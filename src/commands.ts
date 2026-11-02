@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
 import { toArazzo } from "./arazzo.js";
@@ -413,7 +413,7 @@ export function queryText(doc: Subgraph): string {
     const leads = (index.out.get(s.id) ?? []).map((e) => index.calls.get(e.to)!);
     lines.push(`  ${s.id}  ${s.at.file}:${s.at.line}  callers ${callers.length}  leads to ${leads.length}`);
     for (const c of callers) lines.push(`    <- ${c.from} ${c.method} ${c.path}  ${c.at.file}:${c.at.line}`);
-    for (const c of leads) lines.push(`    -> ${c.to} ${c.method} ${c.path} in ${c.scope}  ${c.at.file}:${c.at.line}`);
+    for (const c of leads) lines.push(`    -> ${c.to} ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${c.at.file}:${c.at.line}`);
   }
   if (filter.kind !== "surfaces") lines.push(`calls (${calls.length})`);
   for (const c of calls) {
@@ -497,7 +497,8 @@ function cmdExport(o: Options): number {
   const { document, limits } = toArazzo(graph, loadFlows(source, config, o.out), config, {
     flow: o.flow,
     title: `Flows of ${basename(o.root)}`,
-    read: (path) => source.read(path),
+    // A description outside the repository, given by absolute path, is read from disk as route extraction reads it.
+    read: (path) => (isAbsolute(path) ? (existsSync(path) ? readFileSync(path, "utf8") : undefined) : source.read(path)),
   });
   process.stdout.write(o.format === "json" ? `${JSON.stringify(document, null, 2)}\n` : stringify(document, { lineWidth: 0 }));
   for (const l of limits) process.stderr.write(`limit: ${l}\n`);

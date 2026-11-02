@@ -17,13 +17,14 @@ export interface Inventory {
   apiDocuments: ApiDocument[];
 }
 
-const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go}";
+const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,html,htm}";
 const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle\.kts|go\.mod)$/;
 
 const ROUTE_STYLES: Array<{ style: string; re: RegExp }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g },
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g },
   { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g },
+  { style: "spring", re: /@(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g },
 ];
 
@@ -32,6 +33,8 @@ const CALL_SHAPES = [
   /\bfetch\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
+  /@\{\s*~?\/[A-Za-z][^}]*\}/g,
+  /\b(?:action|data-[\w-]+-url)\s*=\s*["']\/[A-Za-z]/g,
 ];
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;

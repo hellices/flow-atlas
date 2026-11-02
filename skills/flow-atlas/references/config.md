@@ -18,7 +18,7 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi
+    styles: [nest]            # nest | express | fastapi | spring
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
@@ -96,8 +96,19 @@ followed through local functions, relative imports and re-exports, and the membe
 outbound call of the same component held in a method of that name continues the trace. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards; the verb comes from the call before the literal and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
-decorators are read from Python. A route source's `openapi` document adds every operation it declares, whatever the
-language; see `references/openapi.md`.
+decorators are read from Python. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+`@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
+it, in Java and Kotlin, and the POST endpoints `formLogin()` and `logout()` give Spring Security; a handler that returns
+a view name (`return "movies/detail"`) leads to the requests in `templates/movies/detail.html`. A route source's
+`openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
+
+HTML files in a call source are read as templates: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) and
+root-relative URLs in `href`, `action`, `src` and `data-*` attributes. A link is a GET, a form action takes the form's
+`method` or `th:method`, and a `data-*` URL, read by a script, is any method; a `data-*` URL ending in `/` is a base the
+script appends a segment to. Absolute URLs name other sites and are skipped.
+
+Where a call names a fixed segment, it matches the route that names it too over one with a parameter there
+(`/movies/search` over `/movies/{id}`), as routers choose.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several

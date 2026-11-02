@@ -55,6 +55,8 @@ Never decide "plan" without a decision you can link.
 - `=` (evidence `static`): a call matched a route by method and path. Reliable when the call file is a real client.
 - `~` (evidence `static`): the outbound call is written in code the handler runs (its body or a function it calls).
   Reliable.
+- `~` (evidence `name`, `via view <name>`): a Spring page handler renders the template whose requests these are, by
+  Spring MVC's convention (`templates/<name>.html`). Check the view resolver if the app changed its prefix or suffix.
 - `~` (evidence `name`): a handler calls a method with the name of the method holding an outbound call. Check the code
   when the name is generic (`get`, `send`, `request`) or the component has several clients.
 - evidence `text`: read as text in a language atlas does not parse. Check the line.

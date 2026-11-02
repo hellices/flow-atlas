@@ -36,7 +36,12 @@ export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map
     const reached = new Set(s.reaches ?? []);
     const runs = executed?.get(s.id);
     if (!reached.size && !runs?.size) continue;
+    const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
     for (const c of graph.calls) {
+      if (rendered.has(c.at.file)) {
+        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: `view ${rendered.get(c.at.file)}` });
+        continue;
+      }
       if (c.from !== s.component) continue;
       if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", ...(c.scope ? { via: c.scope } : {}) });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });

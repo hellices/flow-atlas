@@ -188,6 +188,78 @@ export function callsFromText(file: string, original: string, spec: CallSource):
   return out;
 }
 
+/** `@{/path(params)}` in a Thymeleaf template; `~/` makes a path server-relative and is read the same way. */
+const LINK_EXPRESSION = /@\{\s*~?(\/[^(){}\s]*(?:\{[^{}]*\}[^(){}\s]*)*)\s*(?:\([^)]*\))?\s*\}/g;
+/** A root-relative URL written as an attribute value: `href="/x"`, `action="/x"`, `data-api-url="/x"`. */
+const URL_ATTRIBUTE = /\b((?:th:)?(?:href|action|src|formaction)|data-[\w-]+)\s*=\s*["'](\/(?!\/)[^"'\s?#]*)/g;
+
+/**
+ * The attribute whose value holds `index`, lower-cased. Inside `th:attr="a=@{..},b=@{..}"`, and its `attrappend` and
+ * `attrprepend` forms, the item the value belongs to names it.
+ */
+function attributeAt(text: string, index: number): string | undefined {
+  const tagStart = text.lastIndexOf("<", index);
+  if (tagStart < 0) return undefined;
+  const attr = /([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+  attr.lastIndex = tagStart;
+  for (let m = attr.exec(text); m && m.index <= index; m = attr.exec(text)) {
+    const valueStart = m.index + m[0].length - m[2]!.length + 1;
+    const valueEnd = m.index + m[0].length - 1;
+    if (index < valueStart || index >= valueEnd) continue;
+    const name = m[1]!.toLowerCase();
+    if (!/^th:attr(append|prepend)?$/.test(name)) return name;
+    const item = text.slice(valueStart, index).split(",").pop() ?? "";
+    return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase() ?? name;
+  }
+  return undefined;
+}
+
+/** The method a request from an attribute uses: GET for links, the form's method for an action, any for data values. */
+function templateMethod(text: string, index: number, attribute: string | undefined): string {
+  const name = attribute?.replace(/^th:/, "");
+  if (name === "href" || name === "src") return "GET";
+  if (name === "action" || name === "formaction") {
+    const tagStart = text.lastIndexOf("<", index);
+    const tagEnd = text.indexOf(">", index);
+    const tag = text.slice(tagStart, tagEnd === -1 ? undefined : tagEnd);
+    // th:method (PUT, DELETE through Spring's hidden method field) wins over the HTML method.
+    const method = /\bth:method\s*=\s*["']([A-Za-z]+)["']/.exec(tag)?.[1] ?? /\bmethod\s*=\s*["']([A-Za-z]+)["']/.exec(tag)?.[1];
+    return method ? method.toUpperCase() : "GET";
+  }
+  return "*";
+}
+
+/**
+ * Requests an HTML template makes: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) and root-relative URLs
+ * in `href`, `action`, `src` and `data-*` attributes. A `{name}` placeholder is any segment text. A `data-*` URL that
+ * ends in `/` is a base a script appends to, so it stands for one more segment. Absolute URLs name other sites and are
+ * not read.
+ */
+export function callsFromTemplate(file: string, text: string, spec: CallSource): Draft<Call>[] {
+  const out: Draft<Call>[] = [];
+  const seen = new Set<number>();
+  const add = (raw: string, index: number) => {
+    if (seen.has(index)) return;
+    seen.add(index);
+    const attribute = attributeAt(text, index);
+    const base = attribute?.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
+    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
+    if (!parsed) return;
+    out.push({
+      from: spec.from,
+      to: spec.to,
+      method: templateMethod(text, index, attribute),
+      path: parsed.path,
+      based: false,
+      at: { file, line: lineOf(text, index) },
+      evidence: "text",
+    });
+  };
+  for (const m of text.matchAll(LINK_EXPRESSION)) add(m[1]!, m.index ?? 0);
+  for (const m of text.matchAll(URL_ATTRIBUTE)) add(m[2]!, (m.index ?? 0) + m[0].length - m[2]!.length);
+  return out.sort((a, b) => a.at.line - b.at.line);
+}
+
 export function extractCalls(source: Source, config: Config, coverage: Coverage[] = []): Draft<Call>[] {
   const out: Draft<Call>[] = [];
   for (const spec of config.calls) {
@@ -197,6 +269,7 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const text = source.read(file);
       if (text === undefined) continue;
       if (/\.(c|m)?[tj]sx?$/.test(file)) out.push(...callsFromTypeScript(file, text, spec));
+      else if (/\.html?$/.test(file)) out.push(...callsFromTemplate(file, text, spec));
       else out.push(...callsFromText(file, text, spec));
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);

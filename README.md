@@ -29,11 +29,12 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
 | Reads | From |
 |---|---|
-| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers), FastAPI decorators, and the OpenAPI 2.0 or 3.x document of any framework |
-| client calls | TypeScript and JavaScript parsed; Kotlin, Python and other languages as text |
-| what a route's handler calls next | TypeScript and JavaScript |
+| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers), FastAPI decorators, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
+| client calls | TypeScript and JavaScript parsed; HTML templates (Thymeleaf `@{...}` links, root-relative `href`, `action` and `data-*` URLs); Kotlin, Python and other languages as text |
+| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
 
-For Spring Boot (springdoc), Django REST framework (drf-spectacular), Flask (flask-smorest, flasgger) and the rest,
+For a Spring app, read its annotations (`styles: [spring]`) and give it springdoc's document as well: routes keep their
+controller lines and take the document's operationIds. For Django REST framework (drf-spectacular), Flask (flask-smorest, flasgger) and the rest,
 give atlas the document the framework generates; it finds each operation's handler by the operationId where it can.
 [`fixtures/openapi`](fixtures/openapi/README.md) holds eight documents that seven frameworks actually generate (Fastify in both formats), and
 [openapi.md](skills/flow-atlas/references/openapi.md) how to produce one without serving it.

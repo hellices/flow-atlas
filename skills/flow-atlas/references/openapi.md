@@ -1,8 +1,10 @@
 # OpenAPI documents from the framework
 
-atlas parses TypeScript and JavaScript routes (Nest, Express-style receivers) and FastAPI decorators. For every other
-server framework, and to see routes the code composes in ways atlas cannot follow, give atlas the OpenAPI document the
-framework itself generates. Generating it means running the application's code, so it is your job (or CI's), not
+atlas parses TypeScript and JavaScript routes (Nest, Express-style receivers), FastAPI decorators and Spring MVC
+annotations. For every other server framework, and to see routes the code composes in ways atlas cannot follow, give
+atlas the OpenAPI document the framework itself generates. For Spring, use both: `styles: [spring]` gives every route
+(pages included, which springdoc leaves out) at its controller line, and the document adds springdoc's operationIds,
+which `export arazzo` needs. Generating it means running the application's code, so it is your job (or CI's), not
 atlas's: atlas only reads files.
 
 ```yaml

@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
+import { routesFromSpring } from "./spring.js";
 import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
@@ -408,6 +409,8 @@ export function extractRoutes(
   executed?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
+  // View names Spring handlers render; their templates' requests are what the route leads to.
+  const views = new Map<string, string[]>();
   const codeFiles = new Map<string, Set<string>>();
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
@@ -420,6 +423,7 @@ export function extractRoutes(
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
       else if (file.endsWith(".py") && (spec.styles ?? []).includes("fastapi")) out.push(...routesFromPython(file, text, spec));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views));
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
@@ -436,6 +440,13 @@ export function extractRoutes(
     const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
+  }
+  if (executed && views.size) {
+    const templates = source.list().filter((f) => /(^|\/)templates\/.+\.html$/.test(f));
+    for (const [id, names] of views) {
+      const runs = executed.get(id) ?? executed.set(id, new Set()).get(id)!;
+      for (const name of names) for (const t of templates) if (t.endsWith(`templates/${name}.html`)) runs.add(`${t}:*${name}`);
+    }
   }
   return unique(out);
 }

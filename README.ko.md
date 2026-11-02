@@ -45,11 +45,12 @@
 
 | 무엇을 | 어디서 |
 |---|---|
-| 라우트 | TypeScript·JavaScript 코드(NestJS 데코레이터, Express, Fastify 같은 `app.get("/x")` 형태), FastAPI 데코레이터, 그리고 어떤 프레임워크든 그것이 만든 OpenAPI 2.0·3.x 문서 |
-| 클라이언트 호출 | TypeScript·JavaScript는 구문으로, Kotlin·Python 등 다른 언어는 문자열로 |
-| 라우트 핸들러가 다음에 부르는 것 | TypeScript·JavaScript |
+| 라우트 | TypeScript·JavaScript 코드(NestJS 데코레이터, Express, Fastify 같은 `app.get("/x")` 형태), FastAPI 데코레이터, Spring MVC 애너테이션과 Spring Security의 로그인·로그아웃, 그리고 어떤 프레임워크든 그것이 만든 OpenAPI 2.0·3.x 문서 |
+| 클라이언트 호출 | TypeScript·JavaScript는 구문으로, HTML 템플릿(Thymeleaf `@{...}` 링크, `/`로 시작하는 `href`·`action`·`data-*` 주소), Kotlin·Python 등 다른 언어는 문자열로 |
+| 라우트 핸들러가 다음에 부르는 것 | TypeScript·JavaScript. Spring MVC는 핸들러가 돌려주는 뷰 이름의 템플릿이 보내는 요청 |
 
-Spring Boot(springdoc), Django REST framework(drf-spectacular), Flask(flask-smorest, flasgger) 같은 프레임워크는
+Spring 앱은 애너테이션을 읽게 하고(`styles: [spring]`) springdoc 문서도 함께 주면, 라우트가 컨트롤러 줄 위치를 유지하면서
+문서의 operationId를 얻는다. Django REST framework(drf-spectacular), Flask(flask-smorest, flasgger) 같은 프레임워크는
 그 프레임워크가 만든 문서를 설정에 주면 된다. 문서의 각 작업은 operationId로 찾을 수 있으면 핸들러 위치로 이어
 준다. 일곱 프레임워크가 실제로 만든 문서 여덟 개(Fastify는 두 형식)는 [`fixtures/openapi`](fixtures/openapi/README.md)에, 서버를 띄우지 않고
 문서를 만드는 방법은 [openapi.md](skills/flow-atlas/references/openapi.md)에 있다.
