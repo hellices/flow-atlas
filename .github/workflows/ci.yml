@@ -11,24 +11,44 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
           version: 11
+      # pnpm 11 itself needs Node 22.13 or later; the CLI's own range is checked in the next job.
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
-      - name: install the packed CLI and run it
+      - run: npm pack --pack-destination dist-pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist-pack/*.tgz
+
+  cli:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: package
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: install the packed CLI and run it on the fixture
         run: |
-          npm pack --pack-destination "$RUNNER_TEMP"
-          npm install --prefix "$RUNNER_TEMP/try" "$RUNNER_TEMP"/flow-atlas-*.tgz
-          "$RUNNER_TEMP/try/node_modules/.bin/atlas" check --root fixtures/shop --out "$RUNNER_TEMP/out"
+          npm install --prefix "$RUNNER_TEMP/try" package/flow-atlas-*.tgz
+          "$RUNNER_TEMP/try/node_modules/.bin/atlas" check --root fixtures/shop --out "$RUNNER_TEMP/out" | tee "$RUNNER_TEMP/check.txt"
+          grep -q "^9 new" "$RUNNER_TEMP/check.txt"
