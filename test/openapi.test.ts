@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { definitionLines, describedOperations, handlerNames } from "../src/extract/openapi.js";
-import { documentPathKeys } from "../src/extract/apidocs.js";
+import { documentPathKeys, resolveApiDescriptions } from "../src/extract/apidocs.js";
+import { validate } from "../src/schema.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { WorktreeSource, type Source } from "../src/source.js";
@@ -85,6 +87,14 @@ describe("describedOperations", () => {
     const keys = documentPathKeys("swagger: '2.0'\nbasePath: /v2\npaths:\n  /items/{itemId}/:\n    get: {}\n");
     expect([...keys!]).toEqual([["GET /v2/items/{}", "/items/{itemId}/"]]);
   });
+  it("drops the host of network-path and absolute server URLs and keeps a relative path", () => {
+    const base = (url: string) => describedOperations("s.yaml", `openapi: 3.0.3\nservers: [{url: '${url}'}]\npaths: {}\n`)!.basePath;
+    expect(base("//api.example.com/v1")).toBe("/v1");
+    expect(base("https://api.example.com/v2/")).toBe("/v2/");
+    expect(base("/v3")).toBe("/v3");
+    expect(base("v4")).toBe("/v4");
+  });
+
   it("ignores path-level fields that are not operations", () => {
     const api = describedOperations("c.yaml", "openapi: 3.1.0\npaths:\n  /x:\n    parameters: []\n    summary: s\n    get: {}\n")!;
     expect(api.operations.map((o) => o.method)).toEqual(["GET"]);
@@ -100,11 +110,20 @@ describe("handler lookup", () => {
     expect(handlerNames("read_order_api_v1_orders__order_id__get", "GET", "/api/v1/orders/{order_id}")).toContain("read_order");
     expect(handlerNames("OrdersController_read", "GET", "/orders/{id}")).toContain("read");
     expect(handlerNames("read", "GET", "/orders/{id}")).toEqual(["read"]);
+    expect(handlerNames("Admin_APIController_list", "GET", "/admin")).toEqual(["Admin_APIController_list", "list"]);
   });
   it("finds definitions in Python, TypeScript and Java but not calls", () => {
     expect(definitionLines("a.py", "x = read()\nasync def read(id):\n", "read")).toEqual([2]);
     expect(definitionLines("a.ts", "this.read(1);\n  async read(@Param() id: string): Promise<X> {\n", "read")).toEqual([2]);
     expect(definitionLines("A.java", "return read(id);\n  public ResponseEntity<Map<String, Object>> read(@PathVariable String id) {\n", "read")).toEqual([2]);
+  });
+  it("finds a one-line TypeScript method", () => {
+    expect(definitionLines("a.ts", "class A {\n  handle() { return 1; }\n}\nhandle();\n", "handle")).toEqual([2]);
+  });
+  it("finds Kotlin functions by fun, not calls", () => {
+    const kt = "fun main() {\n  target(arg)\n  val x = target(arg)\n}\n@GetMapping(\"/x\")\nsuspend fun target(id: String): String = id\n";
+    expect(definitionLines("A.kt", kt, "target")).toEqual([6]);
+    expect(definitionLines("A.java", "    target(arg)\n", "target")).toEqual([]);
   });
 });
 
@@ -241,6 +260,37 @@ describe("routes from an OpenAPI document", () => {
     expect(surfaces).toHaveLength(4);
     expect(surfaces[0]!.at.file).toBe(outside);
     expect(limits).toEqual([`routes svc: ${outside} is outside the repository and is read as it is now, not at 0123456789ab`]);
+  });
+
+  it("reports a document that cannot be read as a limit instead of stopping", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-openapi-"));
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: [], openapi: dir }] });
+    const limits: string[] = [];
+    expect(extractRoutes(memory({}), config, undefined, [], limits)).toEqual([]);
+    expect(limits).toEqual([`routes svc: the OpenAPI document ${dir} could not be read (EISDIR)`]);
+  });
+
+  it("lists every document read for routes as a candidate when several are", () => {
+    const config = normalizeConfig({
+      components: [{ name: "svc", path: "svc" }],
+      routes: [
+        { component: "svc", files: [], openapi: "svc/a.json" },
+        { component: "svc", files: [], openapi: "svc/b.json" },
+      ],
+    });
+    expect(resolveApiDescriptions([], [], config)).toEqual([
+      { component: "svc", status: "ambiguous", reason: "SeveralReadForRoutes", message: "candidates: svc/a.json, svc/b.json", candidates: ["svc/a.json", "svc/b.json"] },
+    ]);
+  });
+
+  it("rejects an empty or relative describedPath", () => {
+    const graph = scan(new WorktreeSource(root), config);
+    const surface = graph.surfaces.find((s) => s.describedPath)!;
+    for (const bad of ["", "orders"]) {
+      const broken = { ...graph, surfaces: [{ ...surface, describedPath: bad }] };
+      expect(validate("graph", broken).length).toBeGreaterThan(0);
+    }
+    expect(validate("graph", graph)).toEqual([]);
   });
 
   it("reports a missing or foreign document as a limit", () => {

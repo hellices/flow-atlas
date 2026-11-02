@@ -129,7 +129,9 @@
         },
         "describedPath": {
           "description": "The path key that document writes the operation under, which may differ from `path` by a base path, a trailing slash or parameter names.",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/"
         },
         "reaches": {
           "description": "Member methods the handler calls, following local and relatively imported functions. Absent when the handler was not read.",

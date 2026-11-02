@@ -30,9 +30,9 @@ function basePathOf(doc: Record<string, unknown>): string {
   const servers = doc.servers as Array<{ url?: unknown }> | undefined;
   const url = servers?.[0]?.url;
   if (typeof url !== "string" || url.includes("{")) return "/";
-  if (url.startsWith("/")) return url;
   try {
-    return new URL(url).pathname;
+    // A placeholder origin resolves absolute, network-path (`//host/v1`), root-relative and relative URLs alike.
+    return decodeURI(new URL(url, "http://openapi.invalid/").pathname);
   } catch {
     return "/";
   }
@@ -75,7 +75,7 @@ export function describedOperations(file: string, text: string): DescribedApi | 
  */
 export function handlerNames(operationId: string, method: string, rawPath: string): string[] {
   const names = [operationId];
-  const nest = /^[A-Za-z0-9]+Controller_([A-Za-z_$][\w$]*)$/.exec(operationId);
+  const nest = /^[A-Za-z_$][\w$]*Controller_([A-Za-z_$][\w$]*)$/.exec(operationId);
   if (nest) names.push(nest[1]!);
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));
@@ -84,15 +84,20 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
 
 export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or class method, a Java or Kotlin method. */
+/**
+ * Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or
+ * class method, a Kotlin `fun`, a Java method (a return type before the name).
+ */
 export function definitionLines(file: string, text: string, name: string): number[] {
   const n = escapeRegExp(name);
   const modifiers = "(?:(?:public|protected|private|static|final|abstract|synchronized|async|override|suspend|open|export|default|readonly)\\s+)*";
   const patterns = file.endsWith(".py")
     ? [new RegExp(`^\\s*(?:async\\s+)?def\\s+${n}\\s*\\(`)]
     : /\.(c|m)?[jt]sx?$/.test(file)
-      ? [new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*\\(`), new RegExp(`^\\s*${modifiers}\\*?${n}\\s*\\(.*\\)\\s*(?::[^=;]+)?\\{\\s*$`)]
-      : [new RegExp(`^\\s*${modifiers}(?:fun\\s+)?(?:[\\w$<>\\[\\],.? ]+\\s+)?${n}\\s*\\([^;=]*$`)];
+      ? [new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*\\(`), new RegExp(`^\\s*${modifiers}\\*?${n}\\s*\\([^;]*\\)\\s*(?::[^=;{]+)?\\{`)]
+      : /\.kts?$/.test(file)
+        ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
+        : [new RegExp(`^\\s*${modifiers}(?:<[^>]*>\\s*)?[\\w$.?]+(?:<.*>)?(?:\\[\\])*\\s+${n}\\s*\\([^;=]*$`)];
   const out: number[] = [];
   text.split("\n").forEach((line, i) => {
     if (/^\s*(?:return|if|for|while|switch|catch|new|throw)\b/.test(line)) return;

@@ -224,7 +224,13 @@ export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surfa
     const forRoutes = read.get(component) ?? [];
     if (forRoutes.length === 1) return { component, status: "chosen", location: forRoutes[0]!, kind: "author", reason: "ReadForRoutes", candidates };
     if (forRoutes.length > 1)
-      return { component, status: "ambiguous", reason: "SeveralReadForRoutes", message: `candidates: ${forRoutes.join(", ")}`, candidates };
+      return {
+        component,
+        status: "ambiguous",
+        reason: "SeveralReadForRoutes",
+        message: `candidates: ${forRoutes.join(", ")}`,
+        candidates: [...new Set([...forRoutes, ...candidates])],
+      };
 
     const servedPaths = new Set(docs.filter((d) => d.kind === "served").map((d) => d.location));
     // A page that shows its own path is that document, not an alias of another.

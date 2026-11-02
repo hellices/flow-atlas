@@ -51,7 +51,7 @@
 
 Spring Boot(springdoc), Django REST framework(drf-spectacular), Flask(flask-smorest, flasgger) 같은 프레임워크는
 그 프레임워크가 만든 문서를 설정에 주면 된다. 문서의 각 작업은 operationId로 찾을 수 있으면 핸들러 위치로 이어
-준다. 여덟 프레임워크가 실제로 만든 문서는 [`fixtures/openapi`](fixtures/openapi/README.md)에, 서버를 띄우지 않고
+준다. 일곱 프레임워크가 실제로 만든 문서 여덟 개(Fastify는 두 형식)는 [`fixtures/openapi`](fixtures/openapi/README.md)에, 서버를 띄우지 않고
 문서를 만드는 방법은 [openapi.md](skills/flow-atlas/references/openapi.md)에 있다.
 
 ## 설치

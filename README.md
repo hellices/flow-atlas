@@ -35,7 +35,7 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
 For Spring Boot (springdoc), Django REST framework (drf-spectacular), Flask (flask-smorest, flasgger) and the rest,
 give atlas the document the framework generates; it finds each operation's handler by the operationId where it can.
-[`fixtures/openapi`](fixtures/openapi/README.md) holds the documents eight frameworks actually generate, and
+[`fixtures/openapi`](fixtures/openapi/README.md) holds eight documents that seven frameworks actually generate (Fastify in both formats), and
 [openapi.md](skills/flow-atlas/references/openapi.md) how to produce one without serving it.
 
 ## Who does what

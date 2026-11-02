@@ -3,7 +3,7 @@ import type { Config, RouteSource } from "../config.js";
 import type { Coverage, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
@@ -272,7 +272,18 @@ function handlerPlace(texts: Map<string, string>, operationId: string, method: s
  */
 function documentedSurfaces(source: Source, spec: RouteSource, texts: Map<string, string>, code: Surface[], limits: string[]): Surface[] {
   const file = spec.openapi!;
-  const text = isAbsolute(file) ? (existsSync(file) ? readFileSync(file, "utf8") : undefined) : source.read(file);
+  let text: string | undefined;
+  if (isAbsolute(file)) {
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        limits.push(`routes ${spec.component}: the OpenAPI document ${file} could not be read (${code ?? (e as Error).message})`);
+        return [];
+      }
+    }
+  } else text = source.read(file);
   if (text === undefined) {
     limits.push(`routes ${spec.component}: the OpenAPI document ${file} is not there${isAbsolute(file) ? "" : " at this revision"}`);
     return [];
