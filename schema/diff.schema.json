@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:diff",
+  "title": "Flow Atlas diff",
+  "description": "What changed in the flow between two revisions: surfaces, component edges and findings. provenance.externalParameters holds base and head as given; resolvedDependencies holds both commits.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "surfaces",
+    "componentEdges",
+    "findings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Diff"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "surfaces": {
+      "type": "object",
+      "required": [
+        "added",
+        "removed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surface"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surface"
+          }
+        }
+      }
+    },
+    "componentEdges": {
+      "type": "object",
+      "required": [
+        "added",
+        "removed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/componentEdge"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/componentEdge"
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "object",
+      "required": [
+        "new",
+        "resolved"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "new": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/finding"
+          }
+        },
+        "resolved": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/finding"
+          }
+        }
+      }
+    }
+  }
+}

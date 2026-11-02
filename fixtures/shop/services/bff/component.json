@@ -1,0 +1,1 @@
+{ "name": "bff", "provides": ["web-bff"], "consumes": ["bff-orders", "bff-pricing"] }

@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:flow",
+  "title": "Flow",
+  "description": "One end-to-end flow, written by people and agents in YAML under flows/*.flow.yaml; several flows may share a file as separate YAML documents. The envelope follows the Kubernetes Resource Model (apiVersion, kind, metadata, spec) as Backstage's catalog-info.yaml does; the steps follow Arazzo 1.0, naming a surface, a call or another flow of this repository instead of an OpenAPI operation. Metadata also carries OKF 0.2 trust fields (sources, generated, verified, stale_after) for the authored intent. atlas reads this file and never writes it; what it observes goes into a FlowReport. Who writes what: 'author' fields need intent and are written by a person or an agent; 'from atlas' fields are ids copied from atlas output (atlas draft flow writes them); atlas checks both in its FlowReport.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Flow"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "from atlas (draft) or author. Unique across the repository's flows; Arazzo's workflowId.",
+          "$ref": "#/$defs/name"
+        },
+        "title": {
+          "type": "string",
+          "description": "author. What the customer or the system achieves through the flow. Required for Documented=True."
+        },
+        "description": {
+          "type": "string",
+          "description": "author. Anything a reader needs that the steps do not show."
+        },
+        "labels": {
+          "description": "author. Identifying values to select flows by, such as domain or journey. Short keys and values, as in Kubernetes.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^([a-z0-9.-]+/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$"
+          }
+        },
+        "annotations": {
+          "description": "author or atlas. Non-identifying values for tools and people; atlas sets flow-atlas.dev/location in reports.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "sources": {
+          "description": "author. OKF 0.2 sources: the decisions, documents and issues behind the flow.",
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfSource"
+          }
+        },
+        "generated": {
+          "description": "author. OKF 0.2 generated: who wrote the flow's intent (title, roles) and when it last changed meaningfully. An agent writes its own actor, <tool>/<model>.",
+          "allOf": [
+            {
+              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
+            }
+          ]
+        },
+        "verified": {
+          "description": "a person, or a process they name. OKF 0.2 verified: who confirmed the intent; a human: actor makes the flow human-reviewed. An agent never adds a human: entry.",
+          "oneOf": [
+            {
+              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
+              }
+            }
+          ]
+        },
+        "stale_after": {
+          "description": "author. OKF 0.2 stale_after: the instant after which the intent must be reviewed again; atlas reports Fresh=False from then on.",
+          "allOf": [
+            {
+              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/timestamp"
+            }
+          ]
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "steps"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle": {
+          "description": "author. active: the code must bear the flow out. planned: steps may be missing. deprecated: not checked.",
+          "enum": [
+            "active",
+            "planned",
+            "deprecated"
+          ],
+          "default": "active"
+        },
+        "owner": {
+          "description": "author. The person or team who answers for the flow.",
+          "type": "string"
+        },
+        "entry": {
+          "description": "from atlas when one component calls the first step, otherwise author. Where the flow starts outside the graph, such as a screen. The first step must be called by this component.",
+          "type": "object",
+          "required": [
+            "component"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "produces": {
+          "description": "author. Registry entries the flow issues, as registry:key.",
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntryId"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/step"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "step": {
+      "description": "A hop the flow must pass through; Arazzo's Step with surface, call or flow in place of operationId, operationPath or workflowId. Hops between listed steps may be left out.",
+      "type": "object",
+      "required": [
+        "stepId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "description": "from atlas (draft) or author."
+        },
+        "surface": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId",
+          "description": "from atlas: a surface id from atlas query, trace or draft."
+        },
+        "call": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/callId",
+          "description": "from atlas: a call id from atlas query or trace."
+        },
+        "flow": {
+          "$ref": "#/$defs/name",
+          "description": "author: the name of another Flow used as one step."
+        },
+        "role": {
+          "description": "author. What this component does in the flow, and what it leaves to others. Required for Documented=True on surface and call steps.",
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "planned"
+          ],
+          "default": "active",
+          "description": "author. planned when the step is not built yet."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "surface"
+          ]
+        },
+        {
+          "required": [
+            "call"
+          ]
+        },
+        {
+          "required": [
+            "flow"
+          ]
+        }
+      ]
+    }
+  }
+}

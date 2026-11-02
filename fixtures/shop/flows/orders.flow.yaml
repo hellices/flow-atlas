@@ -1,0 +1,59 @@
+apiVersion: flow-atlas.dev/v1alpha1
+kind: Flow
+metadata:
+  name: view-order
+  title: The web order screen shows one order
+  labels:
+    domain: orders
+  sources:
+    - id: screens
+      resource: docs/orders.md#screens
+      title: Order screen decision
+  generated: { by: claude-code/opus-4, at: 2026-10-01T09:00:00Z }
+  verified: { by: human:shop-lead, at: 2026-10-02T09:00:00Z }
+  stale_after: 2027-04-01T00:00:00Z
+spec:
+  owner: shop-team
+  entry:
+    component: web
+    description: Order screen
+  steps:
+    - stepId: screen
+      surface: "bff|GET /screens/order/{orderId}"
+      role: Builds the order screen from the orders service
+    - stepId: read
+      surface: "orders|GET /orders/{id}"
+      role: Owns the order record
+  produces: ["document:receipt"]
+---
+apiVersion: flow-atlas.dev/v1alpha1
+kind: Flow
+metadata:
+  name: place-order
+  title: The android app places an order
+  generated: { by: claude-code/opus-4, at: 2026-10-01T09:00:00Z }
+  labels:
+    domain: orders
+spec:
+  owner: shop-team
+  entry:
+    component: android
+  steps:
+    - stepId: submit
+      surface: "bff|POST /orders"
+      role: Accepts the app's order and forwards it; holds no order state
+    - stepId: create
+      surface: "orders|POST /orders"
+      role: Creates and owns the order
+---
+apiVersion: flow-atlas.dev/v1alpha1
+kind: Flow
+metadata:
+  name: refund-order
+spec:
+  lifecycle: planned
+  steps:
+    - stepId: request
+      surface: "bff|POST /orders/{id}/refund"
+    - stepId: refund
+      surface: "orders|POST /orders/{id}/refund"

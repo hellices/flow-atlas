@@ -1,0 +1,8 @@
+openapi: 3.0.3
+info:
+  title: Pricing (before discounts)
+  version: "1"
+paths:
+  /quote:
+    get:
+      operationId: getQuote

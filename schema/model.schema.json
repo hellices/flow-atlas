@@ -1,0 +1,730 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:model",
+  "title": "Flow Atlas model definitions",
+  "description": "Shared definitions. Every document has apiVersion and kind, after the Kubernetes Resource Model, and a provenance after SLSA: the tool, its parameters and every input it read with a digest. Nothing in a document depends on when or where it was written.",
+  "$defs": {
+    "componentName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^|>]+$"
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^([A-Z]+|\\*)$"
+    },
+    "surfaceId": {
+      "description": "component|METHOD /path, the path as an OpenAPI path template: parameters are written {name}, never :name.",
+      "type": "string",
+      "pattern": "^[^|]+\\|([A-Z]+|\\*) /(?!.*/:)(?!:)[^\\s]*$"
+    },
+    "callId": {
+      "description": "from->to|METHOD /path@file#scope, or @file:line without a scope; ~n tells repeats apart",
+      "type": "string",
+      "pattern": "^[^|]+->[^|]+\\|([A-Z]+|\\*) /[^@]*@.+$"
+    },
+    "registryEntryId": {
+      "description": "registry:key",
+      "type": "string",
+      "pattern": "^[^:]+:.+$"
+    },
+    "evidence": {
+      "description": "declared: a manifest states it. static: parsed syntax. text: matched as text. name: joined because a method name agrees.",
+      "enum": [
+        "declared",
+        "static",
+        "text",
+        "name"
+      ]
+    },
+    "place": {
+      "type": "object",
+      "required": [
+        "file",
+        "line"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "provides",
+        "consumes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/componentName"
+        },
+        "path": {
+          "type": "string"
+        },
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "consumes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "surface": {
+      "description": "A route a component serves.",
+      "type": "object",
+      "required": [
+        "id",
+        "component",
+        "method",
+        "path",
+        "at",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/surfaceId"
+        },
+        "component": {
+          "$ref": "#/$defs/componentName"
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "path": {
+          "description": "OpenAPI path template, such as /orders/{id}.",
+          "type": "string",
+          "pattern": "^/(?!.*/:)(?!:)[^\\s]*$"
+        },
+        "at": {
+          "$ref": "#/$defs/place"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "operationId": {
+          "description": "The OpenAPI operationId, when the code states it or the configured convention gives it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "reaches": {
+          "description": "Member methods the handler calls, following local and relatively imported functions. Absent when the handler was not read.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "call": {
+      "description": "A request one component makes to another, found at a call site.",
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to",
+        "method",
+        "path",
+        "based",
+        "at",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/callId"
+        },
+        "from": {
+          "$ref": "#/$defs/componentName"
+        },
+        "to": {
+          "$ref": "#/$defs/componentName"
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "path": {
+          "description": "Request path; {} marks an interpolated value.",
+          "type": "string",
+          "pattern": "^/"
+        },
+        "based": {
+          "description": "The call site joins a base address to the path.",
+          "type": "boolean"
+        },
+        "at": {
+          "$ref": "#/$defs/place"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "scope": {
+          "description": "The function or method that holds the call site.",
+          "type": "string"
+        }
+      }
+    },
+    "edge": {
+      "description": "match: a call reaches a surface by method and path (call id to surface id). reach: a surface's handler calls the method via, which holds an outbound call (surface id to call id).",
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "match",
+            "reach"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "via": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "reach"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "via"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/surfaceId"
+          },
+          "to": {
+            "$ref": "#/$defs/callId"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/callId"
+          },
+          "to": {
+            "$ref": "#/$defs/surfaceId"
+          }
+        }
+      }
+    },
+    "declaredEdge": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "via"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        }
+      }
+    },
+    "registryEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "registry",
+        "key",
+        "at",
+        "producers",
+        "consumers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/registryEntryId"
+        },
+        "registry": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "#/$defs/place"
+        },
+        "producers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/place"
+          }
+        },
+        "consumers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/place"
+          }
+        }
+      }
+    },
+    "contractVersion": {
+      "type": "object",
+      "required": [
+        "id",
+        "family",
+        "version",
+        "at",
+        "references"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "-v[0-9]+$"
+        },
+        "family": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active": {
+          "description": "Absent when no active list is configured.",
+          "type": "boolean"
+        },
+        "at": {
+          "$ref": "#/$defs/place"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/place"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "source",
+        "files",
+        "items"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "pattern": "^(routes|calls) "
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matched": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "linked": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "rule",
+        "key",
+        "title",
+        "message",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "enum": [
+            "FA001",
+            "FA002",
+            "FA003",
+            "FA004",
+            "FA006",
+            "FA007"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^FA[0-9]{3}\\|"
+        },
+        "title": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "at": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/place"
+          }
+        }
+      }
+    },
+    "componentEdge": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "via"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        }
+      }
+    },
+    "apiVersion": {
+      "const": "flow-atlas.dev/v1alpha1"
+    },
+    "resourceDescriptor": {
+      "description": "An input a document was made from, after the in-toto ResourceDescriptor.",
+      "type": "object",
+      "required": [
+        "name",
+        "uri"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "What the input is to this document: code, config, flows, or base/head variants.",
+          "type": "string"
+        },
+        "uri": {
+          "description": "Repository-relative location; . for the repository itself.",
+          "type": "string"
+        },
+        "digest": {
+          "description": "gitCommit for code read from a commit, sha256 for files; absent for an uncommitted working tree.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]+$"
+          },
+          "propertyNames": {
+            "enum": [
+              "gitCommit",
+              "sha256"
+            ]
+          }
+        }
+      }
+    },
+    "provenance": {
+      "description": "How the document was produced, after SLSA provenance v1: builder, buildType, externalParameters, resolvedDependencies. No timestamps or machine paths.",
+      "type": "object",
+      "required": [
+        "builder",
+        "buildType",
+        "externalParameters",
+        "resolvedDependencies"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "builder": {
+          "type": "object",
+          "required": [
+            "id",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "flow-atlas"
+            },
+            "version": {
+              "type": "string"
+            }
+          }
+        },
+        "buildType": {
+          "type": "string",
+          "pattern": "^flow-atlas/[A-Za-z]+@v1alpha1$"
+        },
+        "externalParameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "resolvedDependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/resourceDescriptor"
+          }
+        }
+      }
+    },
+    "condition": {
+      "description": "After Kubernetes status conditions, without lastTransitionTime so that the same inputs give the same document.",
+      "type": "object",
+      "required": [
+        "type",
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "Ready",
+            "Resolved",
+            "Connected",
+            "EntryCalled",
+            "ProducesListed",
+            "Documented",
+            "Fresh"
+          ]
+        },
+        "status": {
+          "enum": [
+            "True",
+            "False",
+            "Unknown"
+          ]
+        },
+        "reason": {
+          "description": "A stable CamelCase code.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z]*$"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "apiDocument": {
+      "description": "An OpenAPI description of a component. file: committed, location is the repository path. served: the component serves it, location is the path on the server; the origin depends on the environment.",
+      "type": "object",
+      "required": [
+        "component",
+        "kind",
+        "location",
+        "convention",
+        "at",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "$ref": "#/$defs/componentName"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "served"
+          ]
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "convention": {
+          "type": "string"
+        },
+        "aliasOf": {
+          "description": "A served path that shows another served document, as a swagger UI's uiConfig.url does.",
+          "type": "string"
+        },
+        "agreement": {
+          "description": "For a committed file: how many of the component's routes it declares, which it lacks, and how many operations it adds.",
+          "type": "object",
+          "required": [
+            "surfaces",
+            "covered",
+            "missing",
+            "extra"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "surfaces": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "covered": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "missing": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/surfaceId"
+              }
+            },
+            "extra": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "at": {
+          "$ref": "#/$defs/place"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "apiDescription": {
+      "description": "Which description is a component's, decided only where the code decides it: the author's openapi entry, the one committed file that declares every route, else the one served document (aliases collapsed), else a single partial file. Otherwise ambiguous, with the candidates.",
+      "type": "object",
+      "required": [
+        "component",
+        "status",
+        "reason",
+        "candidates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "$ref": "#/$defs/componentName"
+        },
+        "status": {
+          "enum": [
+            "chosen",
+            "ambiguous",
+            "none"
+          ]
+        },
+        "location": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "served",
+            "author"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "AuthorOverride",
+            "FileMatchesCode",
+            "ServedByCode",
+            "AliasesOfOne",
+            "OnlyPartialFile",
+            "OnlyFileUnconfirmed",
+            "SeveralCompleteFiles",
+            "SeveralServedDocuments",
+            "SeveralPartialFiles",
+            "NoneFound"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "description": "ISO 8601 date-time with an explicit UTC offset, as OKF requires.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "actor": {
+      "description": "OKF actor (0.2 §7): <producer>/<version> for agents and tools, human:<id> for people, process:<id> for automated processes. Other <kind>:<id> prefixes, such as the spec's own team:<id> example, are accepted; only human: counts toward the human-reviewed tier.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]*:[^\\s]+|[^\\s:/]+/[^\\s]+)$"
+    },
+    "okfSource": {
+      "description": "OKF source (0.2 §5.1): a material the knowledge derives from.",
+      "type": "object",
+      "required": [
+        "resource"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "resource": {
+          "description": "Absolute URL, repository-relative path, or a scope descriptor.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "author": {
+          "$ref": "#/$defs/actor"
+        },
+        "last_modified": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "okfEvent": {
+      "type": "object",
+      "required": [
+        "by"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/actor"
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    }
+  }
+}

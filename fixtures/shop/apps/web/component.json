@@ -1,0 +1,1 @@
+{ "name": "web", "provides": [], "consumes": ["web-bff"] }

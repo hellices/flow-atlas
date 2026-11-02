@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:flow-report",
+  "title": "Flow report",
+  "description": "What atlas observed when it held the flows against one graph. Each item is a Flow with its metadata and a status, after the Kubernetes spec/status split: conditions say whether the steps resolve, connect, are entered by the stated component, and whether produced entries and dependencies exist. Findings FA007 are derived from these conditions. provenance lists the code, the configuration and every flow file read, with digests.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "files",
+    "items",
+    "unassigned"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "FlowReport"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "file",
+          "flows",
+          "errors"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "flows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "description": "Schema or YAML errors; a document with errors is not resolved.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "unassigned": {
+      "description": "Surfaces that no active or planned flow names as a step or passes through.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+        },
+        "kind": {
+          "const": "Flow"
+        },
+        "metadata": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:flow#/properties/metadata"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "required": [
+        "observedRef",
+        "lifecycle",
+        "trust",
+        "conditions",
+        "steps",
+        "produces"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "observedRef": {
+          "description": "The commit the flow was held against, or WORKTREE; Kubernetes' observedGeneration.",
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "planned",
+            "deprecated"
+          ]
+        },
+        "trust": {
+          "description": "OKF 0.2 §5.3 trust tier of the authored intent, from metadata.verified: unverified, machine-confirmed (no human: actor), human-reviewed.",
+          "enum": [
+            "unverified",
+            "machine-confirmed",
+            "human-reviewed"
+          ]
+        },
+        "conditions": {
+          "description": "Always the same seven types in the same order; Ready is False when any other is False. Documented and Fresh look at the author's part (title and roles written, stale_after not passed at the report's asOf); the others check the code.",
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+          }
+        },
+        "entry": {
+          "type": "object",
+          "required": [
+            "component",
+            "callers"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "type": "string"
+            },
+            "callers": {
+              "description": "Calls from the entry component that reach the first step.",
+              "type": "array",
+              "items": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/callId"
+              }
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/step"
+          }
+        },
+        "produces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "found"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "found": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "stepId",
+        "line",
+        "kind",
+        "target",
+        "lifecycle",
+        "resolved"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "stepId": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "enum": [
+            "surface",
+            "call",
+            "flow"
+          ]
+        },
+        "target": {
+          "description": "The surface id, call id or flow name the step names.",
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "active",
+            "planned"
+          ]
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "at": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
+        },
+        "toNext": {
+          "description": "The shortest chain of edges to the next step; absent on the last step or when either side is unresolved.",
+          "type": "object",
+          "required": [
+            "connected",
+            "edges"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "edges": {
+              "type": "array",
+              "items": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

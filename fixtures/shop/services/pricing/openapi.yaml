@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: Pricing
+  version: "2"
+paths:
+  /quotes:
+    get:
+      operationId: listQuotes
+  /discounts:
+    post:
+      operationId: createDiscount

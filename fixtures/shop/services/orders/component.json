@@ -1,0 +1,1 @@
+{ "name": "orders", "provides": ["bff-orders"], "consumes": ["orders-pricing"] }

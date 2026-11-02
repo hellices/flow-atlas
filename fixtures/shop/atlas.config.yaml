@@ -1,0 +1,34 @@
+manifest:
+  kind: component-json
+  glob: "**/component.json"
+routes:
+  - component: orders
+    files: ["services/orders/src/**/*.ts"]
+    styles: [nest]
+    constants: "Path$"
+    operationIds: nest-swagger
+  - component: bff
+    files: ["services/bff/src/routes.ts"]
+    styles: [express]
+    calls:
+      - { name: registerRoute, methodArg: 1, pathArg: 2 }
+  - component: pricing
+    files: ["services/pricing/**/*.py"]
+    styles: [fastapi]
+calls:
+  - { from: bff, to: orders, files: ["services/bff/src/clients/orders.ts"] }
+  - { from: bff, to: pricing, files: ["services/bff/src/clients/pricing.ts"] }
+  - { from: web, to: bff, files: ["apps/web/src/api.ts"] }
+  - { from: web, to: orders, files: ["apps/web/src/legacy.ts"] }
+  - { from: android, to: bff, files: ["apps/android/src/**/*.kt"] }
+registries:
+  - name: document
+    active: { file: catalog/active.json, pattern: "(.+)-v\\d+\\.schema\\.json" }
+    producers: ["services/**"]
+    consumers: ["apps/**"]
+versions:
+  - name: document-schema
+    files: "catalog/schemas/*.schema.json"
+    pattern: "(.+)-v(\\d+)\\.schema\\.json"
+    active: { file: catalog/active.json, pattern: "(.+)\\.schema\\.json" }
+    references: ["apps/**", "services/**"]

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:subgraph",
+  "title": "Flow Atlas subgraph",
+  "description": "Part of a graph with the same node and edge shapes. kind trace: everything upstream and downstream of the seeds. kind query: the surfaces and calls matching the filter, with the edges among them.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "surfaces",
+    "calls",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "enum": [
+        "Trace",
+        "Query"
+      ]
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "seeds": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+      }
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surface"
+      }
+    },
+    "calls": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/call"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "Trace"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "seeds"
+    ]
+  },
+  "else": {
+    "required": [
+      "filter"
+    ]
+  }
+}
