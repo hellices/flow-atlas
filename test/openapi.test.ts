@@ -323,6 +323,26 @@ describe("routes from an OpenAPI document", () => {
     ]);
   });
 
+  it("does not take a function as the handler for an operationId quoted in its body", () => {
+    const files = {
+      "svc/a.ts": [
+        'function helper() { return lookup("listOrders"); }',
+        "class C {",
+        '  @ApiOperation({ operationId: "readOrder" }) read() { return this.port.findOne(); }',
+        "}",
+      ].join("\n"),
+      "svc/openapi.json": JSON.stringify({ openapi: "3.0.3", paths: { "/orders": { get: { operationId: "listOrders" } }, "/orders/{id}": { get: { operationId: "readOrder" } } } }),
+    };
+    const source = memory(files);
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.ts"], openapi: "svc/openapi.json" }] });
+    const surfaces = extractRoutes(source, config, new Reach(source));
+    expect(surfaces.map((s) => `${s.id} ${s.evidence} ${s.at.line} ${s.reaches === undefined ? "-" : s.reaches.join(",")}`)).toEqual([
+      "svc|GET /orders text 1 -",
+      "svc|GET /orders/{id} text 3 findOne",
+    ]);
+    expect(Object.keys(surfaces[1]!.at)).toEqual(["file", "line"]);
+  });
+
   it("exports an operationPath with the key the document writes", () => {
     const graph = scan(new WorktreeSource(root), config);
     expect(graph.surfaces.find((s) => s.id === "fastify|POST /api/v1/orders")?.describedPath).toBe("/api/v1/orders/");

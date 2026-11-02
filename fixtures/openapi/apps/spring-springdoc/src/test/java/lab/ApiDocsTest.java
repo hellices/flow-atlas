@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.aMapWithSize;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +27,11 @@ class ApiDocsTest {
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.openapi").isString())
-            .andExpect(jsonPath("$.paths").isMap())
+            // The operations OrdersApplication serves, and nothing else: the hidden route stays out.
+            .andExpect(jsonPath("$.paths", aMapWithSize(3)))
+            .andExpect(jsonPath("$.paths['/api/v1/orders'].post.operationId").value("create"))
+            .andExpect(jsonPath("$.paths['/api/v1/orders/{orderId}'].get.operationId").value("read"))
+            .andExpect(jsonPath("$.paths['/api/v1/orders/{orderId}/history'].get.operationId").value("orderHistory"))
             .andReturn()
             .getResponse()
             .getContentAsString();

@@ -246,28 +246,39 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
 }
 
 /** Lines where an operationId is written as a quoted string, as code that states it explicitly does. */
-function literalLines(texts: Map<string, string>, id: string): Surface["at"][] {
-  const quoted = new RegExp(`(["'\`])${escapeRegExp(id)}\\1`);
-  const out: Surface["at"][] = [];
-  for (const [file, text] of texts) text.split("\n").forEach((l, i) => quoted.test(l) && out.push({ file, line: i + 1 }));
+function literalLines(texts: Map<string, string>, id: string): Found[] {
+  const quoted = new RegExp(`(["'\`])${escapeRegExp(id)}\\1`, "g");
+  const out: Found[] = [];
+  for (const [file, text] of texts) for (const m of text.matchAll(quoted)) out.push({ file, line: lineOf(text, m.index ?? 0), offset: m.index ?? 0 });
   return out;
 }
 
+/** A place in a file, with the character offset of what was found there. */
+type Found = Surface["at"] & { offset: number };
+
+/** The offset of a definition of `name` on a line: where the name stands before its parameters. */
+function definitionOffset(text: string, line: number, name: string): number {
+  let start = 0;
+  for (let i = 1; i < line; i++) start = text.indexOf("\n", start) + 1;
+  const end = text.indexOf("\n", start);
+  const at = text.slice(start, end === -1 ? undefined : end).search(new RegExp(`(?<![\\w$])${escapeRegExp(name)}\\s*[(<]`));
+  return start + Math.max(at, 0);
+}
+
 /**
- * The TypeScript or JavaScript function whose header (decorators and signature, up to its body) holds a line: the
- * handler a definition line or a quoted operationId in its decorator points at. A line inside a body names no handler.
+ * The TypeScript or JavaScript function whose header (decorators and signature, before its body) holds an offset: the
+ * handler a definition or a quoted operationId in its decorator points at. Text inside a body names no handler, even
+ * on the same line as the header.
  */
-function handlerNode(reach: Reach, at: Surface["at"]): ts.Node | undefined {
+function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
   if (!/\.(c|m)?[jt]sx?$/.test(at.file)) return undefined;
   const sf = reach.parse(at.file)?.sf;
   if (!sf) return undefined;
-  const lineOfPos = (pos: number) => sf.getLineAndCharacterOfPosition(pos).line + 1;
   let found: ts.Node | undefined;
   const visit = (n: ts.Node): void => {
     if (ts.isFunctionLike(n) && "body" in n && n.body) {
-      const start = lineOfPos(n.getStart(sf));
-      const bodyStart = lineOfPos((n.body as ts.Node).getStart(sf));
-      if (start <= at.line && at.line <= bodyStart && (!found || n.getStart(sf) > found.getStart(sf))) found = n;
+      const start = n.getStart(sf);
+      if (start <= at.offset && at.offset < (n.body as ts.Node).getStart(sf) && (!found || start > found.getStart(sf))) found = n;
     }
     ts.forEachChild(n, visit);
   };
@@ -276,10 +287,10 @@ function handlerNode(reach: Reach, at: Surface["at"]): ts.Node | undefined {
 }
 
 /** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
-function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Surface["at"]; evidence: Surface["evidence"] } | undefined {
-  const hits: Surface["at"][] = [];
+function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Found; evidence: Surface["evidence"] } | undefined {
+  const hits: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
-    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line });
+    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
     if (hits.length) break;
   }
   if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
@@ -343,7 +354,7 @@ function documentedSurfaces(
       component: spec.component,
       method: op.method,
       path: op.path,
-      at: place?.at ?? op.at,
+      at: place ? { file: place.at.file, line: place.at.line } : op.at,
       evidence: place?.evidence ?? "declared",
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
