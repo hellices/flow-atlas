@@ -1,0 +1,13 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Orders snapshot", "version": "1" },
+  "paths": {
+    "/orders/{orderId}": {
+      "get": {
+        "operationId": "OrdersController_get",
+        "parameters": [{ "name": "orderId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "The order" } }
+      }
+    }
+  }
+}

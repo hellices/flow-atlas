@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:inventory",
+  "title": "Flow Atlas inventory",
+  "description": "Candidates for writing a configuration. Lists what looks like components, route registrations, client requests and versioned files; decides nothing.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "components",
+    "routes",
+    "calls",
+    "versions",
+    "activeLists",
+    "apiDocuments"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Inventory"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "manifest"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "manifest": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "component",
+          "file",
+          "style",
+          "count",
+          "example"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "style": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "example": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "component",
+          "file",
+          "count",
+          "example"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "example": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "dir",
+          "pattern",
+          "families",
+          "files"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "families": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "activeLists": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "file",
+          "names",
+          "dir"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "names": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dir": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "apiDocuments": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiDocument"
+      }
+    }
+  }
+}

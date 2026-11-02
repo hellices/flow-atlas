@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:findings",
+  "title": "Flow Atlas findings",
+  "description": "The result of `atlas check`: every finding with its status against the baseline, exceptions and --since. Also written to last-check.json.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "items"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Findings"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "since": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "finding",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "finding": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/finding"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "baseline",
+              "excepted",
+              "expired-exception"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

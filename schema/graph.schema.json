@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:graph",
+  "title": "Flow Atlas graph",
+  "description": "Everything atlas extracted from one commit: components, surfaces, calls, the edges between them, registries, contract versions and how much each configured source yielded. Written by `atlas scan` to graph.json.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "components",
+    "surfaces",
+    "calls",
+    "edges",
+    "declared",
+    "registries",
+    "versions",
+    "apiDocuments",
+    "apiDescriptions",
+    "coverage",
+    "limits"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Graph"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/component"
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surface"
+      }
+    },
+    "calls": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/call"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
+      }
+    },
+    "declared": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/declaredEdge"
+      }
+    },
+    "registries": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntry"
+      }
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/contractVersion"
+      }
+    },
+    "apiDocuments": {
+      "description": "Every OpenAPI description found per component.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiDocument"
+      }
+    },
+    "apiDescriptions": {
+      "description": "Per component, which description is its own, or why that is not decided.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiDescription"
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/coverage"
+      }
+    },
+    "limits": {
+      "description": "What atlas could not read or match, in prose.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

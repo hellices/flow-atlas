@@ -1,0 +1,1 @@
+{ "name": "android", "provides": [], "consumes": ["web-bff"] }
