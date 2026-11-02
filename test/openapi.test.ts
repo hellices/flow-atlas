@@ -97,6 +97,8 @@ describe("describedOperations", () => {
     expect(base("https://{environment}.example.com/api/v1")).toBe("/api/v1");
     expect(base("{scheme}://api.example.com/v5")).toBe("/v5");
     expect(base("https://api.example.com/{version}")).toBe("/");
+    expect(base("https://example.com/v1?token={token}")).toBe("/v1");
+    expect(base("/v2#{section}")).toBe("/v2");
   });
 
   it("ignores path-level fields that are not operations", () => {
@@ -145,6 +147,11 @@ describe("handler lookup", () => {
     expect(definitionLines("A.java", java, "read")).toEqual([2]);
     expect(definitionLines("A.java", java, "size")).toEqual([3]);
     expect(definitionLines("A.java", '  @Operation(summary = "x") public static <T> List<T> all(Class<T> type) {', "all")).toEqual([1]);
+  });
+  it("finds generic TypeScript functions and methods", () => {
+    const text = ["export function load<T>(id: string): Promise<T> {", "class A {", "  async read<T extends object>(id: string): Promise<T> {", "  }", "}", "load<Order>(1);"].join("\n");
+    expect(definitionLines("a.ts", text, "load")).toEqual([1]);
+    expect(definitionLines("a.ts", text, "read")).toEqual([3]);
   });
   it("finds a one-line TypeScript method", () => {
     expect(definitionLines("a.ts", "class A {\n  handle() { return 1; }\n}\nhandle();\n", "handle")).toEqual([2]);
@@ -323,7 +330,41 @@ describe("routes from an OpenAPI document", () => {
     ]);
   });
 
-  it("does not take a function as the handler for an operationId quoted in its body", () => {
+  it("follows the handler a route registration passes with its operationId", () => {
+    const files = {
+      "svc/app.ts": [
+        "export default async function plugin(orders) {",
+        '  orders.get(ROUTE, { schema: { operationId: "history" } }, async () => store.history());',
+        "}",
+      ].join("\n"),
+      "svc/openapi.json": JSON.stringify({ openapi: "3.0.3", paths: { "/history": { get: { operationId: "history" } } } }),
+    };
+    const source = memory(files);
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.ts"], openapi: "svc/openapi.json" }] });
+    expect(extractRoutes(source, config, new Reach(source))[0]).toMatchObject({ evidence: "text", at: { file: "svc/app.ts", line: 2 }, reaches: ["history"] });
+  });
+
+  it("keeps the handlers of the real fixtures followed", () => {
+    const graph = scan(new WorktreeSource(root), config);
+    expect(graph.surfaces.filter((s) => s.reaches).map((s) => s.id).sort()).toEqual([
+      "fastify-swagger|GET /api/v1/orders/{orderId}/history",
+      "fastify|GET /api/v1/orders/{orderId}/history",
+      "nestjs|GET /api/v1/orders/{id}",
+      "nestjs|GET /api/v1/orders/{id}/history",
+      "nestjs|POST /api/v1/orders",
+    ]);
+  });
+
+  it("ignores a Python mention of an operationId that does not declare it", () => {
+    const source = memory({
+      "svc/a.py": 'log.info("theId")\n@router.get("/x", operation_id = "theId")\ndef x():\n    pass\n',
+      "svc/openapi.json": '{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"theId"}}}}',
+    });
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.py"], openapi: "svc/openapi.json" }] });
+    expect(extractRoutes(source, config)[0]).toMatchObject({ evidence: "text", at: { file: "svc/a.py", line: 2 } });
+  });
+
+  it("takes a quoted operationId only where code declares it, not where a body mentions it", () => {
     const files = {
       "svc/a.ts": [
         'function helper() { return lookup("listOrders"); }',
@@ -336,9 +377,9 @@ describe("routes from an OpenAPI document", () => {
     const source = memory(files);
     const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.ts"], openapi: "svc/openapi.json" }] });
     const surfaces = extractRoutes(source, config, new Reach(source));
-    expect(surfaces.map((s) => `${s.id} ${s.evidence} ${s.at.line} ${s.reaches === undefined ? "-" : s.reaches.join(",")}`)).toEqual([
-      "svc|GET /orders text 1 -",
-      "svc|GET /orders/{id} text 3 findOne",
+    expect(surfaces.map((s) => `${s.id} ${s.evidence} ${s.at.file}:${s.at.line} ${s.reaches === undefined ? "-" : s.reaches.join(",")}`)).toEqual([
+      "svc|GET /orders declared svc/openapi.json:1 -",
+      "svc|GET /orders/{id} text svc/a.ts:3 findOne",
     ]);
     expect(Object.keys(surfaces[1]!.at)).toEqual(["file", "line"]);
   });

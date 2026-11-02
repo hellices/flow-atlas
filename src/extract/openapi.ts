@@ -30,8 +30,9 @@ function basePathOf(doc: Record<string, unknown>): string {
   const servers = doc.servers as Array<{ url?: unknown }> | undefined;
   const url = servers?.[0]?.url;
   if (typeof url !== "string") return "/";
-  // The scheme and host belong to the environment, variables in them included; only a variable in the path hides it.
-  const path = url.replace(/^(?:[^/?#:]+:)?\/\/[^/?#]*/, "");
+  // The scheme and host belong to the environment, variables in them included, and so do a query and a fragment; only
+  // a variable in the path hides it.
+  const path = url.replace(/^(?:[^/?#:]+:)?\/\/[^/?#]*/, "").replace(/[?#].*$/, "");
   if (path.includes("{")) return "/";
   try {
     // A placeholder origin resolves root-relative and relative paths alike.
@@ -115,7 +116,11 @@ export function definitionLines(file: string, text: string, name: string): numbe
   const patterns = file.endsWith(".py")
     ? [new RegExp(`^\\s*(?:async\\s+)?def\\s+${n}\\s*\\(`)]
     : /\.(c|m)?[jt]sx?$/.test(file)
-      ? [new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*\\(`), new RegExp(`^\\s*${modifiers}\\*?${n}\\s*\\([^;]*\\)\\s*(?::[^=;{]+)?\\{`)]
+      ? // A function or a class method, with an optional type parameter list before its parameters.
+        [
+          new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*(?:<[^()]*>\\s*)?\\(`),
+          new RegExp(`^\\s*${modifiers}\\*?${n}\\s*(?:<[^()]*>\\s*)?\\([^;]*\\)\\s*(?::[^=;{]+)?\\{`),
+        ]
       : /\.kts?$/.test(file)
         ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
         : // A Java declaration up to its opening parenthesis: annotations, modifiers, type parameters, a return type.

@@ -22,8 +22,8 @@ routes:
   (`describedPath`), which `export arazzo` uses for an `operationPath`.
 - Where the handler is, when the code gives it away: a function named as the framework derives the operationId (FastAPI
   `read_order_api_v1_orders__order_id__get` → `def read_order`, Nest `OrdersController_read` → `read(`, springdoc
-  `read` → `read(`), evidence `name`; else, when no name or several match, exactly one quoted occurrence of the
-  operationId in the component's route files
+  `read` → `read(`), evidence `name`; else, when no name or several match, exactly one place in the component's
+  route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
   exactly one place, the surface stays at the document, evidence `declared`. A TypeScript or JavaScript handler found
   this way is followed like a code route's (`reaches`), so a trace continues through it.

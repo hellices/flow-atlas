@@ -18,8 +18,9 @@ flow-atlas understands what each framework actually emits.
 
 What they show:
 
-- Every framework composes router, blueprint, controller and global prefixes itself; the document is the most
-  complete list of routes a service serves.
+- Every framework composes router, blueprint, controller and global prefixes itself, so the document is an
+  authoritative list of the routes it documents, prefixes included. It is not every route the service serves: see
+  the omissions below.
 - Default operationIds differ: FastAPI `read_order_api_v1_orders__order_id__get`, NestJS `OrdersController_read`,
   springdoc `read` (the method), drf-spectacular `api_v1_orders_retrieve`; flask-smorest, flasgger and Fastify give
   none unless the code states one.

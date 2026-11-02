@@ -245,11 +245,23 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
   return out;
 }
 
-/** Lines where an operationId is written as a quoted string, as code that states it explicitly does. */
+/** The text before a quoted value that declares it an operationId: `operationId: `, `operation_id=`, `"operationId": `. */
+const DECLARES_ID = /["']?\b(?:operationId|operation_id)["']?\s*[:=]\s*$/;
+
+/**
+ * Where code declares an operationId as a quoted value: a route option, a decorator argument or an annotation
+ * attribute (`operation_id="x"`, `{ operationId: "x" }`, `@Operation(operationId = "x")`). The same text elsewhere, in a
+ * log line or a lookup, declares nothing.
+ */
 function literalLines(texts: Map<string, string>, id: string): Found[] {
   const quoted = new RegExp(`(["'\`])${escapeRegExp(id)}\\1`, "g");
   const out: Found[] = [];
-  for (const [file, text] of texts) for (const m of text.matchAll(quoted)) out.push({ file, line: lineOf(text, m.index ?? 0), offset: m.index ?? 0 });
+  for (const [file, text] of texts) {
+    for (const m of text.matchAll(quoted)) {
+      const at = m.index ?? 0;
+      if (DECLARES_ID.test(text.slice(text.lastIndexOf("\n", at - 1) + 1, at))) out.push({ file, line: lineOf(text, at), offset: at });
+    }
+  }
   return out;
 }
 
@@ -266,24 +278,33 @@ function definitionOffset(text: string, line: number, name: string): number {
 }
 
 /**
- * The TypeScript or JavaScript function whose header (decorators and signature, before its body) holds an offset: the
- * handler a definition or a quoted operationId in its decorator points at. Text inside a body names no handler, even
- * on the same line as the header.
+ * The TypeScript or JavaScript handler an offset points at. Walking out from it: a function whose header (decorators and
+ * signature, before the body) holds it is the handler; a call whose arguments hold it, such as
+ * `app.get(path, { operationId }, handler)`, gives its last function argument. Reaching a function's body first means
+ * the text sits inside code, which names no handler, even on the header's line.
  */
 function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
   if (!/\.(c|m)?[jt]sx?$/.test(at.file)) return undefined;
   const sf = reach.parse(at.file)?.sf;
   if (!sf) return undefined;
-  let found: ts.Node | undefined;
-  const visit = (n: ts.Node): void => {
-    if (ts.isFunctionLike(n) && "body" in n && n.body) {
-      const start = n.getStart(sf);
-      if (start <= at.offset && at.offset < (n.body as ts.Node).getStart(sf) && (!found || start > found.getStart(sf))) found = n;
-    }
-    ts.forEachChild(n, visit);
+  const chain: ts.Node[] = [];
+  const descend = (n: ts.Node): void => {
+    chain.push(n);
+    const child = n.getChildren(sf).find((c) => c.getStart(sf) <= at.offset && at.offset < c.getEnd());
+    if (child) descend(child);
   };
-  visit(sf);
-  return found;
+  descend(sf);
+  for (const n of chain.reverse()) {
+    if (ts.isFunctionLike(n) && "body" in n && n.body) {
+      if (at.offset < (n.body as ts.Node).getStart(sf)) return n;
+      return undefined;
+    }
+    if (ts.isCallExpression(n) && n.arguments.some((a) => a.getStart(sf) <= at.offset && at.offset < a.getEnd())) {
+      const handler = [...n.arguments].reverse().find((a) => ts.isFunctionLike(a));
+      if (handler) return handler;
+    }
+  }
+  return undefined;
 }
 
 /** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
