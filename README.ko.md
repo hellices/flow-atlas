@@ -41,6 +41,19 @@
 규칙별 원인과 고치는 방법은 [rules.md](skills/flow-atlas/references/rules.md)에 있다. 계약 필드 중 만들기만 하고
 읽지 않는 필드를 찾는 FA005는 아직 만들지 않았다. 스키마와 타입을 함께 읽어야 해서 문자열 비교로는 부족하다.
 
+## 읽는 언어와 프레임워크
+
+| 무엇을 | 어디서 |
+|---|---|
+| 라우트 | TypeScript·JavaScript 코드(NestJS 데코레이터, Express, Fastify 같은 `app.get("/x")` 형태), FastAPI 데코레이터, 그리고 어떤 프레임워크든 그것이 만든 OpenAPI 2.0·3.x 문서 |
+| 클라이언트 호출 | TypeScript·JavaScript는 구문으로, Kotlin·Python 등 다른 언어는 문자열로 |
+| 라우트 핸들러가 다음에 부르는 것 | TypeScript·JavaScript |
+
+Spring Boot(springdoc), Django REST framework(drf-spectacular), Flask(flask-smorest, flasgger) 같은 프레임워크는
+그 프레임워크가 만든 문서를 설정에 주면 된다. 문서의 각 작업은 operationId로 찾을 수 있으면 핸들러 위치로 이어
+준다. 여덟 프레임워크가 실제로 만든 문서는 [`fixtures/openapi`](fixtures/openapi/README.md)에, 서버를 띄우지 않고
+문서를 만드는 방법은 [openapi.md](skills/flow-atlas/references/openapi.md)에 있다.
+
 ## 설치
 
 Node 20 이상이 필요하다. 이 저장소는 CLI와 그 CLI를 쓰는 에이전트 스킬을 함께 담는다. 스킬은 Agent Skills

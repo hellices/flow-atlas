@@ -220,13 +220,21 @@ export function extractApiDocuments(source: Source, config: Config, components: 
  * Anything else is ambiguous: several complete files, several served documents, several partial files.
  */
 export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surface[], config: Config): ApiDescription[] {
+  const read = new Map<string, string[]>();
+  for (const r of config.routes) if (r.openapi) read.set(r.component, [...new Set([...(read.get(r.component) ?? []), r.openapi])]);
   // A component that serves routes but has no description is reported as NoneFound, not left out.
-  const components = [...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi), ...surfaces.map((s) => s.component)])].sort();
+  const components = [
+    ...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi), ...read.keys(), ...surfaces.map((s) => s.component)]),
+  ].sort();
   return components.map((component): ApiDescription => {
     const docs = documents.filter((d) => d.component === component);
     const candidates = docs.map((d) => d.location);
     const override = config.openapi[component];
     if (override) return { component, status: "chosen", location: override, kind: "author", reason: "AuthorOverride", candidates };
+    const forRoutes = read.get(component) ?? [];
+    if (forRoutes.length === 1) return { component, status: "chosen", location: forRoutes[0]!, kind: "author", reason: "ReadForRoutes", candidates };
+    if (forRoutes.length > 1)
+      return { component, status: "ambiguous", reason: "SeveralReadForRoutes", message: `candidates: ${forRoutes.join(", ")}`, candidates };
 
     const servedPaths = new Set(docs.filter((d) => d.kind === "served").map((d) => d.location));
     // A page that shows its own path is that document, not an alias of another.

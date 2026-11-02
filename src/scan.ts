@@ -61,7 +61,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
 
   const coverage: Coverage[] = [];
   const executed = new Map<string, Set<string>>();
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage, executed);
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
   const calls = assignCallIds(extractCalls(source, config, coverage));
   const edges = edgesOf({ surfaces, calls }, executed);

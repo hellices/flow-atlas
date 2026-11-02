@@ -3,7 +3,10 @@ import type { Config, RouteSource } from "../config.js";
 import type { Coverage, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
+import { definitionLines, describedOperations, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
 
@@ -241,16 +244,84 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
   return out;
 }
 
+/** Lines where an operationId is written as a quoted string, as code that states it explicitly does. */
+function literalLines(texts: Map<string, string>, id: string): Surface["at"][] {
+  const quoted = new RegExp(`(["'\`])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`);
+  const out: Surface["at"][] = [];
+  for (const [file, text] of texts) text.split("\n").forEach((l, i) => quoted.test(l) && out.push({ file, line: i + 1 }));
+  return out;
+}
+
+/** Surfaces from a component's OpenAPI document, merged with those its code registers. */
+function documentedSurfaces(source: Source, spec: RouteSource, codeFiles: string[], code: Surface[], limits: string[]): Surface[] {
+  const file = spec.openapi!;
+  const text = isAbsolute(file) ? (existsSync(file) ? readFileSync(file, "utf8") : undefined) : source.read(file);
+  if (text === undefined) {
+    limits.push(`routes ${spec.component}: the OpenAPI document ${file} is not there${isAbsolute(file) ? "" : " at this revision"}`);
+    return [];
+  }
+  if (isAbsolute(file) && source.ref !== "WORKTREE")
+    limits.push(`routes ${spec.component}: ${file} is outside the repository and is read as it is now, not at ${source.ref.slice(0, 12)}`);
+  const api = describedOperations(isAbsolute(file) ? basename(file) : file, text);
+  if (!api) {
+    limits.push(`routes ${spec.component}: ${file} is not a Swagger 2.0 or OpenAPI 3 document`);
+    return [];
+  }
+  const byId = new Map(code.map((s) => [s.id, s]));
+  const texts = new Map(codeFiles.map((f) => [f, source.read(f) ?? ""]));
+  const out: Surface[] = [];
+  for (const op of api.operations) {
+    const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
+    const known = byId.get(id);
+    if (known) {
+      if (op.operationId && !known.operationId) known.operationId = op.operationId;
+      known.described = op.at;
+      continue;
+    }
+    let at: Surface["at"] = op.at;
+    let evidence: Surface["evidence"] = "declared";
+    if (op.operationId) {
+      const hits: Surface["at"][] = [];
+      for (const name of handlerNames(op.operationId, op.method, op.key)) {
+        for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line });
+        if (hits.length) break;
+      }
+      if (hits.length === 1) {
+        at = hits[0]!;
+        evidence = "name";
+      } else if (!hits.length) {
+        const quoted = literalLines(texts, op.operationId);
+        if (quoted.length === 1) {
+          at = quoted[0]!;
+          evidence = "text";
+        }
+      }
+    }
+    out.push({
+      id,
+      component: spec.component,
+      method: op.method,
+      path: op.path,
+      at,
+      evidence,
+      ...(op.operationId ? { operationId: op.operationId } : {}),
+      ...(evidence !== "declared" ? { described: op.at } : {}),
+    });
+  }
+  return out;
+}
+
 export function extractRoutes(
   source: Source,
   config: Config,
   reach?: Reach,
   coverage: Coverage[] = [],
+  limits: string[] = [],
   executed?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
   for (const spec of config.routes) {
-    const files = select(source, spec.files, config.exclude);
+    const files = select(source, spec.files ?? [], config.exclude);
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
@@ -258,7 +329,8 @@ export function extractRoutes(
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
       else if (file.endsWith(".py") && (spec.styles ?? []).includes("fastapi")) out.push(...routesFromPython(file, text, spec));
     }
-    addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
+    if (spec.openapi) out.push(...documentedSurfaces(source, spec, files, out.slice(before), limits));
+    addCoverage(coverage, `routes ${spec.component}`, files.length + (spec.openapi ? 1 : 0), out.length - before);
   }
   const seen = new Set<string>();
   return out.filter((s) => {

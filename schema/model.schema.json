@@ -119,9 +119,13 @@
           "$ref": "#/$defs/evidence"
         },
         "operationId": {
-          "description": "The OpenAPI operationId, when the code states it or the configured convention gives it.",
+          "description": "The OpenAPI operationId, when the code states it, the configured convention gives it, or a document declares it.",
           "type": "string",
           "minLength": 1
+        },
+        "described": {
+          "description": "Where the component's OpenAPI document declares this operation.",
+          "$ref": "#/$defs/place"
         },
         "reaches": {
           "description": "Member methods the handler calls, following local and relatively imported functions. Absent when the handler was not read.",
@@ -652,6 +656,7 @@
         "reason": {
           "enum": [
             "AuthorOverride",
+            "ReadForRoutes",
             "FileMatchesCode",
             "ServedByCode",
             "AliasesOfOne",
@@ -660,6 +665,7 @@
             "SeveralCompleteFiles",
             "SeveralServedDocuments",
             "SeveralPartialFiles",
+            "SeveralReadForRoutes",
             "NoneFound"
           ]
         },

@@ -1,0 +1,40 @@
+{
+  "definitions": {},
+  "info": {
+    "description": "powered by Flasgger",
+    "termsOfService": "/tos",
+    "title": "A swagger API",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/api/v1/orders": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "created"
+          }
+        },
+        "summary": "Create an order"
+      }
+    },
+    "/api/v1/orders/{order_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the order"
+          }
+        },
+        "summary": "Read an order"
+      }
+    }
+  },
+  "swagger": "2.0"
+}

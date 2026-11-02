@@ -25,6 +25,19 @@ another. flow-atlas shows those gaps where the work happens, instead of in a lat
 
 Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
+## Languages and frameworks
+
+| Reads | From |
+|---|---|
+| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers), FastAPI decorators, and the OpenAPI 2.0 or 3.x document of any framework |
+| client calls | TypeScript and JavaScript parsed; Kotlin, Python and other languages as text |
+| what a route's handler calls next | TypeScript and JavaScript |
+
+For Spring Boot (springdoc), Django REST framework (drf-spectacular), Flask (flask-smorest, flasgger) and the rest,
+give atlas the document the framework generates; it finds each operation's handler by the operationId where it can.
+[`fixtures/openapi`](fixtures/openapi/README.md) holds the documents eight frameworks actually generate, and
+[openapi.md](skills/flow-atlas/references/openapi.md) how to produce one without serving it.
+
 ## Who does what
 
 atlas generates what the code settles: routes, calls, how they connect, operationIds, OpenAPI descriptions and how
