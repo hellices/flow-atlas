@@ -464,9 +464,11 @@ describe("schemas", () => {
     const chosen = { ...config, openapi: { bff: "openapi/bff.json", orders: "services/orders/openapi.json" } };
     const step = (read: (p: string) => string | undefined) =>
       (toArazzo(unnamed, loadFlows(source, config), chosen, { title: "t", flow: "view-order", read }).document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!;
-    expect(step((p) => source.read(p))).toMatchObject({ operationId: "$sourceDescriptions.orders.OrdersController_get" });
+    // One or the other, never both: an Arazzo step names its operation exactly once.
+    const target = ({ operationId, operationPath }: Record<string, unknown>) => ({ operationId, operationPath });
+    expect(target(step((p) => source.read(p)))).toEqual({ operationId: "$sourceDescriptions.orders.OrdersController_get", operationPath: undefined });
     const withoutId = (p: string) => source.read(p)?.replace('"operationId": "OrdersController_get",', "");
-    expect(step(withoutId)).toMatchObject({ operationPath: "{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get" });
+    expect(target(step(withoutId))).toEqual({ operationId: undefined, operationPath: "{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get" });
   });
 
   it("refuses an export with no workflow in it", () => {
