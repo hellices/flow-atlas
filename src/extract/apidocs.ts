@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
+import { describedOperations } from "./openapi.js";
 
 /** Paths API documents are commonly served at. */
 export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\.json)?$|\/v3\/api-docs$/;
@@ -11,7 +12,6 @@ export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\
 /** File names API descriptions are commonly committed under. */
 export const DOCUMENT_FILE = /(^|\/)(openapi|swagger)\.(json|ya?ml)$|\.openapi\.(json|ya?ml)$/;
 
-const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 
 function str(node: ts.Node | undefined): string | undefined {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
@@ -103,23 +103,13 @@ function versionKeyOffset(text: string): number {
 const shape = (path: string): string => routeTemplate(path).replace(/\{[^}]*\}/g, "{}");
 
 /**
- * The path key a description writes each operation under, by `METHOD /path` with parameters written `{}`: the same
- * operation may name its parameters differently from the code (`{orderId}` for `{id}`).
+ * The path key a description writes each operation under, by `METHOD /path` (the base path joined, parameters written
+ * `{}`): the same operation may name its parameters differently from the code (`{orderId}` for `{id}`).
  */
 export function documentPathKeys(text: string): Map<string, string> | undefined {
-  let doc: unknown;
-  try {
-    doc = parse(text);
-  } catch {
-    return undefined;
-  }
-  const paths = (doc as { paths?: Record<string, Record<string, unknown>> } | null)?.paths;
-  if (!paths || typeof paths !== "object") return undefined;
-  const out = new Map<string, string>();
-  for (const [path, item] of Object.entries(paths)) {
-    for (const method of HTTP_METHODS) if (item && typeof item === "object" && method in item) out.set(`${method.toUpperCase()} ${shape(path)}`, path);
-  }
-  return out;
+  const api = describedOperations("", text);
+  if (!api) return undefined;
+  return new Map(api.operations.map((o) => [`${o.method} ${shape(o.path)}`, o.key]));
 }
 
 /** The operationId a description gives each operation that has one, by `METHOD /path` as in `documentPathKeys`. */

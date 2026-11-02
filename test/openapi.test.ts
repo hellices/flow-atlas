@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { definitionLines, describedOperations, handlerNames } from "../src/extract/openapi.js";
+import { documentPathKeys } from "../src/extract/apidocs.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { WorktreeSource, type Source } from "../src/source.js";
@@ -77,6 +78,10 @@ describe("describedOperations", () => {
     ]);
     const openapi = describedOperations("b.yaml", "openapi: 3.0.3\nservers: [{url: 'https://api.example.com/base/'}]\npaths:\n  /x:\n    post: {}\n")!;
     expect(openapi.operations.map((o) => o.path)).toEqual(["/base/x"]);
+  });
+  it("gives the path key each operation is written under, by its full path", () => {
+    const keys = documentPathKeys("swagger: '2.0'\nbasePath: /v2\npaths:\n  /items/{itemId}/:\n    get: {}\n");
+    expect([...keys!]).toEqual([["GET /v2/items/{}", "/items/{itemId}/"]]);
   });
   it("ignores path-level fields that are not operations", () => {
     const api = describedOperations("c.yaml", "openapi: 3.1.0\npaths:\n  /x:\n    parameters: []\n    summary: s\n    get: {}\n")!;
