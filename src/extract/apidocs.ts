@@ -113,22 +113,9 @@ export function documentPathKeys(text: string): Map<string, string> | undefined 
 
 /** The operationId a description gives each operation that has one, by `METHOD /path` as in `documentPathKeys`. */
 export function documentOperationIds(text: string): Map<string, string> | undefined {
-  let doc: unknown;
-  try {
-    doc = parse(text);
-  } catch {
-    return undefined;
-  }
-  const paths = (doc as { paths?: Record<string, Record<string, unknown>> } | null)?.paths;
-  if (!paths || typeof paths !== "object") return undefined;
-  const out = new Map<string, string>();
-  for (const [path, item] of Object.entries(paths)) {
-    for (const method of HTTP_METHODS) {
-      const op = item && typeof item === "object" ? (item[method] as { operationId?: unknown } | undefined) : undefined;
-      if (op && typeof op.operationId === "string") out.set(`${method.toUpperCase()} ${shape(path)}`, op.operationId);
-    }
-  }
-  return out;
+  const api = describedOperations("", text);
+  if (!api) return undefined;
+  return new Map(api.operations.filter((o) => o.operationId).map((o) => [`${o.method} ${shape(o.path)}`, o.operationId!]));
 }
 
 /** The operations a committed description declares, as `METHOD /path` with parameters written `{}`. */

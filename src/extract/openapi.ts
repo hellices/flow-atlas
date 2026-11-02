@@ -29,10 +29,13 @@ function basePathOf(doc: Record<string, unknown>): string {
   if (doc.swagger !== undefined) return typeof doc.basePath === "string" ? doc.basePath : "/";
   const servers = doc.servers as Array<{ url?: unknown }> | undefined;
   const url = servers?.[0]?.url;
-  if (typeof url !== "string" || url.includes("{")) return "/";
+  if (typeof url !== "string") return "/";
+  // The scheme and host belong to the environment, variables in them included; only a variable in the path hides it.
+  const path = url.replace(/^(?:[^/?#:]+:)?\/\/[^/?#]*/, "");
+  if (path.includes("{")) return "/";
   try {
-    // A placeholder origin resolves absolute, network-path (`//host/v1`), root-relative and relative URLs alike.
-    return decodeURI(new URL(url, "http://openapi.invalid/").pathname);
+    // A placeholder origin resolves root-relative and relative paths alike.
+    return decodeURI(new URL(path || "/", "http://openapi.invalid/").pathname);
   } catch {
     return "/";
   }
@@ -115,10 +118,11 @@ export function definitionLines(file: string, text: string, name: string): numbe
       ? [new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*\\(`), new RegExp(`^\\s*${modifiers}\\*?${n}\\s*\\([^;]*\\)\\s*(?::[^=;{]+)?\\{`)]
       : /\.kts?$/.test(file)
         ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
-        : [new RegExp(`^\\s*${modifiers}(?:<[^>]*>\\s*)?[\\w$.?]+(?:<.*>)?(?:\\[\\])*\\s+${n}\\s*\\([^;=]*$`)];
+        : // A Java declaration up to its opening parenthesis: annotations, modifiers, type parameters, a return type.
+          [new RegExp(`^\\s*(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*${modifiers}(?:<[^>]*>\\s*)?[\\w$.]+(?:<[^()]*>)?(?:\\[\\])*\\s+${n}\\s*\\(`)];
   const out: number[] = [];
   text.split("\n").forEach((line, i) => {
-    if (/^\s*(?:return|if|for|while|switch|catch|new|throw)\b/.test(line)) return;
+    if (/^\s*(?:return|if|else|for|while|do|switch|case|catch|new|throw|yield|await|assert)\b/.test(line)) return;
     if (patterns.some((p) => p.test(line))) out.push(i + 1);
   });
   return out;

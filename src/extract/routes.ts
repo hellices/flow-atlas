@@ -253,6 +253,28 @@ function literalLines(texts: Map<string, string>, id: string): Surface["at"][] {
   return out;
 }
 
+/**
+ * The TypeScript or JavaScript function whose header (decorators and signature, up to its body) holds a line: the
+ * handler a definition line or a quoted operationId in its decorator points at. A line inside a body names no handler.
+ */
+function handlerNode(reach: Reach, at: Surface["at"]): ts.Node | undefined {
+  if (!/\.(c|m)?[jt]sx?$/.test(at.file)) return undefined;
+  const sf = reach.parse(at.file)?.sf;
+  if (!sf) return undefined;
+  const lineOfPos = (pos: number) => sf.getLineAndCharacterOfPosition(pos).line + 1;
+  let found: ts.Node | undefined;
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n) && "body" in n && n.body) {
+      const start = lineOfPos(n.getStart(sf));
+      const bodyStart = lineOfPos((n.body as ts.Node).getStart(sf));
+      if (start <= at.line && at.line <= bodyStart && (!found || n.getStart(sf) > found.getStart(sf))) found = n;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found;
+}
+
 /** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
 function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Surface["at"]; evidence: Surface["evidence"] } | undefined {
   const hits: Surface["at"][] = [];
@@ -270,7 +292,15 @@ function handlerPlace(texts: Map<string, string>, operationId: string, method: s
  * gains the document's operationId and place; the others are new surfaces, placed on their handler when the code gives
  * it away. `code` holds every route read so far, of every component.
  */
-function documentedSurfaces(source: Source, spec: RouteSource, texts: Map<string, string>, code: Surface[], limits: string[]): Surface[] {
+function documentedSurfaces(
+  source: Source,
+  spec: RouteSource,
+  texts: Map<string, string>,
+  code: Surface[],
+  limits: string[],
+  reach?: Reach,
+  executed?: Map<string, Set<string>>,
+): Surface[] {
   const file = spec.openapi!;
   let text: string | undefined;
   if (isAbsolute(file)) {
@@ -307,6 +337,7 @@ function documentedSurfaces(source: Source, spec: RouteSource, texts: Map<string
       continue;
     }
     const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const handler = place && reach ? handlerNode(reach, place.at) : undefined;
     const surface: Surface = {
       id,
       component: spec.component,
@@ -317,11 +348,23 @@ function documentedSurfaces(source: Source, spec: RouteSource, texts: Map<string
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
+      ...(handler ? { reaches: reach!.from(place!.at.file, handler, executed && (executed.get(id) ?? executed.set(id, new Set()).get(id)!)) } : {}),
     };
     byShape.set(operationShape(op.method, op.path), surface);
     out.push(surface);
   }
   return out;
+}
+
+/** Surfaces with one per component, method and path, the first kept. */
+function unique(surfaces: Surface[]): Surface[] {
+  const seen = new Set<string>();
+  return surfaces.filter((s) => {
+    const k = `${s.component}|${s.method}|${s.path}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 export function extractRoutes(
@@ -348,18 +391,19 @@ export function extractRoutes(
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
-  for (const spec of config.routes) {
-    if (!spec.openapi) continue;
+  // A route two entries both register is one surface, so the document enriches the copy that is kept.
+  const code = unique(out);
+  out.length = 0;
+  out.push(...code);
+  // The document the configuration chooses for a component goes first, so its operationIds and places win.
+  const documents = config.routes
+    .filter((r) => r.openapi)
+    .sort((a, b) => Number(config.openapi[b.component] === b.openapi) - Number(config.openapi[a.component] === a.openapi));
+  for (const spec of documents) {
     const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
-    const added = documentedSurfaces(source, spec, texts, out, limits);
+    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
   }
-  const seen = new Set<string>();
-  return out.filter((s) => {
-    const k = `${s.component}|${s.method}|${s.path}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  return unique(out);
 }

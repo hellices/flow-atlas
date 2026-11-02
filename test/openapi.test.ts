@@ -10,6 +10,7 @@ import { extractRoutes } from "../src/extract/routes.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { WorktreeSource, type Source } from "../src/source.js";
 import { scan } from "../src/scan.js";
+import { Reach } from "../src/extract/reach.js";
 import type { Coverage } from "../src/model.js";
 import { toArazzo } from "../src/arazzo.js";
 import type { LoadedFile } from "../src/flows.js";
@@ -93,6 +94,9 @@ describe("describedOperations", () => {
     expect(base("https://api.example.com/v2/")).toBe("/v2/");
     expect(base("/v3")).toBe("/v3");
     expect(base("v4")).toBe("/v4");
+    expect(base("https://{environment}.example.com/api/v1")).toBe("/api/v1");
+    expect(base("{scheme}://api.example.com/v5")).toBe("/v5");
+    expect(base("https://api.example.com/{version}")).toBe("/");
   });
 
   it("ignores path-level fields that are not operations", () => {
@@ -129,6 +133,18 @@ describe("handler lookup", () => {
     expect(definitionLines("a.py", "x = read()\nasync def read(id):\n", "read")).toEqual([2]);
     expect(definitionLines("a.ts", "this.read(1);\n  async read(@Param() id: string): Promise<X> {\n", "read")).toEqual([2]);
     expect(definitionLines("A.java", "return read(id);\n  public ResponseEntity<Map<String, Object>> read(@PathVariable String id) {\n", "read")).toEqual([2]);
+  });
+  it("finds Java declarations whatever follows their opening parenthesis", () => {
+    const java = [
+      "  @GetMapping(\"/x\")",
+      "  public Order read(@RequestParam(required = false) String id) {",
+      "  int size() { return items.size(); }",
+      "  else read(id);",
+      "  Order o = read(id);",
+    ].join("\n");
+    expect(definitionLines("A.java", java, "read")).toEqual([2]);
+    expect(definitionLines("A.java", java, "size")).toEqual([3]);
+    expect(definitionLines("A.java", '  @Operation(summary = "x") public static <T> List<T> all(Class<T> type) {', "all")).toEqual([1]);
   });
   it("finds a one-line TypeScript method", () => {
     expect(definitionLines("a.ts", "class A {\n  handle() { return 1; }\n}\nhandle();\n", "handle")).toEqual([2]);
@@ -247,6 +263,64 @@ describe("routes from an OpenAPI document", () => {
         }),
       ]);
     }
+  });
+
+  it("keeps document metadata on the surface two entries both register", () => {
+    const source = memory({
+      "svc/app.ts": 'app.get("/items/:id", (req, res) => res.json({}));\n',
+      "svc/openapi.yaml": "openapi: 3.0.3\npaths:\n  /items/{id}:\n    get: {operationId: getItem}\n",
+    });
+    const entry = { component: "svc", files: ["svc/**/*.ts"], styles: ["express"] };
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [entry, { ...entry, openapi: "svc/openapi.yaml" }] });
+    expect(extractRoutes(source, config)).toEqual([
+      expect.objectContaining({ id: "svc|GET /items/{id}", evidence: "static", operationId: "getItem", describedPath: "/items/{id}" }),
+    ]);
+  });
+
+  it("takes operationIds and places from the description the configuration chooses", () => {
+    const source = memory({
+      "svc/a.yaml": "openapi: 3.0.3\npaths:\n  /x:\n    get: {operationId: idA}\n",
+      "svc/b.yaml": "openapi: 3.0.3\npaths:\n  /x:\n    get: {operationId: idB}\n",
+    });
+    const routes = [
+      { component: "svc", files: [], openapi: "svc/a.yaml" },
+      { component: "svc", files: [], openapi: "svc/b.yaml" },
+    ];
+    const pick = (openapi?: Record<string, string>) =>
+      extractRoutes(source, normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes, ...(openapi ? { openapi } : {}) }))[0];
+    expect(pick()).toMatchObject({ operationId: "idA", described: { file: "svc/a.yaml" } });
+    expect(pick({ svc: "svc/b.yaml" })).toMatchObject({ operationId: "idB", described: { file: "svc/b.yaml" } });
+  });
+
+  it("follows the located TypeScript handler of a documented operation", () => {
+    const files = {
+      "svc/orders.controller.ts": [
+        'import { Controller, Get } from "@nestjs/common";',
+        "@Controller()",
+        "export class OrdersController {",
+        "  constructor(private readonly port: OrdersPort) {}",
+        "  @Get(ROUTE)",
+        '  @ApiOperation({ operationId: "listOrders" })',
+        "  list() {",
+        "    return this.port.findAll();",
+        "  }",
+        "  read(id: string) {",
+        "    return this.port.findOne(id);",
+        "  }",
+        "}",
+      ].join("\n"),
+      "svc/openapi.json": JSON.stringify({
+        openapi: "3.0.3",
+        paths: { "/api/orders": { get: { operationId: "listOrders" } }, "/api/orders/{id}": { get: { operationId: "OrdersController_read" } } },
+      }),
+    };
+    const source = memory(files);
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.ts"], openapi: "svc/openapi.json" }] });
+    const surfaces = extractRoutes(source, config, new Reach(source));
+    expect(surfaces.map((s) => `${s.id} ${s.evidence} ${(s.reaches ?? []).join(",")}`)).toEqual([
+      "svc|GET /api/orders text findAll",
+      "svc|GET /api/orders/{id} name findOne",
+    ]);
   });
 
   it("exports an operationPath with the key the document writes", () => {

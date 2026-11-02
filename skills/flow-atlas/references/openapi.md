@@ -15,7 +15,8 @@ routes:
 ## What atlas takes from the document
 
 - Every operation becomes a surface: the method, and the path with Swagger 2.0 `basePath` or the path of the first
-  OpenAPI 3 server URL in front. A server's host and a trailing slash are dropped, so `/api/v1/orders/` and a code
+  OpenAPI 3 server URL in front. A server's scheme and host (variables in them included) and a trailing slash are
+  dropped, so `/api/v1/orders/` and a code
   route `/api/v1/orders` are one surface.
 - The `operationId`, where the document declares the operation (`described`), and the path key it writes it under
   (`describedPath`), which `export arazzo` uses for an `operationPath`.
@@ -24,11 +25,14 @@ routes:
   `read` → `read(`), evidence `name`; else, when no name or several match, exactly one quoted occurrence of the
   operationId in the component's route files
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
-  exactly one place, the surface stays at the document, evidence `declared`.
+  exactly one place, the surface stays at the document, evidence `declared`. A TypeScript or JavaScript handler found
+  this way is followed like a code route's (`reaches`), so a trace continues through it.
 - When any route entry of the component registers the same route in code (same method and path, whatever the
   parameters are named), the code's location stays and the document adds its operationId and place.
 - The document becomes the component's OpenAPI description (`ReadForRoutes`), unless `openapi.<component>` overrides
-  it.
+  it. When several documents describe one operation, the one `openapi.<component>` names gives its operationId and
+  place. `export arazzo` resolves each operation against the chosen description when it is a file atlas can read:
+  that document's operationId, else its path key; an operation it does not declare is left out with a `limit:`.
 
 It does not take request or response schemas, security, or callers: the document says none of that about the code.
 
