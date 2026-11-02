@@ -192,7 +192,8 @@ export function extractApiDocuments(source: Source, config: Config, components: 
  * Anything else is ambiguous: several complete files, several served documents, several partial files.
  */
 export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surface[], config: Config): ApiDescription[] {
-  const components = [...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi)])].sort();
+  // A component that serves routes but has no description is reported as NoneFound, not left out.
+  const components = [...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi), ...surfaces.map((s) => s.component)])].sort();
   return components.map((component): ApiDescription => {
     const docs = documents.filter((d) => d.component === component);
     const candidates = docs.map((d) => d.location);

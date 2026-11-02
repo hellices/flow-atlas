@@ -309,7 +309,7 @@ describe("draft flow", () => {
     expect(flow.metadata).toEqual({ name: "bff-get-screens-order" });
     expect(flow.spec.entry).toEqual({ component: "web" });
     expect(flow.spec.steps.map((s) => s.surface)).toEqual(["bff|GET /screens/order/{orderId}", "orders|GET /orders/{id}"]);
-    expect(open).toEqual(["metadata.title", "spec.owner", "spec.lifecycle", "spec.steps[0].role", "spec.steps[1].role"]);
+    expect(open).toEqual(["metadata.title", "spec.owner", "spec.lifecycle", "spec.produces", "spec.steps[0].role", "spec.steps[1].role"]);
     expect(yaml).toContain("# agent: role:");
   });
 
@@ -427,7 +427,7 @@ describe("schemas", () => {
       { name: "orders", url: "/docs-json", type: "openapi" },
     ]);
     expect(limits).toEqual([
-      "orders serves its OpenAPI document at /docs-json (services/orders/src/main.ts:7); set origins.orders to the server's base URL for the environment",
+      "orders serves its OpenAPI document at /docs-json (services/orders/src/main.ts:8); set origins.orders to the server's base URL for the environment",
     ]);
     const withOrigin = toArazzo(graph, loadFlows(source, config), { ...config, origins: { orders: "http://localhost:3001/" } }, { title: "Shop flows" });
     expect(withOrigin.document.sourceDescriptions).toEqual([

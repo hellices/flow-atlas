@@ -1,3 +1,4 @@
+import { isMap, isScalar, isSeq, parseDocument, type Node as YamlNode } from "yaml";
 import type { ActiveList, Config } from "../config.js";
 import type { ContractVersion, Place, RegistryEntry } from "../model.js";
 import { lineOf, select, type Source } from "../source.js";
@@ -26,18 +27,20 @@ function keysFrom(source: Source, file: string, pattern: string | undefined, fie
   if (text === undefined) return [];
   const re = pattern ? new RegExp(pattern) : undefined;
   const out: Keyed[] = [];
-  const take = (value: unknown) => {
-    const raw = typeof value === "string" ? value : field && value && typeof value === "object" ? (value as Record<string, unknown>)[field] : undefined;
+  // Each value is located by its own node, so an earlier mention of the same text or an escape does not move it.
+  const take = (node: unknown) => {
+    const valueNode = isScalar(node) ? node : field && isMap(node) ? (node.get(field, true) as YamlNode | undefined) : undefined;
+    const raw = isScalar(valueNode) ? valueNode.value : undefined;
     if (typeof raw !== "string") return;
     const key = re ? re.exec(raw)?.[1] : raw;
     if (!key) return;
-    const index = text.indexOf(raw);
-    out.push({ key, at: { file, line: index >= 0 ? lineOf(text, index) : 1 } });
+    out.push({ key, at: { file, line: valueNode?.range ? lineOf(text, valueNode.range[0]) : 1 } });
   };
   try {
-    const json = JSON.parse(text) as unknown;
-    if (Array.isArray(json)) json.forEach(take);
-    else if (json && typeof json === "object") Object.values(json as Record<string, unknown>).forEach((v) => (Array.isArray(v) ? v.forEach(take) : take(v)));
+    JSON.parse(text);
+    const root = parseDocument(text).contents;
+    if (isSeq(root)) root.items.forEach(take);
+    else if (isMap(root)) for (const pair of root.items) (isSeq(pair.value) ? pair.value.items.forEach(take) : take(pair.value));
   } catch {
     if (!re) return out;
     const global = new RegExp(re.source, "g");

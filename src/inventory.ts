@@ -53,18 +53,31 @@ function nameFrom(manifest: string, text: string | undefined, dir: string): stri
       // not JSON; fall back to the directory name
     }
   }
-  return dir.split("/").pop() || dir;
+  return dir.split("/").pop() || "root";
+}
+
+/** A root manifest that only lists workspaces is the monorepo's tooling, not a component. */
+function workspaceRoot(source: Source, manifest: string, all: string[]): boolean {
+  if (manifest !== "package.json") return false;
+  if (all.includes("pnpm-workspace.yaml")) return true;
+  try {
+    return (JSON.parse(source.read(manifest) ?? "{}") as { workspaces?: unknown }).workspaces !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 export function inventory(source: Source, exclude: string[]): Inventory {
   const skip = matcher(exclude);
   const all = source.list().filter((f) => !skip(f));
 
-  const manifestFiles = all.filter((f) => MANIFESTS.test(f) && f.includes("/"));
+  const manifestFiles = all.filter((f) => MANIFESTS.test(f));
   if (manifestFiles.length) select(source, manifestFiles, []);
   const byDir = new Map<string, { name: string; path: string; manifest: string }>();
   for (const m of manifestFiles) {
-    const dir = dirname(m);
+    if (!m.includes("/") && workspaceRoot(source, m, all)) continue;
+    // A manifest at the root makes the repository itself a component, at path "".
+    const dir = dirname(m) === "." ? "" : dirname(m);
     const prefer = /component\.json/.test(m);
     if (byDir.has(dir) && !prefer) continue;
     byDir.set(dir, { name: nameFrom(m, source.read(m), dir), path: dir, manifest: m });
@@ -124,7 +137,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
   const jsonFiles = all.filter((f) => f.endsWith(".json") && !VERSIONED.test(f.split("/").pop()!));
   const activeLists: Inventory["activeLists"] = [];
   if (groups.size) {
-    const candidates = jsonFiles.filter((f) => versions.some((v) => f.startsWith(dirname(v.dir))));
+    // A list may sit anywhere under the parent of the versioned directory; a top-level directory's parent is the root.
+    const under = (f: string, dir: string) => dir === "." || dir === "" || f.startsWith(`${dir}/`);
+    const candidates = jsonFiles.filter((f) => versions.some((v) => under(f, dirname(v.dir))));
     select(source, candidates, []);
     // Names are matched within one directory's group, so the same file name in two directories is not confused.
     const shared = (a: string, b: string) => {

@@ -249,8 +249,11 @@ export function coverageDrops(graph: Pick<Graph, "coverage">, before: Record<str
 
 function cmdDiff(o: Options): number {
   const range = o.args[0];
-  if (!range?.includes("..")) throw new Error("diff needs <base>..<head>");
-  const [base, head] = range.split("..") as [string, string];
+  const parts = range?.split("..") ?? [];
+  // Exactly two revisions; a ref name never starts or ends with a dot, so `a...b` and `a..b..c` are refused too.
+  if (parts.length !== 2 || !parts[0] || parts[0].endsWith(".") || parts[1]!.startsWith("."))
+    throw new Error(`diff needs <base>..<head> (head may be empty for the working tree), not ${range ?? "nothing"}`);
+  const [base, head] = parts as [string, string];
   const config = configFor(o);
   const b = analyze(o, config, base);
   const h = analyze(o, config, head || "WORKTREE");

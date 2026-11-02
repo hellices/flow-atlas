@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename, isAbsolute, relative } from "node:path";
+import { basename, isAbsolute, relative, sep } from "node:path";
 import type { Config } from "./config.js";
 import type { Provenance, ResourceDescriptor } from "./model.js";
 
@@ -31,7 +31,9 @@ export function codeDependency(name: string, commit: string): ResourceDescriptor
 export function configDependency(config: Config, root: string | undefined): ResourceDescriptor[] {
   if (!config.file) return [];
   const rel = root ? relative(root, config.file.path) : "";
-  const uri = rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : basename(config.file.path);
+  // Outside means a leading `..` segment, not a name that happens to start with two dots.
+  const outside = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+  const uri = rel && !outside ? rel.split(sep).join("/") : basename(config.file.path);
   return [{ name: "config", uri, digest: { sha256: config.file.sha256 } }];
 }
 

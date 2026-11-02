@@ -61,9 +61,12 @@ describe("schemas", () => {
 
   it("checks timestamps as real date-times", () => {
     expect(isDateTime("2026-02-28T23:59:60+09:00")).toBe(true);
-    expect(isDateTime("2024-02-29T00:00Z")).toBe(true);
-    for (const bad of ["2026-99-99T99:99+99:99", "2026-02-29T00:00Z", "2026-04-31T00:00Z", "2026-01-01T24:00Z", "2026-01-01T00:00+24:00"]) expect(isDateTime(bad)).toBe(false);
-    expect(validate("flow", flow({ generated: { by: "a/1", at: "2026-13-01T00:00Z" } })).length).toBeGreaterThan(0);
+    expect(isDateTime("2024-02-29T00:00:00Z")).toBe(true);
+    expect(isDateTime("2026-11-02T12:34:00.5-05:00")).toBe(true);
+    for (const bad of ["2026-99-99T99:99:00+99:99", "2026-02-29T00:00:00Z", "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z", "2026-01-01T00:00:00+24:00", "2026-11-02T12:34Z"])
+      expect(isDateTime(bad), bad).toBe(false);
+    for (const at of ["2026-13-01T00:00:00Z", "2026-11-02T12:34Z", "2026-99-99T99:99+99:99"]) expect(validate("flow", flow({ generated: { by: "a/1", at } })).length, at).toBeGreaterThan(0);
+    expect(validate("flow", flow({ generated: { by: "a/1", at: "2026-11-02T12:34:00Z" } }))).toEqual([]);
   });
 
   const graph = scan(new WorktreeSource(shop), loadConfig(join(shop, "atlas.config.yaml")));

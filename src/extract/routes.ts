@@ -20,12 +20,18 @@ const NEST_METHODS: Record<string, string> = {
 };
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
 
+/** A property's name as written, quoted or not: `path` and `"path"` are the same key. */
+function propertyName(p: ts.ObjectLiteralElementLike): string | undefined {
+  const n = p.name;
+  return n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isNumericLiteral(n)) ? n.text : undefined;
+}
+
 function stringValue(node: ts.Node | undefined): string | undefined {
   if (!node) return undefined;
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isObjectLiteralExpression(node)) {
     for (const p of node.properties) {
-      if (ts.isPropertyAssignment(p) && p.name.getText() === "path") return stringValue(p.initializer);
+      if (ts.isPropertyAssignment(p) && propertyName(p) === "path") return stringValue(p.initializer);
     }
   }
   return undefined;
@@ -39,7 +45,7 @@ function decoratorPaths(args: readonly ts.Expression[]): string[] | undefined {
   const arg = args[0];
   if (!arg) return [""];
   if (ts.isObjectLiteralExpression(arg)) {
-    const path = arg.properties.find((p) => ts.isPropertyAssignment(p) && p.name.getText() === "path") as ts.PropertyAssignment | undefined;
+    const path = arg.properties.find((p) => ts.isPropertyAssignment(p) && propertyName(p) === "path") as ts.PropertyAssignment | undefined;
     if (!path) return [""];
     return decoratorPaths([path.initializer]);
   }
@@ -186,15 +192,47 @@ export function pythonCode(text: string): string {
   return out.join("");
 }
 
+/** The index of the `)` that closes the `(` before `from`, in code whose strings and comments are blanked. */
+function closingParen(code: string, from: number): number {
+  let depth = 1;
+  for (let i = from; i < code.length; i++) {
+    if ("([{".includes(code[i]!)) depth++;
+    else if (")]}".includes(code[i]!) && --depth === 0) return i;
+  }
+  return code.length;
+}
+
+/**
+ * The methods a FastAPI `api_route` serves: GET when `methods` is not given, the listed ones when it is a literal list,
+ * tuple or set of strings; undefined when the list is built at run time, so no route is guessed.
+ */
+function apiRouteMethods(text: string, code: string, argsStart: number): string[] | undefined {
+  const end = closingParen(code, argsStart);
+  const m = /\bmethods\s*=\s*/.exec(code.slice(argsStart, end));
+  if (!m) return ["GET"];
+  const valueStart = argsStart + m.index + m[0].length;
+  const open = code[valueStart];
+  if (!open || !"[({".includes(open)) return undefined;
+  const close = closingParen(code, valueStart + 1);
+  const items = text.slice(valueStart + 1, close).split(",").map((x) => x.trim()).filter(Boolean);
+  const methods = items.map((x) => /^[rRuU]?(["'])([A-Za-z]+)\1$/.exec(x)?.[2]?.toUpperCase());
+  return methods.length && methods.every(Boolean) ? [...new Set(methods as string[])] : undefined;
+}
+
 export function routesFromPython(file: string, text: string, spec: RouteSource): Surface[] {
   const out: Surface[] = [];
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
-  for (const m of pythonCode(text).matchAll(FASTAPI)) {
+  const code = pythonCode(text);
+  for (const m of code.matchAll(FASTAPI)) {
     if (!receivers.has(m[1]!)) continue;
-    const path = /^["']([^"']+)["']/.exec(text.slice((m.index ?? 0) + m[0].length))?.[1];
+    const argsStart = (m.index ?? 0) + m[0].length;
+    // A plain, raw or unicode literal; an f-string or a name is a path the file does not spell out.
+    const path = /^[rRuU]?(["'])((?:(?!\1).)+)\1/.exec(text.slice(argsStart))?.[2];
     if (!path) continue;
-    const method = m[2] === "api_route" ? "*" : m[2]!.toUpperCase();
-    out.push({ id: surfaceId({ component: spec.component, method, path: joinRoute(path) }), component: spec.component, method, path: joinRoute(path), at: { file, line: lineOf(text, m.index ?? 0) }, evidence: "text" });
+    const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
+    for (const method of methods ?? []) {
+      out.push({ id: surfaceId({ component: spec.component, method, path: joinRoute(path) }), component: spec.component, method, path: joinRoute(path), at: { file, line: lineOf(text, m.index ?? 0) }, evidence: "text" });
+    }
   }
   return out;
 }

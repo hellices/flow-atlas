@@ -447,17 +447,18 @@
           "type": "string"
         },
         "digest": {
-          "description": "gitCommit for code read from a commit, sha256 for files; absent for an uncommitted working tree.",
+          "description": "gitCommit for code read from a commit (a SHA-1 or SHA-256 object name), sha256 for files; absent for an uncommitted working tree.",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^[0-9a-f]+$"
-          },
-          "propertyNames": {
-            "enum": [
-              "gitCommit",
-              "sha256"
-            ]
+          "additionalProperties": false,
+          "properties": {
+            "gitCommit": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           }
         }
       }
@@ -690,9 +691,9 @@
       }
     },
     "timestamp": {
-      "description": "ISO 8601 / RFC 3339 date-time with an explicit UTC offset, as OKF requires.",
+      "description": "RFC 3339 date-time with seconds and an explicit UTC offset, as OKF requires. The pattern bounds each field; the date-time format, which the validator asserts, checks the calendar day.",
       "type": "string",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$",
+      "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:([0-5]\\d|60)(\\.\\d+)?(Z|[+-]([01]\\d|2[0-3]):[0-5]\\d)$",
       "format": "date-time"
     },
     "actor": {

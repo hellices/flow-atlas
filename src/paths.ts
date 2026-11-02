@@ -60,13 +60,24 @@ export function segments(path: string): string[] {
   return path.split("/").filter(Boolean);
 }
 
-/** A call segment with an interpolation, as a pattern: `{}` matches any text, the fixed text around it must match. */
-function holePattern(seg: string): RegExp {
-  const body = seg
-    .split(HOLE)
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${body}$`);
+/**
+ * Whether a call segment with interpolations matches a route segment: each `{}` stands for any text, and the fixed
+ * pieces must appear in order, the first at the start and the last at the end. Taking each middle piece at its leftmost
+ * place is enough for `*`-only patterns, so the check never backtracks.
+ */
+export function holeMatches(pattern: string, text: string): boolean {
+  const parts = pattern.split(HOLE);
+  const first = parts[0]!;
+  const last = parts[parts.length - 1]!;
+  if (text.length < first.length + last.length || !text.startsWith(first) || !text.endsWith(last)) return false;
+  let at = first.length;
+  const end = text.length - last.length;
+  for (const part of parts.slice(1, -1)) {
+    const found = text.indexOf(part, at);
+    if (found === -1 || found + part.length > end) return false;
+    at = found + part.length;
+  }
+  return true;
 }
 
 /** A route segment `:id`/`{id}` matches anything; a call segment's interpolations match any text, its fixed text must agree. */
@@ -77,7 +88,7 @@ export function pathsMatch(routePath: string, call: string): boolean {
   return r.every((seg, i) => {
     const part = c[i]!;
     if (isParam(seg) || seg === part) return true;
-    return isHole(part) && holePattern(part).test(seg);
+    return isHole(part) && holeMatches(part, seg);
   });
 }
 

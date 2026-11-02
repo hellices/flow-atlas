@@ -38,10 +38,10 @@
           "description": "author. Anything a reader needs that the steps do not show."
         },
         "labels": {
-          "description": "author. Identifying values to select flows by, such as domain or journey. Keys and values follow Kubernetes labels: an optional DNS-subdomain prefix (at most 253 characters) and /, then a name of at most 63 characters.",
+          "description": "author. Identifying values to select flows by, such as domain or journey. Keys and values follow Kubernetes labels: an optional DNS-subdomain prefix (labels of at most 63 characters, 253 in all) and /, then a name of at most 63 characters.",
           "type": "object",
           "propertyNames": {
-            "pattern": "^((?=[^/]{1,253}/)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            "pattern": "^((?=[^/]{1,253}/)[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
           },
           "additionalProperties": {
             "type": "string",

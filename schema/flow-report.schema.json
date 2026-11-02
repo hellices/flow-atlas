@@ -255,7 +255,39 @@
             }
           ],
           "items": false,
-          "minItems": 7
+          "minItems": 7,
+          "if": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "False"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            }
+          },
+          "then": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "Ready"
+                },
+                "status": {
+                  "const": "False"
+                }
+              },
+              "required": [
+                "type",
+                "status"
+              ]
+            }
+          }
         },
         "entry": {
           "type": "object",

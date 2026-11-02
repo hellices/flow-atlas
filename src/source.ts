@@ -70,6 +70,8 @@ function walk(root: string, dir: string): string[] {
 /** Reads a commit through `git ls-tree` and `git cat-file --batch`; the working tree and index are never touched. */
 export class GitRefSource implements Source {
   private files: string[] | undefined;
+  /** Each file's blob object id, so a batch read names objects and no path ever goes into the line-based input. */
+  private readonly blobs = new Map<string, string>();
   private readonly cache = new Map<string, string | undefined>();
   constructor(
     private readonly root: string,
@@ -83,19 +85,34 @@ export class GitRefSource implements Source {
 
   list(): string[] {
     if (this.files) return this.files;
-    const out = execFileSync("git", ["-C", this.root, "ls-tree", "-r", "-z", "--name-only", this.ref], {
+    const out = execFileSync("git", ["-C", this.root, "ls-tree", "-r", "-z", this.ref], {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     });
-    this.files = out.split("\0").filter(Boolean);
+    // `<mode> <type> <object>\t<path>`, NUL-terminated, so a path may hold any character but NUL.
+    this.files = [];
+    for (const entry of out.split("\0")) {
+      const tab = entry.indexOf("\t");
+      if (tab < 0) continue;
+      const [, type, object] = entry.slice(0, tab).split(" ");
+      const path = entry.slice(tab + 1);
+      this.files.push(path);
+      if (type === "blob" && object) this.blobs.set(path, object);
+    }
     return this.files;
   }
 
-  /** Loads many files in one `git cat-file --batch` process. */
+  /** Loads many files in one `git cat-file --batch` process, by blob object id. */
   preload(paths: string[]): void {
-    const wanted = paths.filter((p) => !this.cache.has(p));
+    this.list();
+    const wanted: string[] = [];
+    for (const p of paths) {
+      if (this.cache.has(p)) continue;
+      if (this.blobs.has(p)) wanted.push(p);
+      else this.cache.set(p, undefined);
+    }
     if (wanted.length === 0) return;
-    const input = wanted.map((p) => `${this.ref}:${p}\n`).join("");
+    const input = wanted.map((p) => `${this.blobs.get(p)}\n`).join("");
     const result = spawnSync("git", ["-C", this.root, "cat-file", "--batch"], {
       input,
       maxBuffer: 1024 * 1024 * 1024,

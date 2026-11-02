@@ -12,6 +12,8 @@ interface Parsed {
   /** Names re-exported from other modules: `export { a as b } from "./x"` and `export * from "./y"`. */
   reexports: Map<string, { file: string; name: string }>;
   stars: string[];
+  /** `import * as ns from "./x"`: the namespace's local name to the module. */
+  namespaces: Map<string, string>;
   /** What `export default` gives: a function node, or the name of a top-level function. */
   defaultExport?: ts.Node | string;
 }
@@ -29,6 +31,24 @@ function bindingNames(name: ts.BindingName, out: string[] = []): string[] {
 }
 
 /**
+ * A `var` of a function's own scope by name, wherever it is declared in the body (blocks and loop heads included,
+ * nested functions not): JavaScript hoists it to the whole function.
+ */
+function functionVar(fn: ts.SignatureDeclaration, name: string): ts.VariableDeclaration | undefined {
+  const body = "body" in fn ? (fn.body as ts.Node | undefined) : undefined;
+  let found: ts.VariableDeclaration | undefined;
+  const visit = (n: ts.Node): void => {
+    if (found || (n !== body && ts.isFunctionLike(n))) return;
+    if (ts.isVariableDeclarationList(n) && !(n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
+      for (const d of n.declarations) if (bindingNames(d.name).includes(name)) found = d;
+    }
+    ts.forEachChild(n, visit);
+  };
+  if (body) visit(body);
+  return found;
+}
+
+/**
  * What a name used at `id` is bound to between it and the top of its file: a local function (returned, to follow),
  * another local binding such as a parameter or a variable (null: it shadows any top-level function of that name), or
  * nothing (undefined: the top-level function or import of that name applies).
@@ -39,6 +59,8 @@ function localBinding(id: ts.Identifier): ts.Node | null | undefined {
     if (ts.isFunctionLike(a)) {
       for (const p of a.parameters) if (bindingNames(p.name).includes(name)) return null;
       if ((ts.isFunctionExpression(a) || ts.isFunctionDeclaration(a)) && a.name?.text === name && a.body) return a.body;
+      const hoisted = functionVar(a, name);
+      if (hoisted) return ts.isIdentifier(hoisted.name) && isFunctionValue(hoisted.initializer) ? hoisted.initializer! : null;
     }
     if (ts.isCatchClause(a) && a.variableDeclaration && bindingNames(a.variableDeclaration.name).includes(name)) return null;
     if ((ts.isForStatement(a) || ts.isForInStatement(a) || ts.isForOfStatement(a)) && a.initializer && ts.isVariableDeclarationList(a.initializer)) {
@@ -76,7 +98,7 @@ export class Reach {
       return null;
     }
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-    const parsed: Parsed = { sf, functions: new Map(), imports: new Map(), reexports: new Map(), stars: [] };
+    const parsed: Parsed = { sf, functions: new Map(), imports: new Map(), reexports: new Map(), stars: [], namespaces: new Map() };
     for (const st of sf.statements) {
       if (ts.isFunctionDeclaration(st) && st.body) {
         if (st.name) parsed.functions.set(st.name.text, st.body);
@@ -93,6 +115,7 @@ export class Reach {
         const target = this.resolve(file, st.moduleSpecifier.text);
         const nb = st.importClause.namedBindings;
         if (target && st.importClause.name) parsed.imports.set(st.importClause.name.text, { file: target, name: "default" });
+        if (target && nb && ts.isNamespaceImport(nb)) parsed.namespaces.set(nb.name.text, target);
         if (target && nb && ts.isNamedImports(nb)) {
           for (const el of nb.elements) parsed.imports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
         }
@@ -125,20 +148,22 @@ export class Reach {
     return undefined;
   }
 
-  /** The function a module exports under a name, following re-exports. */
-  private exported(file: string, name: string, depth = 0): { file: string; node: ts.Node } | undefined {
+  /** The function a module exports under a name, following re-exports to any depth; a re-export cycle ends the search. */
+  private exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
+    const key = `${file}#${name}`;
     const p = this.parse(file);
-    if (!p || depth > 5) return undefined;
+    if (!p || visiting.has(key)) return undefined;
+    visiting.add(key);
     if (name === "default" && p.defaultExport !== undefined) {
       if (typeof p.defaultExport !== "string") return { file, node: p.defaultExport };
-      return this.exported(file, p.defaultExport, depth + 1);
+      return this.exported(file, p.defaultExport, visiting);
     }
     const local = p.functions.get(name);
     if (local) return { file, node: local };
     const re = p.reexports.get(name) ?? p.imports.get(name);
-    if (re) return this.exported(re.file, re.name, depth + 1);
+    if (re) return this.exported(re.file, re.name, visiting);
     for (const star of p.stars) {
-      const found = this.exported(star, name, depth + 1);
+      const found = this.exported(star, name, visiting);
       if (found) return found;
     }
     return undefined;
@@ -162,7 +187,17 @@ export class Reach {
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
         if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
           const member = n.expression.name.text;
-          names.add(member);
+          const receiver = n.expression.expression;
+          // `ns.run()` on an imported namespace runs that module's function: follow it rather than count a member call.
+          const namespace = ts.isIdentifier(receiver) && localBinding(receiver) === undefined ? parsed.namespaces.get(receiver.text) : undefined;
+          const implementation = namespace ? this.exported(namespace, member) : undefined;
+          if (implementation) {
+            const key = `${implementation.file}#${implementation.node.pos}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              queue.push(implementation);
+            }
+          } else names.add(member);
           if (n.expression.expression.kind === ts.SyntaxKind.ThisKeyword && classOf) {
             const method = classOf.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(parsed.sf) === member);
             const key = `${f}#this.${member}`;

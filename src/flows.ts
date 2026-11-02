@@ -294,14 +294,20 @@ function conditionsFor(
         : condition("Resolved", "False", "StepNotFound", `not in the code: ${missing.map((s) => `${s.stepId} (${s.target})`).join(", ")}`);
 
   const pairs = steps.slice(0, -1);
-  const broken = pairs.filter((s) => s.toNext && !s.toNext.connected);
+  const gaps = pairs.filter((s) => s.toNext && !s.toNext.connected);
+  // A gap next to a planned step is the plan, not yet built; only a gap between two active steps is a fault.
+  const broken = gaps.filter((s) => !touchesPlanned(steps, s));
+  const planned = gaps.filter((s) => touchesPlanned(steps, s));
   const open = pairs.filter((s) => !s.toNext);
+  const pairName = (s: StepStatus) => `${s.stepId} -> ${steps[steps.indexOf(s) + 1]!.stepId}`;
   const connected =
     broken.length > 0
-      ? condition("Connected", "False", "NoPathBetweenSteps", broken.map((s) => `${s.stepId} -> ${steps[steps.indexOf(s) + 1]!.stepId}`).join(", "))
+      ? condition("Connected", "False", "NoPathBetweenSteps", broken.map(pairName).join(", "))
       : open.length > 0
         ? condition("Connected", "Unknown", "StepsUnresolved", `not checked: ${open.map((s) => s.stepId).join(", ")}`)
-        : condition("Connected", "True", "AllStepsConnected");
+        : planned.length > 0
+          ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${planned.map(pairName).join(", ")}`)
+          : condition("Connected", "True", "AllStepsConnected");
 
   const entryCalled = !entry
     ? condition("EntryCalled", "Unknown", "NoEntry")
@@ -342,13 +348,19 @@ function conditionsFor(
   const failing = rest.filter((c) => c.status === "False");
   const ready = failing.length
     ? condition("Ready", "False", "ConditionsFailed", failing.map((c) => c.type).join(", "))
-    : unresolved.length
-      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${unresolved.map((s) => s.stepId).join(", ")}`)
+    : unresolved.length || planned.length
+      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName)].join(", ")}`)
       : condition("Ready", "True", "NoConditionFailed");
   return [ready, ...rest];
 }
 
 const TITLE = "flow description that the code does not bear out";
+
+/** Whether a step or the one after it is planned, so the link between them is not expected to exist yet. */
+function touchesPlanned(steps: StepStatus[], step: StepStatus): boolean {
+  const next = steps[steps.indexOf(step) + 1];
+  return step.lifecycle === "planned" || next?.lifecycle === "planned";
+}
 
 /** FA007 findings, derived from the conditions: what an active flow states and the graph does not show. */
 export function flowFindings(report: FlowReport): Finding[] {
@@ -372,7 +384,7 @@ export function flowFindings(report: FlowReport): Finding[] {
     s.steps.forEach((step, i) => {
       const place = { file, line: step.line };
       if (!step.resolved && step.lifecycle === "active") add(`${name}|${step.stepId}|unresolved`, `step ${step.stepId} of ${name} names ${step.target}, which the code does not have.`, [place]);
-      if (step.toNext && !step.toNext.connected) {
+      if (step.toNext && !step.toNext.connected && !touchesPlanned(s.steps, step)) {
         const next = s.steps[i + 1]!;
         add(`${name}|${step.stepId}|disconnected`, `nothing in the code leads from step ${step.stepId} (${step.target}) to step ${next.stepId} (${next.target}) of ${name}.`, [place, ...(step.at ? [step.at] : [])]);
       }

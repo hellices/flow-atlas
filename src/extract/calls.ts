@@ -101,9 +101,52 @@ function enumMethodNear(line: string, start: number, end: number): string | unde
   return best?.method;
 }
 
+/**
+ * The text with every comment blanked (newlines kept, offsets unchanged) and strings left as they are: `#` comments in
+ * Python, Ruby and shell, `//` and `/* *\/` in the C family (Kotlin, Java, Swift, Go, C#, Dart and the like).
+ */
+export function withoutComments(file: string, text: string): string {
+  const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
+  const out = text.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < text.length) {
+    const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(text[i]!) ? text[i]! : undefined;
+    if (quote) {
+      let j = i + quote.length;
+      while (j < text.length && !text.startsWith(quote, j)) {
+        if (text[j] === "\\") j++;
+        else if (quote.length === 1 && quote !== "`" && text[j] === "\n") break;
+        j++;
+      }
+      i = j + quote.length;
+      continue;
+    }
+    const line = hash ? text[i] === "#" : text.startsWith("//", i);
+    if (line) {
+      const end = text.indexOf("\n", i);
+      blank(i, end === -1 ? text.length : end);
+      i = end === -1 ? text.length : end;
+      continue;
+    }
+    if (!hash && text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
+
 /** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
-export function callsFromText(file: string, text: string, spec: CallSource): Draft<Call>[] {
+export function callsFromText(file: string, original: string, spec: CallSource): Draft<Call>[] {
   const out: Draft<Call>[] = [];
+  const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
   for (const m of text.matchAll(STRING)) {
     const inner = (m[1] ?? m[2]!).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);

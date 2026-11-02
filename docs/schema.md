@@ -204,7 +204,7 @@ KRM의 `observedGeneration`에 해당한다. `conditions`는 언제나 일곱 �
 |---|---|---|---|
 | `Ready` | 실패한 조건이 없다 (`NoConditionFailed`) | 하나라도 False (`ConditionsFailed`) | 계획 단계가 아직 없다 (`PlannedStepsPending`), 폐기됨 (`Deprecated`) |
 | `Resolved` | 모든 단계가 코드에 있다 (`AllStepsResolved`, 계획 단계만 없으면 `PlannedStepsPending`) | 없는 단계가 있다 (`StepNotFound`) | |
-| `Connected` | 이웃 단계가 모두 이어진다 (`AllStepsConnected`) | 길이 없는 쌍이 있다 (`NoPathBetweenSteps`) | 풀리지 않은 단계 때문에 못 봄 (`StepsUnresolved`) |
+| `Connected` | 이웃 단계가 모두 이어진다 (`AllStepsConnected`) | 둘 다 active인 쌍에 길이 없다 (`NoPathBetweenSteps`) | 풀리지 않은 단계 때문에 못 봄 (`StepsUnresolved`), 계획 단계와의 사이가 아직 없음 (`PlannedStepsPending`) |
 | `EntryCalled` | 시작 컴포넌트가 첫 단계를 부른다 (`EntryCallsFirstStep`) | 부르지 않는다 (`EntryDoesNotCall`) | `entry` 없음 (`NoEntry`), 첫 단계 없음 (`FirstStepUnresolved`) |
 | `ProducesListed` | 적은 등록 항목이 모두 있다 (`AllListed`) | 없는 항목이 있다 (`NotInRegistry`) | 적지 않음 (`NotDeclared`) |
 | `Documented` | 제목과 단계별 역할을 적었다 (`TitleAndRolesWritten`) | 제목이 없다 (`TitleMissing`), 역할이 없는 단계가 있다 (`RoleMissing`) | |

@@ -19,8 +19,12 @@ describe("skills follow the Agent Skills specification", () => {
       expect(typeof fm.description).toBe("string");
       expect((fm.description as string).length).toBeGreaterThan(0);
       expect((fm.description as string).length).toBeLessThanOrEqual(1024);
+      for (const key of ["license", "compatibility", "allowed-tools"]) if (fm[key] !== undefined) expect(typeof fm[key], `${key} is a string`).toBe("string");
       if (fm.compatibility !== undefined) expect((fm.compatibility as string).length).toBeLessThanOrEqual(500);
-      if (fm.metadata !== undefined) for (const v of Object.values(fm.metadata as object)) expect(typeof v).toBe("string");
+      if (fm.metadata !== undefined) {
+        expect(fm.metadata !== null && typeof fm.metadata === "object" && !Array.isArray(fm.metadata), "metadata is a mapping").toBe(true);
+        for (const v of Object.values(fm.metadata as object)) expect(typeof v).toBe("string");
+      }
       for (const ref of text.matchAll(/`(references\/[^`]+\.md)`/g)) {
         expect(() => readFileSync(new URL(`${dir}/${ref[1]}`, skills)), `${ref[1]} exists`).not.toThrow();
       }

@@ -103,6 +103,7 @@ export function draftFlow(graph: Graph, seed: Surface, to?: Surface): Draft {
   } else {
     lines.push("  # agent: entry: no component in the repository calls the first step; name the outside client, or leave it out");
   }
+  open.push("spec.produces");
   lines.push("  # agent: produces: registry entries the flow issues, as registry:key", "  steps:");
   chain.forEach((id, i) => {
     const s = index.surfaces.get(id)!;

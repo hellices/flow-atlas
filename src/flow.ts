@@ -115,15 +115,19 @@ export function traceText(doc: Subgraph): string {
     const s = index.surfaces.get(id);
     if (s) return `${s.id}  ${where(s.at)}${repeated ? "  (shown above)" : ""}`;
     const c = index.calls.get(id)!;
-    return `${c.from} -> ${c.to}  ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${where(c.at)}`;
+    return `${c.from} -> ${c.to}  ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${where(c.at)}${repeated ? "  (shown above)" : ""}`;
   };
   const lines: string[] = [];
-  const walk = (id: string, dir: "in" | "out", indent: string, path: Set<string>) => {
+  // Each node is expanded once per direction: a node reached again, by a cycle or another branch, is only named.
+  const walk = (id: string, dir: "in" | "out", indent: string, expanded: Set<string>) => {
     for (const e of (dir === "out" ? index.out : index.in).get(id) ?? []) {
       const other = dir === "out" ? e.to : e.from;
-      const repeated = path.has(other);
+      const repeated = expanded.has(other);
       lines.push(`${indent}${e.kind === "reach" ? "~" : "="} ${label(other, repeated)}`);
-      if (!repeated) walk(other, dir, `${indent}  `, new Set([...path, other]));
+      if (!repeated) {
+        expanded.add(other);
+        walk(other, dir, `${indent}  `, expanded);
+      }
     }
   };
   for (const seed of doc.seeds ?? []) {
