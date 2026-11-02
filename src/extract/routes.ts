@@ -152,15 +152,49 @@ export function routesFromTypeScript(file: string, text: string, spec: RouteSour
   return out;
 }
 
-const FASTAPI = /@(\w+)\.(get|post|put|patch|delete|head|options|api_route)\(\s*["']([^"']+)["']/g;
+const FASTAPI = /^[ \t]*@(\w+)\.(get|post|put|patch|delete|head|options|api_route)\(\s*/gm;
+const PY_STRING = /^(?:[rRbBuUfF]{0,2})("""|'''|"|')/;
+
+/**
+ * Python source with every comment and the contents of every string literal blanked (newlines kept), so text that
+ * only looks like code there is not read as code. Offsets are unchanged.
+ */
+export function pythonCode(text: string): string {
+  const out = text.split("");
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i]!;
+    if (c === "#") {
+      while (i < text.length && text[i] !== "\n") out[i++] = " ";
+      continue;
+    }
+    const m = /[A-Za-z_]/.test(text[i - 1] ?? "") ? null : PY_STRING.exec(text.slice(i, i + 5));
+    if (m) {
+      const quote = m[1]!;
+      let j = i + m[0].length;
+      while (j < text.length && !text.startsWith(quote, j)) {
+        if (text[j] === "\\") j++;
+        else if (quote.length === 1 && text[j] === "\n") break;
+        j++;
+      }
+      for (let k = i + m[0].length; k < Math.min(j, text.length); k++) if (out[k] !== "\n") out[k] = " ";
+      i = j + quote.length;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
 
 export function routesFromPython(file: string, text: string, spec: RouteSource): Surface[] {
   const out: Surface[] = [];
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
-  for (const m of text.matchAll(FASTAPI)) {
+  for (const m of pythonCode(text).matchAll(FASTAPI)) {
     if (!receivers.has(m[1]!)) continue;
+    const path = /^["']([^"']+)["']/.exec(text.slice((m.index ?? 0) + m[0].length))?.[1];
+    if (!path) continue;
     const method = m[2] === "api_route" ? "*" : m[2]!.toUpperCase();
-    out.push({ id: surfaceId({ component: spec.component, method, path: joinRoute(m[3]!) }), component: spec.component, method, path: joinRoute(m[3]!), at: { file, line: lineOf(text, m.index ?? 0) }, evidence: "text" });
+    out.push({ id: surfaceId({ component: spec.component, method, path: joinRoute(path) }), component: spec.component, method, path: joinRoute(path), at: { file, line: lineOf(text, m.index ?? 0) }, evidence: "text" });
   }
   return out;
 }

@@ -6,3 +6,5 @@ paths:
   /quote:
     get:
       operationId: getQuote
+      responses:
+        "200": { description: A quote }

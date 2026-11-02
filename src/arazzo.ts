@@ -16,7 +16,23 @@ export interface ArazzoExport {
 }
 
 const pointer = (path: string): string => path.replace(/~/g, "~0").replace(/\//g, "~1");
-const sourceName = (component: string): string => component.replace(/[^A-Za-z0-9_-]/g, "-");
+/**
+ * Arazzo source description names (letters, digits, _ and -) for every component, unique even where two component
+ * names reduce to the same characters: in name order, a later one gets `-2`, `-3`. Assigned over all components, so a
+ * component keeps its name whichever flows are exported.
+ */
+export function sourceNames(components: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  for (const component of [...new Set(components)].sort()) {
+    const base = component.replace(/[^A-Za-z0-9_-]/g, "-");
+    let name = base;
+    for (let n = 2; used.has(name); n++) name = `${base}-${n}`;
+    used.add(name);
+    out.set(component, name);
+  }
+  return out;
+}
 
 function parseSurfaceId(id: string): { component: string; method: string; path: string } | undefined {
   const m = /^([^|]+)\|([A-Z]+|\*) (\/.*)$/.exec(id);
@@ -99,6 +115,12 @@ export function toArazzo(
     }
     return described.get(component);
   };
+  const sourceNameOf = sourceNames([
+    ...graph.components.map((c) => c.name),
+    ...graph.surfaces.map((x) => x.component),
+    ...flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : undefined)).filter((c): c is string => !!c)),
+  ]);
+  const sourceName = (component: string): string => sourceNameOf.get(component)!;
   const sourceCount = new Set(
     flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : s.call ? calls.get(s.call)?.to : undefined))),
   );
@@ -166,10 +188,24 @@ export function toArazzo(
       },
     };
   });
-  for (const w of workflows) if (w.steps.length === 0) limits.push(`${w.workflowId}: no step could be written as an operation`);
-
   if (problems.length) throw new Error(problems.join("\n"));
-  const exported = workflows.filter((w) => w.steps.length > 0);
+  // A workflow with no step is left out, and so is every step that runs it, until nothing changes.
+  let exported = workflows;
+  for (;;) {
+    const empty = new Set(exported.filter((w) => w.steps.length === 0).map((w) => w.workflowId));
+    if (empty.size === 0) break;
+    for (const id of empty) limits.push(`${id}: no step could be written as an operation`);
+    exported = exported
+      .filter((w) => !empty.has(w.workflowId))
+      .map((w) => ({
+        ...w,
+        steps: w.steps.filter((s) => {
+          const runs = (s as { workflowId?: string }).workflowId;
+          if (runs && empty.has(runs)) limits.push(`${w.workflowId}.${s.stepId}: flow ${runs} is not in this export`);
+          return !(runs && empty.has(runs));
+        }),
+      }));
+  }
   const sourceDescriptions = [...described]
     .filter(([, d]) => d)
     .sort(([a], [b]) => a.localeCompare(b))

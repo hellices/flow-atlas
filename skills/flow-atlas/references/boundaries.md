@@ -38,7 +38,11 @@ unrelated reason (a feature flag, an analytics ping) does not make another step.
 
 ## Defect, plan, or false positive?
 
-- Defect: the code differs from the agreed responsibility or from a flow's steps, and nothing records why. Fix it.
+- Defect: the code differs from an agreement, and nothing records why. An agreement is a repository rule or design
+  document, or a `human-reviewed` flow that is still `Fresh`. Fix it.
+- Open question: the code differs from an `unverified` or `machine-confirmed` flow, or from one past its
+  `stale_after`. Its roles are a proposal (see "How far to trust a flow's intent"): ask a person whether the code or
+  the flow is right before calling it a defect.
 - Plan: the gap is intended, such as a provider built before its client. A decision or issue says so. Mark the step
   or flow `lifecycle: planned`, or add an exception with `decidedBy` and `reviewBy`.
 - False positive: atlas misread the code (a path built far from the call, a string that is not a request). Record

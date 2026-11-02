@@ -6,6 +6,10 @@ paths:
   /quotes:
     get:
       operationId: listQuotes
+      responses:
+        "200": { description: The current quotes }
   /discounts:
     post:
       operationId: createDiscount
+      responses:
+        "201": { description: The discount created }

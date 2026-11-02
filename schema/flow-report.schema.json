@@ -126,9 +126,136 @@
         "conditions": {
           "description": "Always the same seven types in the same order; Ready is False when any other is False. Documented and Fresh look at the author's part (title and roles written, stale_after not passed at the report's asOf); the others check the code.",
           "type": "array",
-          "items": {
-            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
-          }
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "Ready"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "Resolved"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "Connected"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "EntryCalled"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "ProducesListed"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "Documented"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "Fresh"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              ]
+            }
+          ],
+          "items": false,
+          "minItems": 7
         },
         "entry": {
           "type": "object",

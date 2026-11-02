@@ -44,7 +44,10 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   for (const p of obj.properties) {
     if (ts.isPropertyAssignment(p) && p.name.getText().replace(/["']/g, "") === "method") {
       const v = p.initializer;
-      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) return v.text.toUpperCase();
+      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
+        const method = v.text.toUpperCase();
+        return METHODS.has(method) ? method : undefined;
+      }
     }
   }
   return undefined;
@@ -82,7 +85,21 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
 
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
 const VERB_BEFORE = /\.(get|post|put|patch|delete|head|options)\s*\(\s*\w?$/i;
-const ENUM_METHOD = /HttpMethod\.(Get|Post|Put|Patch|Delete)/;
+const ENUM_METHOD = /HttpMethod\.(Get|Post|Put|Patch|Delete|Head|Options)\b/g;
+
+/** The `HttpMethod.X` nearest to a string within its statement on the line, so each of two calls on one line keeps its own. */
+function enumMethodNear(line: string, start: number, end: number): string | undefined {
+  const from = line.lastIndexOf(";", start) + 1;
+  const stop = line.indexOf(";", end);
+  const statement = line.slice(from, stop === -1 ? undefined : stop);
+  let best: { method: string; distance: number } | undefined;
+  for (const m of statement.matchAll(ENUM_METHOD)) {
+    const at = from + (m.index ?? 0);
+    const distance = at < start ? start - at : at - end;
+    if (!best || distance < best.distance) best = { method: m[1]!, distance };
+  }
+  return best?.method;
+}
 
 /** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
 export function callsFromText(file: string, text: string, spec: CallSource): Draft<Call>[] {
@@ -97,7 +114,7 @@ export function callsFromText(file: string, text: string, spec: CallSource): Dra
     const lineEnd = text.indexOf("\n", index);
     const before = text.slice(lineStart, index);
     const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const verb = before.match(VERB_BEFORE)?.[1] ?? line.match(ENUM_METHOD)?.[1];
+    const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + m[0].length);
     out.push({
       from: spec.from,
       to: spec.to,

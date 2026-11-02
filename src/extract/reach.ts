@@ -12,10 +12,52 @@ interface Parsed {
   /** Names re-exported from other modules: `export { a as b } from "./x"` and `export * from "./y"`. */
   reexports: Map<string, { file: string; name: string }>;
   stars: string[];
+  /** What `export default` gives: a function node, or the name of a top-level function. */
+  defaultExport?: ts.Node | string;
 }
 
 const isFunctionValue = (n: ts.Node | undefined): boolean =>
   !!n && (ts.isArrowFunction(n) || ts.isFunctionExpression(n));
+
+const hasDefault = (n: ts.Node): boolean =>
+  ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+
+function bindingNames(name: ts.BindingName, out: string[] = []): string[] {
+  if (ts.isIdentifier(name)) out.push(name.text);
+  else for (const el of name.elements) if (!ts.isOmittedExpression(el)) bindingNames(el.name, out);
+  return out;
+}
+
+/**
+ * What a name used at `id` is bound to between it and the top of its file: a local function (returned, to follow),
+ * another local binding such as a parameter or a variable (null: it shadows any top-level function of that name), or
+ * nothing (undefined: the top-level function or import of that name applies).
+ */
+function localBinding(id: ts.Identifier): ts.Node | null | undefined {
+  const name = id.text;
+  for (let a: ts.Node | undefined = id.parent; a && !ts.isSourceFile(a); a = a.parent) {
+    if (ts.isFunctionLike(a)) {
+      for (const p of a.parameters) if (bindingNames(p.name).includes(name)) return null;
+      if ((ts.isFunctionExpression(a) || ts.isFunctionDeclaration(a)) && a.name?.text === name && a.body) return a.body;
+    }
+    if (ts.isCatchClause(a) && a.variableDeclaration && bindingNames(a.variableDeclaration.name).includes(name)) return null;
+    if ((ts.isForStatement(a) || ts.isForInStatement(a) || ts.isForOfStatement(a)) && a.initializer && ts.isVariableDeclarationList(a.initializer)) {
+      for (const d of a.initializer.declarations) if (bindingNames(d.name).includes(name)) return null;
+    }
+    const statements = ts.isBlock(a) || ts.isModuleBlock(a) || ts.isCaseClause(a) || ts.isDefaultClause(a) ? a.statements : undefined;
+    for (const st of statements ?? []) {
+      if (ts.isFunctionDeclaration(st) && st.name?.text === name) return st.body ?? null;
+      if ((ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name?.text === name) return null;
+      if (ts.isVariableStatement(st)) {
+        for (const d of st.declarationList.declarations) {
+          if (ts.isIdentifier(d.name) && d.name.text === name) return isFunctionValue(d.initializer) ? d.initializer! : null;
+          if (bindingNames(d.name).includes(name)) return null;
+        }
+      }
+    }
+  }
+  return undefined;
+}
 
 /**
  * Finds the member methods a piece of code calls, following the local and relatively imported functions it uses.
@@ -36,15 +78,22 @@ export class Reach {
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const parsed: Parsed = { sf, functions: new Map(), imports: new Map(), reexports: new Map(), stars: [] };
     for (const st of sf.statements) {
-      if (ts.isFunctionDeclaration(st) && st.name && st.body) parsed.functions.set(st.name.text, st.body);
-      else if (ts.isVariableStatement(st)) {
+      if (ts.isFunctionDeclaration(st) && st.body) {
+        if (st.name) parsed.functions.set(st.name.text, st.body);
+        if (hasDefault(st)) parsed.defaultExport = st.body;
+      } else if (ts.isExportAssignment(st) && !st.isExportEquals) {
+        const e = st.expression;
+        if (ts.isIdentifier(e)) parsed.defaultExport = e.text;
+        else if (isFunctionValue(e)) parsed.defaultExport = e;
+      } else if (ts.isVariableStatement(st)) {
         for (const d of st.declarationList.declarations) {
           if (ts.isIdentifier(d.name) && isFunctionValue(d.initializer)) parsed.functions.set(d.name.text, d.initializer!);
         }
-      } else if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && st.importClause?.namedBindings) {
+      } else if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && st.importClause) {
         const target = this.resolve(file, st.moduleSpecifier.text);
         const nb = st.importClause.namedBindings;
-        if (target && ts.isNamedImports(nb)) {
+        if (target && st.importClause.name) parsed.imports.set(st.importClause.name.text, { file: target, name: "default" });
+        if (target && nb && ts.isNamedImports(nb)) {
           for (const el of nb.elements) parsed.imports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
         }
       } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
@@ -80,6 +129,10 @@ export class Reach {
   private exported(file: string, name: string, depth = 0): { file: string; node: ts.Node } | undefined {
     const p = this.parse(file);
     if (!p || depth > 5) return undefined;
+    if (name === "default" && p.defaultExport !== undefined) {
+      if (typeof p.defaultExport !== "string") return { file, node: p.defaultExport };
+      return this.exported(file, p.defaultExport, depth + 1);
+    }
     const local = p.functions.get(name);
     if (local) return { file, node: local };
     const re = p.reexports.get(name) ?? p.imports.get(name);
@@ -91,7 +144,10 @@ export class Reach {
     return undefined;
   }
 
-  /** Member method names called under `start` in `file`, sorted. */
+  /**
+   * Member method names called under `start` in `file`, sorted. A function declared inside the code, or bound to a
+   * local name, is followed only where it is used; a function written inline (a callback argument) counts as run.
+   */
   from(file: string, start: ts.Node): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
@@ -103,6 +159,7 @@ export class Reach {
       const classOf = enclosingClass(node);
       const visit = (n: ts.Node): void => {
         if (ts.isTypeNode(n) || ts.isImportDeclaration(n)) return;
+        if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
         if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
           const member = n.expression.name.text;
           names.add(member);
@@ -116,11 +173,15 @@ export class Reach {
           }
         }
         if (ts.isIdentifier(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
-          const target = parsed.functions.has(n.text)
-            ? { file: f, node: parsed.functions.get(n.text)! }
-            : parsed.imports.has(n.text)
-              ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
-              : undefined;
+          const local = localBinding(n);
+          const target =
+            local !== undefined
+              ? local && { file: f, node: local }
+              : parsed.functions.has(n.text)
+                ? { file: f, node: parsed.functions.get(n.text)! }
+                : parsed.imports.has(n.text)
+                  ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
+                  : undefined;
           if (target) {
             const key = `${target.file}#${target.node.pos}`;
             if (!seen.has(key)) {

@@ -12,19 +12,27 @@ export function extractComponents(source: Source, config: Config): { components:
     for (const file of select(source, [config.manifest.glob], [])) {
       const text = source.read(file);
       if (text === undefined) continue;
+      let json: unknown;
       try {
-        const json = JSON.parse(text) as { name?: string; provides?: string[]; consumes?: string[] };
-        if (!json.name) continue;
-        const existing = byName.get(json.name);
-        byName.set(json.name, {
-          name: json.name,
-          path: existing?.path ?? dirname(file),
-          provides: json.provides ?? [],
-          consumes: json.consumes ?? [],
-        });
+        json = JSON.parse(text);
       } catch {
         limits.push(`${file}: not valid JSON, its declarations were skipped`);
+        continue;
       }
+      const m = json as { name?: unknown; provides?: unknown; consumes?: unknown } | null;
+      if (!m || typeof m !== "object" || Array.isArray(m) || m.name === undefined) continue;
+      const strings = (v: unknown): v is string[] => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string"));
+      if (typeof m.name !== "string" || !m.name || !strings(m.provides) || !strings(m.consumes)) {
+        limits.push(`${file}: name must be a string and provides and consumes lists of strings; its declarations were skipped`);
+        continue;
+      }
+      const existing = byName.get(m.name);
+      byName.set(m.name, {
+        name: m.name,
+        path: existing?.path ?? dirname(file),
+        provides: (m.provides as string[] | undefined) ?? [],
+        consumes: (m.consumes as string[] | undefined) ?? [],
+      });
     }
   }
 

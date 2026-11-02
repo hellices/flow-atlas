@@ -121,17 +121,29 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     .map((g) => ({ dir: g.dir, pattern: g.pattern, families: g.families.size, files: g.files.length }))
     .sort((a, b) => b.files - a.files);
 
-  const versionedNames = new Map<string, string>();
-  for (const g of groups.values()) for (const f of g.files) versionedNames.set(f, g.dir);
   const jsonFiles = all.filter((f) => f.endsWith(".json") && !VERSIONED.test(f.split("/").pop()!));
   const activeLists: Inventory["activeLists"] = [];
-  if (versionedNames.size) {
+  if (groups.size) {
     const candidates = jsonFiles.filter((f) => versions.some((v) => f.startsWith(dirname(v.dir))));
     select(source, candidates, []);
+    // Names are matched within one directory's group, so the same file name in two directories is not confused.
+    const shared = (a: string, b: string) => {
+      const x = a.split("/");
+      const y = b.split("/");
+      let n = 0;
+      while (n < x.length && n < y.length && x[n] === y[n]) n++;
+      return n;
+    };
     for (const f of candidates) {
       const text = source.read(f) ?? "";
-      const named = [...versionedNames.keys()].filter((n) => text.includes(`"${n}"`));
-      if (named.length >= 2) activeLists.push({ file: f, names: named.length, dir: versionedNames.get(named[0]!)! });
+      let best: { dir: string; names: number; near: number } | undefined;
+      for (const g of groups.values()) {
+        const names = new Set(g.files.filter((n) => text.includes(`"${n}"`))).size;
+        if (names < 2) continue;
+        const near = shared(dirname(f), g.dir);
+        if (!best || names > best.names || (names === best.names && near > best.near)) best = { dir: g.dir, names, near };
+      }
+      if (best) activeLists.push({ file: f, names: best.names, dir: best.dir });
     }
   }
 

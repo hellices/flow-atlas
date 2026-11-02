@@ -21,9 +21,10 @@ export function callPath(text: string): CallPath | undefined {
     s = s.slice(lead[0].length);
     based = true;
   }
-  const absolute = s.match(/^https?:\/\/[^/]+(\/.*)$/);
-  if (absolute?.[1]) {
-    s = absolute[1];
+  // The authority ends at the first /, ? or #, so a query or fragment that holds a slash is not taken for the path.
+  const absolute = s.match(/^https?:\/\/[^/?#]+(.*)$/);
+  if (absolute) {
+    s = absolute[1]!;
     based = true;
   }
   s = s.split("?")[0]!.split("#")[0]!;

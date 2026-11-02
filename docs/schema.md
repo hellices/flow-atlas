@@ -146,7 +146,11 @@ provenance:
     - { name: flows,  uri: flows/home.flow.yaml,   digest: { sha256: f2fcd80e... } }
 ```
 
-`provenance`는 SLSA provenance v1의 네 항목을 그대로 쓴다. `externalParameters`에는 호출한 사람이 준 값을 그대로 두고,
+`provenance`는 SLSA provenance v1에서 네 항목의 이름과 뜻을 가져와 한 층으로 편 flow-atlas 전용 구조다. SLSA에서는
+`buildType`, `externalParameters`, `resolvedDependencies`가 `predicate.buildDefinition` 아래, `builder`가
+`predicate.runDetails` 아래에 있고 in-toto statement(`_type`, `subject`, `predicateType`)로 감싸지만, 여기서는 그렇게 하지
+않으므로 SLSA 소비자에게 그대로 넘길 수 있는 statement가 아니다. `resolvedDependencies`의 각 항목은 in-toto
+ResourceDescriptor 모양 그대로다. `externalParameters`에는 호출한 사람이 준 값을 그대로 두고,
 `resolvedDependencies`에는 실제로 읽은 커밋과 파일을 digest와 함께 적는다. `origin/main`처럼 움직이는 이름은 앞에,
 그 순간의 커밋은 뒤에 남는다. 어떤 입력으로 이 판정이 나왔는지 나중에 다시 확인할 수 있다.
 

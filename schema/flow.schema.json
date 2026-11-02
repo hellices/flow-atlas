@@ -38,10 +38,10 @@
           "description": "author. Anything a reader needs that the steps do not show."
         },
         "labels": {
-          "description": "author. Identifying values to select flows by, such as domain or journey. Short keys and values, as in Kubernetes.",
+          "description": "author. Identifying values to select flows by, such as domain or journey. Keys and values follow Kubernetes labels: an optional DNS-subdomain prefix (at most 253 characters) and /, then a name of at most 63 characters.",
           "type": "object",
           "propertyNames": {
-            "pattern": "^([a-z0-9.-]+/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+            "pattern": "^((?=[^/]{1,253}/)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
           },
           "additionalProperties": {
             "type": "string",
@@ -162,8 +162,8 @@
       "properties": {
         "stepId": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "description": "from atlas (draft) or author."
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "from atlas (draft) or author. Letters, digits, _ and -, as Arazzo 1.0 stepIds are."
         },
         "surface": {
           "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId",

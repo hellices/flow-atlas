@@ -200,7 +200,8 @@ export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surfa
     if (override) return { component, status: "chosen", location: override, kind: "author", reason: "AuthorOverride", candidates };
 
     const servedPaths = new Set(docs.filter((d) => d.kind === "served").map((d) => d.location));
-    const served = docs.filter((d) => d.kind === "served" && !(d.aliasOf && servedPaths.has(d.aliasOf)));
+    // A page that shows its own path is that document, not an alias of another.
+    const served = docs.filter((d) => d.kind === "served" && !(d.aliasOf && d.aliasOf !== d.location && servedPaths.has(d.aliasOf)));
     const files = docs.filter((d) => d.kind === "file");
     const routes = surfaces.filter((s) => s.component === component).length;
     const complete = files.filter((d) => routes > 0 && d.agreement && d.agreement.missing.length === 0);

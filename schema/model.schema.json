@@ -463,7 +463,7 @@
       }
     },
     "provenance": {
-      "description": "How the document was produced, after SLSA provenance v1: builder, buildType, externalParameters, resolvedDependencies. No timestamps or machine paths.",
+      "description": "How the document was produced. The four fields take their names and meaning from SLSA provenance v1, flattened: this is not an in-toto statement or a SLSA predicate (no _type, subject, buildDefinition or runDetails). Dependencies are in-toto ResourceDescriptors. No timestamps or machine paths.",
       "type": "object",
       "required": [
         "builder",
@@ -671,12 +671,29 @@
             "type": "string"
           }
         }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "chosen"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "location",
+          "kind"
+        ]
       }
     },
     "timestamp": {
-      "description": "ISO 8601 date-time with an explicit UTC offset, as OKF requires.",
+      "description": "ISO 8601 / RFC 3339 date-time with an explicit UTC offset, as OKF requires.",
       "type": "string",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$",
+      "format": "date-time"
     },
     "actor": {
       "description": "OKF actor (0.2 §7): <producer>/<version> for agents and tools, human:<id> for people, process:<id> for automated processes. Other <kind>:<id> prefixes, such as the spec's own team:<id> example, are accepted; only human: counts toward the human-reviewed tier.",

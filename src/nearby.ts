@@ -32,8 +32,9 @@ export function nearby(graph: Graph, finding: Finding, limit = 5): Candidate[] {
     const [method, path] = request.split(" ", 2) as [string, string];
     for (const c of graph.calls) {
       if (c.to !== component) continue;
-      const score = similarity(path, c.path) + (c.method === method ? 1 : 0);
-      if (score > 0) out.push({ what: `${c.from} calls ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}`, at: c.at, score });
+      const close = similarity(path, c.path);
+      const score = close + (c.method === method ? 1 : 0);
+      if (close > 0) out.push({ what: `${c.from} calls ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}`, at: c.at, score });
     }
   } else if (finding.rule === "FA002") {
     const [edge, request] = finding.key.split("|").slice(1) as [string, string];
@@ -41,8 +42,9 @@ export function nearby(graph: Graph, finding: Finding, limit = 5): Candidate[] {
     const [method, path] = request.split(" ", 2) as [string, string];
     for (const s of graph.surfaces) {
       if (s.component !== to) continue;
-      const score = similarity(s.path, path) + (s.method === method ? 1 : 0);
-      if (score > 0) out.push({ what: `${surfaceId(s)}`, at: s.at, score });
+      const close = similarity(s.path, path);
+      const score = close + (s.method === method ? 1 : 0);
+      if (close > 0) out.push({ what: `${surfaceId(s)}`, at: s.at, score });
     }
   }
   return out.sort((a, b) => b.score - a.score || a.what.localeCompare(b.what)).slice(0, limit);

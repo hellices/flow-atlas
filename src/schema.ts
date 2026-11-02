@@ -5,11 +5,26 @@ const FILES = ["model", "graph", "subgraph", "findings", "diff", "inventory", "f
 export type SchemaName = (typeof FILES)[number];
 
 let ajv: Ajv2020 | undefined;
+
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+
+/** An RFC 3339 date-time whose fields are in range: a real calendar day, hours to 23, minutes to 59, seconds to 60 (leap). */
+export function isDateTime(value: string): boolean {
+  const m = DATE_TIME.exec(value);
+  if (!m) return false;
+  const [year, month, day, hour, minute, second = "0", , offH = "0", offM = "0"] = m.slice(1).map((x) => x ?? undefined) as string[];
+  const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+  return (
+    Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1 && Number(day) <= days &&
+    Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 60 && Number(offH) <= 23 && Number(offM) <= 59
+  );
+}
 const compiled = new Map<SchemaName, ValidateFunction>();
 
 function load(): Ajv2020 {
   if (ajv) return ajv;
   ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
+  ajv.addFormat("date-time", { type: "string", validate: isDateTime });
   for (const f of FILES) ajv.addSchema(JSON.parse(readFileSync(new URL(`../schema/${f}.schema.json`, import.meta.url), "utf8")));
   return ajv;
 }

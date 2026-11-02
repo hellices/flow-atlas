@@ -20,6 +20,17 @@ const slug = (s: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
+/** Gives each base back once; a base already given, or a suffixed id already given, gets the next free `-<n>`. */
+export function uniqueIds(): (base: string) => string {
+  const used = new Set<string>();
+  return (base) => {
+    let id = base;
+    for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+    used.add(id);
+    return id;
+  };
+}
+
 export function flowName(seed: Surface): string {
   return slug(`${seed.component}-${seed.method === "*" ? "any" : seed.method}-${seed.path}`).slice(0, 63).replace(/-+$/, "");
 }
@@ -59,13 +70,10 @@ export function draftFlow(graph: Graph, seed: Surface, to?: Surface): Draft {
   const callers = (index.in.get(seed.id) ?? []).filter((e) => e.kind === "match").map((e) => index.calls.get(e.from)!.from);
   const entryComponents = [...new Set(callers)].sort();
 
-  const stepIds = new Map<string, number>();
+  const unique = uniqueIds();
   const stepId = (id: string): string => {
     const s = index.surfaces.get(id)!;
-    const base = slug(`${s.component}-${s.path}`) || slug(s.component);
-    const n = (stepIds.get(base) ?? 0) + 1;
-    stepIds.set(base, n);
-    return n === 1 ? base : `${base}-${n}`;
+    return unique(slug(`${s.component}-${s.path}`) || slug(s.component) || "step");
   };
 
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit ?? "WORKTREE";

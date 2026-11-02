@@ -111,7 +111,11 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--component") o.component = value();
     else if (a === "--path") o.path = value();
     else if (a === "--method") o.method = value().toUpperCase();
-    else if (a === "--kind") o.kind = value() as Options["kind"];
+    else if (a === "--kind") {
+      const kind = value();
+      if (kind !== "surfaces" && kind !== "calls" && kind !== "both") throw new Error(`--kind is surfaces, calls or both, not ${kind}`);
+      o.kind = kind;
+    }
     else if (a === "--flow") o.flow = value();
     else if (a === "--to") o.to = value();
     else if (a === "--all") o.all = true;
@@ -124,8 +128,12 @@ function parseArgs(argv: string[]): Options {
   return { ...(o as Options), root, out: resolve(o.out ?? join(root, ".atlas")), args };
 }
 
+function configCandidates(o: Options): string[] {
+  return o.config ? [resolve(o.config)] : [join(o.root, "atlas.config.yaml"), join(o.out, "atlas.config.yaml")];
+}
+
 function configFor(o: Options): Config {
-  const candidates = o.config ? [resolve(o.config)] : [join(o.root, "atlas.config.yaml"), join(o.out, "atlas.config.yaml")];
+  const candidates = configCandidates(o);
   const found = candidates.find((c) => existsSync(c));
   if (!found) throw new Error(`no configuration found; looked for ${candidates.join(", ")}. Run \`atlas inventory\` and write one; see the skill's references/config.md.`);
   return loadConfig(found);
@@ -350,7 +358,7 @@ function cmdCases(o: Options): number {
 }
 
 function cmdInventory(o: Options): number {
-  const config = o.config || existsSync(join(o.root, "atlas.config.yaml")) ? configFor(o) : undefined;
+  const config = o.config || configCandidates(o).some((c) => existsSync(c)) ? configFor(o) : undefined;
   const source = openSource(o.root, o.ref);
   const inv = inventory(source, config?.exclude ?? DEFAULT_EXCLUDE);
   const doc = {

@@ -28,6 +28,7 @@ export function textReport(items: Classified[], showAll: boolean): string {
 export function markdownReport(items: Classified[]): string {
   const shown = items.filter((i) => i.status === "new" || i.status === "expired-exception");
   if (shown.length === 0) return "No new flow findings.\n";
-  const rows = shown.map((i) => `| ${i.finding.rule} | ${i.finding.message.replace(/\|/g, "\\|")} | ${place(i.finding)} |`);
+  const cell = (text: string) => text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|\r|\n/g, "<br>");
+  const rows = shown.map((i) => `| ${cell(i.finding.rule)} | ${cell(i.finding.message)} | ${cell(place(i.finding))} |`);
   return ["| Rule | Finding | Where |", "|---|---|---|", ...rows, ""].join("\n");
 }

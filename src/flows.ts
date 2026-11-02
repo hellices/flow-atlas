@@ -237,6 +237,11 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): F
       const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, entry, produces, object, asOf);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
+        // A call step passes through the surface it reaches, also when it is the last step.
+        for (const s of steps) {
+          if (s.kind !== "call" || !s.resolved) continue;
+          for (const e of index.out.get(s.target) ?? []) if (e.kind === "match" && index.surfaces.has(e.to)) covered.add(e.to);
+        }
         for (const s of steps) for (const e of s.toNext?.edges ?? []) for (const id of [e.from, e.to]) if (index.surfaces.has(id)) covered.add(id);
       }
       items.push({
