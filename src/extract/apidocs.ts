@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { parse } from "yaml";
+import { isMap, isScalar, parse, parseDocument } from "yaml";
 import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
@@ -89,7 +89,15 @@ export function documentStart(text: string): number | undefined {
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return undefined;
   const top = doc as Record<string, unknown>;
   if (top.openapi === undefined && top.swagger === undefined) return undefined;
-  return /^\s*["']?(openapi|swagger)["']?\s*:/m.exec(text)?.index ?? Math.max(0, text.search(/["']?(openapi|swagger)["']?\s*:/));
+  return versionKeyOffset(text);
+}
+
+/** Where the top-level `openapi` or `swagger` key stands; a key of the same name nested deeper is not it. */
+function versionKeyOffset(text: string): number {
+  const root = parseDocument(text).contents;
+  if (!isMap(root)) return 0;
+  const pair = root.items.find((p) => isScalar(p.key) && (p.key.value === "openapi" || p.key.value === "swagger"));
+  return (isScalar(pair?.key) && pair.key.range?.[0]) || 0;
 }
 
 const shape = (path: string): string => routeTemplate(path).replace(/\{[^}]*\}/g, "{}");
