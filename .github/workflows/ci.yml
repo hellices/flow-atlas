@@ -49,6 +49,6 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: install the packed CLI and run it on the fixture
         run: |
-          npm install --prefix "$RUNNER_TEMP/try" package/flow-atlas-*.tgz
+          npm install --prefix "$RUNNER_TEMP/try" ./package/flow-atlas-*.tgz
           "$RUNNER_TEMP/try/node_modules/.bin/atlas" check --root fixtures/shop --out "$RUNNER_TEMP/out" | tee "$RUNNER_TEMP/check.txt"
           grep -q "^9 new" "$RUNNER_TEMP/check.txt"
