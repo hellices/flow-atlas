@@ -21,18 +21,25 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
   });
 }
 
-/** `match` edges from calls to the surfaces they reach; `reach` edges from surfaces to the outbound calls their handlers lead to. */
-export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">): Edge[] {
+/**
+ * `match` edges from calls to the surfaces they reach; `reach` edges from surfaces to the outbound calls their handlers
+ * lead to: a call the handler's code runs (its line is in `executed`, evidence `static`), or one held in a method the
+ * handler calls by name (evidence `name`).
+ */
+export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf } = matchCalls(graph);
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });
   for (const s of graph.surfaces) {
-    if (!s.reaches?.length) continue;
-    const reached = new Set(s.reaches);
+    const reached = new Set(s.reaches ?? []);
+    const runs = executed?.get(s.id);
+    if (!reached.size && !runs?.size) continue;
     for (const c of graph.calls) {
-      if (c.from === s.component && c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
+      if (c.from !== s.component) continue;
+      if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", ...(c.scope ? { via: c.scope } : {}) });
+      else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
   }
   return edges;
@@ -53,10 +60,11 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   if (paths.length) select(source, paths, config.exclude);
 
   const coverage: Coverage[] = [];
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage);
+  const executed = new Map<string, Set<string>>();
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, executed);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
   const calls = assignCallIds(extractCalls(source, config, coverage));
-  const edges = edgesOf({ surfaces, calls });
+  const edges = edgesOf({ surfaces, calls }, executed);
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",

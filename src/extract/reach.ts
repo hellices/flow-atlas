@@ -119,6 +119,12 @@ export class Reach {
         if (target && nb && ts.isNamedImports(nb)) {
           for (const el of nb.elements) parsed.imports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
         }
+      } else if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+        // `export { run as handler }` names a binding of this file under another name.
+        for (const el of st.exportClause.elements) {
+          const local = (el.propertyName ?? el.name).text;
+          if (local !== el.name.text) parsed.reexports.set(el.name.text, { file, name: local });
+        }
       } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
         const target = this.resolve(file, st.moduleSpecifier.text);
         if (!target) continue;
@@ -132,7 +138,10 @@ export class Reach {
     return parsed;
   }
 
-  /** A relative module specifier resolved to a file of the source, trying TypeScript extensions and index files. */
+  /**
+   * A relative module specifier resolved to a file of the source: the TypeScript file a `.js` specifier stands for
+   * first, then the specifier as written, then the extensions and index files TypeScript and Node try.
+   */
   resolve(from: string, spec: string): string | undefined {
     if (!spec.startsWith(".")) return undefined;
     const parts = from.split("/").slice(0, -1);
@@ -141,9 +150,20 @@ export class Reach {
       if (seg === "..") parts.pop();
       else parts.push(seg);
     }
-    const base = parts.join("/").replace(/\.(m|c)?js$/, "");
-    for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
-      if (/\.(m|c)?tsx?$/.test(candidate) && this.source.read(candidate) !== undefined) return candidate;
+    const written = parts.join("/");
+    const js = /\.(m|c)?jsx?$/.exec(written);
+    const base = js ? written.slice(0, -js[0].length) : written;
+    const typescriptFor: Record<string, string[]> = { ".js": ["ts", "tsx"], ".jsx": ["tsx"], ".mjs": ["mts"], ".cjs": ["cts"] };
+    const substituted = js ? (typescriptFor[js[0]] ?? []).map((e) => `${base}.${e}`) : [];
+    const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+    const candidates = [
+      ...substituted,
+      written,
+      ...extensions.map((e) => `${written}.${e}`),
+      ...extensions.map((e) => `${written}/index.${e}`),
+    ];
+    for (const candidate of candidates) {
+      if (/\.(m|c)?[jt]sx?$/.test(candidate) && this.source.read(candidate) !== undefined) return candidate;
     }
     return undefined;
   }
@@ -170,10 +190,11 @@ export class Reach {
   }
 
   /**
-   * Member method names called under `start` in `file`, sorted. A function declared inside the code, or bound to a
+   * Member method names called under `start` in `file`, sorted; `executed` collects `file:line` of each string the code
+   * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
    * local name, is followed only where it is used; a function written inline (a callback argument) counts as run.
    */
-  from(file: string, start: ts.Node): string[] {
+  from(file: string, start: ts.Node, executed?: Set<string>): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -182,9 +203,13 @@ export class Reach {
       const parsed = this.parse(f);
       if (!parsed) continue;
       const classOf = enclosingClass(node);
-      const visit = (n: ts.Node): void => {
+      // `inCall`: inside a call the code runs, other than the registration call a route handler may start from.
+      const visit = (n: ts.Node, inCall = false): void => {
         if (ts.isTypeNode(n) || ts.isImportDeclaration(n)) return;
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
+        if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
+          executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
+        }
         if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
           const member = n.expression.name.text;
           const receiver = n.expression.expression;
@@ -225,7 +250,8 @@ export class Reach {
             }
           }
         }
-        ts.forEachChild(n, visit);
+        const childInCall = inCall || (ts.isCallExpression(n) && n !== node);
+        ts.forEachChild(n, (child) => visit(child, childInCall));
       };
       visit(node);
     }

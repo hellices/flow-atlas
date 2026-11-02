@@ -15,6 +15,19 @@ function templateText(node: ts.TemplateExpression): string {
   return s;
 }
 
+/**
+ * The method a `fetch(url, init)` call uses: GET when there is no init, or an init without a `method`; the stated
+ * method when it is a known one; `*` when the method or the init is built at run time.
+ */
+function fetchMethod(init: ts.Expression | undefined): string {
+  if (!init) return "GET";
+  if (!ts.isObjectLiteralExpression(init)) return "*";
+  if (init.properties.some((p) => ts.isSpreadAssignment(p))) return "*";
+  const method = init.properties.find((p) => p.name && p.name.getText().replace(/["']/g, "") === "method");
+  if (!method) return "GET";
+  return methodProperty(init) ?? "*";
+}
+
 /** The HTTP method a call site states near the string: `http.post(url)`, `request(url, "POST")`, `{ method: "POST" }`, otherwise `*`. */
 function methodNear(node: ts.Node): string {
   let current: ts.Node | undefined = node;
@@ -25,6 +38,9 @@ function methodNear(node: ts.Node): string {
       const callee = parent.expression;
       const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
       if (VERBS.has(name.toLowerCase())) return name.toUpperCase();
+      // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
+      const global = ts.isIdentifier(callee) || (ts.isPropertyAccessExpression(callee) && /^(window|globalThis|self)$/.test(callee.expression.getText()));
+      if (name === "fetch" && global && parent.arguments[0] === current) return fetchMethod(parent.arguments[1]);
       for (const arg of parent.arguments) {
         if (arg === current) continue;
         if ((ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && METHODS.has(arg.text)) return arg.text;

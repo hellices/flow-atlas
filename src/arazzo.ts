@@ -1,7 +1,7 @@
 import type { Config } from "./config.js";
 import type { FlowObject, LoadedFile } from "./flows.js";
 import type { Graph } from "./model.js";
-import { documentPathKeys, operationShape } from "./extract/apidocs.js";
+import { documentOperationIds, documentPathKeys, operationShape } from "./extract/apidocs.js";
 
 /**
  * Flows as an Arazzo 1.0 description, for API workflow tools such as test runners. A surface becomes an OpenAPI
@@ -47,7 +47,15 @@ function parseSurfaceId(id: string): { component: string; method: string; path: 
 export function documentUrl(component: string, graph: Graph, config: Config): { url: string; note?: string; file?: string } {
   if (config.openapi[component]) {
     const url = config.openapi[component]!;
-    return { url, ...(/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/") ? {} : { file: url }) };
+    if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return { url };
+    // A root-relative choice is a served path: the environment's origin goes in front of it, as for a found one.
+    if (url.startsWith("/")) {
+      const origin = config.origins[component];
+      return origin
+        ? { url: `${origin.replace(/\/+$/, "")}${url}` }
+        : { url, note: `${component}'s chosen OpenAPI document ${url} is served; set origins.${component} to the server's base URL for the environment` };
+    }
+    return { url, file: url };
   }
   const d = graph.apiDescriptions.find((x) => x.component === component);
   if (!d || d.status !== "chosen" || !d.location) {
@@ -99,7 +107,7 @@ export function toArazzo(
   const names = new Set(flows.map((f) => f.metadata.name));
 
   const problems: string[] = [];
-  const described = new Map<string, { url: string; keys?: Map<string, string>; file?: string } | undefined>();
+  const described = new Map<string, { url: string; keys?: Map<string, string>; ids?: Map<string, string>; file?: string } | undefined>();
   const description = (component: string) => {
     if (!described.has(component)) {
       try {
@@ -107,7 +115,8 @@ export function toArazzo(
         if (note) limits.push(note);
         const text = file ? options.read?.(file) : undefined;
         const keys = text === undefined ? undefined : documentPathKeys(text);
-        described.set(component, { url, ...(keys ? { keys, file } : {}) });
+        const ids = text === undefined ? undefined : documentOperationIds(text);
+        described.set(component, { url, ...(keys ? { keys, ids, file } : {}) });
       } catch (e) {
         problems.push((e as Error).message);
         described.set(component, undefined);
@@ -136,18 +145,21 @@ export function toArazzo(
     }
     const name = sourceName(parsed.component);
     const doc = description(parsed.component);
-    const operationId = surfaces.get(surfaceId)?.operationId;
-    if (operationId) return { operationId: qualify ? `$sourceDescriptions.${name}.${operationId}` : operationId };
-    let key = parsed.path;
+    const byId = (id: string) => ({ operationId: qualify ? `$sourceDescriptions.${name}.${id}` : id });
+    const byPath = (key: string) => ({ operationPath: `{$sourceDescriptions.${name}.url}#/paths/${pointer(key)}/${parsed.method.toLowerCase()}` });
+    // A description atlas can read decides the operation: its own operationId, else the key it writes the path under.
     if (doc?.keys) {
-      const written = doc.keys.get(operationShape(parsed.method, parsed.path));
+      const shape = operationShape(parsed.method, parsed.path);
+      const written = doc.keys.get(shape);
       if (!written) {
         limits.push(`${where}: ${doc.file} declares no ${parsed.method} ${parsed.path}`);
         return undefined;
       }
-      key = written;
+      const id = doc.ids?.get(shape);
+      return id ? byId(id) : byPath(written);
     }
-    return { operationPath: `{$sourceDescriptions.${name}.url}#/paths/${pointer(key)}/${parsed.method.toLowerCase()}` };
+    const operationId = surfaces.get(surfaceId)?.operationId;
+    return operationId ? byId(operationId) : byPath(parsed.path);
   };
 
   const workflows = flows.map((f) => {

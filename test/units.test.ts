@@ -178,7 +178,7 @@ describe("call scope", () => {
       spec,
     );
     expect(calls.map((c) => [c.scope, c.method, c.path])).toEqual([
-      ["listOrders", "*", "/orders"],
+      ["listOrders", "GET", "/orders"],
       ["readOne", "GET", "/orders/{}"],
       ["cancel", "POST", "/orders/{}/cancel"],
     ]);

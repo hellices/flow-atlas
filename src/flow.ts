@@ -146,7 +146,7 @@ export function traceText(doc: Subgraph): string {
           : "  none found: no configured call of this component sits in a method the handler reaches",
       );
     }
-    lines.push("", "= matched by method and path   ~ joined through the handler's calls (by method name)", "");
+    lines.push("", "= matched by method and path   ~ run by the handler (static) or held in a method it calls (by name)", "");
   }
   return lines.join("\n");
 }

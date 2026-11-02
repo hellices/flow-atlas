@@ -9,7 +9,7 @@ export function extractComponents(source: Source, config: Config): { components:
   for (const c of config.components) byName.set(c.name, { name: c.name, path: c.path.replace(/\/+$/, ""), provides: [], consumes: [] });
 
   if (config.manifest?.kind === "component-json") {
-    for (const file of select(source, [config.manifest.glob], [])) {
+    for (const file of select(source, [config.manifest.glob], config.exclude)) {
       const text = source.read(file);
       if (text === undefined) continue;
       let json: unknown;

@@ -85,7 +85,7 @@ describe("shop fixture", () => {
     const keys = evaluate(noOrders, config).map((f) => f.key);
     expect(keys.filter((k) => k.startsWith("FA002|bff->orders|"))).toEqual([
       "FA002|bff->orders|* /order-updates",
-      "FA002|bff->orders|* /orders/{}",
+      "FA002|bff->orders|GET /orders/{}",
       "FA002|bff->orders|POST /orders",
       "FA002|bff->orders|POST /orders/{}/refund",
     ]);
@@ -162,7 +162,7 @@ describe("trace", () => {
     const doc = trace(graph, seedsFor(graph, "GET /screens/order/:orderId"));
     expect(ids(doc)).toEqual(["bff#getOrder", "bff|GET /screens/order/{orderId}", "orders|GET /orders/{id}", "web#orderScreen"]);
     expect(doc.edges.map((e) => `${e.kind}${e.via ? ` ${e.via}` : ""}`).sort()).toEqual(["match", "match", "reach getOrder"]);
-    expect(traceText(doc)).toContain("~ bff -> orders  * /orders/{} in getOrder");
+    expect(traceText(doc)).toContain("~ bff -> orders  GET /orders/{} in getOrder");
   });
 
   it("goes back from a service route to the client that starts the flow", () => {
@@ -459,15 +459,14 @@ describe("schemas", () => {
     expect(workflows[1]!.steps[0]).toMatchObject({ stepId: "place", workflowId: "place-order" });
   });
 
-  it("points an operationPath at the path key the chosen description writes", () => {
-    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
-    const { document } = toArazzo(unnamed, loadFlows(source, config), { ...config, openapi: { bff: "openapi/bff.json", orders: "services/orders/openapi.json" } }, {
-      title: "t",
-      flow: "view-order",
-      read: (p) => source.read(p),
-    });
-    const steps = (document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps;
-    expect(steps[1]!.operationPath).toBe("{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get");
+  it("resolves an operation against the chosen description: its operationId, else the path key it writes", () => {
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: s.component === "orders" ? "CodeOnlyId" : undefined })) };
+    const chosen = { ...config, openapi: { bff: "openapi/bff.json", orders: "services/orders/openapi.json" } };
+    const step = (read: (p: string) => string | undefined) =>
+      (toArazzo(unnamed, loadFlows(source, config), chosen, { title: "t", flow: "view-order", read }).document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!;
+    expect(step((p) => source.read(p))).toMatchObject({ operationId: "$sourceDescriptions.orders.OrdersController_get" });
+    const withoutId = (p: string) => source.read(p)?.replace('"operationId": "OrdersController_get",', "");
+    expect(step(withoutId)).toMatchObject({ operationPath: "{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get" });
   });
 
   it("refuses an export with no workflow in it", () => {

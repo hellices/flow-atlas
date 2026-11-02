@@ -88,24 +88,28 @@ function operationIdIn(args: readonly ts.Expression[]): string | undefined {
   return undefined;
 }
 
-export function routesFromTypeScript(file: string, text: string, spec: RouteSource, reach?: Reach): Surface[] {
+/** `executed` collects, per surface id, the `file:line` of each call its handler runs (see `Reach.from`). */
+export function routesFromTypeScript(file: string, text: string, spec: RouteSource, reach?: Reach, executed?: Map<string, Set<string>>): Surface[] {
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const styles = new Set(spec.styles ?? []);
   const receivers = new Set(spec.receivers ?? ["app", "router", "server", "fastify"]);
   const constPattern = spec.constants ? new RegExp(spec.constants) : undefined;
   const out: Surface[] = [];
   const at = (node: ts.Node) => ({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 });
-  const add = (method: string, path: string, node: ts.Node, handler?: ts.Node, operationId?: string) =>
+  const add = (method: string, path: string, node: ts.Node, handler?: ts.Node, operationId?: string) => {
+    const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
+    const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
     out.push({
-      id: surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) }),
+      id,
       component: spec.component,
       method: method.toUpperCase(),
       path: routeTemplate(joinRoute(path)),
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
-      ...(reach && handler ? { reaches: reach.from(file, handler) } : {}),
+      ...(reach && handler ? { reaches: reach.from(file, handler, lines) } : {}),
     });
+  };
 
   const visit = (node: ts.Node): void => {
     if (styles.has("nest") && ts.isClassDeclaration(node)) {
@@ -237,7 +241,13 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
   return out;
 }
 
-export function extractRoutes(source: Source, config: Config, reach?: Reach, coverage: Coverage[] = []): Surface[] {
+export function extractRoutes(
+  source: Source,
+  config: Config,
+  reach?: Reach,
+  coverage: Coverage[] = [],
+  executed?: Map<string, Set<string>>,
+): Surface[] {
   const out: Surface[] = [];
   for (const spec of config.routes) {
     const files = select(source, spec.files, config.exclude);
@@ -245,7 +255,7 @@ export function extractRoutes(source: Source, config: Config, reach?: Reach, cov
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
       else if (file.endsWith(".py") && (spec.styles ?? []).includes("fastapi")) out.push(...routesFromPython(file, text, spec));
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);

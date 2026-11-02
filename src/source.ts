@@ -56,13 +56,24 @@ export class WorktreeSource implements Source {
   }
 }
 
+/**
+ * Every file under a directory that is not a git repository. A symbolic link to a file is listed; a link to a
+ * directory is not followed, so a link back to an ancestor or out of the tree cannot loop or pull in other files.
+ */
 function walk(root: string, dir: string): string[] {
   const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === ".git") continue;
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...walk(root, full));
-    else out.push(relative(root, full));
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === ".git") continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walk(root, full));
+    else if (entry.isFile()) out.push(relative(root, full));
+    else if (entry.isSymbolicLink()) {
+      try {
+        if (statSync(full).isFile()) out.push(relative(root, full));
+      } catch {
+        // a dangling link names nothing to read
+      }
+    }
   }
   return out;
 }

@@ -2,6 +2,9 @@ import type { Finding, Findings, Place, RuleId } from "./model.js";
 import { RULES } from "./rules.js";
 import { VERSION } from "./provenance.js";
 
+/** A repository path as a relative URI reference: each segment percent-encoded, `/` kept between them. */
+export const uriOf = (path: string): string => path.split("/").map(encodeURIComponent).join("/");
+
 /**
  * Findings as SARIF 2.1.0 (OASIS), the format code-scanning services, IDE viewers and review bots read. The stable key
  * becomes a partial fingerprint, the baseline becomes baselineState, an exception becomes an accepted external
@@ -30,7 +33,7 @@ export const FINGERPRINT = "flowAtlasKey/v1";
 
 const location = (p: Place, id?: number) => ({
   ...(id !== undefined ? { id } : {}),
-  physicalLocation: { artifactLocation: { uri: p.file, uriBaseId: "%SRCROOT%" }, region: { startLine: p.line } },
+  physicalLocation: { artifactLocation: { uri: uriOf(p.file), uriBaseId: "%SRCROOT%" }, region: { startLine: p.line } },
 });
 
 export function toSarif(doc: Findings, inBaseline: (f: Finding) => boolean): object {
