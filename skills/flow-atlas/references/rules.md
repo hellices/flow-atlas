@@ -25,8 +25,9 @@ Fix: add or wire the caller, or remove the route. If a client outside the reposi
 
 Key `FA002|<from>-><to>|<METHOD> <path>`.
 
-A configured call site whose request matches no route of its target. Reported only when the request is clearly
-a path on that target: it starts from a base address, or its first segment is one the target serves.
+A configured call site whose request matches no route of its target. Reported only when the target has route
+sources in the configuration (even if none of its routes is left) and the request is clearly a path on that target:
+it starts from a base address, or its first segment is one the target serves.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.
@@ -38,9 +39,11 @@ unless the behavior is wanted.
 
 Keys `FA003|undeclared|<from>-><to>` and `FA003|cycle|<a>-><b>->...`.
 
-An edge is a call that matched a route of another component. When component manifests declare what each
-component consumes, an actual edge missing from the declarations is reported. Cycles are reported over declared
-and actual edges together; set `rules.FA003.cycles: false` when the repository already checks cycles itself.
+An edge is a call that matched a route of another component. When the configuration reads component manifests,
+an actual edge missing from their declarations is reported, also when the manifests declare nothing. Cycles are
+reported over declared and actual edges together, at any length; in a very dense graph the search stops early,
+says so in a `limit:` line, and still reports at least one cycle per group of components that reach each other. Set
+`rules.FA003.cycles: false` when the repository already checks cycles itself.
 
 Fix: declare the dependency through the repository's own process, or route the call through the component that
 owns it. Break a cycle by moving the shared responsibility, not by hiding the call.

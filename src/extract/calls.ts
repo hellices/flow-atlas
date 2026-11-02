@@ -80,16 +80,16 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   return out;
 }
 
-const STRING = /"((?:[^"\\\n]|\\.)*)"/g;
-const VERB_BEFORE = /\.(get|post|put|patch|delete)\s*\(\s*$/i;
+const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
+const VERB_BEFORE = /\.(get|post|put|patch|delete|head|options)\s*\(\s*\w?$/i;
 const ENUM_METHOD = /HttpMethod\.(Get|Post|Put|Patch|Delete)/;
 
-/** Kotlin, Java, Swift, Python and other languages: string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
+/** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
 export function callsFromText(file: string, text: string, spec: CallSource): Draft<Call>[] {
   const out: Draft<Call>[] = [];
   const scopeAt = textScopes(text);
   for (const m of text.matchAll(STRING)) {
-    const inner = m[1]!.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
+    const inner = (m[1] ?? m[2]!).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     const parsed = callPath(inner);
     if (!parsed) continue;
     const index = m.index ?? 0;

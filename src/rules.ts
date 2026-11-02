@@ -27,7 +27,8 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
   return (id) => patterns.some((p) => p.test(id));
 }
 
-export function evaluate(graph: Graph, config: Config): Finding[] {
+/** Findings for a graph. What the rules could not settle completely is added to `limits`. */
+export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];
   const { callersOf, targetsOf } = matchCalls(graph);
   const isPublic = surfacePattern(config.publicSurfaces);
@@ -45,7 +46,8 @@ export function evaluate(graph: Graph, config: Config): Finding[] {
   }
 
   if (ruleEnabled(config, "FA002")) {
-    const served = new Set(graph.surfaces.map((s) => s.component));
+    // Components whose routes are configured: a call to one is checked even when none of its routes is left.
+    const served = new Set(config.routes.map((r) => r.component));
     graph.calls.forEach((c, i) => {
       if (targetsOf.has(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
       out.push(
@@ -62,7 +64,8 @@ export function evaluate(graph: Graph, config: Config): Finding[] {
       const k = `${c.from}->${c.to}`;
       (actual.get(k) ?? actual.set(k, []).get(k)!).push(c.at);
     });
-    if (graph.declared.length > 0) {
+    // With manifests configured, no declaration means none is allowed; without them there is nothing to compare.
+    if (config.manifest) {
       for (const [edge, places] of actual) {
         if (declared.has(edge)) continue;
         const [from, to] = edge.split("->");
@@ -71,7 +74,9 @@ export function evaluate(graph: Graph, config: Config): Finding[] {
     }
     if (config.rules.FA003?.cycles !== false) {
       const edges = new Set([...declared, ...actual.keys()]);
-      for (const cycle of cycles(edges)) {
+      const search = cycleSearch(edges);
+      if (!search.complete) limits.push(`FA003: stopped listing cycles after ${CYCLE_BUDGET} steps; every strongly connected group has one cycle reported, others may be missing`);
+      for (const cycle of search.cycles) {
         out.push(finding("FA003", `cycle|${cycle.join("->")}`, `Components depend on each other in a cycle: ${[...cycle, cycle[0]].join(" -> ")}.`, []));
       }
     }
@@ -102,29 +107,120 @@ export function evaluate(graph: Graph, config: Config): Finding[] {
   return out.sort((a, b) => a.key.localeCompare(b.key));
 }
 
+const CYCLE_BUDGET = 200_000;
+
 /** Elementary cycles, each reported once from its smallest member. */
 export function cycles(edges: Set<string>): string[][] {
+  return cycleSearch(edges).cycles;
+}
+
+/** Groups of nodes that reach each other (Tarjan), each with at least two nodes or a self-loop. */
+function cyclicGroups(next: Map<string, string[]>): string[][] {
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const groups: string[][] = [];
+  let counter = 0;
+  for (const root of [...next.keys()].sort()) {
+    if (index.has(root)) continue;
+    const work: Array<[string, number]> = [[root, 0]];
+    index.set(root, counter);
+    low.set(root, counter++);
+    stack.push(root);
+    onStack.add(root);
+    while (work.length) {
+      const frame = work[work.length - 1]!;
+      const [node, i] = frame;
+      const succ = next.get(node) ?? [];
+      if (i < succ.length) {
+        frame[1]++;
+        const n = succ[i]!;
+        if (!index.has(n)) {
+          index.set(n, counter);
+          low.set(n, counter++);
+          stack.push(n);
+          onStack.add(n);
+          work.push([n, 0]);
+        } else if (onStack.has(n)) low.set(node, Math.min(low.get(node)!, index.get(n)!));
+        continue;
+      }
+      work.pop();
+      if (work.length) {
+        const parent = work[work.length - 1]![0];
+        low.set(parent, Math.min(low.get(parent)!, low.get(node)!));
+      }
+      if (low.get(node) === index.get(node)) {
+        const group: string[] = [];
+        let n: string;
+        do {
+          n = stack.pop()!;
+          onStack.delete(n);
+          group.push(n);
+        } while (n !== node);
+        if (group.length > 1 || (next.get(node) ?? []).includes(node)) groups.push(group.sort());
+      }
+    }
+  }
+  return groups;
+}
+
+/** The shortest cycle through `start` within a group, by breadth-first search. */
+function shortestCycle(start: string, next: Map<string, string[]>, members: Set<string>): string[] {
+  const parent = new Map<string, string>();
+  const queue = [start];
+  while (queue.length) {
+    const node = queue.shift()!;
+    for (const n of next.get(node) ?? []) {
+      if (!members.has(n)) continue;
+      if (n === start) {
+        const path = [node];
+        while (path[0] !== start) path.unshift(parent.get(path[0]!)!);
+        return path;
+      }
+      if (!parent.has(n) && n !== start) {
+        parent.set(n, node);
+        queue.push(n);
+      }
+    }
+  }
+  return [start];
+}
+
+/**
+ * Elementary cycles, searched within each group of mutually reachable nodes and without a length limit. The search
+ * stops after a fixed number of steps; even then every group has at least its shortest cycle through its smallest node,
+ * so a cyclic graph is never reported as free of cycles, and `complete` says whether the list is whole.
+ */
+export function cycleSearch(edges: Set<string>, budget = CYCLE_BUDGET): { cycles: string[][]; complete: boolean } {
   const next = new Map<string, string[]>();
   for (const e of edges) {
     const [a, b] = e.split("->") as [string, string];
     (next.get(a) ?? next.set(a, []).get(a)!).push(b);
+    if (!next.has(b)) next.set(b, []);
   }
+  for (const list of next.values()) list.sort();
   const found = new Map<string, string[]>();
-  const nodes = [...next.keys()].sort();
-  for (const start of nodes) {
-    const stack: Array<[string, string[]]> = [[start, [start]]];
-    while (stack.length) {
-      const [node, path] = stack.pop()!;
-      for (const n of next.get(node) ?? []) {
-        if (n === start) {
-          const min = path.reduce((m, x) => (x < m ? x : m));
-          if (min !== start) continue;
-          found.set(path.join("->"), path);
-        } else if (!path.includes(n) && n > start && path.length < 12) {
-          stack.push([n, [...path, n]]);
+  let steps = 0;
+  let complete = true;
+  for (const group of cyclicGroups(next)) {
+    const members = new Set(group);
+    for (const start of group) {
+      const stack: Array<[string, string[]]> = [[start, [start]]];
+      while (stack.length && complete) {
+        const [node, path] = stack.pop()!;
+        for (const n of next.get(node) ?? []) {
+          if (++steps > budget) {
+            complete = false;
+            break;
+          }
+          if (n === start) found.set(path.join("->"), path);
+          else if (members.has(n) && n > start && !path.includes(n)) stack.push([n, [...path, n]]);
         }
       }
     }
+    const first = shortestCycle(group[0]!, next, members);
+    found.set(first.join("->"), first);
   }
-  return [...found.values()];
+  return { cycles: [...found.values()], complete };
 }

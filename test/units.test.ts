@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { callPath, joinRoute, methodsMatch, pathsMatch, routeTemplate } from "../src/paths.js";
-import { cycles, surfacePattern } from "../src/rules.js";
+import { cycleSearch, cycles, surfacePattern } from "../src/rules.js";
+import { routesFromTypeScript } from "../src/extract/routes.js";
+import { documentStart } from "../src/extract/apidocs.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
 import { similarity } from "../src/nearby.js";
@@ -59,6 +61,19 @@ describe("cycles", () => {
   it("finds none in a chain", () => {
     expect(cycles(new Set(["a->b", "b->c"]))).toEqual([]);
   });
+  it("finds a ring of any length", () => {
+    const names = Array.from({ length: 20 }, (_, i) => `c${String(i).padStart(2, "0")}`);
+    const ring = new Set(names.map((n, i) => `${n}->${names[(i + 1) % names.length]}`));
+    expect(cycles(ring)).toEqual([names]);
+  });
+  it("says when it stopped early, and still reports one cycle per cyclic group", () => {
+    const names = ["a", "b", "c", "d", "e", "f"];
+    const dense = new Set(names.flatMap((x) => names.filter((y) => y !== x).map((y) => `${x}->${y}`)));
+    const search = cycleSearch(dense, 50);
+    expect(search.complete).toBe(false);
+    expect(search.cycles.length).toBeGreaterThan(0);
+    expect(cycleSearch(dense).complete).toBe(true);
+  });
 });
 
 describe("callsFromText", () => {
@@ -66,6 +81,39 @@ describe("callsFromText", () => {
     const calls = callsFromText("Api.kt", 'val r = http.post("$baseUrl/orders/${id}/pay") {}', { from: "app", to: "api", files: [] });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ method: "POST", path: "/orders/{}/pay", based: true });
+  });
+  it("reads single-quoted Python strings, f-strings included", () => {
+    const calls = callsFromText("client.py", "r = http.get('/orders')\nq = http.delete(f'/orders/{order_id}')\n", { from: "app", to: "api", files: [] });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /orders", "DELETE /orders/{}"]);
+  });
+});
+
+describe("routesFromTypeScript", () => {
+  const nest = { component: "svc", files: [], styles: ["nest" as const] };
+  const ids = (text: string, spec: Parameters<typeof routesFromTypeScript>[2] = nest) =>
+    routesFromTypeScript("a.ts", text, spec).map((s) => `${s.method} ${s.path}`);
+
+  it("reads HEAD and OPTIONS routes", () => {
+    expect(ids('@Controller("x")\nclass C {\n  @Head() h() {}\n  @Options(":id") o() {}\n}')).toEqual(["HEAD /x", "OPTIONS /x/{id}"]);
+    const express = { component: "svc", files: [], styles: ["express" as const] };
+    expect(ids('app.options("/orders", h);\napp.head("/orders", h);', express)).toEqual(["OPTIONS /orders", "HEAD /orders"]);
+  });
+  it("registers nothing for a path the file does not spell out", () => {
+    expect(ids("@Controller(API_PREFIX)\nclass C {\n  @Get() a() {}\n}")).toEqual([]);
+    expect(ids('@Controller("x")\nclass C {\n  @Get(DETAIL_PATH) a() {}\n  @Get() b() {}\n}')).toEqual(["GET /x"]);
+  });
+  it("reads paths given as a list or as { path }", () => {
+    expect(ids('@Controller({ path: "x", version: "1" })\nclass C {\n  @Get(["a", "b"]) a() {}\n}')).toEqual(["GET /x/a", "GET /x/b"]);
+    expect(ids('@Controller({ version: "1" })\nclass C {\n  @Get("a") a() {}\n}')).toEqual(["GET /a"]);
+  });
+});
+
+describe("documentStart", () => {
+  it("recognizes compact JSON, pretty YAML, and nothing else", () => {
+    expect(documentStart('{"openapi":"3.1.0","paths":{}}')).toBe(1);
+    expect(documentStart("info: {}\nswagger: '2.0'\n")).toBe(9);
+    expect(documentStart('{"name":"pkg","openapi":false}'.replace("openapi", "x"))).toBeUndefined();
+    expect(documentStart("{not json")).toBeUndefined();
   });
 });
 

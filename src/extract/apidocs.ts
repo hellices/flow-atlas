@@ -75,10 +75,30 @@ export function servedDocuments(file: string, text: string, component: string): 
   return out;
 }
 
+/**
+ * Where an OpenAPI or Swagger document declares its version, or undefined when the text is not such a document. The
+ * parsed top-level `openapi` or `swagger` field decides, so compact JSON counts as much as pretty YAML.
+ */
+export function documentStart(text: string): number | undefined {
+  let doc: unknown;
+  try {
+    doc = parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return undefined;
+  const top = doc as Record<string, unknown>;
+  if (top.openapi === undefined && top.swagger === undefined) return undefined;
+  return /^\s*["']?(openapi|swagger)["']?\s*:/m.exec(text)?.index ?? Math.max(0, text.search(/["']?(openapi|swagger)["']?\s*:/));
+}
+
 const shape = (path: string): string => routeTemplate(path).replace(/\{[^}]*\}/g, "{}");
 
-/** The operations a committed description declares, as `METHOD /path` with parameters written `{}`. */
-export function documentOperations(text: string): string[] | undefined {
+/**
+ * The path key a description writes each operation under, by `METHOD /path` with parameters written `{}`: the same
+ * operation may name its parameters differently from the code (`{orderId}` for `{id}`).
+ */
+export function documentPathKeys(text: string): Map<string, string> | undefined {
   let doc: unknown;
   try {
     doc = parse(text);
@@ -87,12 +107,21 @@ export function documentOperations(text: string): string[] | undefined {
   }
   const paths = (doc as { paths?: Record<string, Record<string, unknown>> } | null)?.paths;
   if (!paths || typeof paths !== "object") return undefined;
-  const out: string[] = [];
+  const out = new Map<string, string>();
   for (const [path, item] of Object.entries(paths)) {
-    for (const method of HTTP_METHODS) if (item && typeof item === "object" && method in item) out.push(`${method.toUpperCase()} ${shape(path)}`);
+    for (const method of HTTP_METHODS) if (item && typeof item === "object" && method in item) out.set(`${method.toUpperCase()} ${shape(path)}`, path);
   }
-  return out.sort();
+  return out;
 }
+
+/** The operations a committed description declares, as `METHOD /path` with parameters written `{}`. */
+export function documentOperations(text: string): string[] | undefined {
+  const keys = documentPathKeys(text);
+  return keys ? [...keys.keys()].sort() : undefined;
+}
+
+/** A surface's `METHOD /path` with parameters written `{}`, to look up in `documentPathKeys`. */
+export const operationShape = (method: string, path: string): string => `${method} ${shape(path)}`;
 
 /** How well a committed description agrees with the routes the code serves for the same component. */
 function agreement(operations: string[], surfaces: Surface[]): NonNullable<ApiDocument["agreement"]> {
@@ -121,8 +150,8 @@ export function extractApiDocuments(source: Source, config: Config, components: 
     const component = owner(file);
     if (!component || select(source, [file], config.exclude).length === 0) continue;
     const text = source.read(file) ?? "";
-    const m = /^\s*["']?(openapi|swagger)["']?\s*:/m.exec(text);
-    if (!m) continue;
+    const start = documentStart(text);
+    if (start === undefined) continue;
     const operations = documentOperations(text);
     out.push({
       component,
@@ -130,7 +159,7 @@ export function extractApiDocuments(source: Source, config: Config, components: 
       location: file,
       convention: "committed",
       ...(operations ? { agreement: agreement(operations, surfaces.filter((s) => s.component === component)) } : {}),
-      at: { file, line: lineOf(text, m.index) },
+      at: { file, line: lineOf(text, start) },
       evidence: "text",
     });
   }

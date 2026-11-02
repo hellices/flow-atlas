@@ -118,7 +118,8 @@ Arazzo의 `dependsOn`은 넣지 않았다. Arazzo에서 이것은 실행 순서�
 Arazzo의 실행 의미는 가져오지 않았다. `parameters`, `requestBody`, `successCriteria`, `onSuccess`, `onFailure`,
 `outputs`와 런타임 표현식은 API를 실제로 부르는 도구에 필요하다. flow-atlas는 코드를 읽어 흐름을 확인할 뿐 부르지
 않는다. `atlas export arazzo`가 Flow를 Arazzo 1.0 문서로 내보낸다. 라우트에 operationId가 있으면 `operationId`로, 없으면
-`operationPath`(`{$sourceDescriptions.bff.url}#/paths/~1orders~1{id}/get`)로 쓴다. 각 컴포넌트의 OpenAPI 문서는 도구가 찾는다.
+`operationPath`(`{$sourceDescriptions.bff.url}#/paths/~1orders~1{id}/get`)로 쓴다. 저장소에 둔 문서가 고른 설명이면 그 문서가 쓴 경로 키(`{orderId}`처럼 코드와 다른 파라미터 이름)를 따르고,
+문서에 없는 작업은 단계에서 빼고 알린다. `--flow`로 고른 흐름이 부르는 하위 흐름은 함께 내보내고, 내보낼 워크플로가 하나도 없으면 멈춘다. 각 컴포넌트의 OpenAPI 문서는 도구가 찾는다.
 후보가 여럿이면 코드로 가릴 수 있을 때만 고른다. 작성자가 `openapi`에 적은 것이 먼저이고, 그다음은 코드의 라우트를
 모두 담은 저장소 파일 하나, 그다음은 코드가 내보내는 문서 하나다. 같은 문서를 보여 주는 swagger-ui 경로는 그 문서로 묶는다
 (예를 들어 swagger-ui의 `/docs/swagger/json`이 `uiConfig.url`로 `/openapi.json`을 보여 주면 그 별칭이다). 라우트가 빠진 저장소 파일은 낡은 사본으로 보고 차이를 알린다.

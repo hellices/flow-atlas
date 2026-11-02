@@ -80,6 +80,30 @@ describe("shop fixture", () => {
     expect(keys).toContain("FA003|undeclared|web->orders");
   });
 
+  it("still checks calls to a component whose routes are all gone", () => {
+    const noOrders = { ...graph, surfaces: graph.surfaces.filter((s) => s.component !== "orders") };
+    const keys = evaluate(noOrders, config).map((f) => f.key);
+    expect(keys.filter((k) => k.startsWith("FA002|bff->orders|"))).toEqual([
+      "FA002|bff->orders|* /order-updates",
+      "FA002|bff->orders|* /orders/{}",
+      "FA002|bff->orders|POST /orders",
+      "FA002|bff->orders|POST /orders/{}/refund",
+    ]);
+  });
+
+  it("treats manifests that declare nothing as allowing nothing, and no manifests as nothing to compare", () => {
+    const none = { ...graph, declared: [] };
+    expect(evaluate(none, config).filter((f) => f.key.startsWith("FA003|undeclared")).map((f) => f.key)).toEqual([
+      "FA003|undeclared|android->bff",
+      "FA003|undeclared|bff->orders",
+      "FA003|undeclared|bff->pricing",
+      "FA003|undeclared|web->bff",
+      "FA003|undeclared|web->orders",
+    ]);
+    const unmanaged = { ...config, manifest: undefined };
+    expect(evaluate(none, unmanaged).some((f) => f.key.startsWith("FA003|undeclared"))).toBe(false);
+  });
+
   it("treats a declared public surface as called", () => {
     const open = { ...config, publicSurfaces: ["pricing|POST /discounts"] };
     expect(evaluate(graph, open).map((f) => f.key)).not.toContain("FA001|pricing|POST /discounts");
@@ -422,6 +446,33 @@ describe("schemas", () => {
     expect(() => toArazzo(twoServed, loadFlows(source, config), config, { title: "Shop flows" })).toThrow(
       "no OpenAPI description is decided for orders: SeveralServedDocuments (candidates: /v1/docs-json, /v2/docs-json); choose one and set openapi.orders",
     );
+  });
+
+  it("brings the flows a selected flow runs into the export", () => {
+    const files = loadFlows(source, config);
+    const parent = { ...files[0]!.flows[1]!.object, metadata: { name: "checkout" }, spec: { steps: [{ stepId: "place", flow: "place-order" }] } };
+    files.push({ file: "flows/checkout.flow.yaml", text: "", errors: [], flows: [{ object: parent, line: 1, stepLine: () => 1 }] });
+    const { document } = toArazzo(graph, files, { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t", flow: "checkout" });
+    expect(arazzoErrors(document)).toEqual([]);
+    const workflows = document.workflows as Array<{ workflowId: string; steps: Array<Record<string, unknown>> }>;
+    expect(workflows.map((w) => w.workflowId)).toEqual(["place-order", "checkout"]);
+    expect(workflows[1]!.steps[0]).toMatchObject({ stepId: "place", workflowId: "place-order" });
+  });
+
+  it("points an operationPath at the path key the chosen description writes", () => {
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
+    const { document } = toArazzo(unnamed, loadFlows(source, config), { ...config, openapi: { bff: "openapi/bff.json", orders: "services/orders/openapi.json" } }, {
+      title: "t",
+      flow: "view-order",
+      read: (p) => source.read(p),
+    });
+    const steps = (document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps;
+    expect(steps[1]!.operationPath).toBe("{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get");
+  });
+
+  it("refuses an export with no workflow in it", () => {
+    expect(() => toArazzo(graph, [], config, { title: "t" })).toThrow("nothing to export: no flow description is active");
+    expect(() => toArazzo(graph, loadFlows(source, config), config, { title: "t", flow: "nope" })).toThrow("nothing to export: no active flow is named nope");
   });
 
   it("rejects a step that names neither a surface, a call nor a flow", () => {

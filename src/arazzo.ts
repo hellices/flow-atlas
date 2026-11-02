@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { FlowObject, LoadedFile } from "./flows.js";
 import type { Graph } from "./model.js";
+import { documentPathKeys, operationShape } from "./extract/apidocs.js";
 
 /**
  * Flows as an Arazzo 1.0 description, for API workflow tools such as test runners. A surface becomes an OpenAPI
@@ -27,14 +28,17 @@ function parseSurfaceId(id: string): { component: string; method: string; path: 
  * `origins` entry. A served path without an origin is written as is, with a note: the origin belongs to the
  * environment, not the code. An ambiguous or missing description is an error: export never picks one.
  */
-export function documentUrl(component: string, graph: Graph, config: Config): { url: string; note?: string } {
-  if (config.openapi[component]) return { url: config.openapi[component]! };
+export function documentUrl(component: string, graph: Graph, config: Config): { url: string; note?: string; file?: string } {
+  if (config.openapi[component]) {
+    const url = config.openapi[component]!;
+    return { url, ...(/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/") ? {} : { file: url }) };
+  }
   const d = graph.apiDescriptions.find((x) => x.component === component);
   if (!d || d.status !== "chosen" || !d.location) {
     const why = d ? `${d.reason}${d.message ? ` (${d.message})` : ""}` : "NoneFound";
     throw new Error(`no OpenAPI description is decided for ${component}: ${why}; choose one and set openapi.${component}`);
   }
-  if (d.kind !== "served") return { url: d.location };
+  if (d.kind !== "served") return { url: d.location, file: d.location };
   const origin = config.origins[component];
   if (origin) return { url: `${origin.replace(/\/+$/, "")}${d.location}` };
   const doc = graph.apiDocuments.find((x) => x.component === component && x.location === d.location);
@@ -44,18 +48,57 @@ export function documentUrl(component: string, graph: Graph, config: Config): { 
   };
 }
 
-export function toArazzo(graph: Graph, files: LoadedFile[], config: Config, options: { flow?: string; title: string }): ArazzoExport {
+/**
+ * `read` gives the text of a repository file, so an operationPath can name the path key a committed description
+ * actually uses. Without it, or for a served description, the code's path is written.
+ */
+export function toArazzo(
+  graph: Graph,
+  files: LoadedFile[],
+  config: Config,
+  options: { flow?: string; title: string; read?: (path: string) => string | undefined },
+): ArazzoExport {
   const limits: string[] = [];
   const surfaces = new Map(graph.surfaces.map((s) => [s.id, s]));
   const calls = new Map(graph.calls.map((c) => [c.id, c]));
   const targets = new Map<string, string[]>();
   for (const e of graph.edges) if (e.kind === "match") (targets.get(e.from) ?? targets.set(e.from, []).get(e.from)!).push(e.to);
 
-  const flows: FlowObject[] = files
-    .flatMap((f) => f.flows.map((x) => x.object))
-    .filter((f) => (f.spec.lifecycle ?? "active") !== "deprecated" && (!options.flow || f.metadata.name === options.flow));
+  const available = new Map<string, FlowObject>();
+  for (const f of files.flatMap((x) => x.flows.map((y) => y.object))) {
+    if ((f.spec.lifecycle ?? "active") !== "deprecated" && !available.has(f.metadata.name)) available.set(f.metadata.name, f);
+  }
+  if (available.size === 0) throw new Error("nothing to export: no flow description is active");
+  if (options.flow && !available.has(options.flow)) throw new Error(`nothing to export: no active flow is named ${options.flow}`);
+  // A selected flow brings the flows its steps run, so each workflowId it names is in the export.
+  const selected = new Set<string>();
+  const queue = options.flow ? [options.flow] : [...available.keys()];
+  while (queue.length) {
+    const name = queue.shift()!;
+    if (selected.has(name)) continue;
+    selected.add(name);
+    for (const s of available.get(name)!.spec.steps) if (s.flow && available.has(s.flow)) queue.push(s.flow);
+  }
+  const flows = [...available.values()].filter((f) => selected.has(f.metadata.name));
   const names = new Set(flows.map((f) => f.metadata.name));
-  const sources = new Set<string>();
+
+  const problems: string[] = [];
+  const described = new Map<string, { url: string; keys?: Map<string, string>; file?: string } | undefined>();
+  const description = (component: string) => {
+    if (!described.has(component)) {
+      try {
+        const { url, note, file } = documentUrl(component, graph, config);
+        if (note) limits.push(note);
+        const text = file ? options.read?.(file) : undefined;
+        const keys = text === undefined ? undefined : documentPathKeys(text);
+        described.set(component, { url, ...(keys ? { keys, file } : {}) });
+      } catch (e) {
+        problems.push((e as Error).message);
+        described.set(component, undefined);
+      }
+    }
+    return described.get(component);
+  };
   const sourceCount = new Set(
     flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : s.call ? calls.get(s.call)?.to : undefined))),
   );
@@ -70,10 +113,19 @@ export function toArazzo(graph: Graph, files: LoadedFile[], config: Config, opti
       return undefined;
     }
     const name = sourceName(parsed.component);
-    sources.add(parsed.component);
+    const doc = description(parsed.component);
     const operationId = surfaces.get(surfaceId)?.operationId;
     if (operationId) return { operationId: qualify ? `$sourceDescriptions.${name}.${operationId}` : operationId };
-    return { operationPath: `{$sourceDescriptions.${name}.url}#/paths/${pointer(parsed.path)}/${parsed.method.toLowerCase()}` };
+    let key = parsed.path;
+    if (doc?.keys) {
+      const written = doc.keys.get(operationShape(parsed.method, parsed.path));
+      if (!written) {
+        limits.push(`${where}: ${doc.file} declares no ${parsed.method} ${parsed.path}`);
+        return undefined;
+      }
+      key = written;
+    }
+    return { operationPath: `{$sourceDescriptions.${name}.url}#/paths/${pointer(key)}/${parsed.method.toLowerCase()}` };
   };
 
   const workflows = flows.map((f) => {
@@ -116,18 +168,15 @@ export function toArazzo(graph: Graph, files: LoadedFile[], config: Config, opti
   });
   for (const w of workflows) if (w.steps.length === 0) limits.push(`${w.workflowId}: no step could be written as an operation`);
 
-  const problems: string[] = [];
-  const sourceDescriptions = [...sources].sort().map((component) => {
-    try {
-      const { url, note } = documentUrl(component, graph, config);
-      if (note) limits.push(note);
-      return { name: sourceName(component), url, type: "openapi" };
-    } catch (e) {
-      problems.push((e as Error).message);
-      return { name: sourceName(component), url: "", type: "openapi" };
-    }
-  });
   if (problems.length) throw new Error(problems.join("\n"));
+  const exported = workflows.filter((w) => w.steps.length > 0);
+  const sourceDescriptions = [...described]
+    .filter(([, d]) => d)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([component, d]) => ({ name: sourceName(component), url: d!.url, type: "openapi" }));
+  // Arazzo requires at least one workflow and one source description.
+  if (exported.length === 0 || sourceDescriptions.length === 0)
+    throw new Error(`nothing to export: no step of the selected flows could be written as an operation${limits.length ? `\n${limits.join("\n")}` : ""}`);
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit;
   return {
     document: {
@@ -138,7 +187,7 @@ export function toArazzo(graph: Graph, files: LoadedFile[], config: Config, opti
         description: "Generated by flow-atlas from the repository's Flow descriptions and code. Parameters, request bodies and success criteria are left for the workflow's runner.",
       },
       sourceDescriptions,
-      workflows: workflows.filter((w) => w.steps.length > 0),
+      workflows: exported,
       "x-flow-atlas-provenance": graph.provenance,
     },
     limits,

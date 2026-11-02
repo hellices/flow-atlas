@@ -7,8 +7,18 @@ import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
 
-const NEST_METHODS: Record<string, string> = { Get: "GET", Post: "POST", Put: "PUT", Patch: "PATCH", Delete: "DELETE", Sse: "GET", All: "*" };
-const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "all"]);
+const NEST_METHODS: Record<string, string> = {
+  Get: "GET",
+  Post: "POST",
+  Put: "PUT",
+  Patch: "PATCH",
+  Delete: "DELETE",
+  Head: "HEAD",
+  Options: "OPTIONS",
+  Sse: "GET",
+  All: "*",
+};
+const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
 
 function stringValue(node: ts.Node | undefined): string | undefined {
   if (!node) return undefined;
@@ -19,6 +29,26 @@ function stringValue(node: ts.Node | undefined): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * The paths a Nest decorator gives: none written means the root; a string, a list of strings or `{ path }` are read.
+ * A path the file does not spell out (a constant, an expression) is unknown, so the caller registers nothing for it.
+ */
+function decoratorPaths(args: readonly ts.Expression[]): string[] | undefined {
+  const arg = args[0];
+  if (!arg) return [""];
+  if (ts.isObjectLiteralExpression(arg)) {
+    const path = arg.properties.find((p) => ts.isPropertyAssignment(p) && p.name.getText() === "path") as ts.PropertyAssignment | undefined;
+    if (!path) return [""];
+    return decoratorPaths([path.initializer]);
+  }
+  if (ts.isArrayLiteralExpression(arg)) {
+    const paths = arg.elements.map((e) => stringValue(e));
+    return paths.length && paths.every((p) => p !== undefined) ? (paths as string[]) : undefined;
+  }
+  const path = stringValue(arg);
+  return path === undefined ? undefined : [path];
 }
 
 function decorators(node: ts.Node): ts.Decorator[] {
@@ -73,12 +103,12 @@ export function routesFromTypeScript(file: string, text: string, spec: RouteSour
 
   const visit = (node: ts.Node): void => {
     if (styles.has("nest") && ts.isClassDeclaration(node)) {
-      let base: string | undefined;
+      let bases: string[] | undefined;
       for (const d of decorators(node)) {
         const call = decoratorCall(d);
-        if (call?.name === "Controller") base = stringValue(call.args[0]) ?? "";
+        if (call?.name === "Controller") bases = decoratorPaths(call.args);
       }
-      if (base !== undefined) {
+      if (bases !== undefined) {
         const className = node.name?.text;
         for (const member of node.members) {
           const explicit = decorators(member)
@@ -91,7 +121,9 @@ export function routesFromTypeScript(file: string, text: string, spec: RouteSour
           for (const d of decorators(member)) {
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
-            if (call && method) add(method, joinRoute(base, stringValue(call.args[0]) ?? ""), member, member, operationId);
+            const paths = call && method ? decoratorPaths(call.args) : undefined;
+            if (!paths) continue;
+            for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
           }
         }
       }
@@ -120,7 +152,7 @@ export function routesFromTypeScript(file: string, text: string, spec: RouteSour
   return out;
 }
 
-const FASTAPI = /@(\w+)\.(get|post|put|patch|delete|api_route)\(\s*["']([^"']+)["']/g;
+const FASTAPI = /@(\w+)\.(get|post|put|patch|delete|head|options|api_route)\(\s*["']([^"']+)["']/g;
 
 export function routesFromPython(file: string, text: string, spec: RouteSource): Surface[] {
   const out: Surface[] = [];

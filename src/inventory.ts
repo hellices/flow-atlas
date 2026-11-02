@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { DOCUMENT_FILE, servedDocuments } from "./extract/apidocs.js";
+import { DOCUMENT_FILE, documentStart, servedDocuments } from "./extract/apidocs.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
 
@@ -77,8 +77,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
   const apiDocuments: ApiDocument[] = [];
   for (const file of all.filter((f) => DOCUMENT_FILE.test(f))) {
     const text = source.read(file) ?? "";
-    const m = /^\s*["']?(openapi|swagger)["']?\s*:/m.exec(text);
-    if (m) apiDocuments.push({ component: ownerOf(file, components), kind: "file", location: file, convention: "committed", at: { file, line: lineOf(text, m.index) }, evidence: "text" });
+    const start = documentStart(text);
+    if (start !== undefined)
+      apiDocuments.push({ component: ownerOf(file, components), kind: "file", location: file, convention: "committed", at: { file, line: lineOf(text, start) }, evidence: "text" });
   }
   for (const file of code) {
     const text = source.read(file);

@@ -154,7 +154,7 @@ function analyze(o: Options, config: Config, ref: string | undefined): Analysis 
   const source = openSource(o.root, ref);
   const graph = scan(source, config, { root: o.root, requested: ref ?? "WORKTREE" });
   const flows = resolveFlows(graph, loadFlows(source, config, o.out), source.asOf());
-  const findings = evaluate(graph, config);
+  const findings = evaluate(graph, config, graph.limits);
   if (ruleEnabled(config, "FA007")) findings.push(...flowFindings(flows));
   return { graph, flows, findings: findings.sort((a, b) => a.key.localeCompare(b.key)) };
 }
@@ -483,7 +483,11 @@ function cmdExport(o: Options): number {
   const config = configFor(o);
   const source = openSource(o.root, o.ref);
   const graph = scan(source, config, { root: o.root, requested: o.ref ?? "WORKTREE" });
-  const { document, limits } = toArazzo(graph, loadFlows(source, config, o.out), config, { flow: o.flow, title: `Flows of ${basename(o.root)}` });
+  const { document, limits } = toArazzo(graph, loadFlows(source, config, o.out), config, {
+    flow: o.flow,
+    title: `Flows of ${basename(o.root)}`,
+    read: (path) => source.read(path),
+  });
   process.stdout.write(o.format === "json" ? `${JSON.stringify(document, null, 2)}\n` : stringify(document, { lineWidth: 0 }));
   for (const l of limits) process.stderr.write(`limit: ${l}\n`);
   return 0;
