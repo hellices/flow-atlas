@@ -24,7 +24,7 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g },
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g },
   { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g },
-  { style: "spring", re: /@(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g },
+  { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g },
 ];
 

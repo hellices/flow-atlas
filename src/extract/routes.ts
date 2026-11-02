@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
-import { routesFromSpring } from "./spring.js";
+import { routesFromSpring, type Views } from "./spring.js";
 import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
@@ -309,9 +309,15 @@ function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
 }
 
 /** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
-function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Found; evidence: Surface["evidence"] } | undefined {
+function handlerPlace(
+  texts: Map<string, string>,
+  operationId: string,
+  method: string,
+  key: string,
+  siblings: Set<string>,
+): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
-  for (const name of handlerNames(operationId, method, key)) {
+  for (const name of handlerNames(operationId, method, key, siblings)) {
     for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
     if (hits.length) break;
   }
@@ -361,6 +367,7 @@ function documentedSurfaces(
   // Matched by method and path with parameters unnamed: the document may name them differently from the code.
   const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
   const out: Surface[] = [];
+  const ids = new Set(api.operations.flatMap((o) => (o.operationId ? [o.operationId] : [])));
   for (const op of api.operations) {
     const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
     const known = byShape.get(operationShape(op.method, op.path));
@@ -369,7 +376,7 @@ function documentedSurfaces(
       if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
       continue;
     }
-    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key, ids) : undefined;
     const handler = place && reach ? handlerNode(reach, place.at) : undefined;
     const surface: Surface = {
       id,
@@ -410,7 +417,7 @@ export function extractRoutes(
 ): Surface[] {
   const out: Surface[] = [];
   // View names Spring handlers render; their templates' requests are what the route leads to.
-  const views = new Map<string, string[]>();
+  const views: Views = new Map();
   const codeFiles = new Map<string, Set<string>>();
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
@@ -443,9 +450,21 @@ export function extractRoutes(
   }
   if (executed && views.size) {
     const templates = source.list().filter((f) => /(^|\/)templates\/.+\.html$/.test(f));
-    for (const [id, names] of views) {
+    const files = new Set(templates);
+    for (const [id, { file, names }] of views) {
       const runs = executed.get(id) ?? executed.set(id, new Set()).get(id)!;
-      for (const name of names) for (const t of templates) if (t.endsWith(`templates/${name}.html`)) runs.add(`${t}:*${name}`);
+      // Spring Boot's Thymeleaf resolver: classpath:/templates/<name>.html of the application the handler belongs to.
+      const module = /^(?:(.*)\/)?src\/main\/(?:java|kotlin)\//.exec(file);
+      for (const name of names) {
+        if (module) {
+          const t = `${module[1] ? `${module[1]}/` : ""}src/main/resources/templates/${name}.html`;
+          if (files.has(t)) runs.add(`${t}:*${name}`);
+          continue;
+        }
+        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`));
+        if (found.length === 1) runs.add(`${found[0]}:*${name}`);
+        else if (found.length > 1) limits.push(`routes ${id}: view ${name} names ${found.length} templates (${found.join(", ")}); none is linked`);
+      }
     }
   }
   return unique(out);

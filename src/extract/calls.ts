@@ -188,10 +188,67 @@ export function callsFromText(file: string, original: string, spec: CallSource):
   return out;
 }
 
-/** `@{/path(params)}` in a Thymeleaf template; `~/` makes a path server-relative and is read the same way. */
-const LINK_EXPRESSION = /@\{\s*~?(\/[^(){}\s]*(?:\{[^{}]*\}[^(){}\s]*)*)\s*(?:\([^)]*\))?\s*\}/g;
-/** A root-relative URL written as an attribute value: `href="/x"`, `action="/x"`, `data-api-url="/x"`. */
-const URL_ATTRIBUTE = /\b((?:th:)?(?:href|action|src|formaction)|data-[\w-]+)\s*=\s*["'](\/(?!\/)[^"'\s?#]*)/g;
+// The template with inert comments blanked (newlines and offsets kept): plain HTML comments and Thymeleaf's
+// parser-level comments, which both start with "<!--". Thymeleaf's prototype-only block, opened by "<!--/*/" and
+// closed by "/*/-->", is processed, so only its two markers are blanked.
+export function withoutHtmlComments(text: string): string {
+  const out = text.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = text.indexOf("<!--");
+  while (i >= 0) {
+    if (text.startsWith("<!--/*/", i)) {
+      blank(i, i + 7);
+      const close = text.indexOf("/*/-->", i + 7);
+      if (close < 0) break;
+      blank(close, close + 6);
+      i = text.indexOf("<!--", close + 6);
+      continue;
+    }
+    const close = text.indexOf("-->", i + 4);
+    const end = close < 0 ? text.length : close + 3;
+    blank(i, end);
+    i = text.indexOf("<!--", end);
+  }
+  return out.join("");
+}
+
+/** A root-relative URL written as an attribute value: `href="/x"`, `action="/x"`, `data-api-url="/x"`, in any case. */
+const URL_ATTRIBUTE = /\b((?:th:)?(?:href|action|src|formaction)|data-[\w-]+)\s*=\s*["'](\/(?!\/)[^"'\s?#]*)/gi;
+
+/**
+ * The path of the Thymeleaf link expression starting at `@{`: its `/...` literal with `{name}` placeholders, up to
+ * the parameter list or the closing brace. The parameters may hold any expression; they are not read.
+ */
+function linkPath(text: string, at: number): string | undefined {
+  let i = at + 2;
+  while (/\s/.test(text[i] ?? "")) i++;
+  if (text[i] === "~") i++;
+  if (text[i] !== "/") return undefined;
+  let path = "";
+  while (i < text.length) {
+    const c = text[i]!;
+    if (c === "{") {
+      const close = text.indexOf("}", i);
+      if (close < 0) return undefined;
+      path += text.slice(i, close + 1);
+      i = close + 1;
+      continue;
+    }
+    if (c === "(" || c === "}" || /\s/.test(c)) break;
+    path += c;
+    i++;
+  }
+  return path;
+}
+
+/** The tag that holds `index`: from its `<` to its `>`. */
+function tagAt(text: string, index: number): { start: number; text: string } {
+  const start = text.lastIndexOf("<", index);
+  const end = text.indexOf(">", index);
+  return { start, text: text.slice(start, end === -1 ? undefined : end + 1) };
+}
 
 /**
  * The attribute whose value holds `index`, lower-cased. Inside `th:attr="a=@{..},b=@{..}"`, and its `attrappend` and
@@ -214,28 +271,55 @@ function attributeAt(text: string, index: number): string | undefined {
   return undefined;
 }
 
-/** The method a request from an attribute uses: GET for links, the form's method for an action, any for data values. */
+/** Whether Thymeleaf replaces a plain attribute of the tag: `th:href` for `href`, or an item of `th:attr` naming it. */
+function overridden(tag: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\bth:${escaped}\\s*=`, "i").test(tag)) return true;
+  const attr = /\bth:attr(?:append|prepend)?\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag);
+  const items = attr ? (attr[2] ?? attr[3] ?? "") : "";
+  return new RegExp(`(?:^|,)\\s*${escaped}\\s*=`, "i").test(items);
+}
+
+const methodOf = (tag: string, plain: string): string | undefined =>
+  new RegExp(`\\bth:${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1] ?? new RegExp(`(?<![\\w:-])${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1];
+
+/** The `<form>` a submit control belongs to: the one its `form` attribute names, else the one around it. */
+function formOf(text: string, index: number, control: string): string | undefined {
+  const id = /(?<![\w:-])form\s*=\s*["']([^"']+)["']/i.exec(control)?.[1];
+  if (id) {
+    const named = new RegExp(`<form\\b[^>]*\\bid\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`, "i").exec(text);
+    if (named) return named[0];
+  }
+  const open = text.toLowerCase().lastIndexOf("<form", index);
+  if (open < 0 || text.toLowerCase().lastIndexOf("</form", index) > open) return undefined;
+  return tagAt(text, open + 1).text;
+}
+
+/**
+ * The method a request from an attribute uses: GET for links; a form's `th:method` (PUT, DELETE through Spring's hidden
+ * method field) or `method`; a submit control's `formmethod`, else its form's; any method for a `data-*` URL.
+ */
 function templateMethod(text: string, index: number, attribute: string | undefined): string {
   const name = attribute?.replace(/^th:/, "");
   if (name === "href" || name === "src") return "GET";
-  if (name === "action" || name === "formaction") {
-    const tagStart = text.lastIndexOf("<", index);
-    const tagEnd = text.indexOf(">", index);
-    const tag = text.slice(tagStart, tagEnd === -1 ? undefined : tagEnd);
-    // th:method (PUT, DELETE through Spring's hidden method field) wins over the HTML method.
-    const method = /\bth:method\s*=\s*["']([A-Za-z]+)["']/.exec(tag)?.[1] ?? /\bmethod\s*=\s*["']([A-Za-z]+)["']/.exec(tag)?.[1];
-    return method ? method.toUpperCase() : "GET";
+  const tag = tagAt(text, index).text;
+  if (name === "action") return (methodOf(tag, "method") ?? "GET").toUpperCase();
+  if (name === "formaction") {
+    const form = formOf(text, index, tag);
+    return (methodOf(tag, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
   }
   return "*";
 }
 
 /**
- * Requests an HTML template makes: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) and root-relative URLs
- * in `href`, `action`, `src` and `data-*` attributes. A `{name}` placeholder is any segment text. A `data-*` URL that
- * ends in `/` is a base a script appends to, so it stands for one more segment. Absolute URLs name other sites and are
- * not read.
+ * Requests an HTML template makes: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`), root-relative URLs in
+ * `href`, `action`, `src`, `formaction` and `data-*` attributes (in any case; a plain attribute Thymeleaf replaces is
+ * not requested), and requests in inline scripts, read as JavaScript. A `{name}` placeholder is any segment text. A
+ * `data-*` URL that ends in `/` is a base a script appends to, so it stands for one more segment. Commented-out markup
+ * and absolute URLs, which name other sites, are not read.
  */
-export function callsFromTemplate(file: string, text: string, spec: CallSource): Draft<Call>[] {
+export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
+  const text = withoutHtmlComments(original);
   const out: Draft<Call>[] = [];
   const seen = new Set<number>();
   const add = (raw: string, index: number) => {
@@ -255,8 +339,23 @@ export function callsFromTemplate(file: string, text: string, spec: CallSource):
       evidence: "text",
     });
   };
-  for (const m of text.matchAll(LINK_EXPRESSION)) add(m[1]!, m.index ?? 0);
-  for (const m of text.matchAll(URL_ATTRIBUTE)) add(m[2]!, (m.index ?? 0) + m[0].length - m[2]!.length);
+  for (let at = text.indexOf("@{"); at >= 0; at = text.indexOf("@{", at + 2)) {
+    const path = linkPath(text, at);
+    if (path) add(path, at);
+  }
+  for (const m of text.matchAll(URL_ATTRIBUTE)) {
+    const name = m[1]!.toLowerCase();
+    const index = (m.index ?? 0) + m[0].length - m[2]!.length;
+    if (!name.startsWith("th:") && overridden(tagAt(text, index).text, name)) continue;
+    add(m[2]!, index);
+  }
+  // Inline scripts, without a src: their requests, at their lines in the template.
+  for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    if (/\bsrc\s*=/i.test(m[1]!) || /\btype\s*=\s*["'](?!text\/javascript|module|application\/javascript)[^"']*["']/i.test(m[1]!)) continue;
+    const bodyStart = (m.index ?? 0) + m[0].indexOf(">") + 1;
+    const shift = lineOf(text, bodyStart) - 1;
+    for (const c of callsFromTypeScript(`${file}.js`, m[2]!, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
+  }
   return out.sort((a, b) => a.at.line - b.at.line);
 }
 

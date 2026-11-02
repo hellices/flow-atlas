@@ -81,9 +81,17 @@ export function holeMatches(pattern: string, text: string): boolean {
 }
 
 /** A route segment `:id`/`{id}` matches anything; a call segment's interpolations match any text, its fixed text must agree. */
+/** A last route segment that takes the rest of the path, none or many segments: Spring's `{*rest}` and `**`. */
+const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
+
 export function pathsMatch(routePath: string, call: string): boolean {
-  const r = segments(routePath);
-  const c = segments(call);
+  let r = segments(routePath);
+  let c = segments(call);
+  if (isCatchAll(r[r.length - 1])) {
+    r = r.slice(0, -1);
+    if (c.length < r.length) return false;
+    c = c.slice(0, r.length);
+  }
   if (r.length !== c.length) return false;
   return r.every((seg, i) => {
     const part = c[i]!;

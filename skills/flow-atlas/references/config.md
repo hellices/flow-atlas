@@ -98,17 +98,24 @@ format strings (`%s`, `%d`) and `{x}` become wildcards; the verb comes from the 
 from the last `fun`, `func` or `def` before it. FastAPI
 decorators are read from Python. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
-it, in Java and Kotlin, and the POST endpoints `formLogin()` and `logout()` give Spring Security; a handler that returns
-a view name (`return "movies/detail"`) leads to the requests in `templates/movies/detail.html`. A route source's
+it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
+`formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers
+nothing. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
+`src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
+looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
-HTML files in a call source are read as templates: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) and
-root-relative URLs in `href`, `action`, `src` and `data-*` attributes. A link is a GET, a form action takes the form's
-`method` or `th:method`, and a `data-*` URL, read by a script, is any method; a `data-*` URL ending in `/` is a base the
-script appends a segment to. Absolute URLs name other sites and are skipped.
+HTML files in a call source are read as templates: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`),
+root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*` attributes, and requests in inline scripts. A
+link is a GET; a form action takes the form's `th:method` or `method`; a submit button's `formaction` takes its
+`formmethod`, else its form's; a `data-*` URL, read by a script, is any method, and one ending in `/` is a base the
+script appends a segment to. A plain attribute Thymeleaf replaces (`href` next to `th:href`) is not requested, and
+commented-out markup and absolute URLs, which name other sites, are skipped.
 
-Where a call names a fixed segment, it matches the route that names it too over one with a parameter there
-(`/movies/search` over `/movies/{id}`), as routers choose.
+Routers differ in which of several matching routes serves a request. Spring picks the most specific (fewer variables,
+then fewer wildcards, then the longer pattern), so for a `spring` component a request whose path is fully known reaches
+that route only (`/movies/search`, not `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
+which atlas does not read, so there a request reaches every route it fits.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several

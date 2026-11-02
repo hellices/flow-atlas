@@ -85,13 +85,13 @@ export function describedOperations(file: string, text: string): DescribedApi | 
 /**
  * Names a handler may carry, given how common generators derive an operationId from it: the id itself, the method of
  * a NestJS `Class_method` id, and the function of a FastAPI `{function}{path}_{method}` id. springdoc uses the method
- * name as it is, with `_1`, `_2` appended when several methods share it.
+ * name as it is, with `_1`, `_2` appended to the later methods that share it (`siblings`: the document's other ids).
  *
  * A Nest id joins the class and the method with `_`, and either may hold `_` itself, so every split after a class-like
  * prefix (an identifier that starts upper-case, as class names do) is a candidate, the longest method first:
  * `Admin_APIController_list` gives `APIController_list`, then `list`. The caller keeps the first that the code defines.
  */
-export function handlerNames(operationId: string, method: string, rawPath: string): string[] {
+export function handlerNames(operationId: string, method: string, rawPath: string, siblings: Set<string> = new Set()): string[] {
   const names = [operationId];
   if (/^[A-Z$][\w$]*$/.test(operationId)) {
     for (let i = operationId.indexOf("_"); i > 0; i = operationId.indexOf("_", i + 1)) {
@@ -99,8 +99,10 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
       if (/^[A-Za-z$][\w$]*$/.test(member)) names.push(member);
     }
   }
+  // springdoc numbers the later methods that share a name, so a numbered id stands for a name only when the document
+  // also holds the name itself; `health_2024` alone is an id of its own.
   const springdoc = /^([A-Za-z_$][\w$]*?)_\d+$/.exec(operationId);
-  if (springdoc) names.push(springdoc[1]!);
+  if (springdoc && siblings.has(springdoc[1]!)) names.push(springdoc[1]!);
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));
   return [...new Set(names)];

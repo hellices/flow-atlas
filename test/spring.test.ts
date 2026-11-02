@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,9 @@ import { normalizeConfig } from "../src/config.js";
 import { callsFromTemplate } from "../src/extract/calls.js";
 import { handlerNames } from "../src/extract/openapi.js";
 import { extractRoutes } from "../src/extract/routes.js";
-import { routesFromSpring } from "../src/extract/spring.js";
+import { routesFromSpring, type Views } from "../src/extract/spring.js";
+import { documentUrl } from "../src/arazzo.js";
+import { inventory } from "../src/inventory.js";
 import { matchCalls } from "../src/match.js";
 import type { Call, Surface } from "../src/model.js";
 import { scan } from "../src/scan.js";
@@ -70,11 +72,59 @@ describe("Spring routes", () => {
       "}",
     ].join("\n");
     expect(routes(text)).toEqual(["POST /signin 3", "POST /logout 4"]);
-    expect(routes('http.formLogin(f -> f.loginProcessingUrl("/auth").loginPage("/signin")).logout(l -> l.logoutUrl("/bye"));')).toEqual(["POST /auth 1", "POST /bye 1"]);
+    const config = (chain: string) => routes(`SecurityFilterChain chain(HttpSecurity http) { ${chain} }`);
+    expect(config('http.formLogin(f -> f.loginProcessingUrl("/auth").loginPage("/signin")).logout(l -> l.logoutUrl("/bye"));')).toEqual(["POST /auth 1", "POST /bye 1"]);
+    expect(config('http.formLogin().loginPage("/signin").and().logout().logoutUrl("/bye");')).toEqual(["POST /signin 1", "POST /bye 1"]);
+    expect(config("http.formLogin(withDefaults()).logout(withDefaults());")).toEqual(["POST /login 1", "POST /logout 1"]);
   });
 
-  it("collects the views a handler renders, not its redirects", () => {
-    const views = new Map<string, string[]>();
+  it("registers nothing for a disabled configurer or a URL held in a constant", () => {
+    const config = (chain: string) => routes(`SecurityFilterChain chain(HttpSecurity http) { ${chain} }`);
+    expect(config("http.formLogin(AbstractHttpConfigurer::disable).logout(l -> l.disable());")).toEqual([]);
+    expect(config("http.formLogin(f -> f.loginProcessingUrl(LOGIN_URL)).logout(l -> l.logoutUrl(Paths.OUT));")).toEqual([]);
+    expect(config("http.logout(l -> l.logoutRequestMatcher(matcher));")).toEqual([]);
+    expect(routes("class C { void out(HttpServletRequest request) { request.logout(); } }")).toEqual([]);
+  });
+
+  it("takes a type's mapping only for the type whose body holds the handler", () => {
+    const text = [
+      '@RestController @RequestMapping("/api")',
+      "class Outer {",
+      "  static class Request { String name; }",
+      '  @GetMapping("/items") List<Item> items() { return null; }',
+      '  @RequestMapping("/nested") static class Inner {',
+      '    @GetMapping("/x") String x() { return null; }',
+      "  }",
+      '  @GetMapping("/after") String after() { return null; }',
+      "}",
+    ].join("\n");
+    expect(routes(text)).toEqual(["GET /api/items 4", "GET /nested/x 6", "GET /api/after 8"]);
+  });
+
+  it("unites a type's methods with a handler's, as Spring combines them", () => {
+    const text = [
+      '@RequestMapping(path = "/api", method = RequestMethod.GET)',
+      "class Api {",
+      '  @RequestMapping("/items") List<Item> items() { return null; }',
+      '  @PostMapping("/items") Item create() { return null; }',
+      '  @RequestMapping(path = "/trace", method = RequestMethod.TRACE) void trace() {}',
+      '  @RequestMapping(path = "/dyn", method = METHODS) void dyn() {}',
+      "}",
+    ].join("\n");
+    expect(routes(text)).toEqual(["GET /api/items 3", "GET /api/items 4", "POST /api/items 4", "GET /api/trace 5", "TRACE /api/trace 5"]);
+  });
+
+  it("keeps commas inside a path literal and catch-all segments", () => {
+    const text = ['class A {', '  @GetMapping("/items/{id:[0-9]{1,3}}") void a() {}', '  @GetMapping("/files/{*rest}") void b() {}', '  @GetMapping({"/x", "/y"}) void c() {}', "}"].join("\n");
+    expect(routes(text)).toEqual(["GET /items/{id} 2", "GET /files/{*rest} 3", "GET /x 4", "GET /y 4"]);
+  });
+
+  it("does not read an annotation written in a string", () => {
+    expect(routes('class A { String label = "@GetMapping"; String other = "@RequestMapping(\\"/x\\")"; }')).toEqual([]);
+  });
+
+  it("collects the views a handler renders, not its redirects or response bodies", () => {
+    const views: Views = new Map();
     const text = [
       "@Controller",
       "class Web {",
@@ -84,12 +134,19 @@ describe("Spring routes", () => {
       '    return "reviews/detail";',
       "  }",
       '  @GetMapping("/legacy") ModelAndView legacy() { return new ModelAndView("legacy/page"); }',
+      '  @ResponseBody @GetMapping("/ping") String ping() { return "pong"; }',
+      "}",
+      "@RestController",
+      "class Api {",
+      '  @GetMapping("/health") String health() { return "health"; }',
+      '  @GetMapping("/page") ModelAndView page() { return new ModelAndView("api/page"); }',
       "}",
     ].join("\n");
     routesFromSpring("Web.java", text, spec, views);
-    expect([...views]).toEqual([
+    expect([...views].map(([id, v]) => [id, v.names])).toEqual([
       ["server|GET /reviews/{id}", ["reviews/detail"]],
       ["server|GET /legacy", ["legacy/page"]],
+      ["server|GET /page", ["api/page"]],
     ]);
   });
 });
@@ -120,17 +177,53 @@ describe("template calls", () => {
       "GET /plain 7",
     ]);
   });
+
+  it("reads links whose parameters hold nested expressions", () => {
+    expect(calls('<a th:href="@{/items/{id}(id=${item.getOwner().getId()})}">x</a>')).toEqual(["GET /items/{} 1"]);
+  });
+
+  it("skips commented-out markup but reads Thymeleaf prototype-only blocks", () => {
+    const html = ['<!-- <a th:href="@{/api/retired}">old</a> -->', '<!--/* <a href="/hidden">x</a> */-->', '<!--/*/ <a th:href="@{/shown}">y</a> /*/-->'].join("\n");
+    expect(calls(html)).toEqual(["GET /shown 3"]);
+  });
+
+  it("does not request a plain attribute Thymeleaf replaces", () => {
+    const html = ['<a href="/mock" th:href="@{/real}">x</a>', '<form action="/mock" th:action="@{/save}" method="post"></form>', '<div data-api-url="/mock" th:attr="data-api-url=@{/api/real}"></div>'].join("\n");
+    expect(calls(html)).toEqual(["GET /real 1", "POST /save 2", "* /api/real 3"]);
+  });
+
+  it("reads attributes in any case and requests in inline scripts", () => {
+    const html = ['<A HREF="/orders">o</A>', '<FORM ACTION="/orders" METHOD="POST"></FORM>', "<script>", '  fetch("/api/reviews");', "</script>", '<script src="/js/app.js"></script>'].join("\n");
+    expect(calls(html)).toEqual(["GET /orders 1", "POST /orders 2", "GET /api/reviews 4"]);
+  });
+
+  it("takes a submit button's method from formmethod, else its form", () => {
+    const html = ['<form method="post">', '  <button formaction="/save">s</button>', '  <button formmethod="delete" formaction="/drop">d</button>', "</form>", '<button form="f" formaction="/out">o</button><form id="f" method="put"></form>'].join("\n");
+    expect(calls(html)).toEqual(["POST /save 2", "DELETE /drop 3", "PUT /out 5"]);
+  });
 });
 
 describe("matching", () => {
-  it("prefers a fixed segment over a parameter, per method", () => {
+  it("picks Spring's most specific route for a fully known path, and keeps every route elsewhere", () => {
     const surface = (method: string, path: string): Surface => ({ id: `s|${method} ${path}`, component: "s", method, path, at: { file: "a", line: 1 }, evidence: "text" });
     const call = (method: string, path: string): Call => ({ id: `c|${method} ${path}`, from: "w", to: "s", method, path, at: { file: "b", line: 1 }, evidence: "text", based: false });
     const surfaces = [surface("GET", "/api/movies/search"), surface("GET", "/api/movies/{tmdbId}"), surface("POST", "/api/movies/{tmdbId}")];
     const calls = [call("*", "/api/movies/search"), call("GET", "/api/movies/{}")];
-    const { targetsOf } = matchCalls({ surfaces, calls });
-    expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|POST /api/movies/{tmdbId}"]);
-    expect(targetsOf.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    const ranked = matchCalls({ surfaces, calls }, new Set(["s"])).targetsOf;
+    expect(ranked.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|POST /api/movies/{tmdbId}"]);
+    expect(ranked.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    // Express and the like follow registration order, which is not read: every route the request fits stays.
+    expect(matchCalls({ surfaces, calls }).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
+    // Spring prefers fewer variables: /a/{x}/c/d over /a/b/{x}/{y}.
+    const spring = [surface("GET", "/a/b/{x}/{y}"), surface("GET", "/a/{x}/c/d")];
+    expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Set(["s"])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
+  });
+
+  it("matches a catch-all against the rest of the path", () => {
+    const surface = (path: string): Surface => ({ id: `s|GET ${path}`, component: "s", method: "GET", path, at: { file: "a", line: 1 }, evidence: "text" });
+    const call = (path: string): Call => ({ id: `c|${path}`, from: "w", to: "s", method: "GET", path, at: { file: "b", line: 1 }, evidence: "text", based: false });
+    const { targetsOf } = matchCalls({ surfaces: [surface("/files/{*rest}"), surface("/static/**")], calls: [call("/files/a/b"), call("/static"), call("/other/a")] });
+    expect([0, 1, 2].map((i) => targetsOf.get(i)?.map((s) => s.id) ?? [])).toEqual([["s|GET /files/{*rest}"], ["s|GET /static/**"], []]);
   });
 });
 
@@ -178,9 +271,9 @@ describe("a server-rendered Spring app", () => {
     ]);
   });
 
-  it("guesses a handler from springdoc's numbered operationIds", () => {
-    expect(handlerNames("get_1", "GET", "/api/reviews/{id}")).toEqual(["get_1", "get"]);
-    expect(handlerNames("create_12", "POST", "/x")).toContain("create");
+  it("guesses a handler from springdoc's numbered operationIds only when the document holds the name too", () => {
+    expect(handlerNames("get_1", "GET", "/api/reviews/{id}", new Set(["get", "get_1"]))).toEqual(["get_1", "get"]);
+    expect(handlerNames("health_2024", "GET", "/health", new Set(["health_2024"]))).toEqual(["health_2024"]);
   });
 });
 
@@ -188,19 +281,81 @@ describe("export with a document outside the repository", () => {
   it("reads the document from disk to resolve operations", () => {
     const fixture = fileURLToPath(new URL("../fixtures/shop", import.meta.url));
     const out = mkdtempSync(join(tmpdir(), "atlas-abs-"));
-    const doc = join(out, "orders.json");
-    writeFileSync(doc, JSON.stringify({ openapi: "3.1.0", paths: { "/orders/{orderId}": { get: { operationId: "OrdersFromDisk" } } } }));
-    writeFileSync(join(out, "atlas.config.yaml"), `${new WorktreeSource(fixture).read("atlas.config.yaml")}\nopenapi:\n  bff: openapi/bff.json\n  orders: ${doc}\n`);
-    let text = "";
-    const o = vi.spyOn(process.stdout, "write").mockImplementation((c) => ((text += String(c)), true));
-    const e = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      expect(main(["export", "arazzo", "--root", fixture, "--out", out, "--config", join(out, "atlas.config.yaml"), "--flow", "view-order"])).toBe(0);
+      const doc = join(out, "orders.json");
+      writeFileSync(doc, JSON.stringify({ openapi: "3.1.0", paths: { "/orders/{orderId}": { get: { operationId: "OrdersFromDisk" } } } }));
+      writeFileSync(join(out, "atlas.config.yaml"), `${new WorktreeSource(fixture).read("atlas.config.yaml")}\nopenapi:\n  bff: openapi/bff.json\n  orders: ${doc}\n`);
+      let text = "";
+      const o = vi.spyOn(process.stdout, "write").mockImplementation((c) => ((text += String(c)), true));
+      const e = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        expect(main(["export", "arazzo", "--root", fixture, "--out", out, "--config", join(out, "atlas.config.yaml"), "--flow", "view-order"])).toBe(0);
+      } finally {
+        o.mockRestore();
+        e.mockRestore();
+      }
+      expect(text).toContain("operationId: $sourceDescriptions.orders.OrdersFromDisk");
     } finally {
-      o.mockRestore();
-      e.mockRestore();
+      rmSync(out, { recursive: true, force: true });
     }
-    expect(text).toContain("operationId: $sourceDescriptions.orders.OrdersFromDisk");
+  });
+
+  it("takes a chosen path that names a directory as served, not as a file", () => {
+    const out = mkdtempSync(join(tmpdir(), "atlas-dir-"));
+    try {
+      const graph = { apiDescriptions: [], apiDocuments: [] } as unknown as Parameters<typeof documentUrl>[1];
+      const config = normalizeConfig({ openapi: { svc: out }, origins: { svc: "https://svc.example" } });
+      expect(documentUrl("svc", graph, config)).toEqual({ url: `https://svc.example${out}` });
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("templates of several applications", () => {
+  it("links a view to its own application's template only", () => {
+    const controller = (pkg: string) => `@Controller\nclass Home {\n  @GetMapping("/${pkg}") String home() { return "index"; }\n}`;
+    const files = {
+      "shop/src/main/java/shop/Home.java": controller("shop"),
+      "admin/src/main/java/admin/Home.java": controller("admin"),
+      "shop/src/main/resources/templates/index.html": '<a href="/shop/cart">cart</a>',
+      "admin/src/main/resources/templates/index.html": '<a href="/admin/users">users</a>',
+    };
+    const config = normalizeConfig({
+      components: [
+        { name: "shop", path: "shop" },
+        { name: "admin", path: "admin" },
+      ],
+      routes: [
+        { component: "shop", files: ["shop/src/main/java/**/*.java"], styles: ["spring"] },
+        { component: "admin", files: ["admin/src/main/java/**/*.java"], styles: ["spring"] },
+      ],
+      calls: [
+        { from: "shop", to: "shop", files: ["shop/src/main/resources/templates/**/*.html"] },
+        { from: "admin", to: "admin", files: ["admin/src/main/resources/templates/**/*.html"] },
+      ],
+    });
+    const graph = scan(memory(files), config);
+    const reach = graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${graph.calls.find((c) => c.id === e.to)!.path}`);
+    expect(reach.sort()).toEqual(["admin|GET /admin -> /admin/users", "shop|GET /shop -> /shop/cart"]);
+  });
+
+  it("reports a view outside the standard layout that several templates could be", () => {
+    const files = {
+      "app/Home.java": '@Controller\nclass Home {\n  @GetMapping("/") String home() { return "index"; }\n}',
+      "a/templates/index.html": "",
+      "b/templates/index.html": "",
+    };
+    const limits: string[] = [];
+    extractRoutes(memory(files), normalizeConfig({ routes: [{ component: "app", files: ["app/*.java"], styles: ["spring"] }] }), undefined, [], limits, new Map());
+    expect(limits).toEqual(["routes app|GET /: view index names 2 templates (a/templates/index.html, b/templates/index.html); none is linked"]);
+  });
+});
+
+describe("inventory", () => {
+  it("proposes controllers that write the annotations' full names", () => {
+    const files = { "Api.java": "@org.springframework.web.bind.annotation.RestController\nclass Api {\n  @org.springframework.web.bind.annotation.GetMapping(\"/x\") void x() {}\n}" };
+    expect(inventory(memory(files), []).routes.map((r) => `${r.style} ${r.count}`)).toEqual(["spring 1"]);
   });
 });
 
