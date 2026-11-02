@@ -120,7 +120,8 @@ Arazzo의 실행 의미는 가져오지 않았다. `parameters`, `requestBody`, 
 않는다. `atlas export arazzo`가 Flow를 Arazzo 1.0 문서로 내보낸다. 라우트에 operationId가 있으면 `operationId`로, 없으면
 `operationPath`(`{$sourceDescriptions.bff.url}#/paths/~1orders~1{id}/get`)로 쓴다. 저장소에 둔 문서가 고른 설명이면 그 문서가 쓴 경로 키(`{orderId}`처럼 코드와 다른 파라미터 이름)를 따르고,
 문서에 없는 작업은 단계에서 빼고 알린다. `--flow`로 고른 흐름이 부르는 하위 흐름은 함께 내보내고, 내보낼 워크플로가 하나도 없으면 멈춘다. 각 컴포넌트의 OpenAPI 문서는 도구가 찾는다.
-후보가 여럿이면 코드로 가릴 수 있을 때만 고른다. 작성자가 `openapi`에 적은 것이 먼저이고, 그다음은 코드의 라우트를
+후보가 여럿이면 코드로 가릴 수 있을 때만 고른다. 작성자가 `openapi`에 적은 것이 먼저이고, 그다음은 라우트를 읽으라고
+설정(`routes[].openapi`)에 준 문서(`ReadForRoutes`), 그다음은 코드의 라우트를
 모두 담은 저장소 파일 하나, 그다음은 코드가 내보내는 문서 하나다. 같은 문서를 보여 주는 swagger-ui 경로는 그 문서로 묶는다
 (예를 들어 swagger-ui의 `/docs/swagger/json`이 `uiConfig.url`로 `/openapi.json`을 보여 주면 그 별칭이다). 라우트가 빠진 저장소 파일은 낡은 사본으로 보고 차이를 알린다.
 이렇게 가려지지 않으면 `ambiguous`로 두고 `export arazzo`는 멈춘다.
@@ -173,7 +174,7 @@ ResourceDescriptor 모양 그대로다. `externalParameters`에는 호출한 사
 
 | 요소 | id | 도구 메타데이터 |
 |---|---|---|
-| 라우트(surface) | `component\|METHOD /path` | `at`(파일과 줄), `evidence`, `operationId`, `reaches`(핸들러가 부르는 메서드) |
+| 라우트(surface) | `component\|METHOD /path` | `at`(파일과 줄), `evidence`, `operationId`, `described`(OpenAPI 문서에서 이 작업을 적은 곳), `reaches`(핸들러가 부르는 메서드) |
 | 호출(call) | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope`(호출을 담은 함수), `based` |
 | 간선(edge) | `kind`, `from`, `to` | `evidence`, `via` |
 | 등록 항목 | `registry:key` | `at`, `producers`, `consumers` |
@@ -184,6 +185,14 @@ ResourceDescriptor 모양 그대로다. `externalParameters`에는 호출한 사
 라우트 경로는 OpenAPI 경로 템플릿으로 쓴다. Nest나 Express의 `:id`는 `{id}`가 된다. 같은 라우트가 어느 프레임워크로
 등록되었든 같은 id를 가지고, OpenAPI의 `paths` 키와 그대로 맞는다. `operationId`는 코드에 적힌 값(라우트 옵션이나
 `@ApiOperation`)을 읽고, 설정에서 `operationIds: nest-swagger`를 주면 @nestjs/swagger의 기본 규칙대로 `Class_method`를 만든다.
+
+코드에서 읽지 못하는 프레임워크(Spring, Django, Flask 등)는 그 프레임워크가 만든 OpenAPI 2.0·3.x 문서를 `routes[].openapi`로
+준다. 문서의 작업마다 라우트가 생긴다. 경로는 Swagger 2.0의 `basePath`나 OpenAPI 3 첫 서버 URL의 경로를 앞에 붙이고, 호스트와
+끝의 `/`는 뺀다. 핸들러 위치는 프레임워크가 operationId를 만드는 규칙(FastAPI `함수_경로_메서드`, Nest `Class_method`,
+springdoc 메서드 이름)으로 함수 정의를 찾으면 그곳(`evidence: name`), 코드에 명시한 operationId 문자열이 한 곳에만 있으면 그곳
+(`text`), 아니면 문서 위치(`declared`)다. 이름이 여러 곳에 맞으면 operationId 문자열로 다시 찾는다. 같은 컴포넌트의 어느 설정 항목에서든 코드로도
+읽은 라우트(메서드와 경로가 같고 파라미터 이름은 달라도 된다)는 코드 위치를 그대로 두고 문서의 operationId, `described`, 문서가 쓴
+경로 키(`describedPath`)만 더한다. `export arazzo`는 operationPath에 이 경로 키를 쓴다.
 
 호출 id에 줄 번호 대신 함수 이름을 쓴다. 위쪽 코드가 바뀔 때마다 id가 바뀌면 흐름 기술이 깨지기 때문이다. 함수가 없는
 위치에서만 줄 번호를 쓰고, 같은 id가 겹치면 `~2`처럼 순번을 붙인다.

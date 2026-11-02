@@ -47,6 +47,7 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | exceptions: reason, `decidedBy`, `reviewBy` | expiry brings the finding back |
 | false positives, with why | `stats` |
 | the configuration | `scan` coverage |
+| the OpenAPI document the framework generates, for a component atlas cannot parse (`routes[].openapi`, `references/openapi.md`) | `scan` coverage and `limit:` lines |
 | `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one |
 | `openapi.<component>` when atlas reports its description `ambiguous` | `export arazzo` refuses until it is set |
 
@@ -85,6 +86,9 @@ After adding a route or a client call, run `atlas trace <surface>`. Upstream sho
 downstream the calls you intended. An empty side means either not wired yet, or wired in a way the tool cannot read
 (a path built far from the call, a handler in another language); open the code and say which.
 
+When you add, remove or change a route of a component whose routes come from a generated OpenAPI document, regenerate
+the document in the same change. A client call alone does not change it.
+
 ## Writing a flow
 
 1. `atlas draft flow <first surface>` prints a Flow with everything the code settles; add `--to <surface>` to follow
@@ -117,7 +121,8 @@ or FA001 on routes you know are called. Run `atlas inventory`, compare with the 
 ## Setting up
 
 `atlas inventory` lists candidates without deciding anything. Write the configuration from it
-(`references/config.md`), run `atlas scan` until every source yields what you expect, run `atlas check`, and go
+(`references/config.md`); for a server framework atlas does not parse (Spring, Django, Flask and others), generate its
+OpenAPI document and point the routes at it (`references/openapi.md`), run `atlas scan` until every source yields what you expect, run `atlas check`, and go
 through a sample of findings with a person. Only then record the baseline.
 
 ## Handling a finding
@@ -166,3 +171,4 @@ e2e tools, which still need parameters, request bodies and success criteria fill
 - Interpreting boundaries, deciding defect, plan or false positive: `references/boundaries.md`
 - Rules, causes, resolutions, when an exception fits: `references/rules.md`
 - Writing or correcting the configuration: `references/config.md`
+- Reading routes from a framework's generated OpenAPI document, and how to generate it: `references/openapi.md`

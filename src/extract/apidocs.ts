@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
+import { describedOperations, supportedVersion } from "./openapi.js";
 
 /** Paths API documents are commonly served at. */
 export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\.json)?$|\/v3\/api-docs$/;
@@ -11,7 +12,6 @@ export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\
 /** File names API descriptions are commonly committed under. */
 export const DOCUMENT_FILE = /(^|\/)(openapi|swagger)\.(json|ya?ml)$|\.openapi\.(json|ya?ml)$/;
 
-const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 
 function str(node: ts.Node | undefined): string | undefined {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
@@ -76,8 +76,8 @@ export function servedDocuments(file: string, text: string, component: string): 
 }
 
 /**
- * Where an OpenAPI or Swagger document declares its version, or undefined when the text is not such a document. The
- * parsed top-level `openapi` or `swagger` field decides, so compact JSON counts as much as pretty YAML.
+ * Where a Swagger 2.0 or OpenAPI 3.x document declares its version, or undefined when the text is not such a document.
+ * The parsed top-level `openapi` or `swagger` field decides, so compact JSON counts as much as pretty YAML.
  */
 export function documentStart(text: string): number | undefined {
   let doc: unknown;
@@ -87,8 +87,7 @@ export function documentStart(text: string): number | undefined {
     return undefined;
   }
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return undefined;
-  const top = doc as Record<string, unknown>;
-  if (top.openapi === undefined && top.swagger === undefined) return undefined;
+  if (!supportedVersion(doc as Record<string, unknown>)) return undefined;
   return versionKeyOffset(text);
 }
 
@@ -103,43 +102,20 @@ function versionKeyOffset(text: string): number {
 const shape = (path: string): string => routeTemplate(path).replace(/\{[^}]*\}/g, "{}");
 
 /**
- * The path key a description writes each operation under, by `METHOD /path` with parameters written `{}`: the same
- * operation may name its parameters differently from the code (`{orderId}` for `{id}`).
+ * The path key a description writes each operation under, by `METHOD /path` (the base path joined, parameters written
+ * `{}`): the same operation may name its parameters differently from the code (`{orderId}` for `{id}`).
  */
 export function documentPathKeys(text: string): Map<string, string> | undefined {
-  let doc: unknown;
-  try {
-    doc = parse(text);
-  } catch {
-    return undefined;
-  }
-  const paths = (doc as { paths?: Record<string, Record<string, unknown>> } | null)?.paths;
-  if (!paths || typeof paths !== "object") return undefined;
-  const out = new Map<string, string>();
-  for (const [path, item] of Object.entries(paths)) {
-    for (const method of HTTP_METHODS) if (item && typeof item === "object" && method in item) out.set(`${method.toUpperCase()} ${shape(path)}`, path);
-  }
-  return out;
+  const api = describedOperations("", text);
+  if (!api) return undefined;
+  return new Map(api.operations.map((o) => [`${o.method} ${shape(o.path)}`, o.key]));
 }
 
 /** The operationId a description gives each operation that has one, by `METHOD /path` as in `documentPathKeys`. */
 export function documentOperationIds(text: string): Map<string, string> | undefined {
-  let doc: unknown;
-  try {
-    doc = parse(text);
-  } catch {
-    return undefined;
-  }
-  const paths = (doc as { paths?: Record<string, Record<string, unknown>> } | null)?.paths;
-  if (!paths || typeof paths !== "object") return undefined;
-  const out = new Map<string, string>();
-  for (const [path, item] of Object.entries(paths)) {
-    for (const method of HTTP_METHODS) {
-      const op = item && typeof item === "object" ? (item[method] as { operationId?: unknown } | undefined) : undefined;
-      if (op && typeof op.operationId === "string") out.set(`${method.toUpperCase()} ${shape(path)}`, op.operationId);
-    }
-  }
-  return out;
+  const api = describedOperations("", text);
+  if (!api) return undefined;
+  return new Map(api.operations.filter((o) => o.operationId).map((o) => [`${o.method} ${shape(o.path)}`, o.operationId!]));
 }
 
 /** The operations a committed description declares, as `METHOD /path` with parameters written `{}`. */
@@ -220,13 +196,27 @@ export function extractApiDocuments(source: Source, config: Config, components: 
  * Anything else is ambiguous: several complete files, several served documents, several partial files.
  */
 export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surface[], config: Config): ApiDescription[] {
+  const read = new Map<string, string[]>();
+  for (const r of config.routes) if (r.openapi) read.set(r.component, [...new Set([...(read.get(r.component) ?? []), r.openapi])]);
   // A component that serves routes but has no description is reported as NoneFound, not left out.
-  const components = [...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi), ...surfaces.map((s) => s.component)])].sort();
+  const components = [
+    ...new Set([...documents.map((d) => d.component), ...Object.keys(config.openapi), ...read.keys(), ...surfaces.map((s) => s.component)]),
+  ].sort();
   return components.map((component): ApiDescription => {
     const docs = documents.filter((d) => d.component === component);
     const candidates = docs.map((d) => d.location);
     const override = config.openapi[component];
     if (override) return { component, status: "chosen", location: override, kind: "author", reason: "AuthorOverride", candidates };
+    const forRoutes = read.get(component) ?? [];
+    if (forRoutes.length === 1) return { component, status: "chosen", location: forRoutes[0]!, kind: "author", reason: "ReadForRoutes", candidates };
+    if (forRoutes.length > 1)
+      return {
+        component,
+        status: "ambiguous",
+        reason: "SeveralReadForRoutes",
+        message: `candidates: ${forRoutes.join(", ")}`,
+        candidates: [...new Set([...forRoutes, ...candidates])],
+      };
 
     const servedPaths = new Set(docs.filter((d) => d.kind === "served").map((d) => d.location));
     // A page that shows its own path is that document, not an alias of another.

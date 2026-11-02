@@ -1,0 +1,18 @@
+components:
+  - { name: fastapi, path: apps/fastapi }
+  - { name: flask-smorest, path: apps/flask-smorest }
+  - { name: flasgger, path: apps/flasgger }
+  - { name: django-drf, path: apps/django-drf }
+  - { name: nestjs, path: apps/nestjs }
+  - { name: fastify, path: apps/fastify }
+  - { name: fastify-swagger, path: apps/fastify }
+  - { name: spring, path: apps/spring-springdoc }
+routes:
+  - { component: fastapi, openapi: py-fastapi.json, files: ["apps/fastapi/**/*.py"] }
+  - { component: flask-smorest, openapi: py-smorest.json, files: ["apps/flask-smorest/**/*.py"] }
+  - { component: flasgger, openapi: py-flasgger.json, files: ["apps/flasgger/**/*.py"] }
+  - { component: django-drf, openapi: py-drf.json, files: ["apps/django-drf/**/*.py"] }
+  - { component: nestjs, openapi: node-nest.json, files: ["apps/nestjs/**/*.ts"] }
+  - { component: fastify, openapi: node-fastify-openapi.json, files: ["apps/fastify/**/*.cjs"] }
+  - { component: fastify-swagger, openapi: node-fastify-swagger.json, files: ["apps/fastify/**/*.cjs"] }
+  - { component: spring, openapi: java-springdoc.json, files: ["apps/spring-springdoc/src/main/**/*.java"] }

@@ -5,7 +5,13 @@ import type { RuleId } from "./model.js";
 
 export interface RouteSource {
   component: string;
+  /** Code files that register the component's routes; also searched for the handlers of documented operations. */
   files: string[];
+  /**
+   * An OpenAPI 2.0 or 3.x document of the component, as its framework generates it: a path in the repository, or an
+   * absolute path to a file generated outside it. Its operations are surfaces; code routes add their locations.
+   */
+  openapi?: string;
   /** nest: @Controller/@Get decorators. express: receiver.get("/x"). fastapi: @router.get("/x") in Python. */
   styles?: Array<"nest" | "express" | "fastapi">;
   receivers?: string[];

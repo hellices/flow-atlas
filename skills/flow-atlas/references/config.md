@@ -24,6 +24,9 @@ routes:
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
     calls:                    # registration helpers: registerRoute(app, "POST", "/x", handler)
       - { name: registerRoute, methodArg: 1, pathArg: 2 }
+  - component: payments       # any framework: its generated OpenAPI 2.0/3.x document (references/openapi.md)
+    openapi: services/payments/openapi.json
+    files: ["services/payments/src/main/**/*.java"]   # searched for the handlers of documented operations
 
 # Which files of one component call another. Keep these narrow: the client adapters, not the whole app.
 calls:
@@ -93,7 +96,8 @@ followed through local functions, relative imports and re-exports, and the membe
 outbound call of the same component held in a method of that name continues the trace. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards; the verb comes from the call before the literal and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
-decorators are read from Python.
+decorators are read from Python. A route source's `openapi` document adds every operation it declares, whatever the
+language; see `references/openapi.md`.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several

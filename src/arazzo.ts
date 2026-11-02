@@ -145,6 +145,7 @@ export function toArazzo(
     }
     const name = sourceName(parsed.component);
     const doc = description(parsed.component);
+    const surface = surfaces.get(surfaceId);
     const byId = (id: string) => ({ operationId: qualify ? `$sourceDescriptions.${name}.${id}` : id });
     const byPath = (key: string) => ({ operationPath: `{$sourceDescriptions.${name}.url}#/paths/${pointer(key)}/${parsed.method.toLowerCase()}` });
     // A description atlas can read decides the operation: its own operationId, else the key it writes the path under.
@@ -158,8 +159,9 @@ export function toArazzo(
       const id = doc.ids?.get(shape);
       return id ? byId(id) : byPath(written);
     }
-    const operationId = surfaces.get(surfaceId)?.operationId;
-    return operationId ? byId(operationId) : byPath(parsed.path);
+    if (surface?.operationId) return byId(surface.operationId);
+    // A surface read from the chosen document carries the key that document writes it under.
+    return byPath(surface?.describedPath && doc && surface.described?.file === doc.url ? surface.describedPath : parsed.path);
   };
 
   const workflows = flows.map((f) => {

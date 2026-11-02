@@ -3,7 +3,11 @@ import type { Config, RouteSource } from "../config.js";
 import type { Coverage, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
+import { operationShape } from "./apidocs.js";
+import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
 
@@ -241,18 +245,177 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
   return out;
 }
 
+/** The text before a quoted value that declares it an operationId: `operationId: `, `operation_id=`, `"operationId": `. */
+const DECLARES_ID = /["']?\b(?:operationId|operation_id)["']?\s*[:=]\s*$/;
+
+/**
+ * Where code declares an operationId as a quoted value: a route option, a decorator argument or an annotation
+ * attribute (`operation_id="x"`, `{ operationId: "x" }`, `@Operation(operationId = "x")`). The same text elsewhere, in a
+ * log line or a lookup, declares nothing.
+ */
+function literalLines(texts: Map<string, string>, id: string): Found[] {
+  const quoted = new RegExp(`(["'\`])${escapeRegExp(id)}\\1`, "g");
+  const out: Found[] = [];
+  for (const [file, text] of texts) {
+    for (const m of text.matchAll(quoted)) {
+      const at = m.index ?? 0;
+      if (DECLARES_ID.test(text.slice(text.lastIndexOf("\n", at - 1) + 1, at))) out.push({ file, line: lineOf(text, at), offset: at });
+    }
+  }
+  return out;
+}
+
+/** A place in a file, with the character offset of what was found there. */
+type Found = Surface["at"] & { offset: number };
+
+/** The offset of a definition of `name` on a line: where the name stands before its parameters. */
+function definitionOffset(text: string, line: number, name: string): number {
+  let start = 0;
+  for (let i = 1; i < line; i++) start = text.indexOf("\n", start) + 1;
+  const end = text.indexOf("\n", start);
+  const at = text.slice(start, end === -1 ? undefined : end).search(new RegExp(`(?<![\\w$])${escapeRegExp(name)}\\s*[(<]`));
+  return start + Math.max(at, 0);
+}
+
+/**
+ * The TypeScript or JavaScript handler an offset points at. Walking out from it: a function whose header (decorators and
+ * signature, before the body) holds it is the handler; a call whose arguments hold it, such as
+ * `app.get(path, { operationId }, handler)`, gives its last function argument. Reaching a function's body first means
+ * the text sits inside code, which names no handler, even on the header's line.
+ */
+function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
+  if (!/\.(c|m)?[jt]sx?$/.test(at.file)) return undefined;
+  const sf = reach.parse(at.file)?.sf;
+  if (!sf) return undefined;
+  const chain: ts.Node[] = [];
+  const descend = (n: ts.Node): void => {
+    chain.push(n);
+    const child = n.getChildren(sf).find((c) => c.getStart(sf) <= at.offset && at.offset < c.getEnd());
+    if (child) descend(child);
+  };
+  descend(sf);
+  for (const n of chain.reverse()) {
+    if (ts.isFunctionLike(n) && "body" in n && n.body) {
+      if (at.offset < (n.body as ts.Node).getStart(sf)) return n;
+      return undefined;
+    }
+    if (ts.isCallExpression(n) && n.arguments.some((a) => a.getStart(sf) <= at.offset && at.offset < a.getEnd())) {
+      const handler = [...n.arguments].reverse().find((a) => ts.isFunctionLike(a));
+      if (handler) return handler;
+    }
+  }
+  return undefined;
+}
+
+/** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
+function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Found; evidence: Surface["evidence"] } | undefined {
+  const hits: Found[] = [];
+  for (const name of handlerNames(operationId, method, key)) {
+    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
+    if (hits.length) break;
+  }
+  if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
+  const quoted = literalLines(texts, operationId);
+  return quoted.length === 1 ? { at: quoted[0]!, evidence: "text" } : undefined;
+}
+
+/**
+ * Surfaces from a component's OpenAPI document. An operation the code also registers keeps the code's location and
+ * gains the document's operationId and place; the others are new surfaces, placed on their handler when the code gives
+ * it away. `code` holds every route read so far, of every component.
+ */
+function documentedSurfaces(
+  source: Source,
+  spec: RouteSource,
+  texts: Map<string, string>,
+  code: Surface[],
+  limits: string[],
+  reach?: Reach,
+  executed?: Map<string, Set<string>>,
+): Surface[] {
+  const file = spec.openapi!;
+  let text: string | undefined;
+  if (isAbsolute(file)) {
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        limits.push(`routes ${spec.component}: the OpenAPI document ${file} could not be read (${code ?? (e as Error).message})`);
+        return [];
+      }
+    }
+  } else text = source.read(file);
+  if (text === undefined) {
+    limits.push(`routes ${spec.component}: the OpenAPI document ${file} is not there${isAbsolute(file) ? "" : " at this revision"}`);
+    return [];
+  }
+  if (isAbsolute(file) && source.ref !== "WORKTREE")
+    limits.push(`routes ${spec.component}: ${file} is outside the repository and is read as it is now, not at ${source.ref.slice(0, 12)}`);
+  const api = describedOperations(file, text);
+  if (!api) {
+    limits.push(`routes ${spec.component}: ${file} is not a Swagger 2.0 or OpenAPI 3 document`);
+    return [];
+  }
+  // Matched by method and path with parameters unnamed: the document may name them differently from the code.
+  const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
+  const out: Surface[] = [];
+  for (const op of api.operations) {
+    const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
+    const known = byShape.get(operationShape(op.method, op.path));
+    if (known) {
+      if (op.operationId && !known.operationId) known.operationId = op.operationId;
+      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
+      continue;
+    }
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const handler = place && reach ? handlerNode(reach, place.at) : undefined;
+    const surface: Surface = {
+      id,
+      component: spec.component,
+      method: op.method,
+      path: op.path,
+      at: place ? { file: place.at.file, line: place.at.line } : op.at,
+      evidence: place?.evidence ?? "declared",
+      ...(op.operationId ? { operationId: op.operationId } : {}),
+      described: op.at,
+      describedPath: op.key,
+      ...(handler ? { reaches: reach!.from(place!.at.file, handler, executed && (executed.get(id) ?? executed.set(id, new Set()).get(id)!)) } : {}),
+    };
+    byShape.set(operationShape(op.method, op.path), surface);
+    out.push(surface);
+  }
+  return out;
+}
+
+/** Surfaces with one per component, method and path, the first kept. */
+function unique(surfaces: Surface[]): Surface[] {
+  const seen = new Set<string>();
+  return surfaces.filter((s) => {
+    const k = `${s.component}|${s.method}|${s.path}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 export function extractRoutes(
   source: Source,
   config: Config,
   reach?: Reach,
   coverage: Coverage[] = [],
+  limits: string[] = [],
   executed?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
+  const codeFiles = new Map<string, Set<string>>();
+  // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
-    const files = select(source, spec.files, config.exclude);
+    const files = select(source, spec.files ?? [], config.exclude);
+    const known = codeFiles.get(spec.component) ?? codeFiles.set(spec.component, new Set()).get(spec.component)!;
     const before = out.length;
     for (const file of files) {
+      known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
@@ -260,11 +423,19 @@ export function extractRoutes(
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
-  const seen = new Set<string>();
-  return out.filter((s) => {
-    const k = `${s.component}|${s.method}|${s.path}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  // A route two entries both register is one surface, so the document enriches the copy that is kept.
+  const code = unique(out);
+  out.length = 0;
+  out.push(...code);
+  // The document the configuration chooses for a component goes first, so its operationIds and places win.
+  const documents = config.routes
+    .filter((r) => r.openapi)
+    .sort((a, b) => Number(config.openapi[b.component] === b.openapi) - Number(config.openapi[a.component] === a.openapi));
+  for (const spec of documents) {
+    const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
+    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
+    out.push(...added);
+    addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
+  }
+  return unique(out);
 }

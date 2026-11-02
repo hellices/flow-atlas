@@ -56,8 +56,12 @@ export interface Surface {
   path: string;
   at: Place;
   evidence: Evidence;
-  /** The OpenAPI operationId, when the code states it or the configured convention gives it. */
+  /** The OpenAPI operationId, when the code states it, the configured convention gives it, or a document declares it. */
   operationId?: string;
+  /** Where the component's OpenAPI document declares this operation. */
+  described?: Place;
+  /** The path key that document writes the operation under, which may differ from `path` by a base path, a trailing slash or parameter names. */
+  describedPath?: string;
   /** Member methods the handler calls, following local and relatively imported functions. */
   reaches?: string[];
 }
@@ -139,7 +143,7 @@ export interface ApiDescription {
   status: "chosen" | "ambiguous" | "none";
   location?: string;
   kind?: "file" | "served" | "author";
-  /** AuthorOverride, FileMatchesCode, ServedByCode, AliasesOfOne, OnlyPartialFile, OnlyFileUnconfirmed, SeveralCompleteFiles, SeveralServedDocuments, SeveralPartialFiles, NoneFound. */
+  /** AuthorOverride, ReadForRoutes, FileMatchesCode, ServedByCode, AliasesOfOne, OnlyPartialFile, OnlyFileUnconfirmed, SeveralCompleteFiles, SeveralServedDocuments, SeveralPartialFiles, SeveralReadForRoutes, NoneFound. */
   reason: string;
   message?: string;
   candidates: string[];
