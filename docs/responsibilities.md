@@ -1,85 +1,88 @@
-# 도구, 에이전트, 스킬의 경계
+# Tool, agent and skill: who does what
 
-flow-atlas는 세 부분으로 나뉜다. 코드에서 확정할 수 있는 것은 도구가 만든다. 의도가 필요한 것은 에이전트(또는 사람)가
-쓰고 도구가 확인한다. 둘 사이에서 무엇이 어느 컴포넌트의 일인지 읽어 내는 판단은 스킬이 기준을 준다.
+flow-atlas has three parts. The tool generates what the code settles. An agent (or a person) writes what needs intent,
+and the tool checks it. Between the two, the skill gives the criteria for reading which work belongs to which
+component.
 
-## 나누는 기준
+## Where the line is
 
-입력이 같으면 답이 같고 코드로 다시 확인할 수 있으면 도구의 일이다. LLM이 하면 매번 결과가 달라지고, 같은 질문을 할 때마다
-토큰을 쓴다.
+If the same inputs always give the same answer and the code can confirm it, it is the tool's job. An LLM doing it would
+answer differently each time and spend tokens on every repetition of the question.
 
-의도나 코드 밖 맥락이 있어야 답할 수 있으면 에이전트의 일이다. 흐름이 무엇을 하려는지, 각 컴포넌트가 무엇을 맡는지, 이 결과가
-결함인지 계획된 상태인지는 코드에 적혀 있지 않다. 도구가 이것을 추측하면 그럴듯한 오답이 사실처럼 남는다.
+If the answer needs intent or context outside the code, it is the agent's job. What a flow is for, what each component
+owns in it, whether a finding is a defect or a planned state: none of this is written in the code. A tool that guessed
+would leave plausible wrong answers looking like facts.
 
-에이전트가 쓴 것은 도구가 다시 읽는 파일에만 남긴다. 흐름 파일, 예외 파일, 설정, 피드백이 그렇다. 도구는 이 파일들을 쓰지
-않는다. 초안을 만들어 줄 때도 표준 출력으로 내보내고, 저장은 에이전트가 한다. 그래서 어떤 값이 코드에서 왔는지 사람이 정했는지
-파일만 보고 알 수 있다.
+What the agent decides goes only into files the tool reads back: flow files, the exceptions file, the configuration,
+feedback. The tool never writes these files; even a draft goes to standard output, and the agent saves it. So the files
+alone show whether a value came from the code or from a person.
 
-## 도구가 정적으로 만드는 것
+## What the tool generates
 
-| 산출물 | 명령 | 근거 |
+| Output | Command | From |
 |---|---|---|
-| 라우트, 호출, 간선, operationId | `scan` | 구문 분석과 설정에 적은 파일. 코드에서 읽지 못하는 프레임워크는 그 프레임워크가 만든 OpenAPI 문서 |
-| 컴포넌트별 OpenAPI 문서 위치 | `scan`, `inventory` | 저장소에 둔 `openapi.yaml` 같은 파일, 코드가 문서를 내보내는 경로(`SwaggerModule.setup`, `@fastify/swagger-ui`, `/openapi.json` 라우트) |
-| 후보가 여럿일 때 어느 문서가 그 컴포넌트의 것인지 | `scan` | 같은 문서를 보여 주는 경로는 하나로 묶고, 저장소 파일은 코드의 라우트를 모두 담는지 비교한다. 코드로 가려지지 않으면 고르지 않고 `ambiguous`로 남긴다 |
-| 등록 항목의 생산자와 소비자, 계약 버전의 참조 | `scan` | 파일 안 이름 검색 |
-| 경로와 컴포넌트로 고른 라우트와 호출 | `query` | 그래프 |
-| 한 라우트의 위아래 흐름 | `trace` | 그래프 간선 |
-| 흐름 초안의 이름, 단계, 시작 컴포넌트 | `draft flow` | trace 경로. 분기가 있으면 후보만 적는다 |
-| 흐름이 코드와 맞는지 | `flows` | 단계 해석, 단계 사이 경로, 시작 컴포넌트의 호출, 등록 목록 |
-| 작성자가 채울 칸을 채웠는지 | `flows`의 `Documented` | 제목과 단계별 역할의 존재 |
-| 어긋남 FA001부터 FA007 | `check` | 위 사실 |
-| 바뀐 라우트와 연결과 결과 | `diff` | 두 커밋의 그래프 |
-| 설정에 넣을 후보 | `inventory` | 매니페스트와 파일 모양 |
-| 설정이 코드를 얼마나 덮는지 | `scan`, `check` | 설정 항목별 읽은 양과 기준선 대비 감소 |
-| SARIF, Arazzo 뼈대 | `check --format sarif`, `export arazzo` | 위 결과의 형식 변환 |
+| routes, calls, edges, operationIds | `scan` | parsed code and the files the configuration names; for a framework atlas cannot parse, the OpenAPI document that framework generates |
+| each component's OpenAPI descriptions | `scan`, `inventory` | committed files such as `openapi.yaml`, and the paths the code serves a document at (`SwaggerModule.setup`, `@fastify/swagger-ui`, an `/openapi.json` route) |
+| which description is a component's, when there are several | `scan` | paths that show the same document are one; a committed file is compared with the routes the code serves. If the code cannot decide, nothing is chosen and the result is `ambiguous` |
+| producers and consumers of registry entries, references to contract versions | `scan` | names searched in files |
+| routes and calls by path or component | `query` | the graph |
+| what leads to a route and what it leads to | `trace` | graph edges |
+| a flow draft's name, steps and entry component | `draft flow` | the trace path; where it branches, only the candidates |
+| whether a flow holds in the code | `flows` | steps resolved, paths between steps, the entry's call, registry lists |
+| whether the author's fields are written | `flows` (`Documented`) | a title and each step's role present |
+| findings FA001 to FA007 | `check` | the facts above |
+| routes, links and findings that changed | `diff` | the graphs of two revisions |
+| configuration candidates | `inventory` | manifests and file shapes |
+| how much of the code the configuration covers | `scan`, `check` | what each configured source read, and drops against the baseline |
+| SARIF and Arazzo skeletons | `check --format sarif`, `export arazzo` | the results above, converted |
 
-도구는 고치는 방법을 정하지 않는다. `explain`도 위치와 비슷한 경로만 보여 준다.
+The tool does not decide how to fix anything. `explain` shows only the locations and similar paths.
 
-## 에이전트가 채우는 것
+## What the agent fills in
 
-| 칸 | 도구가 못 하는 이유 | 도구가 확인하는 방법 |
+| Field | Why the tool cannot | How the tool checks it |
 |---|---|---|
-| 흐름 제목(`metadata.title`) | 흐름의 목적은 코드에 없다 | `Documented` |
-| 단계 역할(`steps[].role`) | 컴포넌트가 맡을 일과 맡지 않을 일은 합의의 문제다 | `Documented` |
-| 담당자, 레이블, 근거 문서(`sources`) | 조직과 문서의 정보다 | 스키마 |
-| 누가 의도를 썼는지(`generated`) | 쓴 쪽만 안다 | 스키마(OKF 행위자 형식) |
-| 사람의 검토(`verified`의 `human:`) | 사람만 할 수 있다. 에이전트는 쓰지 않는다 | 신뢰 등급(OKF §5.3) |
-| 다시 검토할 시점(`stale_after`) | 의도가 언제까지 맞을지는 작성자가 정한다 | `Fresh` |
-| 흐름 상태(`lifecycle`) | 아직 없는 단계가 계획인지 결함인지는 의도다 | 계획 단계는 `Resolved`에서 따로 센다 |
-| 시작 컴포넌트(호출자가 여럿일 때) | 어느 클라이언트의 흐름인지 골라야 한다 | `EntryCalled` |
-| 분기 중 다음 단계 | 한 핸들러가 여러 서비스로 가면 어느 것이 이 흐름인지 골라야 한다 | `Resolved`, `Connected` |
-| 흐름이 내는 등록 항목(`produces`) | 어떤 아티팩트가 이 흐름의 결과인지는 의도다 | `ProducesListed` |
-| 예외의 이유, 근거 결정, 다시 볼 날짜 | 왜 지금은 괜찮은지는 결정의 문제다 | 날짜가 지나면 결과가 다시 나온다 |
-| 오탐 표시와 그 이유 | 추출이 틀렸는지는 코드를 읽어 봐야 안다 | `stats`의 오탐률 |
-| 설정 파일 | 어떤 파일이 클라이언트인지는 저장소마다 다르다 | `scan`의 덮는 범위 |
-| 프레임워크가 만든 OpenAPI 문서(`routes[].openapi`) | 문서를 만들려면 애플리케이션 코드를 실행해야 한다. 도구는 파일만 읽는다 | `scan`의 덮는 범위와 `limit:` |
-| 환경별 서버 주소(`origins`) | 코드는 문서 경로만 안다. 서버가 어느 주소에 뜨는지는 배포 환경이 정한다 | 빠지면 `export arazzo`가 알린다 |
-| 문서가 `ambiguous`일 때의 선택(`openapi.<component>`) | 계약 우선인지 코드 우선인지, 어느 버전이 이 흐름의 것인지는 저장소의 결정이다 | 정하기 전에는 `export arazzo`가 멈춘다 |
-| Arazzo의 파라미터, 요청 본문, 성공 조건 | 실행에 필요한 값은 코드에서 나오지 않는다 | Arazzo를 실행하는 도구 |
+| a flow's title (`metadata.title`) | what a flow is for is not in the code | `Documented` |
+| each step's role (`steps[].role`) | what a component takes on and leaves to others is an agreement | `Documented` |
+| owner, labels, source documents (`sources`) | organisational and documentary facts | schema |
+| who wrote the intent (`generated`) | only the writer knows | schema (OKF actor form) |
+| a person's review (`verified` with `human:`) | only a person can review; an agent never writes it | trust tier (OKF §5.3) |
+| when to review again (`stale_after`) | how long the intent holds is the author's call | `Fresh` |
+| a flow's state (`lifecycle`) | whether a missing step is planned or a defect is intent | planned steps are counted apart in `Resolved` |
+| the entry component, when several call the first step | which client's flow it is must be chosen | `EntryCalled` |
+| the next step where a handler branches | when a handler reaches several services, which one is this flow's must be chosen | `Resolved`, `Connected` |
+| registry entries a flow issues (`produces`) | which artifact is this flow's result is intent | `ProducesListed` |
+| an exception's reason, the decision behind it and a date to review | why something is fine for now is a decision | when the date passes, the finding returns |
+| false-positive marks and why | whether extraction went wrong takes reading the code | false-positive rate in `stats` |
+| the configuration | which files are clients differs per repository | `scan` coverage |
+| OpenAPI documents frameworks generate (`routes[].openapi`) | generating one runs the application's code; the tool only reads files | `scan` coverage and `limit:` lines |
+| server addresses per environment (`origins`) | the code knows document paths; where a server runs is the deployment's business | `export arazzo` notes a missing one |
+| the choice when a description is `ambiguous` (`openapi.<component>`) | contract-first or code-first, and which version is this flow's, are the repository's decisions | `export arazzo` stops until it is set |
+| Arazzo parameters, request bodies, success criteria | the values a run needs do not come from the code | the tool that runs the Arazzo document |
 
-## 스킬이 맡는 경계 해석
+## The boundary reading the skill guides
 
-도구가 보여 준 사실을 놓고, 어떤 일이 어느 컴포넌트의 몫인지 읽어 내는 판단이다. 스킬은 이 판단의 기준과 순서를 준다.
-자세한 기준은 스킬의 `references/boundaries.md`에 있다.
+Given the facts the tool shows, this is the judgment of which work belongs to which component. The skill gives the
+criteria and the order to apply them in; the details are in the skill's `references/boundaries.md`.
 
-| 판단 | 기준 |
+| Judgment | Criterion |
 |---|---|
-| 이 홉이 이 컴포넌트의 일인가 | 저장소의 규칙(AGENTS.md, 설계 문서, 매니페스트), 흐름 파일의 역할, 코드 순으로 따른다 |
-| 같은 일을 하는 라우트가 이미 있는가 | `query`로 비슷한 경로와 operationId를 찾고, 역할이 겹치면 새로 만들지 않는다 |
-| 결과를 고칠지, 예외로 둘지, 오탐인지 | 코드가 의도와 다르면 고친다. 의도한 순서면 예외에 결정을 적는다. 추출이 틀렸으면 오탐이다 |
-| 이름으로 이은 간선(`~`)을 믿어도 되는가 | `get`, `send` 같은 흔한 이름을 거쳤으면 코드를 열어 확인한다 |
-| 흐름을 어디서 시작해 어디서 끝낼까 | 사람이 의미 있게 부르는 단위(화면 하나, 요청 하나)로 자른다 |
-| 비어 있는 단계가 계획인가 결함인가 | 결정 문서나 이슈가 있으면 계획(`planned`), 없으면 결함으로 본다 |
+| Does this hop belong to this component? | follow the repository's rules (AGENTS.md, design documents, manifests), then the flow's roles, then the code |
+| Is there already a route that does this? | look for similar paths and operationIds with `query`; if roles overlap, do not add another |
+| Fix, exception, or false positive? | if the code differs from the intent, fix it; if the order is intended, record the decision as an exception; if extraction went wrong, it is a false positive |
+| Can a name-joined edge (`~`) be trusted? | if it passes through a common name such as `get` or `send`, open the code |
+| Where does a flow start and end? | at units a person names: one screen, one request |
+| Is a missing step planned or a defect? | with a decision or an issue, planned (`planned`); without, a defect |
 
-## 흐름 하나를 만드는 순서
+## Writing one flow
 
-`atlas trace`로 흐름을 보고, `atlas draft flow`로 초안을 받는다. 초안에서 `agent:`로 표시된 칸을 채우고, 분기가 있으면 다음
-단계를 고른다. `atlas flows`가 `Ready=True`를 낼 때까지 고친다. `Resolved`, `Connected`, `EntryCalled`가 False이면 코드나
-흐름 중 하나가 틀린 것이고, 어느 쪽인지는 경계 해석의 기준으로 정한다. `Documented`가 False이면 작성자가 쓸 칸이 비어 있는
-것이다.
+Look at the flow with `atlas trace`, then take a draft from `atlas draft flow`. Fill the fields marked `agent:` and,
+where the code branches, choose the next step. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`,
+`Connected` or `EntryCalled` means the code or the flow is wrong; which one is decided with the boundary criteria. A
+False `Documented` means a field the author writes is empty.
 
-## 경계가 지켜지는지 확인하는 장치
+## What keeps the line in place
 
-`Documented` 조건과 FA007은 작성자 몫이 비어 있으면 알린다. 흐름 스키마는 칸마다 누가 쓰는지 설명에 적어 둔다(`author`,
-`from atlas`). 도구는 흐름 파일과 예외 파일을 쓰지 않고, 초안은 표준 출력으로만 낸다. 기준선 갱신은 사람이 요청할 때만 한다.
+The `Documented` condition and FA007 report empty author fields. The flow schema says in each field's description who
+writes it (`author`, `from atlas`). The tool writes neither flow files nor the exceptions file, and prints drafts to
+standard output only. The baseline is updated only when a person asks.

@@ -1,7 +1,5 @@
 # flow-atlas
 
-[한국어](README.ko.md)
-
 Find where flows that cross components of a monorepo come apart: an API no client calls, a client call no service
 serves, a call across a boundary the manifests do not declare, an artifact nothing produces, a contract version
 nothing uses. Every finding comes with a file and a line, and the same code always gives the same findings: no LLM is
@@ -49,7 +47,7 @@ step is planned, why a finding is an accepted exception. atlas does not guess th
 and still hold.
 
 The skill gives the criteria for judgments in between: whether a hop belongs to the component it sits in, whether a
-gap is a defect, a plan or a false positive. See [docs/responsibilities.md](docs/responsibilities.md) (Korean).
+gap is a defect, a plan or a false positive. See [docs/responsibilities.md](docs/responsibilities.md).
 
 ## Install
 
@@ -93,7 +91,30 @@ atlas stats                                   # per-rule action and false-positi
 ```
 
 `--ref <commit>` reads a commit without checking it out, and every write goes to `--out`, so a repository you must not
-change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md).
+change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md);
+expect two or three rounds of `scan` and correction before the findings are worth trusting.
+
+## Day to day
+
+Once the configuration reads what it should, record the current findings with `atlas baseline update`. From then on
+only new findings appear: existing debt is reduced on its own schedule, and each change answers only for what it
+introduced.
+
+A new finding is fixed, or recorded in the exceptions file with the decision behind it and a date to look again; when
+the date passes, the finding comes back. A wrong finding is recorded with `feedback`, and `stats` shows each rule's
+false-positive rate; a rule that is mostly wrong for a repository is switched off there, or its extractor fixed.
+
+atlas reports and does not block by default. To fail CI on new findings, use `--fail-on-new`.
+
+## How traces connect
+
+`trace` joins two kinds of link. A call joins a route when the method and path agree (`=`). Inside a component, a
+route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
+(`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
+name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls
+`deps.backend.getOrder()` and the adapter's `getOrder` makes the HTTP request. Because it joins by name, a link
+through a common name such as `get` or `send` is worth opening. For a Spring page, the requests in the template its
+view name renders are its outbound calls (`via view <name>`).
 
 ## Flows and schemas
 
@@ -107,7 +128,7 @@ trust tier.
 Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema), with
 `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests) and no timestamps, so
 the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`). Why each field is there:
-[docs/schema.md](docs/schema.md) and [docs/standards.md](docs/standards.md) (Korean).
+[docs/schema.md](docs/schema.md) and [docs/standards.md](docs/standards.md).
 
 ## Develop
 
