@@ -82,9 +82,11 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
   return [...new Set(names)];
 }
 
+export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or class method, a Java or Kotlin method. */
 export function definitionLines(file: string, text: string, name: string): number[] {
-  const n = name.replace(/[$]/g, "\\$");
+  const n = escapeRegExp(name);
   const modifiers = "(?:(?:public|protected|private|static|final|abstract|synchronized|async|override|suspend|open|export|default|readonly)\\s+)*";
   const patterns = file.endsWith(".py")
     ? [new RegExp(`^\\s*(?:async\\s+)?def\\s+${n}\\s*\\(`)]

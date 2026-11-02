@@ -190,7 +190,9 @@ ResourceDescriptor 모양 그대로다. `externalParameters`에는 호출한 사
 준다. 문서의 작업마다 라우트가 생긴다. 경로는 Swagger 2.0의 `basePath`나 OpenAPI 3 첫 서버 URL의 경로를 앞에 붙이고, 호스트와
 끝의 `/`는 뺀다. 핸들러 위치는 프레임워크가 operationId를 만드는 규칙(FastAPI `함수_경로_메서드`, Nest `Class_method`,
 springdoc 메서드 이름)으로 함수 정의를 찾으면 그곳(`evidence: name`), 코드에 명시한 operationId 문자열이 한 곳에만 있으면 그곳
-(`text`), 아니면 문서 위치(`declared`)다. 코드에서도 읽은 라우트는 코드 위치를 그대로 두고 문서의 operationId와 `described`만 더한다.
+(`text`), 아니면 문서 위치(`declared`)다. 이름이 여러 곳에 맞으면 operationId 문자열로 다시 찾는다. 같은 컴포넌트의 어느 설정 항목에서든 코드로도
+읽은 라우트(메서드와 경로가 같고 파라미터 이름은 달라도 된다)는 코드 위치를 그대로 두고 문서의 operationId, `described`, 문서가 쓴
+경로 키(`describedPath`)만 더한다. `export arazzo`는 operationPath에 이 경로 키를 쓴다.
 
 호출 id에 줄 번호 대신 함수 이름을 쓴다. 위쪽 코드가 바뀔 때마다 id가 바뀌면 흐름 기술이 깨지기 때문이다. 함수가 없는
 위치에서만 줄 번호를 쓰고, 같은 id가 겹치면 `~2`처럼 순번을 붙인다.

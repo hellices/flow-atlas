@@ -9,6 +9,8 @@ import { loadConfig, normalizeConfig } from "../src/config.js";
 import { WorktreeSource, type Source } from "../src/source.js";
 import { scan } from "../src/scan.js";
 import type { Coverage } from "../src/model.js";
+import { toArazzo } from "../src/arazzo.js";
+import type { LoadedFile } from "../src/flows.js";
 
 const root = fileURLToPath(new URL("../fixtures/openapi", import.meta.url));
 const doc = (name: string) => describedOperations(name, readFileSync(join(root, name), "utf8"))!;
@@ -173,12 +175,71 @@ describe("routes from an OpenAPI document", () => {
     expect(extractRoutes(source, config)[0]).toMatchObject({ evidence: "declared", at: { file: "svc/openapi.json", line: 1 } });
   });
 
+  it("reads operationIds that are not identifiers", () => {
+    expect(definitionLines("a.py", "def read():\n", "read[")).toEqual([]);
+    const source = memory({
+      "svc/a.py": '@app.get("/x", operation_id="read[")\ndef x():\n    pass\n',
+      "svc/openapi.json": '{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"read["}}}}',
+    });
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.py"], openapi: "svc/openapi.json" }] });
+    expect(extractRoutes(source, config)[0]).toMatchObject({ evidence: "text", at: { file: "svc/a.py", line: 1 } });
+  });
+
+  it("falls back to the quoted operationId when the handler name matches more than once", () => {
+    const source = memory({
+      "svc/a.py": '@router.get("/x", operation_id="read")\ndef read():\n    pass\n',
+      "svc/b.py": "def read():\n    pass\n",
+      "svc/openapi.json": '{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"read"}}}}',
+    });
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.py"], openapi: "svc/openapi.json" }] });
+    expect(extractRoutes(source, config)[0]).toMatchObject({ evidence: "text", at: { file: "svc/a.py", line: 1 } });
+  });
+
+  it("merges a document with code routes from another entry of the same component, in either order", () => {
+    const source = memory({
+      "svc/app.ts": 'app.get("/items/:id", (req, res) => res.json({}));\n',
+      "svc/openapi.yaml": "openapi: 3.0.3\npaths:\n  /items/{itemId}:\n    get: {operationId: getItem}\n",
+    });
+    const code = { component: "svc", files: ["svc/**/*.ts"], styles: ["express"] };
+    const doc = { component: "svc", files: [], openapi: "svc/openapi.yaml" };
+    for (const routes of [[code, doc], [doc, code]]) {
+      const surfaces = extractRoutes(source, normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes }));
+      expect(surfaces).toEqual([
+        expect.objectContaining({
+          id: "svc|GET /items/{id}",
+          evidence: "static",
+          at: { file: "svc/app.ts", line: 1 },
+          operationId: "getItem",
+          described: { file: "svc/openapi.yaml", line: 4 },
+          describedPath: "/items/{itemId}",
+        }),
+      ]);
+    }
+  });
+
+  it("exports an operationPath with the key the document writes", () => {
+    const graph = scan(new WorktreeSource(root), config);
+    expect(graph.surfaces.find((s) => s.id === "fastify|POST /api/v1/orders")?.describedPath).toBe("/api/v1/orders/");
+    const flow = {
+      apiVersion: "flow-atlas.dev/v1alpha1",
+      kind: "Flow",
+      metadata: { name: "create" },
+      spec: { steps: [{ stepId: "create", surface: "fastify|POST /api/v1/orders" }] },
+    } as LoadedFile["flows"][number]["object"];
+    const files: LoadedFile[] = [{ file: "f.flow.yaml", text: "", errors: [], flows: [{ object: flow, line: 1, stepLine: () => 1 }] }];
+    const { document } = toArazzo(graph, files, config, { title: "t" });
+    const step = (document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[0]!;
+    expect(step.operationPath).toBe("{$sourceDescriptions.fastify.url}#/paths/~1api~1v1~1orders~1/post");
+  });
+
   it("says a document outside the repository is not read at the revision", () => {
     const outside = join(root, "py-drf.json");
     const source = { ...memory({}), ref: "0123456789abcdef0123" };
     const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: [], openapi: outside }] });
     const limits: string[] = [];
-    expect(extractRoutes(source, config, undefined, [], limits)).toHaveLength(4);
+    const surfaces = extractRoutes(source, config, undefined, [], limits);
+    expect(surfaces).toHaveLength(4);
+    expect(surfaces[0]!.at.file).toBe(outside);
     expect(limits).toEqual([`routes svc: ${outside} is outside the repository and is read as it is now, not at 0123456789ab`]);
   });
 

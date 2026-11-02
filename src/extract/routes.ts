@@ -4,9 +4,10 @@ import type { Coverage, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
-import { definitionLines, describedOperations, handlerNames } from "./openapi.js";
+import { operationShape } from "./apidocs.js";
+import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
 
@@ -246,14 +247,30 @@ export function routesFromPython(file: string, text: string, spec: RouteSource):
 
 /** Lines where an operationId is written as a quoted string, as code that states it explicitly does. */
 function literalLines(texts: Map<string, string>, id: string): Surface["at"][] {
-  const quoted = new RegExp(`(["'\`])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`);
+  const quoted = new RegExp(`(["'\`])${escapeRegExp(id)}\\1`);
   const out: Surface["at"][] = [];
   for (const [file, text] of texts) text.split("\n").forEach((l, i) => quoted.test(l) && out.push({ file, line: i + 1 }));
   return out;
 }
 
-/** Surfaces from a component's OpenAPI document, merged with those its code registers. */
-function documentedSurfaces(source: Source, spec: RouteSource, codeFiles: string[], code: Surface[], limits: string[]): Surface[] {
+/** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
+function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Surface["at"]; evidence: Surface["evidence"] } | undefined {
+  const hits: Surface["at"][] = [];
+  for (const name of handlerNames(operationId, method, key)) {
+    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line });
+    if (hits.length) break;
+  }
+  if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
+  const quoted = literalLines(texts, operationId);
+  return quoted.length === 1 ? { at: quoted[0]!, evidence: "text" } : undefined;
+}
+
+/**
+ * Surfaces from a component's OpenAPI document. An operation the code also registers keeps the code's location and
+ * gains the document's operationId and place; the others are new surfaces, placed on their handler when the code gives
+ * it away. `code` holds every route read so far, of every component.
+ */
+function documentedSurfaces(source: Source, spec: RouteSource, texts: Map<string, string>, code: Surface[], limits: string[]): Surface[] {
   const file = spec.openapi!;
   const text = isAbsolute(file) ? (existsSync(file) ? readFileSync(file, "utf8") : undefined) : source.read(file);
   if (text === undefined) {
@@ -262,51 +279,36 @@ function documentedSurfaces(source: Source, spec: RouteSource, codeFiles: string
   }
   if (isAbsolute(file) && source.ref !== "WORKTREE")
     limits.push(`routes ${spec.component}: ${file} is outside the repository and is read as it is now, not at ${source.ref.slice(0, 12)}`);
-  const api = describedOperations(isAbsolute(file) ? basename(file) : file, text);
+  const api = describedOperations(file, text);
   if (!api) {
     limits.push(`routes ${spec.component}: ${file} is not a Swagger 2.0 or OpenAPI 3 document`);
     return [];
   }
-  const byId = new Map(code.map((s) => [s.id, s]));
-  const texts = new Map(codeFiles.map((f) => [f, source.read(f) ?? ""]));
+  // Matched by method and path with parameters unnamed: the document may name them differently from the code.
+  const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
   const out: Surface[] = [];
   for (const op of api.operations) {
     const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
-    const known = byId.get(id);
+    const known = byShape.get(operationShape(op.method, op.path));
     if (known) {
       if (op.operationId && !known.operationId) known.operationId = op.operationId;
-      known.described = op.at;
+      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
       continue;
     }
-    let at: Surface["at"] = op.at;
-    let evidence: Surface["evidence"] = "declared";
-    if (op.operationId) {
-      const hits: Surface["at"][] = [];
-      for (const name of handlerNames(op.operationId, op.method, op.key)) {
-        for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line });
-        if (hits.length) break;
-      }
-      if (hits.length === 1) {
-        at = hits[0]!;
-        evidence = "name";
-      } else if (!hits.length) {
-        const quoted = literalLines(texts, op.operationId);
-        if (quoted.length === 1) {
-          at = quoted[0]!;
-          evidence = "text";
-        }
-      }
-    }
-    out.push({
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const surface: Surface = {
       id,
       component: spec.component,
       method: op.method,
       path: op.path,
-      at,
-      evidence,
+      at: place?.at ?? op.at,
+      evidence: place?.evidence ?? "declared",
       ...(op.operationId ? { operationId: op.operationId } : {}),
-      ...(evidence !== "declared" ? { described: op.at } : {}),
-    });
+      described: op.at,
+      describedPath: op.key,
+    };
+    byShape.set(operationShape(op.method, op.path), surface);
+    out.push(surface);
   }
   return out;
 }
@@ -320,17 +322,27 @@ export function extractRoutes(
   executed?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
+  const codeFiles = new Map<string, Set<string>>();
+  // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
     const files = select(source, spec.files ?? [], config.exclude);
+    const known = codeFiles.get(spec.component) ?? codeFiles.set(spec.component, new Set()).get(spec.component)!;
     const before = out.length;
     for (const file of files) {
+      known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
       else if (file.endsWith(".py") && (spec.styles ?? []).includes("fastapi")) out.push(...routesFromPython(file, text, spec));
     }
-    if (spec.openapi) out.push(...documentedSurfaces(source, spec, files, out.slice(before), limits));
-    addCoverage(coverage, `routes ${spec.component}`, files.length + (spec.openapi ? 1 : 0), out.length - before);
+    addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
+  }
+  for (const spec of config.routes) {
+    if (!spec.openapi) continue;
+    const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
+    const added = documentedSurfaces(source, spec, texts, out, limits);
+    out.push(...added);
+    addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
   }
   const seen = new Set<string>();
   return out.filter((s) => {

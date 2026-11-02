@@ -17,14 +17,16 @@ routes:
 - Every operation becomes a surface: the method, and the path with Swagger 2.0 `basePath` or the path of the first
   OpenAPI 3 server URL in front. A server's host and a trailing slash are dropped, so `/api/v1/orders/` and a code
   route `/api/v1/orders` are one surface.
-- The `operationId`, and where the document declares the operation (`described`).
+- The `operationId`, where the document declares the operation (`described`), and the path key it writes it under
+  (`describedPath`), which `export arazzo` uses for an `operationPath`.
 - Where the handler is, when the code gives it away: a function named as the framework derives the operationId (FastAPI
   `read_order_api_v1_orders__order_id__get` → `def read_order`, Nest `OrdersController_read` → `read(`, springdoc
-  `read` → `read(`), evidence `name`; else exactly one quoted occurrence of an explicit operationId in `files`
+  `read` → `read(`), evidence `name`; else, when no name or several match, exactly one quoted occurrence of the
+  operationId in the component's route files
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
   exactly one place, the surface stays at the document, evidence `declared`.
-- When `files` also register the route in a style atlas parses, the code's location stays and the document adds its
-  operationId and place.
+- When any route entry of the component registers the same route in code (same method and path, whatever the
+  parameters are named), the code's location stays and the document adds its operationId and place.
 - The document becomes the component's OpenAPI description (`ReadForRoutes`), unless `openapi.<component>` overrides
   it.
 

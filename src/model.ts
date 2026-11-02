@@ -60,6 +60,8 @@ export interface Surface {
   operationId?: string;
   /** Where the component's OpenAPI document declares this operation. */
   described?: Place;
+  /** The path key that document writes the operation under, which may differ from `path` by a base path, a trailing slash or parameter names. */
+  describedPath?: string;
   /** Member methods the handler calls, following local and relatively imported functions. */
   reaches?: string[];
 }
