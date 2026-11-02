@@ -4,7 +4,7 @@ import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
-import { describedOperations } from "./openapi.js";
+import { describedOperations, supportedVersion } from "./openapi.js";
 
 /** Paths API documents are commonly served at. */
 export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\.json)?$|\/v3\/api-docs$/;
@@ -76,8 +76,8 @@ export function servedDocuments(file: string, text: string, component: string): 
 }
 
 /**
- * Where an OpenAPI or Swagger document declares its version, or undefined when the text is not such a document. The
- * parsed top-level `openapi` or `swagger` field decides, so compact JSON counts as much as pretty YAML.
+ * Where a Swagger 2.0 or OpenAPI 3.x document declares its version, or undefined when the text is not such a document.
+ * The parsed top-level `openapi` or `swagger` field decides, so compact JSON counts as much as pretty YAML.
  */
 export function documentStart(text: string): number | undefined {
   let doc: unknown;
@@ -87,8 +87,7 @@ export function documentStart(text: string): number | undefined {
     return undefined;
   }
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return undefined;
-  const top = doc as Record<string, unknown>;
-  if (top.openapi === undefined && top.swagger === undefined) return undefined;
+  if (!supportedVersion(doc as Record<string, unknown>)) return undefined;
   return versionKeyOffset(text);
 }
 

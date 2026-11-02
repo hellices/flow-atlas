@@ -115,6 +115,8 @@ describe("documentStart", () => {
     expect(documentStart('{"name":"pkg","openapi":false}'.replace("openapi", "x"))).toBeUndefined();
     expect(documentStart("{not json")).toBeUndefined();
     expect(documentStart("x-meta:\n  openapi: note\nopenapi: 3.0.0\npaths: {}\n")).toBe(24);
+    expect(documentStart('{"swagger":"1.2","apis":[]}')).toBeUndefined();
+    expect(documentStart('{"openapi":"4.0.0"}')).toBeUndefined();
   });
 });
 

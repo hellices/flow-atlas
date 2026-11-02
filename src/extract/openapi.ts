@@ -38,6 +38,15 @@ function basePathOf(doc: Record<string, unknown>): string {
   }
 }
 
+/**
+ * The version of a document atlas reads: Swagger `2.0` (YAML may write it unquoted, as the number 2) or OpenAPI `3.x`.
+ * Anything else, Swagger 1.x or a later OpenAPI major version included, is not read.
+ */
+export function supportedVersion(doc: Record<string, unknown>): string | undefined {
+  if (doc.swagger !== undefined) return doc.swagger === "2.0" || doc.swagger === 2 ? "2.0" : undefined;
+  return typeof doc.openapi === "string" && /^3\.\d+(\.\d+)?(-[\w.]+)?$/.test(doc.openapi) ? doc.openapi : undefined;
+}
+
 /** The operations a Swagger 2.0 or OpenAPI 3.x document describes, each with the line it is declared at. */
 export function describedOperations(file: string, text: string): DescribedApi | undefined {
   const counter = new LineCounter();
@@ -45,7 +54,8 @@ export function describedOperations(file: string, text: string): DescribedApi | 
   if (parsed.errors.length) return undefined;
   const doc = parsed.toJS() as Record<string, unknown> | null;
   if (!doc || typeof doc !== "object") return undefined;
-  const version = doc.swagger !== undefined ? String(doc.swagger) : typeof doc.openapi === "string" ? doc.openapi : undefined;
+  if (Array.isArray(doc)) return undefined;
+  const version = supportedVersion(doc);
   if (!version) return undefined;
   const basePath = basePathOf(doc);
   const paths = (doc.paths ?? {}) as Record<string, Record<string, unknown>>;
@@ -72,11 +82,19 @@ export function describedOperations(file: string, text: string): DescribedApi | 
  * Names a handler may carry, given how common generators derive an operationId from it: the id itself, the method of
  * a NestJS `Class_method` id, and the function of a FastAPI `{function}{path}_{method}` id. springdoc uses the method
  * name as it is.
+ *
+ * A Nest id joins the class and the method with `_`, and either may hold `_` itself, so every split after a class-like
+ * prefix (an identifier that starts upper-case, as class names do) is a candidate, the longest method first:
+ * `Admin_APIController_list` gives `APIController_list`, then `list`. The caller keeps the first that the code defines.
  */
 export function handlerNames(operationId: string, method: string, rawPath: string): string[] {
   const names = [operationId];
-  const nest = /^[A-Za-z_$][\w$]*Controller_([A-Za-z_$][\w$]*)$/.exec(operationId);
-  if (nest) names.push(nest[1]!);
+  if (/^[A-Z$][\w$]*$/.test(operationId)) {
+    for (let i = operationId.indexOf("_"); i > 0; i = operationId.indexOf("_", i + 1)) {
+      const member = operationId.slice(i + 1);
+      if (/^[A-Za-z$][\w$]*$/.test(member)) names.push(member);
+    }
+  }
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));
   return [...new Set(names)];

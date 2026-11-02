@@ -99,6 +99,17 @@ describe("describedOperations", () => {
     const api = describedOperations("c.yaml", "openapi: 3.1.0\npaths:\n  /x:\n    parameters: []\n    summary: s\n    get: {}\n")!;
     expect(api.operations.map((o) => o.method)).toEqual(["GET"]);
   });
+  it("reads only Swagger 2.0 and OpenAPI 3.x", () => {
+    const read = (head: string) => describedOperations("v.yaml", `${head}\npaths:\n  /x:\n    get: {}\n`)?.version;
+    expect(read("swagger: '2.0'")).toBe("2.0");
+    expect(read("swagger: 2.0")).toBe("2.0");
+    expect(read("openapi: 3.0.3")).toBe("3.0.3");
+    expect(read("openapi: 3.1.0")).toBe("3.1.0");
+    expect(read("swagger: '1.2'")).toBeUndefined();
+    expect(read("openapi: 4.0.0")).toBeUndefined();
+    expect(read("openapi: 3")).toBeUndefined();
+  });
+
   it("refuses what is not an OpenAPI document", () => {
     expect(describedOperations("d.yaml", "components: []\n")).toBeUndefined();
     expect(describedOperations("e.json", "{not json")).toBeUndefined();
@@ -110,7 +121,9 @@ describe("handler lookup", () => {
     expect(handlerNames("read_order_api_v1_orders__order_id__get", "GET", "/api/v1/orders/{order_id}")).toContain("read_order");
     expect(handlerNames("OrdersController_read", "GET", "/orders/{id}")).toContain("read");
     expect(handlerNames("read", "GET", "/orders/{id}")).toEqual(["read"]);
-    expect(handlerNames("Admin_APIController_list", "GET", "/admin")).toEqual(["Admin_APIController_list", "list"]);
+    expect(handlerNames("Admin_APIController_list", "GET", "/admin")).toEqual(["Admin_APIController_list", "APIController_list", "list"]);
+    expect(handlerNames("Cats_findAll", "GET", "/cats")).toEqual(["Cats_findAll", "findAll"]);
+    expect(handlerNames("api_v1_orders_retrieve", "GET", "/api/v1/orders/{id}")).toEqual(["api_v1_orders_retrieve"]);
   });
   it("finds definitions in Python, TypeScript and Java but not calls", () => {
     expect(definitionLines("a.py", "x = read()\nasync def read(id):\n", "read")).toEqual([2]);
