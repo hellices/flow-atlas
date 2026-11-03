@@ -214,9 +214,6 @@ export function withoutHtmlComments(text: string): string {
   return out.join("");
 }
 
-/** A root-relative URL written as an attribute value: `href="/x"`, `action="/x"`, `data-api-url="/x"`, in any case. */
-const URL_ATTRIBUTE = /\b((?:th:)?(?:href|action|src|formaction)|data-[\w-]+)\s*=\s*["'](\/(?!\/)[^"'\s?#]*)/gi;
-
 /**
  * The path of the Thymeleaf link expression starting at `@{`: its `/...` literal with `{name}` placeholders, up to
  * the parameter list or the closing brace. The parameters may hold any expression; they are not read.
@@ -250,36 +247,6 @@ function tagAt(text: string, index: number): { start: number; text: string } {
   return { start, text: text.slice(start, end === -1 ? undefined : end + 1) };
 }
 
-/**
- * The attribute whose value holds `index`, lower-cased. Inside `th:attr="a=@{..},b=@{..}"`, and its `attrappend` and
- * `attrprepend` forms, the item the value belongs to names it.
- */
-function attributeAt(text: string, index: number): string | undefined {
-  const tagStart = text.lastIndexOf("<", index);
-  if (tagStart < 0) return undefined;
-  const attr = /([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
-  attr.lastIndex = tagStart;
-  for (let m = attr.exec(text); m && m.index <= index; m = attr.exec(text)) {
-    const valueStart = m.index + m[0].length - m[2]!.length + 1;
-    const valueEnd = m.index + m[0].length - 1;
-    if (index < valueStart || index >= valueEnd) continue;
-    const name = m[1]!.toLowerCase();
-    if (!/^th:attr(append|prepend)?$/.test(name)) return name;
-    const item = text.slice(valueStart, index).split(",").pop() ?? "";
-    return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase() ?? name;
-  }
-  return undefined;
-}
-
-/** Whether Thymeleaf replaces a plain attribute of the tag: `th:href` for `href`, or an item of `th:attr` naming it. */
-function overridden(tag: string, name: string): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`\\bth:${escaped}\\s*=`, "i").test(tag)) return true;
-  const attr = /\bth:attr(?:append|prepend)?\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag);
-  const items = attr ? (attr[2] ?? attr[3] ?? "") : "";
-  return new RegExp(`(?:^|,)\\s*${escaped}\\s*=`, "i").test(items);
-}
-
 const methodOf = (tag: string, plain: string): string | undefined =>
   new RegExp(`\\bth:${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1] ?? new RegExp(`(?<![\\w:-])${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1];
 
@@ -295,66 +262,152 @@ function formOf(text: string, index: number, control: string): string | undefine
   return tagAt(text, open + 1).text;
 }
 
+interface Attribute {
+  /** Lower-cased. */
+  name: string;
+  value: string;
+  /** Where the value starts in the template. */
+  at: number;
+}
+
+interface StartTag {
+  start: number;
+  text: string;
+  attributes: Attribute[];
+}
+
+const START_TAG = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*\/?>/g;
+const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+
+/** The template with the bodies of `<script>` and `<style>` blanked: raw text, where markup-like text is not markup. */
+function withoutRawText(text: string): string {
+  return text.replace(/(<(script|style)\b[^>]*>)([\s\S]*?)(<\/\2\s*>)/gi, (_, open: string, _n: string, body: string, close: string) => open + body.replace(/[^\n]/g, " ") + close);
+}
+
+/** The template's start tags with their attributes, values located in the template. */
+function startTags(text: string): StartTag[] {
+  const out: StartTag[] = [];
+  for (const m of withoutRawText(text).matchAll(START_TAG)) {
+    const start = m.index ?? 0;
+    const listAt = start + 1 + m[1]!.length;
+    const attributes: Attribute[] = [];
+    for (const a of m[2]!.matchAll(ATTRIBUTE)) {
+      const value = a[2] ?? a[3] ?? a[4];
+      if (value === undefined) continue;
+      const eq = a[0].indexOf("=");
+      let k = eq + 1;
+      while (/\s/.test(a[0][k] ?? "")) k++;
+      if (a[0][k] === '"' || a[0][k] === "'") k++;
+      attributes.push({ name: a[1]!.toLowerCase(), value, at: listAt + (a.index ?? 0) + k });
+    }
+    out.push({ start, text: text.slice(start, start + m[0].length), attributes });
+  }
+  return out;
+}
+
+/** Attributes that make a request: links, form targets, sources, and data attributes a script reads a URL from. */
+const requests = (name: string): boolean => /^(href|src|action|formaction)$/.test(name) || name.startsWith("data-");
+
+/** The `th:attr` family item a value belongs to: the attribute named before the `=` that precedes it. */
+function itemName(value: string, offset: number): string | undefined {
+  const item = value.slice(0, offset).split(",").pop() ?? "";
+  return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+}
+
 /**
- * The method a request from an attribute uses: GET for links; a form's `th:method` (PUT, DELETE through Spring's hidden
- * method field) or `method`; a submit control's `formmethod`, else its form's; any method for a `data-*` URL.
+ * The method a request from an attribute uses: GET for links and sources; a form's `th:method` (PUT, DELETE through
+ * Spring's hidden method field) or `method`; a submit control's `formmethod`, else its form's; any method for a `data-*`
+ * URL, which a script reads.
  */
-function templateMethod(text: string, index: number, attribute: string | undefined): string {
-  const name = attribute?.replace(/^th:/, "");
+function templateMethod(text: string, tag: StartTag, name: string): string {
   if (name === "href" || name === "src") return "GET";
-  const tag = tagAt(text, index).text;
-  if (name === "action") return (methodOf(tag, "method") ?? "GET").toUpperCase();
+  if (name === "action") return (methodOf(tag.text, "method") ?? "GET").toUpperCase();
   if (name === "formaction") {
-    const form = formOf(text, index, tag);
-    return (methodOf(tag, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
+    const form = formOf(text, tag.start, tag.text);
+    return (methodOf(tag.text, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
   }
   return "*";
 }
 
 /**
- * Requests an HTML template makes: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`), root-relative URLs in
- * `href`, `action`, `src`, `formaction` and `data-*` attributes (in any case; a plain attribute Thymeleaf replaces is
- * not requested), and requests in inline scripts, read as JavaScript. A `{name}` placeholder is any segment text. A
- * `data-*` URL that ends in `/` is a base a script appends to, so it stands for one more segment. Commented-out markup
- * and absolute URLs, which name other sites, are not read.
+ * Requests an HTML template makes, read from start tags only:
+ * - Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`,
+ *   `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
+ *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
+ * - root-relative URLs in `href`, `src`, `action`, `formaction` and `data-*`, in any case, unless Thymeleaf replaces the
+ *   attribute;
+ * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
+ *   `[[...]]` or `[(...)]`.
+ * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
+ * Text that is not an attribute, commented-out markup and absolute URLs, which name other sites, are not read.
  */
 export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
   const text = withoutHtmlComments(original);
   const out: Draft<Call>[] = [];
-  const seen = new Set<number>();
-  const add = (raw: string, index: number) => {
-    if (seen.has(index)) return;
-    seen.add(index);
-    const attribute = attributeAt(text, index);
-    const base = attribute?.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
+  const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
+    const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
     const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
     if (!parsed) return;
     out.push({
       from: spec.from,
       to: spec.to,
-      method: templateMethod(text, index, attribute),
+      method: tag ? templateMethod(text, tag, name) : "*",
       path: parsed.path,
       based: false,
       at: { file, line: lineOf(text, index) },
       evidence: "text",
     });
   };
-  for (let at = text.indexOf("@{"); at >= 0; at = text.indexOf("@{", at + 2)) {
-    const path = linkPath(text, at);
-    if (path) add(path, at);
+
+  for (const tag of startTags(text)) {
+    const plain = new Map(tag.attributes.filter((a) => !a.name.startsWith("th:") && !a.name.startsWith("data-th-")).map((a) => [a.name, a]));
+    const replaced = new Set<string>();
+    const joined = new Set<string>();
+    for (const a of tag.attributes) {
+      const th = /^(?:th:|data-th-)(.+)$/.exec(a.name)?.[1];
+      if (!th) continue;
+      const family = /^attr(append|prepend)?$/.exec(th);
+      for (let i = a.value.indexOf("@{"); i >= 0; i = a.value.indexOf("@{", i + 2)) {
+        const name = family ? itemName(a.value, i) : th;
+        const path = linkPath(a.value, i);
+        if (!name || !requests(name) || !path) continue;
+        if (!family || !family[1]) {
+          replaced.add(name);
+          add(path, a.at + i, tag, name);
+          continue;
+        }
+        // attrappend / attrprepend: the request is the static value with this added, if the static value is known.
+        joined.add(name);
+        const fixed = plain.get(name);
+        if (!fixed || !fixed.value.startsWith("/")) continue;
+        add(family[1] === "append" ? `${fixed.value}${path}` : `${path}${fixed.value}`, fixed.at, tag, name);
+      }
+      if (!family) replaced.add(th);
+      else if (!family[1]) for (const item of a.value.split(",")) {
+        const n = /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+        if (n) replaced.add(n);
+      }
+    }
+    for (const a of plain.values()) {
+      if (!requests(a.name) || replaced.has(a.name) || joined.has(a.name)) continue;
+      if (!a.value.startsWith("/") || a.value.startsWith("//")) continue;
+      add(a.value.replace(/[?#].*$/, ""), a.at, tag, a.name);
+    }
   }
-  for (const m of text.matchAll(URL_ATTRIBUTE)) {
-    const name = m[1]!.toLowerCase();
-    const index = (m.index ?? 0) + m[0].length - m[2]!.length;
-    if (!name.startsWith("th:") && overridden(tagAt(text, index).text, name)) continue;
-    add(m[2]!, index);
-  }
+
   // Inline scripts, without a src: their requests, at their lines in the template.
   for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
     if (/\bsrc\s*=/i.test(m[1]!) || /\btype\s*=\s*["'](?!text\/javascript|module|application\/javascript)[^"']*["']/i.test(m[1]!)) continue;
     const bodyStart = (m.index ?? 0) + m[0].indexOf(">") + 1;
     const shift = lineOf(text, bodyStart) - 1;
     for (const c of callsFromTypeScript(`${file}.js`, m[2]!, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
+    if (/\bth:inline\s*=\s*["']javascript["']/i.test(m[1]!)) {
+      for (const e of m[2]!.matchAll(/\[[[(]\s*@\{/g)) {
+        const at = (e.index ?? 0) + e[0].length - 2;
+        const path = linkPath(m[2]!, at);
+        if (path) add(path, bodyStart + at, undefined, "script");
+      }
+    }
   }
   return out.sort((a, b) => a.at.line - b.at.line);
 }

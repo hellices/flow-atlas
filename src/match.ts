@@ -13,15 +13,17 @@ export function rankedComponents(config: Pick<Config, "routes">): Set<string> {
 }
 
 /**
- * Spring's order of path patterns, least specific last: catch-alls (`**`, `{*rest}`), then more URI variables, then
- * more single wildcards, then a shorter pattern. Lower sorts first.
+ * Spring's `PathPattern` specificity, lower first: a pattern with a catch-all (`**`, `{*rest}`) after one without; then
+ * the score, one per URI variable and a hundred per wildcard; then the longer pattern, each variable counted as one
+ * character.
  */
 function springRank(path: string): number[] {
   const segs = segments(path);
-  const catchAll = segs.filter((s) => s === "**" || s.startsWith("{*")).length;
+  const catchAll = segs.some((s) => s === "**" || s.startsWith("{*")) ? 1 : 0;
   const variables = segs.filter((s) => (s.startsWith("{") && !s.startsWith("{*")) || s.startsWith(":")).length;
   const wildcards = segs.filter((s) => s === "*").length;
-  return [catchAll, variables, wildcards, -path.length];
+  const normalizedLength = path.replace(/\{[^}]*\}/g, "?").length;
+  return [catchAll, variables + 100 * wildcards, -normalizedLength];
 }
 
 function compare(a: number[], b: number[]): number {

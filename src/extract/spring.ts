@@ -61,6 +61,29 @@ function declarationStart(masked: string, at: number): number {
   return 0;
 }
 
+/**
+ * Where the run of annotations that holds the one at `at` begins: annotations written one after another, with only
+ * spaces between, belong to one declaration. Members in Kotlin need no `;`, so the previous member's text is not a
+ * boundary to search back to.
+ */
+function annotationsStart(masked: string, at: number): number {
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const a of masked.matchAll(/@[\w.]+/g)) {
+    const start = a.index ?? 0;
+    let end = start + a[0].length;
+    let j = end;
+    while (/\s/.test(masked[j] ?? "")) j++;
+    if (masked[j] === "(") end = (closing(masked, j) ?? j) + 1;
+    spans.push({ start, end });
+  }
+  let begin = at;
+  for (;;) {
+    const previous = spans.filter((sp) => sp.end <= begin && !masked.slice(sp.end, begin).trim()).pop();
+    if (!previous) return begin;
+    begin = previous.start;
+  }
+}
+
 /** String literals of a value: `"a"`, `{"a", "b"}`, `["a"]`, `arrayOf("a")`; undefined when anything else is in it. */
 function literals(value: string): string[] | undefined {
   const out: string[] = [];
@@ -127,15 +150,64 @@ function requestMethods(args: string | undefined): string[] | undefined {
 const springTemplate = (path: string): string =>
   routeTemplate(path.replace(/\{(\*?[A-Za-z_]\w*)(?::[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}/g, "{$1}"));
 
-/** The body of the method a mapping annotates, from after its parameter list: `{ ... }`, or a Kotlin `= expression`. */
-function methodBody(code: string, masked: string, from: number): string | undefined {
-  const open = masked.indexOf("(", from);
-  const close = open < 0 ? undefined : closing(masked, open);
+/**
+ * Where the parameter list of the method a mapping annotates opens: past the annotations that follow the mapping
+ * (`@ResponseBody`, `@ResponseStatus(HttpStatus.OK)`), whatever their order.
+ */
+function parametersAt(masked: string, from: number): number | undefined {
+  let i = from;
+  for (;;) {
+    while (/\s/.test(masked[i] ?? "")) i++;
+    const annotation = /^@[\w.]+/.exec(masked.slice(i));
+    if (!annotation) break;
+    i += annotation[0].length;
+    let j = i;
+    while (/\s/.test(masked[j] ?? "")) j++;
+    if (masked[j] === "(") {
+      const close = closing(masked, j);
+      if (close === undefined) return undefined;
+      i = close + 1;
+    }
+  }
+  const open = masked.indexOf("(", i);
+  return open < 0 ? undefined : open;
+}
+
+/**
+ * Where a Kotlin expression body that starts at `from` ends: at a line break outside brackets, unless the next line
+ * goes on with the expression (`.call()`, `?:`, an operator, `else`).
+ */
+function expressionEnd(masked: string, from: number): number {
+  let depth = 0;
+  let i = from;
+  while (/\s/.test(masked[i] ?? "")) i++;
+  for (; i < masked.length; i++) {
+    const c = masked[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) {
+      if (depth === 0) return i;
+      depth--;
+    } else if (c === "\n" && depth === 0) {
+      const line = masked.slice(masked.lastIndexOf("\n", i - 1) + 1, i).trim();
+      const next = /^\s*(\S{1,4})/.exec(masked.slice(i + 1))?.[1] ?? "";
+      // The expression goes on when this line leaves it open (`if (x)`, `=`, `->`, `else`, an operator) or the next
+      // line continues it (`.call()`, `?:`, an operator, `else`).
+      const open = !line || /(?:\b(?:if|while)\s*\(.*\)|[=,+\-*/(]|->|&&|\|\||\?:|\belse)$/.test(line);
+      if (!open && !/^(\?\.|\?:|\.|\+|-|\*|\/|&&|\|\||else\b)/.test(next)) return i;
+    }
+  }
+  return masked.length;
+}
+
+/** The body of the method a mapping annotates, after its parameter list: `{ ... }`, or a Kotlin `= expression`. */
+function methodBody(code: string, masked: string, open: number): string | undefined {
+  const close = closing(masked, open);
   if (close === undefined) return undefined;
   const brace = masked.slice(close + 1).search(/[{;=]/);
   if (brace < 0) return undefined;
   const start = close + 1 + brace;
-  if (masked[start] !== "{") return code.slice(start, masked.indexOf("\n", start + 1));
+  if (masked[start] === "=") return code.slice(start, expressionEnd(masked, start + 1));
+  if (masked[start] !== "{") return undefined;
   const end = closing(masked, start);
   return end === undefined ? undefined : code.slice(start, end + 1);
 }
@@ -146,7 +218,10 @@ function methodBody(code: string, masked: string, from: number): string | undefi
  */
 function viewNames(body: string, strings: boolean): string[] {
   const explicit = /(?:ModelAndView\s*\(\s*|setViewName\s*\(\s*)"([^"\\:]+)"/g;
-  const returned = !body.trimStart().startsWith("{") ? /(?:\breturn\s+|=\s*)"([^"\\:]+)"/g : /\breturn\s+"([^"\\:]+)"/g;
+  // In a Kotlin expression body, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
+  const returned = !body.trimStart().startsWith("{")
+    ? /(?:\breturn\s+|=\s*|\)\s*|\belse\s+|->\s*)"([^"\\:]+)"/g
+    : /\breturn\s+"([^"\\:]+)"/g;
   const names = [...body.matchAll(explicit), ...(strings ? body.matchAll(returned) : [])].map((m) => m[1]!);
   return [...new Set(names.filter((n) => /^[\w./-]+$/.test(n)))];
 }
@@ -220,9 +295,11 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     if (!bases || !paths || !own || !inherited) continue;
     const united = [...new Set([...inherited, ...own])];
     const methods = united.length ? united : ["*"];
-    const signature = code.slice(declarationStart(masked, m.at), m.end);
+    const open = parametersAt(masked, m.end);
+    // Every annotation on the method, before or after the mapping.
+    const signature = code.slice(annotationsStart(masked, m.at), open ?? m.end);
     const responseBody = (owner?.responseBody ?? false) || /@(?:[\w.]*\.)?ResponseBody\b/.test(signature);
-    const body = views ? methodBody(code, masked, m.end) : undefined;
+    const body = views && open !== undefined ? methodBody(code, masked, open) : undefined;
     const rendered = body ? viewNames(body, !responseBody) : [];
     for (const base of bases) {
       for (const path of paths) {
@@ -244,9 +321,10 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
  * else (a constant, an expression), or undefined when it is not called.
  */
 function setting(code: string, masked: string, call: string): string | null | undefined {
-  const m = new RegExp(`\\.${call}\\s*\\(`).exec(masked);
+  // A builder keeps the last value a setter was given.
+  const m = [...masked.matchAll(new RegExp(`\\.${call}\\s*\\(`, "g"))].pop();
   if (!m) return undefined;
-  const open = m.index + m[0].length - 1;
+  const open = (m.index ?? 0) + m[0].length - 1;
   const close = closing(masked, open);
   const arg = close === undefined ? "" : code.slice(open + 1, close).trim();
   return /^"([^"\\]*)"$/.exec(arg)?.[1] ?? null;

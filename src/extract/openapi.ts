@@ -101,7 +101,7 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
   }
   // springdoc numbers the later methods that share a name, so a numbered id stands for a name only when the document
   // also holds the name itself; `health_2024` alone is an id of its own.
-  const springdoc = /^([A-Za-z_$][\w$]*?)_\d+$/.exec(operationId);
+  const springdoc = /^([A-Za-z_$][\w$]*?)_[1-9]\d*$/.exec(operationId);
   if (springdoc && siblings.has(springdoc[1]!)) names.push(springdoc[1]!);
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));

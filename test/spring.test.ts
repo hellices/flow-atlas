@@ -197,6 +197,26 @@ describe("template calls", () => {
     expect(calls(html)).toEqual(["GET /orders 1", "POST /orders 2", "GET /api/reviews 4"]);
   });
 
+  it("joins th:attrappend and th:attrprepend to the static value instead of replacing it", () => {
+    const html = ['<a href="/base" th:attrappend="href=@{/suffix}">x</a>', '<a href="/tail" th:attrprepend="href=@{/head}">y</a>', '<a th:attrappend="href=@{/alone}">z</a>'].join("\n");
+    expect(calls(html)).toEqual(["GET /base/suffix 1", "GET /head/tail 2"]);
+  });
+
+  it("reads link expressions only where Thymeleaf evaluates them as URLs", () => {
+    const html = [
+      "<pre>@{/admin}</pre>",
+      '<p th:text="@{/shown-as-text}">t</p>',
+      "<p>[[@{/printed}]]</p>",
+      '<script th:inline="javascript">const url = [[@{/api/inlined}]];</script>',
+    ].join("\n");
+    expect(calls(html)).toEqual(["* /api/inlined 4"]);
+  });
+
+  it("reads URLs only from attributes of start tags", () => {
+    const html = ['<pre>href="/example"</pre>', "<script>const sample = 'href=\"/in-script\"';</script>", '<p>see action="/nowhere"</p>', '<a href="/real">r</a>'].join("\n");
+    expect(calls(html)).toEqual(["GET /real 4"]);
+  });
+
   it("takes a submit button's method from formmethod, else its form", () => {
     const html = ['<form method="post">', '  <button formaction="/save">s</button>', '  <button formmethod="delete" formaction="/drop">d</button>', "</form>", '<button form="f" formaction="/out">o</button><form id="f" method="put"></form>'].join("\n");
     expect(calls(html)).toEqual(["POST /save 2", "DELETE /drop 3", "PUT /out 5"]);
@@ -214,6 +234,9 @@ describe("matching", () => {
     expect(ranked.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
     // Express and the like follow registration order, which is not read: every route the request fits stays.
     expect(matchCalls({ surfaces, calls }).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
+    // Spring scores a variable 1 and a wildcard 100: /a/{x}/{y} over /a/*/*.
+    const scored = [surface("GET", "/a/*/*"), surface("GET", "/a/{x}/{y}")];
+    expect(matchCalls({ surfaces: scored, calls: [call("GET", "/a/p/q")] }, new Set(["s"])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/{y}"]);
     // Spring prefers fewer variables: /a/{x}/c/d over /a/b/{x}/{y}.
     const spring = [surface("GET", "/a/b/{x}/{y}"), surface("GET", "/a/{x}/c/d")];
     expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Set(["s"])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
@@ -274,6 +297,7 @@ describe("a server-rendered Spring app", () => {
   it("guesses a handler from springdoc's numbered operationIds only when the document holds the name too", () => {
     expect(handlerNames("get_1", "GET", "/api/reviews/{id}", new Set(["get", "get_1"]))).toEqual(["get_1", "get"]);
     expect(handlerNames("health_2024", "GET", "/health", new Set(["health_2024"]))).toEqual(["health_2024"]);
+    expect(handlerNames("health_0", "GET", "/health", new Set(["health", "health_0"]))).toEqual(["health_0"]);
   });
 });
 
@@ -342,6 +366,7 @@ describe("templates of several applications", () => {
 
   it("reports a view outside the standard layout that several templates could be", () => {
     const files = {
+      "build.gradle.kts": "",
       "app/Home.java": '@Controller\nclass Home {\n  @GetMapping("/") String home() { return "index"; }\n}',
       "a/templates/index.html": "",
       "b/templates/index.html": "",
@@ -349,6 +374,61 @@ describe("templates of several applications", () => {
     const limits: string[] = [];
     extractRoutes(memory(files), normalizeConfig({ routes: [{ component: "app", files: ["app/*.java"], styles: ["spring"] }] }), undefined, [], limits, new Map());
     expect(limits).toEqual(["routes app|GET /: view index names 2 templates (a/templates/index.html, b/templates/index.html); none is linked"]);
+  });
+});
+
+describe("templates outside the standard layout", () => {
+  const controller = '@Controller\nclass Home {\n  @GetMapping("/") String home() { return "home"; }\n}';
+  const run = (files: Record<string, string>) => {
+    const limits: string[] = [];
+    const executed = new Map<string, Set<string>>();
+    extractRoutes(memory(files), normalizeConfig({ routes: [{ component: "a", files: ["a/code/*.java"], styles: ["spring"] }] }), undefined, [], limits, executed);
+    return { links: [...(executed.get("a|GET /") ?? [])], limits };
+  };
+
+  it("links only a template inside the handler's application, found by its build file", () => {
+    expect(run({ "a/pom.xml": "", "a/code/Home.java": controller, "a/web/templates/home.html": "", "b/pom.xml": "", "b/web/templates/home.html": "" }).links).toEqual(["a/web/templates/home.html:*home"]);
+    expect(run({ "a/pom.xml": "", "a/code/Home.java": controller, "b/pom.xml": "", "b/web/templates/home.html": "" }).links).toEqual([]);
+  });
+
+  it("links nothing and says so when no build file tells the application", () => {
+    expect(run({ "a/code/Home.java": controller, "b/web/templates/home.html": "" })).toEqual({
+      links: [],
+      limits: ["routes a|GET /: no build file above a/code/Home.java tells which application view home belongs to; none is linked"],
+    });
+  });
+});
+
+describe("Spring handlers, continued", () => {
+  it("reads a multi-line Kotlin expression body", () => {
+    const views: Views = new Map();
+    routesFromSpring("Web.kt", '@Controller\nclass Web {\n  @GetMapping("/") fun page(): String =\n    "home"\n  @GetMapping("/b") fun b() = if (x)\n    "left"\n  else "right"\n}', spec, views);
+    expect([...views].map(([id, v]) => [id, v.names])).toEqual([
+      ["server|GET /", ["home"]],
+      ["server|GET /b", ["left", "right"]],
+    ]);
+  });
+
+  it("sees @ResponseBody after the mapping, and reads the body past other annotations", () => {
+    const views: Views = new Map();
+    const text = [
+      "@Controller",
+      "class Web {",
+      '  @GetMapping("/x")',
+      "  @ResponseBody",
+      '  fun x() = "payload"',
+      '  @GetMapping("/y")',
+      "  @ResponseStatus(HttpStatus.OK)",
+      '  String y() { return "pages/y"; }',
+      "}",
+    ].join("\n");
+    routesFromSpring("Web.java", text, spec, views);
+    expect([...views].map(([id, v]) => [id, v.names])).toEqual([["server|GET /y", ["pages/y"]]]);
+  });
+
+  it("takes the last value a security setter is given", () => {
+    const text = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(f -> { f.loginPage("/old"); f.loginPage("/new"); }).logout(l -> { l.logoutUrl("/a"); l.logoutUrl("/b"); }); }';
+    expect(routes(text)).toEqual(["POST /new 1", "POST /b 1"]);
   });
 });
 

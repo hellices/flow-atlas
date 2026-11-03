@@ -105,16 +105,20 @@ nothing. A page handler that returns a view name (`return "movies/detail"`) lead
 looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
-HTML files in a call source are read as templates: Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`),
-root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*` attributes, and requests in inline scripts. A
-link is a GET; a form action takes the form's `th:method` or `method`; a submit button's `formaction` takes its
-`formmethod`, else its form's; a `data-*` URL, read by a script, is any method, and one ending in `/` is a base the
-script appends a segment to. A plain attribute Thymeleaf replaces (`href` next to `th:href`) is not requested, and
-commented-out markup and absolute URLs, which name other sites, are skipped.
+HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
+(`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, `th:data-*` and `th:attr` items,
+and root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*`; also the requests inline scripts make,
+and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET; a form action takes
+the form's `th:method` or `method`; a submit button's `formaction` takes its `formmethod`, else its form's; a `data-*`
+URL, read by a script, is any method, and one ending in `/` is a base the script appends a segment to. A plain
+attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
+their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
+are skipped.
 
-Routers differ in which of several matching routes serves a request. Spring picks the most specific (fewer variables,
-then fewer wildcards, then the longer pattern), so for a `spring` component a request whose path is fully known reaches
-that route only (`/movies/search`, not `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
+Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without
+a catch-all first; then the lower score, one per variable and a hundred per wildcard; then the longer pattern), so for
+a `spring` component a request whose path is fully known reaches that route only (`/movies/search`, not
+`/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
 which atlas does not read, so there a request reaches every route it fits.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`

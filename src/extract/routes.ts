@@ -396,6 +396,17 @@ function documentedSurfaces(
   return out;
 }
 
+/** The directory of the nearest build file (Maven or Gradle) above a file: "" at the root, undefined when there is none. */
+function buildRoot(file: string, files: Set<string>): string | undefined {
+  const parts = file.split("/").slice(0, -1);
+  for (let n = parts.length; n >= 0; n--) {
+    const dir = parts.slice(0, n).join("/");
+    const prefix = dir ? `${dir}/` : "";
+    if (["pom.xml", "build.gradle", "build.gradle.kts"].some((b) => files.has(`${prefix}${b}`))) return dir;
+  }
+  return undefined;
+}
+
 /** Surfaces with one per component, method and path, the first kept. */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Set<string>();
@@ -451,6 +462,7 @@ export function extractRoutes(
   if (executed && views.size) {
     const templates = source.list().filter((f) => /(^|\/)templates\/.+\.html$/.test(f));
     const files = new Set(templates);
+    const all = new Set(source.list());
     for (const [id, { file, names }] of views) {
       const runs = executed.get(id) ?? executed.set(id, new Set()).get(id)!;
       // Spring Boot's Thymeleaf resolver: classpath:/templates/<name>.html of the application the handler belongs to.
@@ -461,7 +473,13 @@ export function extractRoutes(
           if (files.has(t)) runs.add(`${t}:*${name}`);
           continue;
         }
-        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`));
+        // Outside the standard layout, the application is the nearest directory above the handler with a build file.
+        const root = buildRoot(file, all);
+        if (root === undefined) {
+          limits.push(`routes ${id}: no build file above ${file} tells which application view ${name} belongs to; none is linked`);
+          continue;
+        }
+        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`) && (root === "" || t.startsWith(`${root}/`)));
         if (found.length === 1) runs.add(`${found[0]}:*${name}`);
         else if (found.length > 1) limits.push(`routes ${id}: view ${name} names ${found.length} templates (${found.join(", ")}); none is linked`);
       }
