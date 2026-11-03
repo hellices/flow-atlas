@@ -28,11 +28,13 @@ So:
 - Never type a surface id, a chain id or a step order you worked out from reading code. Take chains from
   `atlas chains` or `atlas draft flows`; take a following step from a chain's `next`. If atlas does not list what you
   see in the code, the configuration or the extractor is behind: report that, do not write around it.
-- A check fails only on facts from the code: a chain that is gone, a step the code does not reach, an entry that does
-  not call. What you write is checked for presence only (`Documented`). It stays `trust: unverified` until a person
-  reviews it and records `verified`.
-- What atlas cannot settle stays visible: `Connected: Unknown (OrderNotInCode)` when you order two requests one
-  component makes, `unchained` surfaces, and chain edges joined `by name`. Leave them as they are; do not turn an
+- The structural conditions (`Resolved`, `Connected`, `EntryCalled`) fail only on facts from the code: a chain that
+  is gone, a step the code does not reach, an entry that does not call. What you write fails other checks: `Documented`
+  when a title or role is empty, `Fresh` once `stale_after` has passed, and the schema check when a field is invalid.
+  None of those says the code is wrong. What you write stays `trust: unverified` until a person reviews it and records
+  `verified`.
+- What atlas cannot settle stays visible: `Connected` and `Ready` are `Unknown (OrderNotInCode)` when you order two
+  requests one component makes, `unchained` surfaces, and chain edges joined `by name`. Leave them as they are; do not turn an
   Unknown into True by adding steps or edges by hand.
 
 ## Three parts
@@ -127,7 +129,7 @@ the document in the same change. A client call alone does not change it.
 3. For a journey across requests (open a page, then submit its form; attach, then send), write a flow whose steps are
    chains, in order. Take each following chain from the previous chain's `next` when atlas lists one; then `Connected`
    is True from the code. Two requests one component makes, with nothing in the code linking them, give
-   `Connected: Unknown (OrderNotInCode)`: the order is yours, and it stays Unknown.
+   `Connected` and `Ready` `Unknown (OrderNotInCode)`: the order is yours, and it stays Unknown.
 4. `atlas flows` until each flow is `Ready=True` or deliberately Unknown. A False `Resolved`, `Connected` or
    `EntryCalled` means the code or the flow is wrong: decide which with `references/boundaries.md`. A False
    `Documented` means an author field is empty.

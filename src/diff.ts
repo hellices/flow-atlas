@@ -86,9 +86,13 @@ export function diffMarkdown(d: GraphDiff): string {
   section("Chains added", d.chains.added);
   section("Chains removed", d.chains.removed);
   if (d.chains.changed.length) {
-    lines.push("**Chains that now reach other surfaces**");
+    lines.push("**Chains that changed**");
     for (const c of d.chains.changed) {
-      lines.push(`- \`${c.id}\`${c.added.length ? `: now reaches ${c.added.map((s) => `\`${s}\``).join(", ")}` : ""}${c.removed.length ? `${c.added.length ? ";" : ":"} no longer ${c.removed.map((s) => `\`${s}\``).join(", ")}` : ""}`);
+      const reach = [
+        c.added.length ? `now reaches ${c.added.map((s) => `\`${s}\``).join(", ")}` : "",
+        c.removed.length ? `no longer reaches ${c.removed.map((s) => `\`${s}\``).join(", ")}` : "",
+      ].filter(Boolean);
+      lines.push(`- \`${c.id}\`: ${reach.length ? reach.join("; ") : "same surfaces, edges between them changed"}`);
     }
     lines.push("");
   }

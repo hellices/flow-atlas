@@ -506,6 +506,7 @@ function cmdDraft(o: Options): number {
   const [what, ...rest] = o.args;
   const seedText = rest.join(" ");
   if (what === "flows") {
+    if (rest.length) throw new Error(`usage: atlas draft flows [--component <c>]; unexpected ${rest.join(" ")}`);
     const config = configFor(o);
     const { graph, chains, flows } = analyze(o, config, o.ref);
     const users = chainUsers(flows);
@@ -514,17 +515,17 @@ function cmdDraft(o: Options): number {
       process.stderr.write("every chain is named by a flow\n");
       return 0;
     }
-    process.stdout.write(draftChainFlows(graph, open));
+    process.stdout.write(draftChainFlows(graph, open, flows.items.map((i) => i.metadata.name)));
     process.stderr.write(`${open.length} drafts; left for the author: metadata.title, metadata.labels, spec.steps[0].role\n`);
     return 0;
   }
   if (what !== "flow" || !seedText) throw new Error("usage: atlas draft flows | atlas draft flow <chain or surface> [--to <surface>]");
   const config = configFor(o);
-  const { graph, chains } = analyze(o, config, o.ref);
+  const { graph, chains, flows } = analyze(o, config, o.ref);
   if (seedText.includes("->")) {
     const chain = chains.chains.find((c) => c.id === seedText);
     if (!chain) throw new Error(`no chain ${seedText}; see \`atlas chains\``);
-    process.stdout.write(draftChainFlows(graph, [chain]));
+    process.stdout.write(draftChainFlows(graph, [chain], flows.items.map((i) => i.metadata.name)));
     process.stderr.write("left for the author: metadata.title, metadata.labels, spec.steps[0].role\n");
     return 0;
   }

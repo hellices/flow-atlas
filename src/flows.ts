@@ -205,6 +205,16 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     return s ? node(s, end, depth + 1) : undefined;
   };
 
+  /** The chain a step enters by (first) or leaves by (last), looking through sub-flows to their end steps. */
+  const boundaryChain = (step: StepSpec, end: "first" | "last", depth = 0): Chain | undefined => {
+    if (step.chain) return chainById.get(step.chain);
+    const sub = step.flow ? byName.get(step.flow) : undefined;
+    if (!sub || depth > 4) return undefined;
+    const steps = sub.spec.steps;
+    const s = end === "first" ? steps[0] : steps[steps.length - 1];
+    return s ? boundaryChain(s, end, depth + 1) : undefined;
+  };
+
   const items: FlowReport["items"] = [];
   const covered = new Set<string>();
   for (const f of files) {
@@ -227,8 +237,8 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         };
       });
       for (let i = 0; i + 1 < spec.steps.length; i++) {
-        const a = spec.steps[i]!.chain ? chainById.get(spec.steps[i]!.chain!) : undefined;
-        const b = spec.steps[i + 1]!.chain ? chainById.get(spec.steps[i + 1]!.chain!) : undefined;
+        const a = boundaryChain(spec.steps[i]!, "last");
+        const b = boundaryChain(spec.steps[i + 1]!, "first");
         if (a && b) {
           // Between two requests, only what the first returns can lead to the second: a page that offers it.
           const offer = a.next.find((n) => n.chain === b.id);
@@ -247,7 +257,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         steps[i]!.toNext = { connected: edges !== undefined, edges: edges ?? [] };
       }
       const first = spec.steps[0] ? node(spec.steps[0], "first") : undefined;
-      const firstChain = spec.steps[0]?.chain ? chainById.get(spec.steps[0].chain) : undefined;
+      const firstChain = spec.steps[0] ? boundaryChain(spec.steps[0], "first") : undefined;
       // A chain knows who makes its request; a flow that starts with one takes its entry from the code.
       const outside = firstChain?.entry.component === "outside" && !spec.entry;
       const entry = firstChain
@@ -395,7 +405,9 @@ function conditionsFor(
     ? condition("Ready", "False", "ConditionsFailed", failing.map((c) => c.type).join(", "))
     : unresolved.length || planned.length || entryCalled.reason === "PlannedStepsPending"
       ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName), ...(entryCalled.reason === "PlannedStepsPending" ? ["entry"] : [])].join(", ")}`)
-      : condition("Ready", "True", "NoConditionFailed");
+      : declared.length
+        ? condition("Ready", "Unknown", "OrderNotInCode", `order stated by the flow only: ${declared.map(pairName).join(", ")}`)
+        : condition("Ready", "True", "NoConditionFailed");
   return [ready, ...rest];
 }
 

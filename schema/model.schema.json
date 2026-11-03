@@ -26,7 +26,7 @@
     "chainId": {
       "description": "<entry>-><surface id>: the component that makes the request, or outside for a surface declared public, and the surface that serves it.",
       "type": "string",
-      "pattern": "^[^|]+->[^|]+\\|([A-Z]+|\\*) /"
+      "pattern": "^[^|]+->[^|]+\\|([A-Z]+|\\*) /[^@\\s]*$"
     },
     "registryEntryId": {
       "description": "registry:key",

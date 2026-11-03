@@ -3,10 +3,11 @@ import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
 import { diffGraphs } from "../src/diff.js";
-import { draftChainFlows } from "../src/draft.js";
+import { draftChainFlows, uniqueIds } from "../src/draft.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
+import type { Graph } from "../src/model.js";
 import type { Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -105,8 +106,27 @@ describe("chains", () => {
     const flows = resolveFlows(graph, [flowFile(journey, wrong)], "2026-11-01T00:00:00Z", report);
     const connected = flows.items.map((i) => i.status.conditions.find((c) => c.type === "Connected")!);
     expect(connected.map((c) => `${c.status} ${c.reason}`)).toEqual(["Unknown OrderNotInCode", "False NoPathBetweenSteps"]);
-    expect(flows.items[0]!.status.conditions[0]!.status).toBe("True");
+    // An order only the flow states cannot make the flow ready.
+    expect(flows.items[0]!.status.conditions[0]).toMatchObject({ type: "Ready", status: "Unknown", reason: "OrderNotInCode" });
     expect(flowFindings(flows).map((f) => f.key)).toEqual(["FA007|wrong|read|disconnected"]);
+  });
+
+  it("reads the chains at a sub-flow's ends when it orders steps", () => {
+    const child = flow("child", [{ stepId: "read", chain: "web->bff|GET /screen", role: "reads" }]);
+    const journey = flow("journey", [
+      { stepId: "open", flow: "child" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const flows = resolveFlows(graph, [flowFile(child, journey)], "2026-11-01T00:00:00Z", report);
+    const item = flows.items.find((i) => i.metadata.name === "journey")!;
+    expect(item.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "OrderNotInCode" });
+    expect(item.status.entry?.component).toBe("web");
+    expect(flowFindings(flows)).toEqual([]);
+  });
+
+  it("starts no outside chain for a public surface the repository already calls", () => {
+    const both = normalizeConfig({ ...config, publicSurfaces: ["backend|GET /users", "backend|GET /admin/**"] });
+    expect(deriveChains(graph, both).chains.map((c) => c.id)).not.toContain("outside->backend|GET /users");
   });
 
   it("takes a public surface no component calls as served outside, and fails a chain that is gone", () => {
@@ -131,6 +151,12 @@ describe("chains", () => {
     for (const d of docs) expect(validate("flow", d)).toEqual([]);
     const agentLines = text.split("\n").filter((l) => l.trim().startsWith("# agent:"));
     expect(new Set(agentLines.map((l) => /# agent: (\w+)/.exec(l)![1]))).toEqual(new Set(["title", "labels", "sources", "generated", "stale_after", "role"]));
+  });
+
+  it("names drafts by the whole chain, so separate drafts and saved flows never share a name", () => {
+    const one = (id: string, taken: string[] = []) => parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS().metadata.name;
+    expect(one("web->bff|GET /screen")).toBe("web-bff-get-screen");
+    expect(one("web->bff|GET /screen", ["web-bff-get-screen"])).toBe("web-bff-get-screen-2");
   });
 
   it("reports a chain that reaches other surfaces after a change", () => {
@@ -170,5 +196,67 @@ describe("chains of a server-rendered app", () => {
       report,
     );
     expect(flows.items[0]!.status.conditions.find((c) => c.type === "Connected")).toEqual({ type: "Connected", status: "True", reason: "AllStepsConnected" });
+  });
+});
+
+describe("chains of a synthetic graph", () => {
+  const base = scan(memory(shop), config);
+  const surface = (i: number) => ({ id: `svc|GET /s${i}`, component: "svc", method: "GET", path: `/s${i}`, at: { file: "a.ts", line: i + 1 }, evidence: "static" as const });
+  const call = (from: string, i: number, line = i + 1) => ({ id: `${from}->svc|GET /s${i}@a.ts#f${i}`, from, to: "svc", method: "GET", path: `/s${i}`, based: false, at: { file: "a.ts", line }, evidence: "static" as const });
+  const graphOf = (hops: number, via = "handler"): Graph => {
+    const surfaces = Array.from({ length: hops + 1 }, (_, i) => surface(i));
+    const calls = [call("app", 0), ...Array.from({ length: hops }, (_, i) => call("svc", i + 1))];
+    const edges: Graph["edges"] = [{ kind: "match", from: calls[0]!.id, to: surfaces[0]!.id, evidence: "static" }];
+    for (let i = 0; i < hops; i++) {
+      edges.push({ kind: "reach", from: surfaces[i]!.id, to: calls[i + 1]!.id, evidence: "static", via });
+      edges.push({ kind: "match", from: calls[i + 1]!.id, to: surfaces[i + 1]!.id, evidence: "static" });
+    }
+    return { ...base, surfaces, calls, edges };
+  };
+
+  it("follows a request however deep it goes", () => {
+    const report = deriveChains(graphOf(20), normalizeConfig({}));
+    expect(report.chains).toHaveLength(1);
+    expect(report.chains[0]!.surfaces).toHaveLength(21);
+    expect(report.unchained).toEqual([]);
+  });
+
+  it("changes the digest when an edge changes, not when code moves", () => {
+    const digest = (g: Graph) => deriveChains(g, normalizeConfig({})).chains[0]!.digest;
+    const moved = graphOf(2);
+    moved.calls = moved.calls.map((c) => ({ ...c, at: { ...c.at, line: c.at.line + 10 } }));
+    expect(digest(moved)).toBe(digest(graphOf(2)));
+    expect(digest(graphOf(2, "otherHandler"))).not.toBe(digest(graphOf(2)));
+  });
+
+  it("keeps every offer of the same next request", () => {
+    const g = graphOf(1);
+    const page = call("web", 9);
+    g.surfaces.push(surface(9));
+    g.calls.push(page);
+    g.edges.push(
+      { kind: "match", from: page.id, to: "svc|GET /s9", evidence: "static" },
+      { kind: "reach", from: "svc|GET /s0", to: page.id, evidence: "static", via: "view a" },
+      { kind: "reach", from: "svc|GET /s1", to: page.id, evidence: "static", via: "view b" },
+    );
+    const chain = deriveChains(g, normalizeConfig({})).chains.find((c) => c.id === "app->svc|GET /s0")!;
+    expect(chain.next.map((n) => `${n.from} ${n.via}`)).toEqual(["svc|GET /s0 view a", "svc|GET /s1 view b"]);
+  });
+});
+
+describe("draft names", () => {
+  it("stays within 63 characters when a suffix tells two long names apart", () => {
+    const next = uniqueIds();
+    const long = "a".repeat(70);
+    const [first, second] = [next(long), next(long)];
+    expect(first).toHaveLength(63);
+    expect(second).toHaveLength(63);
+    expect(second.endsWith("-2")).toBe(true);
+  });
+
+  it("refuses a chain id with anything after the path", () => {
+    const report = { ...deriveChains(scan(memory(shop), config), config) };
+    report.chains = [{ ...report.chains[0]!, id: "web->bff|GET /screen@bff/src/routes.ts#h" }];
+    expect(validate("chains", report)).not.toEqual([]);
   });
 });

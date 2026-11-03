@@ -27,20 +27,21 @@ export interface Chain {
   next: Array<{ chain: string; from: string; via: string }>;
   /** Edges joined only because a name agrees (evidence `name` or `text`), not because code was followed. */
   weak: number;
-  /** Changes when the chain's surfaces or edges change. */
+  /** Changes when the chain's surfaces or edges change; not when code only moves within a file. */
   digest: string;
 }
 
 export interface ChainReport extends Document<"Chains"> {
   chains: Chain[];
-  /** Surfaces no chain reaches: no caller atlas reads, and not declared public. */
+  /**
+   * Surfaces no chain reaches: no path of calls leads to them from a call that starts a request, and they are not
+   * declared public. A surface whose only callers are handlers no request reaches is one of them.
+   */
   unchained: string[];
 }
 
 /** A reach edge to what a rendered page offers is a later request, not part of the one that rendered it. */
 export const offersNext = (e: Edge): boolean => e.kind === "reach" && (e.via ?? "").startsWith("view ");
-
-const MAX_DEPTH = 16;
 
 export const chainId = (entry: string, surface: string): string => `${entry}->${surface}`;
 
@@ -65,9 +66,10 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       r.callers.push(c.id);
     }
   }
-  const started = new Set([...roots.values()].map((r) => r.root));
+  // A client outside the repository is assumed only for a public surface nothing in the repository calls.
+  const called = new Set(graph.edges.filter((e) => e.kind === "match" && index.calls.has(e.from)).map((e) => e.to));
   for (const s of graph.surfaces) {
-    if (isPublic(s.id) && !started.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
+    if (isPublic(s.id) && !called.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
   }
 
   const chains: Chain[] = [];
@@ -76,8 +78,9 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
     const edges: Edge[] = [];
     const next: Chain["next"] = [];
     const seen = new Set(surfaces);
+    // `seen` stops cycles, so the walk ends without a depth limit and never cuts a chain short.
     let frontier = [r.root];
-    for (let depth = 0; depth < MAX_DEPTH && frontier.length; depth++) {
+    while (frontier.length) {
       const following: string[] = [];
       for (const s of frontier) {
         for (const reach of index.out.get(s) ?? []) {
@@ -102,9 +105,14 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       frontier = following;
     }
     const unique = [...new Map(edges.map((e) => [`${e.kind}|${e.from}|${e.to}`, e])).values()];
-    const offered = [...new Map(next.map((n) => [n.chain, n])).values()].sort((a, b) => a.chain.localeCompare(b.chain));
-    // From surface to surface, so that code moving within a file (call ids hold lines) does not change the chain.
-    const links = unique.filter((e) => e.kind === "reach").flatMap((r) => unique.filter((m) => m.kind === "match" && m.from === r.to).map((m) => `${r.from}>${m.to}|${r.evidence}`));
+    const offered = [...new Map(next.map((n) => [`${n.chain}|${n.from}|${n.via}`, n])).values()].sort(
+      (a, b) => a.chain.localeCompare(b.chain) || a.from.localeCompare(b.from) || a.via.localeCompare(b.via),
+    );
+    // From surface to surface, so that code moving within a file (call ids hold lines) does not change the chain; every
+    // other property of both edges counts.
+    const links = unique
+      .filter((e) => e.kind === "reach")
+      .flatMap((r) => unique.filter((m) => m.kind === "match" && m.from === r.to).map((m) => JSON.stringify([r.from, m.to, r.via ?? "", r.evidence, m.via ?? "", m.evidence])));
     const digest = createHash("sha256")
       .update(JSON.stringify({ surfaces: [...surfaces].sort(), links: [...new Set(links)].sort() }))
       .digest("hex")
@@ -142,7 +150,7 @@ export function chainsText(doc: ChainReport, total: number, usedBy: Map<string, 
     for (const n of c.next) lines.push(`  next ${n.chain}  (${n.via})`);
   }
   if (doc.unchained.length) {
-    lines.push("", `surfaces in no chain: ${doc.unchained.length} (no caller atlas reads; declare one served outside the repository in publicSurfaces)`);
+    lines.push("", `surfaces in no chain: ${doc.unchained.length} (no request atlas reads leads to them; declare one served outside the repository in publicSurfaces)`);
   }
   return `${lines.join("\n")}\n`;
 }

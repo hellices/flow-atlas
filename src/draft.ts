@@ -21,19 +21,31 @@ const slug = (s: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-/** Gives each base back once; a base already given, or a suffixed id already given, gets the next free `-<n>`. */
-export function uniqueIds(): (base: string) => string {
-  const used = new Set<string>();
+const MAX_NAME = 63;
+
+const fit = (s: string, max: number): string => s.slice(0, max).replace(/-+$/, "");
+
+/**
+ * Gives each base back once, never longer than `max`; a base already given or reserved gets the next free `-<n>`,
+ * cutting the base to leave room for it.
+ */
+export function uniqueIds(reserved: Iterable<string> = [], max = MAX_NAME): (base: string) => string {
+  const used = new Set(reserved);
   return (base) => {
-    let id = base;
-    for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+    let id = fit(base, max);
+    for (let n = 2; used.has(id); n++) id = `${fit(base, max - `-${n}`.length)}-${n}`;
     used.add(id);
     return id;
   };
 }
 
 export function flowName(seed: Surface): string {
-  return slug(`${seed.component}-${seed.method === "*" ? "any" : seed.method}-${seed.path}`).slice(0, 63).replace(/-+$/, "");
+  return fit(slug(`${seed.component}-${seed.method === "*" ? "any" : seed.method}-${seed.path}`), MAX_NAME);
+}
+
+/** Every part of a chain's id, path parameters included, so that two chains seldom slug to the same name. */
+function chainName(entry: string, root: Surface): string {
+  return slug(`${entry}-${root.component}-${root.method === "*" ? "any" : root.method}-${root.path.replace(/[{}]/g, "")}`) || "flow";
 }
 
 const q = (s: string): string => JSON.stringify(s);
@@ -48,15 +60,16 @@ const OKF = [
 /**
  * Flow drafts for chains, one YAML document each. The structure is the code's: each flow is one chain step, its entry
  * comes from the chain, and the requests the result offers next are listed for the author to pick from. The author
- * writes only the marked comments: the title, the labels and the step's role.
+ * writes only the marked comments: the title, the labels and the step's role. A name is the chain's whole identity,
+ * so drafting one chain at a time gives the same names as drafting all; `taken` holds the names flows already use.
  */
-export function draftChainFlows(graph: Graph, chains: Chain[]): string {
+export function draftChainFlows(graph: Graph, chains: Chain[], taken: Iterable<string> = []): string {
   const index = new FlowIndex(graph);
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit ?? "WORKTREE";
-  const names = uniqueIds();
+  const names = uniqueIds(taken);
   const docs = chains.map((c) => {
     const root = index.surfaces.get(c.root)!;
-    const name = names(slug(`${c.entry.component}-${root.method === "*" ? "any" : root.method}-${root.path}`).slice(0, 63).replace(/-+$/, "") || "flow");
+    const name = names(chainName(c.entry.component, root));
     const callers = c.entry.callers.map((id) => index.calls.get(id)!).map((x) => `${x.at.file}:${x.at.line}`);
     const lines = [
       `# Draft from \`atlas draft flows\` at ${commit}.`,
