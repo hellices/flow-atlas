@@ -34,7 +34,7 @@ and usable by agents.
 | static analysis results | SARIF 2.1.0 (OASIS) | export | GitHub code scanning, the VS Code SARIF Viewer and review bots read it as is; the output passes the official schema |
 | route names | OpenAPI path templates | followed | path parameters are written `{name}` in ids, so a route has the same id whatever framework registers it |
 | where OpenAPI documents are | conventional file names and frameworks' default paths | followed | `openapi.yaml`, `swagger.json`, Nest's `jsonDocumentUrl` and `<path>-json`, `@fastify/swagger-ui`'s `<prefix>/json` and `/openapi.json` routes are found in the code; only server addresses come from environment settings |
-| operation names | OpenAPI operationId | followed | the operationId the code states is read; on request, @nestjs/swagger's default rule (`Class_method`) is applied |
+| operation names | OpenAPI operationId | followed | the operationId the code states is read; when configured, @nestjs/swagger's default rule (`Class_method`) is applied |
 | joining runtime observation | OpenTelemetry HTTP semantic conventions | mapping only | `component` maps to `service.name`, `method` to `http.request.method`, and a normalized `http.route` to the route path |
 | graph exchange format | JSON Graph Format, SARIF graphs | not followed | no graph exchange standard is widely used; nodes and edges are kept plain so renderers can use them directly |
 | component catalogs | Backstage Component and API relations | not followed | using Backstage entity names as component names joins the two; no separate field is needed for now |

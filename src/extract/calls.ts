@@ -121,6 +121,23 @@ function enumMethodNear(line: string, start: number, end: number): string | unde
  * The text with every comment blanked (newlines kept, offsets unchanged) and strings left as they are: `#` comments in
  * Python, Ruby and shell, `//` and `/* *\/` in the C family (Kotlin, Java, Swift, Go, C#, Dart and the like).
  */
+/**
+ * Where a string literal opened by `quote` at `start` ends (just past its closing quote). A backslash escapes the next
+ * character, except in a Kotlin raw string (`"""` in a `.kt` file), which has no escapes and whose run of closing
+ * quotes ends at its last three. A one-character quote other than a backtick ends at a line break.
+ */
+export function literalEnd(text: string, start: number, quote: string, file: string): number {
+  const raw = quote === '"""' && /\.kts?$/.test(file);
+  let j = start + quote.length;
+  while (j < text.length && !text.startsWith(quote, j)) {
+    if (text[j] === "\\" && !raw) j++;
+    else if (quote.length === 1 && quote !== "`" && text[j] === "\n") return j;
+    j++;
+  }
+  if (raw) while (text[j + 3] === '"') j++;
+  return Math.min(j + quote.length, text.length);
+}
+
 export function withoutComments(file: string, text: string): string {
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
   const out = text.split("");
@@ -131,13 +148,7 @@ export function withoutComments(file: string, text: string): string {
   while (i < text.length) {
     const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(text[i]!) ? text[i]! : undefined;
     if (quote) {
-      let j = i + quote.length;
-      while (j < text.length && !text.startsWith(quote, j)) {
-        if (text[j] === "\\") j++;
-        else if (quote.length === 1 && quote !== "`" && text[j] === "\n") break;
-        j++;
-      }
-      i = j + quote.length;
+      i = literalEnd(text, i, quote, file);
       continue;
     }
     const line = hash ? text[i] === "#" : text.startsWith("//", i);
@@ -188,30 +199,57 @@ export function callsFromText(file: string, original: string, spec: CallSource):
   return out;
 }
 
-// The template with inert comments blanked (newlines and offsets kept): plain HTML comments and Thymeleaf's
-// parser-level comments, which both start with "<!--". Thymeleaf's prototype-only block, opened by "<!--/*/" and
-// closed by "/*/-->", is processed, so only its two markers are blanked.
-export function withoutHtmlComments(text: string): string {
-  const out = text.split("");
+/** A `<script>` or `<style>` element: its start tag and where its raw-text body lies in the template. */
+interface RawText {
+  name: string;
+  attributes: Attribute[];
+  bodyStart: number;
+  bodyEnd: number;
+}
+
+// The template as HTML reads it, in one pass: comments blanked (newlines and offsets kept), and the <script> and
+// <style> elements found, whose bodies are raw text, where neither a comment nor markup can start. Thymeleaf's
+// parser-level comments start with "<!--" too and are blanked; its prototype-only block, opened by "<!--/*/" and
+// closed by "/*/-->", is processed, so only the two markers are blanked and comments inside it still are.
+function scanHtml(original: string): { text: string; raw: RawText[] } {
+  const out = original.split("");
   const blank = (from: number, to: number) => {
     for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
   };
-  let i = text.indexOf("<!--");
-  while (i >= 0) {
-    if (text.startsWith("<!--/*/", i)) {
+  const raw: RawText[] = [];
+  const tag = new RegExp(START_TAG.source, "y");
+  let prototype = false;
+  let i = 0;
+  while (i < original.length) {
+    if (prototype && original.startsWith("/*/-->", i)) {
+      blank(i, i + 6);
+      prototype = false;
+      i += 6;
+    } else if (original.startsWith("<!--/*/", i)) {
       blank(i, i + 7);
-      const close = text.indexOf("/*/-->", i + 7);
-      if (close < 0) break;
-      blank(close, close + 6);
-      i = text.indexOf("<!--", close + 6);
-      continue;
-    }
-    const close = text.indexOf("-->", i + 4);
-    const end = close < 0 ? text.length : close + 3;
-    blank(i, end);
-    i = text.indexOf("<!--", end);
+      prototype = true;
+      i += 7;
+    } else if (original.startsWith("<!--", i)) {
+      const close = original.indexOf("-->", i + 4);
+      const end = close < 0 ? original.length : close + 3;
+      blank(i, end);
+      i = end;
+    } else if (original[i] === "<" && /^<(script|style)\b/i.test(original.slice(i, i + 7))) {
+      tag.lastIndex = i;
+      const m = tag.exec(original);
+      if (!m) {
+        i++;
+        continue;
+      }
+      const name = m[1]!.toLowerCase();
+      const bodyStart = i + m[0].length;
+      const close = original.toLowerCase().indexOf(`</${name}`, bodyStart);
+      const bodyEnd = close < 0 ? original.length : close;
+      raw.push({ name, attributes: attributesOf(m[2]!, i + 1 + m[1]!.length), bodyStart, bodyEnd });
+      i = bodyEnd;
+    } else i++;
   }
-  return out.join("");
+  return { text: out.join(""), raw };
 }
 
 /**
@@ -254,7 +292,7 @@ const methodOf = (tag: string, plain: string): string | undefined =>
 function formOf(text: string, index: number, control: string): string | undefined {
   const id = /(?<![\w:-])form\s*=\s*["']([^"']+)["']/i.exec(control)?.[1];
   if (id) {
-    const named = new RegExp(`<form\\b[^>]*\\bid\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`, "i").exec(text);
+    const named = new RegExp(`<form\\b[^>]*(?<![\\w:-])id\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`, "i").exec(text);
     if (named) return named[0];
   }
   const open = text.toLowerCase().lastIndexOf("<form", index);
@@ -279,28 +317,29 @@ interface StartTag {
 const START_TAG = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*\/?>/g;
 const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
 
-/** The template with the bodies of `<script>` and `<style>` blanked: raw text, where markup-like text is not markup. */
-function withoutRawText(text: string): string {
-  return text.replace(/(<(script|style)\b[^>]*>)([\s\S]*?)(<\/\2\s*>)/gi, (_, open: string, _n: string, body: string, close: string) => open + body.replace(/[^\n]/g, " ") + close);
+/** The attributes of a start tag's attribute list, which begins at `listAt` in the template. */
+function attributesOf(list: string, listAt: number): Attribute[] {
+  const out: Attribute[] = [];
+  for (const a of list.matchAll(ATTRIBUTE)) {
+    const value = a[2] ?? a[3] ?? a[4];
+    if (value === undefined) continue;
+    const eq = a[0].indexOf("=");
+    let k = eq + 1;
+    while (/\s/.test(a[0][k] ?? "")) k++;
+    if (a[0][k] === '"' || a[0][k] === "'") k++;
+    out.push({ name: a[1]!.toLowerCase(), value, at: listAt + (a.index ?? 0) + k });
+  }
+  return out;
 }
 
-/** The template's start tags with their attributes, values located in the template. */
-function startTags(text: string): StartTag[] {
+/** The template's start tags with their attributes, values located in the template; raw-text bodies hold no tags. */
+function startTags(text: string, raw: RawText[]): StartTag[] {
+  const markup = text.split("");
+  for (const r of raw) for (let k = r.bodyStart; k < r.bodyEnd; k++) if (markup[k] !== "\n") markup[k] = " ";
   const out: StartTag[] = [];
-  for (const m of withoutRawText(text).matchAll(START_TAG)) {
+  for (const m of markup.join("").matchAll(START_TAG)) {
     const start = m.index ?? 0;
-    const listAt = start + 1 + m[1]!.length;
-    const attributes: Attribute[] = [];
-    for (const a of m[2]!.matchAll(ATTRIBUTE)) {
-      const value = a[2] ?? a[3] ?? a[4];
-      if (value === undefined) continue;
-      const eq = a[0].indexOf("=");
-      let k = eq + 1;
-      while (/\s/.test(a[0][k] ?? "")) k++;
-      if (a[0][k] === '"' || a[0][k] === "'") k++;
-      attributes.push({ name: a[1]!.toLowerCase(), value, at: listAt + (a.index ?? 0) + k });
-    }
-    out.push({ start, text: text.slice(start, start + m[0].length), attributes });
+    out.push({ start, text: text.slice(start, start + m[0].length), attributes: attributesOf(m[2]!, start + 1 + m[1]!.length) });
   }
   return out;
 }
@@ -342,7 +381,7 @@ function templateMethod(text: string, tag: StartTag, name: string): string {
  * Text that is not an attribute, commented-out markup and absolute URLs, which name other sites, are not read.
  */
 export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
-  const text = withoutHtmlComments(original);
+  const { text, raw } = scanHtml(original);
   const out: Draft<Call>[] = [];
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
@@ -359,7 +398,7 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     });
   };
 
-  for (const tag of startTags(text)) {
+  for (const tag of startTags(text, raw)) {
     const plain = new Map(tag.attributes.filter((a) => !a.name.startsWith("th:") && !a.name.startsWith("data-th-")).map((a) => [a.name, a]));
     const replaced = new Set<string>();
     const joined = new Set<string>();
@@ -396,16 +435,18 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   }
 
   // Inline scripts, without a src: their requests, at their lines in the template.
-  for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    if (/\bsrc\s*=/i.test(m[1]!) || /\btype\s*=\s*["'](?!text\/javascript|module|application\/javascript)[^"']*["']/i.test(m[1]!)) continue;
-    const bodyStart = (m.index ?? 0) + m[0].indexOf(">") + 1;
-    const shift = lineOf(text, bodyStart) - 1;
-    for (const c of callsFromTypeScript(`${file}.js`, m[2]!, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
-    if (/\bth:inline\s*=\s*["']javascript["']/i.test(m[1]!)) {
-      for (const e of m[2]!.matchAll(/\[[[(]\s*@\{/g)) {
+  for (const script of raw.filter((r) => r.name === "script")) {
+    const attribute = (name: string) => script.attributes.find((a) => a.name === name)?.value;
+    const type = attribute("type")?.trim().toLowerCase();
+    if (attribute("src") !== undefined || (type && !/^(text\/javascript|module|application\/javascript)$/.test(type))) continue;
+    const body = text.slice(script.bodyStart, script.bodyEnd);
+    const shift = lineOf(text, script.bodyStart) - 1;
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
+    if (attribute("th:inline")?.toLowerCase() === "javascript") {
+      for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
-        const path = linkPath(m[2]!, at);
-        if (path) add(path, bodyStart + at, undefined, "script");
+        const path = linkPath(body, at);
+        if (path) add(path, script.bodyStart + at, undefined, "script");
       }
     }
   }

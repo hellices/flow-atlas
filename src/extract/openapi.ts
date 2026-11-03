@@ -93,16 +93,17 @@ export function describedOperations(file: string, text: string): DescribedApi | 
  */
 export function handlerNames(operationId: string, method: string, rawPath: string, siblings: Set<string> = new Set()): string[] {
   const names = [operationId];
+  // springdoc numbers the later methods that share a name, so a numbered id stands for a name only when the document
+  // also holds the name itself; `health_2024` alone is an id of its own. That name is the operationId's own, so it
+  // comes before the guesses that split it.
+  const springdoc = /^([A-Za-z_$][\w$]*?)_[1-9]\d*$/.exec(operationId);
+  if (springdoc && siblings.has(springdoc[1]!)) names.push(springdoc[1]!);
   if (/^[A-Z$][\w$]*$/.test(operationId)) {
     for (let i = operationId.indexOf("_"); i > 0; i = operationId.indexOf("_", i + 1)) {
       const member = operationId.slice(i + 1);
       if (/^[A-Za-z$][\w$]*$/.test(member)) names.push(member);
     }
   }
-  // springdoc numbers the later methods that share a name, so a numbered id stands for a name only when the document
-  // also holds the name itself; `health_2024` alone is an id of its own.
-  const springdoc = /^([A-Za-z_$][\w$]*?)_[1-9]\d*$/.exec(operationId);
-  if (springdoc && siblings.has(springdoc[1]!)) names.push(springdoc[1]!);
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));
   return [...new Set(names)];

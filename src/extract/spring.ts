@@ -3,11 +3,12 @@ import type { Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf } from "../source.js";
-import { withoutComments } from "./calls.js";
+import { literalEnd, withoutComments } from "./calls.js";
 
 const SHORTCUTS: Record<string, string> = { GetMapping: "GET", PostMapping: "POST", PutMapping: "PUT", DeleteMapping: "DELETE", PatchMapping: "PATCH" };
 const MAPPING = /@(?:[\w.]*\.)?(RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\b/g;
-const TYPE = /\b(?:class|interface|object|record)\s+[A-Za-z_]\w*/g;
+// A type's name, plain or a Kotlin backtick identifier (`Foo Controller`).
+const TYPE = /\b(?:class|interface|object|record)\s+(?:[A-Za-z_]\w*|`[^`\n]+`)/g;
 const REQUEST_METHODS = /\b(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|TRACE)\b/g;
 
 /** The views a handler renders, by route, with the file of the handler so its application's templates can be found. */
@@ -17,7 +18,7 @@ export type Views = Map<string, { file: string; names: string[] }>;
  * Java or Kotlin code with the contents of every string and character literal blanked (quotes, newlines and offsets
  * kept), so annotations, braces and keywords are searched in code only. Values are read back from the unmasked text.
  */
-function maskStrings(code: string): string {
+function maskStrings(file: string, code: string): string {
   const out = code.split("");
   let i = 0;
   while (i < code.length) {
@@ -26,14 +27,10 @@ function maskStrings(code: string): string {
       i++;
       continue;
     }
-    let j = i + quote.length;
-    while (j < code.length && !code.startsWith(quote, j)) {
-      if (code[j] === "\\") j++;
-      else if (quote.length === 1 && code[j] === "\n") break;
-      j++;
-    }
-    for (let k = i + quote.length; k < Math.min(j, code.length); k++) if (out[k] !== "\n") out[k] = " ";
-    i = j + quote.length;
+    const end = literalEnd(code, i, quote, file);
+    const close = code.startsWith(quote, end - quote.length) ? end - quote.length : end;
+    for (let k = i + quote.length; k < close; k++) if (out[k] !== "\n") out[k] = " ";
+    i = end;
   }
   return out.join("");
 }
@@ -246,7 +243,7 @@ interface TypeScope {
  */
 export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views): Surface[] {
   const code = withoutComments(file, text);
-  const masked = maskStrings(code);
+  const masked = maskStrings(file, code);
   const mappings = [...masked.matchAll(MAPPING)].map((m) => {
     const at = m.index ?? 0;
     let open = at + m[0].length;

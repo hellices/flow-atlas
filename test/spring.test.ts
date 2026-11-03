@@ -446,3 +446,53 @@ describe("extractRoutes with the spring style", () => {
     expect(extractRoutes(source, normalizeConfig({ routes: [{ component: "s", files: ["*.java"], styles: ["spring"] }] })).map((s) => s.id)).toEqual(["s|GET /x"]);
   });
 });
+
+describe("review fixes: templates", () => {
+  const call = { from: "web", to: "server", files: [] };
+  const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
+
+  it("still blanks comments inside a prototype-only block", () => {
+    const html = ['<!--/*/', '<!-- <a href="/retired">x</a> -->', '<a href="/shown">y</a>', "/*/-->"].join("\n");
+    expect(calls(html)).toEqual(["GET /shown 3"]);
+  });
+
+  it("does not open a comment inside a script body", () => {
+    const html = ["<script>", 'const marker = "<!--";', 'fetch("/api/one");', "</script>", '<a href="/after">a</a>', "<!-- -->"].join("\n");
+    expect(calls(html)).toEqual(["GET /api/one 3", "GET /after 5"]);
+  });
+
+  it("reads a script's attributes by exact name and past quoted '>'", () => {
+    const html = ['<script data-src="/x.js">fetch("/api/body");</script>', '<script data-note="a > b">fetch("/api/quoted");</script>', '<script data-type="text/plain">fetch("/api/typed");</script>'].join("\n");
+    expect(calls(html)).toEqual(["GET /api/body 1", "GET /api/quoted 2", "GET /api/typed 3"]);
+  });
+
+  it("finds a button's form by its exact id", () => {
+    const html = ['<button form="f" formaction="/out">o</button>', '<form data-id="f" method="delete"></form>', '<form id="f" method="put"></form>'].join("\n");
+    expect(calls(html)).toEqual(["PUT /out 1"]);
+  });
+});
+
+describe("review fixes: Spring", () => {
+  it("puts springdoc's base name before the guesses that split the operationId", () => {
+    expect(handlerNames("Get_list_1", "GET", "/x", new Set(["Get_list", "Get_list_1"]))).toEqual(["Get_list_1", "Get_list", "list_1"]);
+  });
+
+  it("links no template that belongs to a nested build module", () => {
+    const limits: string[] = [];
+    const executed = new Map<string, Set<string>>();
+    const files = { "a/pom.xml": "", "a/code/Home.java": '@Controller\nclass Home {\n  @GetMapping("/") String home() { return "home"; }\n}', "a/lib/pom.xml": "", "a/lib/templates/home.html": "" };
+    extractRoutes(memory(files), normalizeConfig({ routes: [{ component: "a", files: ["a/code/*.java"], styles: ["spring"] }] }), undefined, [], limits, executed);
+    expect([...(executed.get("a|GET /") ?? [])]).toEqual([]);
+  });
+
+  it("combines a Kotlin backtick-named class's mapping with its methods", () => {
+    expect(routes('@RestController\n@RequestMapping("/api")\nclass `Review Api` {\n  @GetMapping("/reviews") fun list() = 1\n}', "A.kt")).toEqual(["GET /api/reviews 4"]);
+  });
+
+  it("reads a Kotlin raw string's backslash as a character, and a Java text block's as an escape", () => {
+    const kotlin = '@RestController\nclass A {\n  val p = """C:\\"""\n  @GetMapping("/k") fun k() = 1\n}';
+    expect(routes(kotlin, "A.kt")).toEqual(["GET /k 4"]);
+    const java = '@RestController\nclass A {\n  String p = """\n  a\\"""\n  """;\n  @GetMapping("/j") String j() { return ""; }\n}';
+    expect(routes(java, "A.java")).toEqual(["GET /j 6"]);
+  });
+});

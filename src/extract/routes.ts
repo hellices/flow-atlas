@@ -479,7 +479,8 @@ export function extractRoutes(
           limits.push(`routes ${id}: no build file above ${file} tells which application view ${name} belongs to; none is linked`);
           continue;
         }
-        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`) && (root === "" || t.startsWith(`${root}/`)));
+        // A template under a nested build file belongs to that module, not to the handler's application.
+        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`) && buildRoot(t, all) === root);
         if (found.length === 1) runs.add(`${found[0]}:*${name}`);
         else if (found.length > 1) limits.push(`routes ${id}: view ${name} names ${found.length} templates (${found.join(", ")}); none is linked`);
       }
