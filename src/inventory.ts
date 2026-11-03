@@ -17,25 +17,36 @@ export interface Inventory {
   apiDocuments: ApiDocument[];
 }
 
-const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,html,htm}";
-const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle\.kts|go\.mod)$/;
+const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
+const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
 
-const ROUTE_STYLES: Array<{ style: string; re: RegExp }> = [
-  { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g },
-  { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g },
-  { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g },
-  { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g },
-  { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g },
+const SCRIPT = /\.(c|m)?[jt]sx?$/;
+
+/** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
+const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp }> = [
+  { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
+  { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
+  { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
+  { style: "next", re: /^export\s+(?:async\s+)?(?:function|const)\s+(?:GET|POST|PUT|PATCH|DELETE)\b/gm, files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/ },
+  { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
 
 const CALL_SHAPES = [
   /["'`](?:\$\{[^}]+\}|\$[A-Za-z_]\w*)\/[A-Za-z][^"'`]*["'`]/g,
-  /\bfetch\(\s*["'`]\/[A-Za-z][^"'`]*/g,
+  // fetch and the wrappers named after it: authFetch, fetchJson, useFetch.
+  /\b\w*[Ff]etch\w*\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
   /\b(?:action|formaction|data-[\w-]+-url)\s*=\s*["']?\/[A-Za-z]/gi,
 ];
+
+/**
+ * A verb call whose first argument is a path, type arguments allowed: Dio's `dio.get<T>("/x")`, `http.post("/x")`.
+ * Not in JavaScript or TypeScript, where `app.get("/x")` registers a route, nor in a decorator such as FastAPI's.
+ */
+const VERB_CALL = /(?<!@[\w.]*)\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 
@@ -102,7 +113,8 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (!text) continue;
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
-    for (const { style, re } of ROUTE_STYLES) {
+    for (const { style, re, files } of ROUTE_STYLES) {
+      if (!files.test(file)) continue;
       const hits = [...text.matchAll(re)];
       if (!hits.length) continue;
       const first = hits[0]!;
@@ -111,7 +123,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     }
     let count = 0;
     let firstAt: number | undefined;
-    for (const re of CALL_SHAPES) {
+    for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
         count++;
         firstAt = Math.min(firstAt ?? Infinity, m.index ?? 0);

@@ -497,8 +497,9 @@ function cmdChains(o: Options): number {
   const config = configFor(o);
   const { graph, chains, flows } = analyze(o, config, o.ref);
   const users = chainUsers(flows);
-  const doc = { ...chains, chains: chains.chains.filter((c) => touches(c, o.component) && (!o.unnamed || !users.has(c.id))) };
-  if (!emit(o, doc)) process.stdout.write(chainsText(doc, graph.surfaces.length, users));
+  const mine = { ...chains, chains: chains.chains.filter((c) => touches(c, o.component)) };
+  const doc = o.unnamed ? { ...mine, chains: mine.chains.filter((c) => !users.has(c.id)) } : mine;
+  if (!emit(o, doc)) process.stdout.write(chainsText(mine, graph.surfaces.length, users, o.unnamed ? "unnamed" : undefined));
   return 0;
 }
 

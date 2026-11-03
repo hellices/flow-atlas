@@ -73,7 +73,11 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
       }
     }
     if (config.rules.FA003?.cycles !== false) {
-      const edges = new Set([...declared, ...actual.keys()]);
+      // A component calling its own routes, as a browser bundle calls the server of the same app, is no cycle.
+      const edges = new Set([...declared, ...actual.keys()].filter((e) => {
+        const [from, to] = e.split("->");
+        return from !== to;
+      }));
       const search = cycleSearch(edges);
       if (!search.complete) limits.push(`FA003: stopped listing cycles after ${CYCLE_BUDGET} steps; every strongly connected group has one cycle reported, others may be missing`);
       for (const cycle of search.cycles) {

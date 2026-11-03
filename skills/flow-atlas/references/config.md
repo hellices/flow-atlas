@@ -18,12 +18,15 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi | spring
+    styles: [nest]            # nest | express | fastapi | spring | next
     receivers: [app, router]  # express receivers; default app, router, server, fastify
+    mounts:                   # where an Express router file is served, when its `use` path is not a literal
+      "services/orders/src/routes/collect.js": /collect
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
-    calls:                    # registration helpers: registerRoute(app, "POST", "/x", handler)
+    calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler)
       - { name: registerRoute, methodArg: 1, pathArg: 2 }
+      - { name: add_agent_endpoint, pathArg: 2, method: POST }   # a helper that always registers one method (* for all)
   - component: payments       # any framework: its generated OpenAPI 2.0/3.x document (references/openapi.md)
     openapi: services/payments/openapi.json
     files: ["services/payments/src/main/**/*.java"]   # searched for the handlers of documented operations
@@ -31,6 +34,7 @@ routes:
 # Which files of one component call another. Keep these narrow: the client adapters, not the whole app.
 calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
+  - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path (Dio baseUrl, axios baseURL)
   - { from: android, to: bff, files: ["apps/android/**/api/**/*.kt"] }
 
 # Registries whose entries one side produces and another consumes.
@@ -89,14 +93,22 @@ rules:
 
 TypeScript and JavaScript are parsed with the TypeScript compiler: string and template literals inside configured
 call files, the method from `.get(`/`.post(` callees, a method string in the same argument list
-(`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. Routes come
+(`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
+starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
+by the scopes around the use; a constant used only that way is a base, not a request of its own. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept; an
-outbound call of the same component held in a method of that name continues the trace. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
-format strings (`%s`, `%d`) and `{x}` become wildcards; the verb comes from the call before the literal and the scope
+outbound call of the same component held in a method of that name continues the trace. An Express router, from `express.Router()`, serves its routes under each literal path it is mounted at with `use`,
+nested routers included; where a mount path is not a literal and `mounts` does not give it, its routes are not read
+and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and the
+like, at the folder path (route groups and slots add no segment, `[id]` is `{id}`, `[...rest]` is `{*rest}`), and API
+routes under `pages/api` for every method. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
+comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
-decorators are read from Python. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+decorators are read from Python, with Starlette's converters (`{name:path}` takes the rest of the path, as `{*name}`;
+`{id:int}` is one segment), and `app.mount("/x", ...)` serves every method under `/x/**`. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers

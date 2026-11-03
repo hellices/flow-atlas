@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
 import type { Call, Coverage, Draft } from "../model.js";
-import { callPath, HOLE } from "../paths.js";
+import { callPath, HOLE, joinRoute } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { scopeOf, textScopes } from "./reach.js";
@@ -9,9 +9,15 @@ import { scopeOf, textScopes } from "./reach.js";
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
-function templateText(node: ts.TemplateExpression): string {
+/** What a URL expression's leading value stands for, when the code states it; undefined leaves a hole. */
+type Lead = (expr: ts.Expression) => string | undefined;
+
+function templateText(node: ts.TemplateExpression, lead?: Lead): string {
   let s = node.head.text;
-  for (const span of node.templateSpans) s += HOLE + span.literal.text;
+  node.templateSpans.forEach((span, i) => {
+    s += (i === 0 && !s && lead?.(span.expression)) || HOLE;
+    s += span.literal.text;
+  });
   return s;
 }
 
@@ -21,10 +27,16 @@ const isPlus = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpres
  * The text a string concatenation builds, its operands in order, with a hole for each operand that is not a literal:
  * `BASE + "/reviews"` reads as a template `${BASE}/reviews` would. Undefined when no operand is a string.
  */
-function concatenationText(node: ts.BinaryExpression): string | undefined {
+function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | undefined {
   const parts: string[] = [];
   let strings = 0;
   const walk = (n: ts.Expression): void => {
+    const first = !parts.length && !isPlus(n) && !ts.isParenthesizedExpression(n) ? lead?.(n) : undefined;
+    if (first !== undefined) {
+      parts.push(first);
+      strings++;
+      return;
+    }
     if (isPlus(n)) {
       walk(n.left);
       walk(n.right);
@@ -33,7 +45,7 @@ function concatenationText(node: ts.BinaryExpression): string | undefined {
       parts.push(n.text);
       strings++;
     } else if (ts.isTemplateExpression(n)) {
-      parts.push(templateText(n));
+      parts.push(templateText(n, lead));
       strings++;
     } else parts.push(HOLE);
   };
@@ -98,21 +110,58 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   return undefined;
 }
 
+const bindsName = (name: ts.BindingName, text: string): boolean =>
+  ts.isIdentifier(name) ? name.text === text : name.elements.some((e) => !ts.isOmittedExpression(e) && bindsName(e.name, text));
+
+/**
+ * The `const` an identifier refers to, by the lexical scopes around it: the nearest function parameter or block-level
+ * declaration of the name wins. Undefined when that is not a `const` with an initializer.
+ */
+function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
+  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+    if (ts.isFunctionLike(n) && n.parameters.some((p) => bindsName(p.name, id.text))) return undefined;
+    if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n)) {
+      for (const st of n.statements) {
+        if (!ts.isVariableStatement(st)) continue;
+        const d = st.declarationList.declarations.find((x) => bindsName(x.name, id.text));
+        if (d) return st.declarationList.flags & ts.NodeFlags.Const && ts.isIdentifier(d.name) && d.initializer ? d : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 export function callsFromTypeScript(file: string, text: string, spec: CallSource): Draft<Call>[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const out: Draft<Call>[] = [];
+  const found: Array<{ node: ts.Node; call: Draft<Call> }> = [];
+  // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
+  const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
+  const urlText = (node: ts.Node, depth: number): string | undefined => {
+    const lead: Lead = (expr) => {
+      if (depth > 4 || !ts.isIdentifier(expr)) return undefined;
+      const decl = constFor(expr);
+      const value = decl?.initializer ? urlText(decl.initializer, depth + 1) : undefined;
+      if (value === undefined || !callPath(value)) return undefined;
+      (leads.get(decl!) ?? leads.set(decl!, new Set()).get(decl!)!).add(expr);
+      return value;
+    };
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    if (ts.isTemplateExpression(node)) return templateText(node, lead);
+    if (isPlus(node)) return concatenationText(node, lead);
+    if (ts.isParenthesizedExpression(node)) return urlText(node.expression, depth);
+    return undefined;
+  };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
     let raw: string | undefined;
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) raw = node.text;
-    else if (ts.isTemplateExpression(node)) raw = templateText(node);
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) raw = urlText(node, 0);
     // A whole concatenation is one URL; its pieces alone are not requests.
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
-    if (whole) raw = concatenationText(node);
+    if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
       const parsed = callPath(raw);
       if (parsed) {
-        out.push({
+        found.push({ node, call: {
           from: spec.from,
           to: spec.to,
           method: methodNear(node),
@@ -121,18 +170,31 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
           at: { file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 },
           evidence: "static",
           scope: scopeOf(node),
-        });
+        } });
       }
       if (whole || !ts.isTemplateExpression(node)) return;
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return out;
+  const bases = new Set<ts.Node>();
+  for (const [decl, ids] of leads) {
+    const name = (decl.name as ts.Identifier).text;
+    let other = false;
+    const uses = (n: ts.Node): void => {
+      if (other) return;
+      if (ts.isIdentifier(n) && n.text === name && n !== decl.name && !ids.has(n) && constFor(n) === decl) other = true;
+      ts.forEachChild(n, uses);
+    };
+    uses(sf);
+    if (!other) bases.add(decl.initializer!);
+  }
+  return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
 
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
-const VERB_BEFORE = /\.(get|post|put|patch|delete|head|options)\s*\(\s*\w?$/i;
+/** A verb call whose first argument the string is, also when the string starts the next line; `\w{0,2}` takes a prefix such as `f` or `rb`. */
+const VERB_BEFORE = /\.(get|post|put|patch|delete|head|options)\s*(?:<[^()]*>\s*)?\(\s*\w{0,2}$/i;
 const ENUM_METHOD = /HttpMethod\.(Get|Post|Put|Patch|Delete|Head|Options)\b/g;
 
 /** The `HttpMethod.X` nearest to a string within its statement on the line, so each of two calls on one line keeps its own. */
@@ -208,13 +270,19 @@ export function callsFromText(file: string, original: string, spec: CallSource):
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
   for (const m of text.matchAll(STRING)) {
-    const inner = (m[1] ?? m[2]!).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
+    const index = m.index ?? 0;
+    const body = m[1] ?? m[2]!;
+    // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
+    const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
+    const inner = (fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" || x === "}}" ? x[0]! : HOLE)) : body).replace(
+      /\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g,
+      HOLE,
+    );
     const parsed = callPath(inner);
     if (!parsed) continue;
-    const index = m.index ?? 0;
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
-    const before = text.slice(lineStart, index);
+    const before = text.slice(Math.max(0, index - 200), index);
     const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
     const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + m[0].length);
     out.push({
@@ -542,9 +610,9 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?[tj]sx?$/.test(file)) out.push(...callsFromTypeScript(file, text, spec));
-      else if (/\.html?$/.test(file)) out.push(...callsFromTemplate(file, text, spec));
-      else out.push(...callsFromText(file, text, spec));
+      const read = /\.(c|m)?[tj]sx?$/.test(file) ? callsFromTypeScript(file, text, spec) : /\.html?$/.test(file) ? callsFromTemplate(file, text, spec) : callsFromText(file, text, spec);
+      // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
+      out.push(...(spec.prefix ? read.map((c) => (c.based ? c : { ...c, path: joinRoute(spec.prefix!, c.path) })) : read));
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
   }
