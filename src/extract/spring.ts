@@ -81,13 +81,20 @@ function annotationsStart(masked: string, at: number): number {
   }
 }
 
-/** String literals of a value: `"a"`, `{"a", "b"}`, `["a"]`, `arrayOf("a")`; undefined when anything else is in it. */
+/**
+ * String literals of a value: `"a"`, `{"a", "b"}`, `["a"]`, `arrayOf("a")`, or a one-line Kotlin raw string
+ * `"""a"""`, whose run of closing quotes ends at its last three; undefined when anything else is in it. A literal over
+ * several lines (a Java text block) is not read, since its indentation is stripped.
+ */
 function literals(value: string): string[] | undefined {
   const out: string[] = [];
-  const rest = value.replace(/"((?:[^"\\]|\\.)*)"/g, (_, s: string) => {
-    out.push(s);
+  let multiline = false;
+  const rest = value.replace(/"""([\s\S]*?"*)"""(?!")|"((?:[^"\\\n]|\\.)*)"/g, (_, raw: string | undefined, s: string | undefined) => {
+    if (raw?.includes("\n")) multiline = true;
+    out.push(raw ?? s!);
     return "";
   });
+  if (multiline) return undefined;
   return /^[\s{}[\],]*$/.test(rest.replace(/\barrayOf\s*\(/, "").replace(/\)\s*$/, "")) ? out : undefined;
 }
 
@@ -196,30 +203,37 @@ function expressionEnd(masked: string, from: number): number {
   return masked.length;
 }
 
-/** The body of the method a mapping annotates, after its parameter list: `{ ... }`, or a Kotlin `= expression`. */
-function methodBody(code: string, masked: string, open: number): string | undefined {
+/**
+ * The body of the method a mapping annotates, after its parameter list: `{ ... }`, or a Kotlin `= expression`; as
+ * written and with its strings masked.
+ */
+function methodBody(code: string, masked: string, open: number): { body: string; masked: string } | undefined {
   const close = closing(masked, open);
   if (close === undefined) return undefined;
   const brace = masked.slice(close + 1).search(/[{;=]/);
   if (brace < 0) return undefined;
   const start = close + 1 + brace;
-  if (masked[start] === "=") return code.slice(start, expressionEnd(masked, start + 1));
-  if (masked[start] !== "{") return undefined;
-  const end = closing(masked, start);
-  return end === undefined ? undefined : code.slice(start, end + 1);
+  let end: number | undefined;
+  if (masked[start] === "=") end = expressionEnd(masked, start + 1);
+  else if (masked[start] === "{") end = (closing(masked, start) ?? -2) + 1;
+  if (end === undefined || end < 0) return undefined;
+  return { body: code.slice(start, end), masked: masked.slice(start, end) };
 }
 
 /**
  * View names a handler body renders: `ModelAndView("x")` and `setViewName("x")` always; when the handler writes no
  * response body, also `return "x"` or a Kotlin expression body `= "x"`. Redirects and forwards are not views.
  */
-function viewNames(body: string, strings: boolean): string[] {
+function viewNames({ body, masked }: { body: string; masked: string }, strings: boolean): string[] {
   const explicit = /(?:ModelAndView\s*\(\s*|setViewName\s*\(\s*)"([^"\\:]+)"/g;
   // In a Kotlin expression body, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
   const returned = !body.trimStart().startsWith("{")
     ? /(?:\breturn\s+|=\s*|\)\s*|\belse\s+|->\s*)"([^"\\:]+)"/g
     : /\breturn\s+"([^"\\:]+)"/g;
-  const names = [...body.matchAll(explicit), ...(strings ? body.matchAll(returned) : [])].map((m) => m[1]!);
+  // A match that starts inside a string literal (masked there) is text, not a call or a result.
+  const names = [...body.matchAll(explicit), ...(strings ? body.matchAll(returned) : [])]
+    .filter((m) => masked[m.index ?? 0] === body[m.index ?? 0])
+    .map((m) => m[1]!);
   return [...new Set(names.filter((n) => /^[\w./-]+$/.test(n)))];
 }
 
@@ -329,9 +343,10 @@ function setting(code: string, masked: string, call: string): string | null | un
 
 /**
  * Endpoints Spring Security serves without a controller: `formLogin` takes the login form's POST at its processing URL
- * (`loginProcessingUrl`, else `loginPage`, else `/login`) and `logout` a POST at `logoutUrl`, else `/logout`. Both the
- * lambda form (`formLogin(f -> f.loginPage("/x"))`) and the chained form (`formLogin().loginPage("/x").and()`) are read.
- * A disabled configurer serves nothing, and a URL the file does not spell out registers nothing.
+ * (`loginProcessingUrl`, else `loginPage`, else `/login`) and `logout` a POST at `logoutUrl`, else `/logout`. The
+ * lambda form (`formLogin(f -> f.loginPage("/x"))`), the chained form (`formLogin().loginPage("/x").and()`) and
+ * `withDefaults()` are read. A disabled configurer serves nothing, and a URL the file does not spell out, or a
+ * customizer defined elsewhere, registers nothing.
  */
 function securityRoutes(file: string, text: string, code: string, masked: string, spec: RouteSource): Surface[] {
   const out: Surface[] = [];
@@ -348,7 +363,15 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     if (close === undefined) continue;
     let from = open + 1;
     let to = close;
-    if (!masked.slice(open + 1, close).trim()) {
+    const argument = masked.slice(open + 1, close).trim();
+    if (argument && !/^(?:Customizer\s*\.\s*)?withDefaults\s*\(\s*\)$/.test(argument)) {
+      // A lambda is read where its parameter stays in it; a customizer held elsewhere (a variable, a method, a lambda
+      // handing its parameter on) may set anything, so what it serves is unknown and nothing is registered.
+      const lambda = /^(?:\(\s*)?(?:[\w<>?,.\s]+\s)?(\w+)\s*\)?\s*->/.exec(argument);
+      const disabled = /^\w+\s*::\s*disable$/.test(argument);
+      if (!disabled && (!lambda || new RegExp(`[(,]\\s*${lambda[1]}\\s*[,)]`).test(argument.slice(lambda[0].length)))) continue;
+    }
+    if (!argument) {
       // The chained form: the configuration runs from here to `.and()` or the end of the statement.
       const rest = masked.slice(close + 1);
       const stop = rest.search(/\.and\s*\(|;/);

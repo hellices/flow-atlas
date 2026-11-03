@@ -13,9 +13,9 @@ export function rankedComponents(config: Pick<Config, "routes">): Set<string> {
 }
 
 /**
- * Spring's `PathPattern` specificity, lower first: a pattern with a catch-all (`**`, `{*rest}`) after one without; then
- * the score, one per URI variable and a hundred per wildcard; then the longer pattern, each variable counted as one
- * character.
+ * Spring's `PathPattern.SPECIFICITY_COMPARATOR`, lower first: a pattern with a catch-all (`**`, `{*rest}`) after one
+ * without; of two catch-alls, the longer first; then the score, one per URI variable and a hundred per wildcard; then
+ * the longer pattern. Length is normalized, each variable counted as one character.
  */
 function springRank(path: string): number[] {
   const segs = segments(path);
@@ -23,7 +23,7 @@ function springRank(path: string): number[] {
   const variables = segs.filter((s) => (s.startsWith("{") && !s.startsWith("{*")) || s.startsWith(":")).length;
   const wildcards = segs.filter((s) => s === "*").length;
   const normalizedLength = path.replace(/\{[^}]*\}/g, "?").length;
-  return [catchAll, variables + 100 * wildcards, -normalizedLength];
+  return [catchAll, catchAll ? -normalizedLength : 0, variables + 100 * wildcards, -normalizedLength];
 }
 
 function compare(a: number[], b: number[]): number {

@@ -496,3 +496,46 @@ describe("review fixes: Spring", () => {
     expect(routes(java, "A.java")).toEqual(["GET /j 6"]);
   });
 });
+
+describe("review fixes, continued", () => {
+  const call = { from: "web", to: "server", files: [] };
+  const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
+
+  it("reads the method of Thymeleaf's HTML-friendly data-th- attributes", () => {
+    const html = ['<form data-th-method="post" data-th-action="@{/save}"></form>', '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>'].join("\n");
+    expect(calls(html)).toEqual(["POST /save 1", "DELETE /drop 2"]);
+  });
+
+  it("does not take a form written in a script body as a control's form", () => {
+    const html = ['<form method="post">', "<script>const t = '<form method=\"get\">';</script>", '<button formaction="/save">s</button>', "</form>"].join("\n");
+    expect(calls(html)).toEqual(["POST /save 3"]);
+  });
+
+  it("reads an inline script whose type has parameters", () => {
+    expect(calls('<script type="text/javascript; charset=utf-8">fetch("/api/one");</script>')).toEqual(["GET /api/one 1"]);
+  });
+
+  it("reads a Kotlin raw string as one path", () => {
+    expect(routes('@RestController\nclass A {\n  @GetMapping("""/users""") fun users() = 1\n}', "A.kt")).toEqual(["GET /users 3"]);
+  });
+
+  it("collects no view from a call written in a string", () => {
+    const views: Views = new Map();
+    routesFromSpring("Web.kt", '@Controller\nclass Web {\n  @GetMapping("/") fun page(): String {\n    val sample = """ModelAndView("admin")"""\n    return "home"\n  }\n}', spec, views);
+    expect([...views].map(([id, v]) => [id, v.names])).toEqual([["server|GET /", ["home"]]]);
+  });
+
+  it("registers nothing for a Security customizer defined elsewhere", () => {
+    const config = (chain: string) => routes(`SecurityFilterChain chain(HttpSecurity http) { ${chain} }`);
+    expect(config("http.formLogin(loginCustomizer).logout(logoutCustomizer);")).toEqual([]);
+    expect(config("http.formLogin(f -> configure(f)).logout(this::logout);")).toEqual([]);
+    expect(config("http.formLogin(Customizer.withDefaults()).logout((LogoutConfigurer<HttpSecurity> l) -> l.permitAll());")).toEqual(["POST /login 1", "POST /logout 1"]);
+  });
+
+  it("prefers the longer of two catch-all routes before their scores, as Spring does", () => {
+    const surface = (path: string): Surface => ({ id: `s|GET ${path}`, component: "s", method: "GET", path, at: { file: "a", line: 1 }, evidence: "text" });
+    const request: Call = { id: "c", from: "w", to: "s", method: "GET", path: "/bar/foo/z", at: { file: "b", line: 1 }, evidence: "text", based: false };
+    const { targetsOf } = matchCalls({ surfaces: [surface("/bar/{*rest}"), surface("/{x}/foo/{*rest}")], calls: [request] }, new Set(["s"]));
+    expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /{x}/foo/{*rest}"]);
+  });
+});

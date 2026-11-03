@@ -278,26 +278,30 @@ function linkPath(text: string, at: number): string | undefined {
   return path;
 }
 
-/** The tag that holds `index`: from its `<` to its `>`. */
-function tagAt(text: string, index: number): { start: number; text: string } {
-  const start = text.lastIndexOf("<", index);
-  const end = text.indexOf(">", index);
-  return { start, text: text.slice(start, end === -1 ? undefined : end + 1) };
+const valueOf = (tag: StartTag, name: string): string | undefined => tag.attributes.find((a) => a.name === name)?.value;
+
+/** A method a tag names, Thymeleaf's (`th:` or the HTML-friendly `data-th-`) before the plain attribute it replaces. */
+function methodOf(tag: StartTag, plain: string): string | undefined {
+  for (const name of [`th:${plain}`, `data-th-${plain}`, plain]) {
+    const value = valueOf(tag, name)?.trim();
+    if (value && /^[A-Za-z]+$/.test(value)) return value;
+  }
+  return undefined;
 }
 
-const methodOf = (tag: string, plain: string): string | undefined =>
-  new RegExp(`\\bth:${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1] ?? new RegExp(`(?<![\\w:-])${plain}\\s*=\\s*["']([A-Za-z]+)["']`, "i").exec(tag)?.[1];
-
-/** The `<form>` a submit control belongs to: the one its `form` attribute names, else the one around it. */
-function formOf(text: string, index: number, control: string): string | undefined {
-  const id = /(?<![\w:-])form\s*=\s*["']([^"']+)["']/i.exec(control)?.[1];
-  if (id) {
-    const named = new RegExp(`<form\\b[^>]*(?<![\\w:-])id\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`, "i").exec(text);
-    if (named) return named[0];
+/**
+ * The `<form>` a submit control belongs to: the one its `form` attribute names, else the one around it. Both are
+ * found among the template's start tags and in its markup, so text in a script body is neither.
+ */
+function formOf(page: Page, control: StartTag): StartTag | undefined {
+  const id = valueOf(control, "form");
+  if (id !== undefined) {
+    const named = page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
+    if (named) return named;
   }
-  const open = text.toLowerCase().lastIndexOf("<form", index);
-  if (open < 0 || text.toLowerCase().lastIndexOf("</form", index) > open) return undefined;
-  return tagAt(text, open + 1).text;
+  const open = page.tags.filter((t) => t.name === "form" && t.start < control.start).pop();
+  if (!open || page.markup.toLowerCase().lastIndexOf("</form", control.start) > open.start) return undefined;
+  return open;
 }
 
 interface Attribute {
@@ -309,6 +313,8 @@ interface Attribute {
 }
 
 interface StartTag {
+  /** Lower-cased. */
+  name: string;
   start: number;
   text: string;
   attributes: Attribute[];
@@ -332,17 +338,38 @@ function attributesOf(list: string, listAt: number): Attribute[] {
   return out;
 }
 
-/** The template's start tags with their attributes, values located in the template; raw-text bodies hold no tags. */
-function startTags(text: string, raw: RawText[]): StartTag[] {
-  const markup = text.split("");
-  for (const r of raw) for (let k = r.bodyStart; k < r.bodyEnd; k++) if (markup[k] !== "\n") markup[k] = " ";
-  const out: StartTag[] = [];
-  for (const m of markup.join("").matchAll(START_TAG)) {
-    const start = m.index ?? 0;
-    out.push({ start, text: text.slice(start, start + m[0].length), attributes: attributesOf(m[2]!, start + 1 + m[1]!.length) });
-  }
-  return out;
+/** A template's markup (raw-text bodies blanked, offsets kept) and its start tags, values located in the template. */
+interface Page {
+  markup: string;
+  tags: StartTag[];
 }
+
+function pageOf(text: string, raw: RawText[]): Page {
+  const chars = text.split("");
+  for (const r of raw) for (let k = r.bodyStart; k < r.bodyEnd; k++) if (chars[k] !== "\n") chars[k] = " ";
+  const markup = chars.join("");
+  const tags: StartTag[] = [];
+  for (const m of markup.matchAll(START_TAG)) {
+    const start = m.index ?? 0;
+    tags.push({ name: m[1]!.toLowerCase(), start, text: text.slice(start, start + m[0].length), attributes: attributesOf(m[2]!, start + 1 + m[1]!.length) });
+  }
+  return { markup, tags };
+}
+
+/** The MIME type essences a browser runs a script of, besides `module`. */
+const JAVASCRIPT_TYPES = new Set([
+  "module",
+  "text/javascript",
+  "application/javascript",
+  "text/ecmascript",
+  "application/ecmascript",
+  "application/x-javascript",
+  "application/x-ecmascript",
+  "text/x-javascript",
+  "text/x-ecmascript",
+  "text/jscript",
+  "text/livescript",
+]);
 
 /** Attributes that make a request: links, form targets, sources, and data attributes a script reads a URL from. */
 const requests = (name: string): boolean => /^(href|src|action|formaction)$/.test(name) || name.startsWith("data-");
@@ -358,12 +385,12 @@ function itemName(value: string, offset: number): string | undefined {
  * Spring's hidden method field) or `method`; a submit control's `formmethod`, else its form's; any method for a `data-*`
  * URL, which a script reads.
  */
-function templateMethod(text: string, tag: StartTag, name: string): string {
+function templateMethod(page: Page, tag: StartTag, name: string): string {
   if (name === "href" || name === "src") return "GET";
-  if (name === "action") return (methodOf(tag.text, "method") ?? "GET").toUpperCase();
+  if (name === "action") return (methodOf(tag, "method") ?? "GET").toUpperCase();
   if (name === "formaction") {
-    const form = formOf(text, tag.start, tag.text);
-    return (methodOf(tag.text, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
+    const form = formOf(page, tag);
+    return (methodOf(tag, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
   }
   return "*";
 }
@@ -382,6 +409,7 @@ function templateMethod(text: string, tag: StartTag, name: string): string {
  */
 export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
   const { text, raw } = scanHtml(original);
+  const page = pageOf(text, raw);
   const out: Draft<Call>[] = [];
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
@@ -390,7 +418,7 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     out.push({
       from: spec.from,
       to: spec.to,
-      method: tag ? templateMethod(text, tag, name) : "*",
+      method: tag ? templateMethod(page, tag, name) : "*",
       path: parsed.path,
       based: false,
       at: { file, line: lineOf(text, index) },
@@ -398,7 +426,7 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     });
   };
 
-  for (const tag of startTags(text, raw)) {
+  for (const tag of page.tags) {
     const plain = new Map(tag.attributes.filter((a) => !a.name.startsWith("th:") && !a.name.startsWith("data-th-")).map((a) => [a.name, a]));
     const replaced = new Set<string>();
     const joined = new Set<string>();
@@ -437,8 +465,9 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   // Inline scripts, without a src: their requests, at their lines in the template.
   for (const script of raw.filter((r) => r.name === "script")) {
     const attribute = (name: string) => script.attributes.find((a) => a.name === name)?.value;
-    const type = attribute("type")?.trim().toLowerCase();
-    if (attribute("src") !== undefined || (type && !/^(text\/javascript|module|application\/javascript)$/.test(type))) continue;
+    // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
+    const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
+    if (attribute("src") !== undefined || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;
     for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
