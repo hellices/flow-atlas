@@ -22,6 +22,26 @@ What atlas reads, it reads for certain:
 A guessed call that is wrong is worse than a call not found: it joins the wrong route, hides a real gap and produces
 findings nobody acts on.
 
+### Who writes a flow: three layers
+
+A flow's structure comes from atlas; only its words come from an agent or a person.
+
+1. **Chains (atlas).** One request and every surface it reaches in that request, fan-out included, derived on every
+   run (`atlas chains`).
+2. **What may follow (atlas).** The requests a chain's result offers, such as the links and forms of a page its
+   handler renders (a chain's `next`).
+3. **Intent (agent or person).** Titles, labels, owners, each step's role, and for a journey across requests, which
+   chains in which order, picked from atlas output.
+
+A check fails only on facts from layers 1 and 2: a chain that is gone, a step the code does not reach, an entry that
+does not call. Layer 3 is checked for presence and for naming chains that exist; whether it is right is a person's
+review (`verified`). An order the code neither shows nor contradicts, such as two requests one app makes, stays
+`Connected: Unknown`.
+
+Measured on the private monorepo, the derived chains alone covered 45 of 65 routes, where 27 flows written by hand
+earlier covered 37; the remaining 20 were routes nothing calls or whose callers atlas cannot read. The values an agent
+writes per flow fell from a step list, surface ids, an entry and roles to a title, labels and one role.
+
 ## Evidence
 
 ### Static extraction has a known ceiling
@@ -115,8 +135,10 @@ None of these is committed. Each fits the decision above and would be taken up w
   leaves out (server-rendered pages), so every flow step becomes an Arazzo operation and the whole flow renders in an
   Arazzo viewer. A trial on the Spring application rendered both flows completely in Arazzo UI, with one participant
   per component when each component has one source description.
-- **Unknown connections.** Report a step pair the code shows no link for as `Connected: Unknown` when a step's side is
-  outside the readable scope, rather than `False`.
+- **Unknown connections beyond chains.** Chain steps already leave an order the code does not show as Unknown. A
+  surface-step pair whose side is outside the readable scope still reports `False`.
+- **What an app does next.** A chain's `next` comes from rendered pages today. The requests a mobile or single-page
+  app makes after a response could come from observed calls, so journeys there could be connected from evidence too.
 - **Running the flows.** Hand the exported Arazzo to Redocly Respect or the Jentic runner, so a flow is checked by
   executing it as well as against the code.
 - **Bridges.** Publish routes and flows to a Backstage catalog, or read Pact contracts as declared calls.

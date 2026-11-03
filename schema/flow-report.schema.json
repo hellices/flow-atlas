@@ -359,11 +359,12 @@
           "enum": [
             "surface",
             "call",
+            "chain",
             "flow"
           ]
         },
         "target": {
-          "description": "The surface id, call id or flow name the step names.",
+          "description": "The surface id, call id, chain id or flow name the step names.",
           "type": "string"
         },
         "lifecycle": {
@@ -379,7 +380,7 @@
           "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
         },
         "toNext": {
-          "description": "The shortest chain of edges to the next step; absent on the last step or when either side is unresolved.",
+          "description": "The shortest chain of edges to the next step; absent on the last step or when either side is unresolved. order declared: both steps are requests one component makes, and the code does not show which comes first.",
           "type": "object",
           "required": [
             "connected",
@@ -395,6 +396,9 @@
               "items": {
                 "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
               }
+            },
+            "order": {
+              "const": "declared"
             }
           }
         }

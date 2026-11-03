@@ -82,7 +82,8 @@ atlas inventory --root <repo>                 # candidate components, routes, cl
 atlas scan --root <repo>                      # what each configured source yielded
 atlas query --path /orders                    # surfaces and calls by path or component
 atlas trace "bff|GET /screens/order/{id}"     # callers upstream and services downstream
-atlas draft flow "bff|GET /screens/home"      # a flow draft from the code, the author's fields marked
+atlas chains --unnamed                        # each request and everything it reaches, that no flow names yet
+atlas draft flows                             # a flow draft per such chain; only the author's fields are left
 atlas flows                                   # flow descriptions held against the code
 atlas check --root <repo>                     # findings new since the baseline
 atlas check --since main                      # findings the current change introduced

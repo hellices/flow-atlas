@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flow-atlas:schema:v1alpha1:chains",
+  "title": "Flow Atlas chains",
+  "description": "The requests the code makes and everything each one reaches, derived on every run; nobody writes them. A flow names a chain as a step, and atlas holds the flow against it.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "provenance",
+    "chains",
+    "unchained"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/apiVersion"
+    },
+    "kind": {
+      "const": "Chains"
+    },
+    "provenance": {
+      "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/provenance"
+    },
+    "chains": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/chain"
+      }
+    },
+    "unchained": {
+      "description": "Surfaces no chain reaches: no caller atlas reads, and not declared public.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+      }
+    }
+  },
+  "$defs": {
+    "chain": {
+      "description": "One request and every surface it reaches in the same request, fan-out included.",
+      "type": "object",
+      "required": [
+        "id",
+        "entry",
+        "root",
+        "surfaces",
+        "edges",
+        "next",
+        "weak",
+        "digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId"
+        },
+        "entry": {
+          "description": "The component that makes the request, with its call sites; outside for a surface declared public that no component calls.",
+          "type": "object",
+          "required": [
+            "component",
+            "callers"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "type": "string"
+            },
+            "callers": {
+              "type": "array",
+              "items": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/callId"
+              }
+            }
+          }
+        },
+        "root": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+        },
+        "surfaces": {
+          "description": "The root and every surface the request reaches, nearest first.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
+          }
+        },
+        "next": {
+          "description": "Requests the result offers (a page whose template makes them): the chain, the surface that offers it, and how.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "chain",
+              "from",
+              "via"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "chain": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId"
+              },
+              "from": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+              },
+              "via": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "weak": {
+          "description": "Edges joined only because a name agrees, not because code was followed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "digest": {
+          "description": "Changes when the chain's surfaces or edges change.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{12}$"
+        }
+      }
+    }
+  }
+}

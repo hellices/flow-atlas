@@ -23,6 +23,11 @@
       "type": "string",
       "pattern": "^[^|]+->[^|]+\\|([A-Z]+|\\*) /[^@]*@.+$"
     },
+    "chainId": {
+      "description": "<entry>-><surface id>: the component that makes the request, or outside for a surface declared public, and the surface that serves it.",
+      "type": "string",
+      "pattern": "^[^|]+->[^|]+\\|([A-Z]+|\\*) /"
+    },
     "registryEntryId": {
       "description": "registry:key",
       "type": "string",

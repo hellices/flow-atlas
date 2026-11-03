@@ -153,7 +153,7 @@
       "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "step": {
-      "description": "A hop the flow must pass through; Arazzo's Step with surface, call or flow in place of operationId, operationPath or workflowId. Hops between listed steps may be left out.",
+      "description": "A hop the flow must pass through; Arazzo's Step with surface, call, chain or flow in place of operationId, operationPath or workflowId. Hops between listed steps may be left out.",
       "type": "object",
       "required": [
         "stepId"
@@ -172,6 +172,10 @@
         "call": {
           "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/callId",
           "description": "from atlas: a call id from atlas query or trace."
+        },
+        "chain": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId",
+          "description": "from atlas: a chain id from atlas chains or draft flows. The step is the request and every surface it reaches."
         },
         "flow": {
           "$ref": "#/$defs/name",
@@ -199,6 +203,11 @@
         {
           "required": [
             "call"
+          ]
+        },
+        {
+          "required": [
+            "chain"
           ]
         },
         {

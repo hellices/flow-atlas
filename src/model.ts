@@ -213,6 +213,8 @@ export interface GraphDiff extends Document<"Diff"> {
   surfaces: { added: Surface[]; removed: Surface[] };
   componentEdges: { added: ComponentEdge[]; removed: ComponentEdge[] };
   findings: { new: Finding[]; resolved: Finding[] };
+  /** Chains that appear, disappear, or reach different surfaces: what a change does to the requests the code makes. */
+  chains: { added: string[]; removed: string[]; changed: Array<{ id: string; added: string[]; removed: string[] }> };
 }
 
 export interface ComponentEdge {
