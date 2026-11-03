@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
+import { routesFromSpring, type Views } from "./spring.js";
 import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import type { Reach } from "./reach.js";
@@ -308,7 +309,12 @@ function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
 }
 
 /** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
-function handlerPlace(texts: Map<string, string>, operationId: string, method: string, key: string): { at: Found; evidence: Surface["evidence"] } | undefined {
+function handlerPlace(
+  texts: Map<string, string>,
+  operationId: string,
+  method: string,
+  key: string,
+): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
     for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
@@ -388,6 +394,17 @@ function documentedSurfaces(
   return out;
 }
 
+/** The directory of the nearest build file (Maven or Gradle) above a file: "" at the root, undefined when there is none. */
+function buildRoot(file: string, files: Set<string>): string | undefined {
+  const parts = file.split("/").slice(0, -1);
+  for (let n = parts.length; n >= 0; n--) {
+    const dir = parts.slice(0, n).join("/");
+    const prefix = dir ? `${dir}/` : "";
+    if (["pom.xml", "build.gradle", "build.gradle.kts"].some((b) => files.has(`${prefix}${b}`))) return dir;
+  }
+  return undefined;
+}
+
 /** Surfaces with one per component, method and path, the first kept. */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Set<string>();
@@ -408,6 +425,8 @@ export function extractRoutes(
   executed?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
+  // View names Spring handlers render; their templates' requests are what the route leads to.
+  const views: Views = new Map();
   const codeFiles = new Map<string, Set<string>>();
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
@@ -420,6 +439,7 @@ export function extractRoutes(
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed));
       else if (file.endsWith(".py") && (spec.styles ?? []).includes("fastapi")) out.push(...routesFromPython(file, text, spec));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views));
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
@@ -436,6 +456,33 @@ export function extractRoutes(
     const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
+  }
+  if (executed && views.size) {
+    const templates = source.list().filter((f) => /(^|\/)templates\/.+\.html$/.test(f));
+    const files = new Set(templates);
+    const all = new Set(source.list());
+    for (const [id, { file, names }] of views) {
+      const runs = executed.get(id) ?? executed.set(id, new Set()).get(id)!;
+      // Spring Boot's Thymeleaf resolver: classpath:/templates/<name>.html of the application the handler belongs to.
+      const module = /^(?:(.*)\/)?src\/main\/(?:java|kotlin)\//.exec(file);
+      for (const name of names) {
+        if (module) {
+          const t = `${module[1] ? `${module[1]}/` : ""}src/main/resources/templates/${name}.html`;
+          if (files.has(t)) runs.add(`${t}:*${name}`);
+          continue;
+        }
+        // Outside the standard layout, the application is the nearest directory above the handler with a build file.
+        const root = buildRoot(file, all);
+        if (root === undefined) {
+          limits.push(`routes ${id}: no build file above ${file} tells which application view ${name} belongs to; none is linked`);
+          continue;
+        }
+        // A template under a nested build file belongs to that module, not to the handler's application.
+        const found = templates.filter((t) => t.endsWith(`templates/${name}.html`) && buildRoot(t, all) === root);
+        if (found.length === 1) runs.add(`${found[0]}:*${name}`);
+        else if (found.length > 1) limits.push(`routes ${id}: view ${name} names ${found.length} templates (${found.join(", ")}); none is linked`);
+      }
+    }
   }
   return unique(out);
 }

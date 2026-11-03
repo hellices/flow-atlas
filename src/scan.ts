@@ -5,7 +5,7 @@ import { extractComponents } from "./extract/components.js";
 import { Reach } from "./extract/reach.js";
 import { extractRegistries, extractVersions } from "./extract/registries.js";
 import { extractRoutes } from "./extract/routes.js";
-import { matchCalls } from "./match.js";
+import { matchCalls, rankedComponents } from "./match.js";
 import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph } from "./model.js";
 import { select, type Source } from "./source.js";
 import { codeDependency, configDependency, provenance } from "./provenance.js";
@@ -26,9 +26,9 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * lead to: a call the handler's code runs (its line is in `executed`, evidence `static`), or one held in a method the
  * handler calls by name (evidence `name`).
  */
-export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>): Edge[] {
+export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>, ranked?: Set<string>): Edge[] {
   const edges: Edge[] = [];
-  const { targetsOf } = matchCalls(graph);
+  const { targetsOf } = matchCalls(graph, ranked);
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });
@@ -36,7 +36,12 @@ export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map
     const reached = new Set(s.reaches ?? []);
     const runs = executed?.get(s.id);
     if (!reached.size && !runs?.size) continue;
+    const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
     for (const c of graph.calls) {
+      if (rendered.has(c.at.file)) {
+        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: `view ${rendered.get(c.at.file)}` });
+        continue;
+      }
       if (c.from !== s.component) continue;
       if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", ...(c.scope ? { via: c.scope } : {}) });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
@@ -64,7 +69,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
   const calls = assignCallIds(extractCalls(source, config, coverage));
-  const edges = edgesOf({ surfaces, calls }, executed);
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config));
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",

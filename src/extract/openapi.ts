@@ -85,7 +85,9 @@ export function describedOperations(file: string, text: string): DescribedApi | 
 /**
  * Names a handler may carry, given how common generators derive an operationId from it: the id itself, the method of
  * a NestJS `Class_method` id, and the function of a FastAPI `{function}{path}_{method}` id. springdoc uses the method
- * name as it is.
+ * name as it is. When several methods share a name springdoc appends `_1`, `_2` to the later ones; such an id is not
+ * traced back to its name, since an operationId may end in a number for its own reasons and nothing in the document
+ * says which generator wrote it.
  *
  * A Nest id joins the class and the method with `_`, and either may hold `_` itself, so every split after a class-like
  * prefix (an identifier that starts upper-case, as class names do) is a candidate, the longest method first:

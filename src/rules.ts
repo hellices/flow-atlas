@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import { ruleEnabled } from "./config.js";
-import { matchCalls, plausibleRequest } from "./match.js";
+import { matchCalls, plausibleRequest, rankedComponents } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { surfaceId } from "./model.js";
 
@@ -30,7 +30,7 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
 /** Findings for a graph. What the rules could not settle completely is added to `limits`. */
 export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];
-  const { callersOf, targetsOf } = matchCalls(graph);
+  const { callersOf, targetsOf } = matchCalls(graph, rankedComponents(config));
   const isPublic = surfacePattern(config.publicSurfaces);
 
   if (ruleEnabled(config, "FA001")) {

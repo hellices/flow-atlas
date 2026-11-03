@@ -161,10 +161,14 @@ e2e tools, which still need parameters, request bodies and success criteria fill
 - Finding status: `new` is yours; `baseline` is accepted debt; `excepted` is covered; `expired-exception` needs a person.
 - In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
-  the handler calls (evidence `name`). A `~` by name through a generic name (`get`, `send`) needs a look at the code.
+  the handler calls (evidence `name`), or, for a Spring page, made by the template its view name renders (`via view
+  <name>`). A `~` by name through a generic name (`get`, `send`) needs a look at the code.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
-- Only configured files are read. No finding does not prove a flow is complete.
+- Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a
+  standard or the framework gives them. A URL from a variable, another template engine, or htmx and Vue attributes
+  is not read and not guessed. So "no caller" means none that atlas can read; check the code before removing anything,
+  and declare surfaces served outside the repository in `publicSurfaces`. No finding does not prove a flow is complete.
 
 ## References
 

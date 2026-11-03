@@ -12,8 +12,11 @@ export interface RouteSource {
    * absolute path to a file generated outside it. Its operations are surfaces; code routes add their locations.
    */
   openapi?: string;
-  /** nest: @Controller/@Get decorators. express: receiver.get("/x"). fastapi: @router.get("/x") in Python. */
-  styles?: Array<"nest" | "express" | "fastapi">;
+  /**
+   * nest: @Controller/@Get decorators. express: receiver.get("/x"). fastapi: @router.get("/x") in Python. spring:
+   * @RequestMapping/@GetMapping annotations in Java or Kotlin.
+   */
+  styles?: Array<"nest" | "express" | "fastapi" | "spring">;
   receivers?: string[];
   calls?: Array<{ name: string; methodArg: number; pathArg: number }>;
   /** A regular expression over constant names whose string value is a GET route, such as `Path$`. */

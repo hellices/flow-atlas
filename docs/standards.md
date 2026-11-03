@@ -1,81 +1,83 @@
-# 표준 정합 분석
+# Alignment with standards
 
-flow-atlas의 문서 형식에서 항목마다 누가 쓰는지, 어떤 표준과 맞는지를 따져 넣을 것과 뺄 것을 정했다. 기준은 두 가지다.
-이 도구가 해결하려는 문제에 실제로 쓰여야 하고, 이미 널리 쓰이는 표준이 있으면 그 모양을 따라 다른 도구가 따로 맞추지
-않아도 되게 해야 한다.
+For each field of flow-atlas's documents, we looked at who writes it and which standard it lines up with, and decided
+what to keep and what to leave out. Two tests apply: the field has to serve the problem this tool solves, and where a
+widely used standard exists, the field takes its shape so other tools need no adapter.
 
-## 이 도구가 해결하려는 문제
+## The problem the tool solves
 
-여러 컴포넌트를 거치는 흐름을 이해하지 못한 채 개발하면 한 모듈이 맡을 일이 여러 곳에 섞인다. flow-atlas는 코드에서 흐름을
-뽑아 보여 주고, 사람이 적은 흐름이 코드와 맞는지 확인하고, 어긋난 곳을 작업하는 자리에서 알려 준다. 사람이 읽을 수 있어야
-하고, 나중에 e2e 시험 도구와 이을 수 있어야 하며, 에이전트가 쓸 수 있어야 한다.
+When people develop without understanding flows that cross components, one module's work ends up spread over several.
+flow-atlas extracts the flows from the code, checks the flows people write against the code, and points out where they
+diverge while the work is being done. Its output must be readable by people, joinable to end-to-end test tools later,
+and usable by agents.
 
-## 결과를 읽는 쪽
+## Who reads the output
 
-| 읽는 쪽 | 필요한 것 |
+| Reader | Needs |
 |---|---|
-| 에이전트 | 라우트와 호출 조회, 흐름 추적, 결과의 안정적인 키, 흐름 상태의 이유 코드 |
-| 리뷰어 | PR 본문에 붙일 변경 요약, 그림 |
-| 렌더러(Mermaid, HTML) | 노드와 간선, 흐름별 상태 |
-| IDE와 코드 리뷰 도구 | 파일과 줄에 붙는 결과 |
-| e2e 시험 도구 | 흐름 단계가 가리키는 API 작업 |
-| 실행 중 관측(트레이스) | 정적 그래프와 맞춰 볼 라우트 이름 |
+| agents | route and call lookups, flow traces, stable finding keys, reason codes for flow states |
+| reviewers | a change summary and a picture to put in a PR description |
+| renderers (Mermaid, HTML) | nodes and edges, per-flow state |
+| IDEs and code review tools | findings attached to files and lines |
+| end-to-end test tools | the API operations a flow's steps point at |
+| runtime observation (traces) | route names to set against the static graph |
 
-## 관심사별 표준
+## Standards by concern
 
-| 관심사 | 표준 | 선택 | 이유 |
+| Concern | Standard | Choice | Why |
 |---|---|---|---|
-| 사람이 쓰는 흐름 파일의 겉모양 | Kubernetes Resource Model, Backstage 기술자 형식 | 따름 | `apiVersion`, `kind`, `metadata`, `spec` 틀과 labels, annotations를 그대로 쓴다. 저장소 안 YAML로 소프트웨어 구성을 적는 가장 넓게 퍼진 틀이다 |
-| 흐름 안의 단계 | Arazzo 1.0 | 따름, 내보내기 제공 | 단계 구조와 이름을 맞췄고 `atlas export arazzo`가 공식 스키마를 통과하는 Arazzo 문서를 만든다 |
-| 작성자가 쓴 지식의 출처, 신뢰, 유효기간 | Google Open Knowledge Format(OKF) 0.2 | 따름 | 흐름 파일 `metadata`의 `sources`, `generated`, `verified`, `stale_after`를 OKF 이름과 뜻 그대로 쓴다. 신뢰 등급은 OKF §5.3대로 `verified`에서만 정한다. 파일 형식과 `status`는 가져오지 않았다 |
-| 관측 상태 | Kubernetes status conditions | 따름 | `type`, `status`(True, False, Unknown), `reason`, `message`. 시각 필드만 뺐다 |
-| 도구가 만든 문서의 출처 | SLSA provenance v1 (in-toto ResourceDescriptor) | 모양을 따름 | 읽은 커밋과 파일을 digest로 남긴다. 빌드 산출물용 규격이라 SLSA 준수를 주장하지는 않는다 |
-| 정적 분석 결과 | SARIF 2.1.0 (OASIS) | 내보내기 제공 | GitHub code scanning, VS Code SARIF Viewer, 리뷰 봇이 그대로 읽는다. 공식 스키마를 통과한다 |
-| 라우트 이름 | OpenAPI 경로 템플릿 | 따름 | id의 경로를 `{name}`으로 쓴다. 프레임워크와 상관없이 같은 라우트는 같은 id를 가진다 |
-| OpenAPI 문서 위치 | 관례적 파일 이름과 프레임워크 기본 경로 | 따름 | `openapi.yaml`, `swagger.json`, Nest `jsonDocumentUrl`과 `<path>-json`, `@fastify/swagger-ui`의 `<prefix>/json`, `/openapi.json` 라우트를 코드에서 찾는다. 서버 주소만 환경 설정으로 받는다 |
-| 작업 이름 | OpenAPI operationId | 따름 | 코드에 적힌 operationId를 읽고, 설정하면 @nestjs/swagger 기본 규칙(`Class_method`)으로 만든다 |
-| 실행 중 관측과의 결합 | OpenTelemetry HTTP 의미 규약 | 대응만 정함 | `component`는 `service.name`, `method`는 `http.request.method`, 정규화한 `http.route`는 라우트 경로에 대응한다 |
-| 그래프 교환 형식 | JSON Graph Format, SARIF graphs | 따르지 않음 | 널리 쓰이는 그래프 교환 표준이 없다. 노드와 간선을 단순하게 두어 렌더러가 바로 쓰게 했다 |
-| 컴포넌트 카탈로그 | Backstage Component, API 관계 | 따르지 않음 | 컴포넌트 이름을 Backstage 엔터티 이름과 같게 쓰면 이어진다. 지금 따로 필드를 둘 필요는 없다 |
+| the shape of the flow files people write | Kubernetes Resource Model, the Backstage descriptor format | followed | the `apiVersion`, `kind`, `metadata`, `spec` frame with labels and annotations, the most widespread frame for describing software configuration in YAML inside a repository |
+| steps within a flow | Arazzo 1.0 | followed, with an export | step structure and names match, and `atlas export arazzo` produces Arazzo documents that pass the official schema |
+| where authored knowledge comes from, how far it is trusted, how long it holds | Google Open Knowledge Format (OKF) 0.2 | followed | `sources`, `generated`, `verified` and `stale_after` in a flow's `metadata` keep OKF's names and meanings; the trust tier is derived from `verified` only, as in OKF §5.3. OKF's file format and `status` are not taken |
+| observed state | Kubernetes status conditions | followed | `type`, `status` (True, False, Unknown), `reason`, `message`; only the timestamp fields are left out |
+| where a generated document came from | SLSA provenance v1 (in-toto ResourceDescriptor) | shape followed | the commits and files read are recorded with digests. SLSA is a specification for build outputs, so no SLSA conformance is claimed |
+| static analysis results | SARIF 2.1.0 (OASIS) | export | GitHub code scanning, the VS Code SARIF Viewer and review bots read it as is; the output passes the official schema |
+| route names | OpenAPI path templates | followed | path parameters are written `{name}` in ids, so a route has the same id whatever framework registers it |
+| where OpenAPI documents are | conventional file names and frameworks' default paths | followed | `openapi.yaml`, `swagger.json`, Nest's `jsonDocumentUrl` and `<path>-json`, `@fastify/swagger-ui`'s `<prefix>/json` and `/openapi.json` routes are found in the code; only server addresses come from environment settings |
+| operation names | OpenAPI operationId | followed | the operationId the code states is read; when configured, @nestjs/swagger's default rule (`Class_method`) is applied |
+| joining runtime observation | OpenTelemetry HTTP semantic conventions | mapping only | `component` maps to `service.name`, `method` to `http.request.method`, and a normalized `http.route` to the route path |
+| graph exchange format | JSON Graph Format, SARIF graphs | not followed | no graph exchange standard is widely used; nodes and edges are kept plain so renderers can use them directly |
+| component catalogs | Backstage Component and API relations | not followed | using Backstage entity names as component names joins the two; no separate field is needed for now |
 
-## 항목별 판단
+## Field by field
 
-| 항목 | 쓰는 곳 | 판단 |
+| Field | Used for | Decision |
 |---|---|---|
-| `metadata.name` | 흐름 id, Arazzo `workflowId`, 결과 키 | 유지 |
-| `metadata.labels` | 렌더러가 흐름을 묶어 보여 줄 때 | 유지 |
-| `metadata.annotations` | 도구가 붙이는 위치 정보 | 유지 |
-| `metadata.links` | 흐름을 정한 결정 문서 | OKF `sources`로 바꿈 |
-| `metadata.generated`, `verified` | 역할을 에이전트가 썼는지, 사람이 검토했는지 | 추가(OKF). 세 부분 경계에서 비어 있던 자리다 |
-| `metadata.stale_after` | 의도를 다시 검토할 시점 | 추가(OKF). 코드와의 일치는 매번 확인하지만 의도가 아직 맞는지는 기계가 모른다 |
-| `spec.lifecycle` | 백엔드를 먼저 만드는 경우(planned), 폐기(deprecated) | 유지. 백엔드를 먼저 만드는 저장소에서 실제로 필요했던 구분이다 |
-| `spec.owner` | 누가 이 흐름을 책임지는지 | 유지 |
-| `spec.entry` | 앱이 첫 단계를 부르는지 확인 | 유지. 앱이 부르지 않는 API를 흐름 단위로 잡는다 |
-| `spec.produces` | 흐름이 내는 아티팩트가 목록에 있는지 | 유지. 생산자 없는 아티팩트를 흐름과 잇는다 |
-| `spec.dependsOn` | Arazzo에서는 실행 순서 | 뺌. 다른 흐름을 한 단계로 쓰는 `flow` 단계로 재사용은 충분하고, 실행 순서는 이 도구가 다루지 않는다 |
-| `steps[].role` | 각 컴포넌트가 맡는 일 | 유지. 책임이 섞이는 것을 막는 핵심이다. 도구가 확인하지는 못하고 사람과 에이전트가 읽는다 |
-| `steps[].surface`, `call`, `flow` | 단계의 대상 | 유지 |
-| 라우트 `operationId` | Arazzo 내보내기, OpenAPI 문서와 결합 | 추가 |
-| 라우트 경로 `{name}` 표기 | id 안정성, OpenAPI와 트레이스 결합 | 변경. 이전에는 `:id`처럼 프레임워크 표기를 그대로 썼다 |
-| condition `DependenciesDescribed` | `dependsOn` 확인 | 뺌 |
-| condition 나머지 다섯 | 렌더러 색, 에이전트 분기 | 유지 |
-| condition `Documented` | 작성자 몫(제목, 단계 역할)을 채웠는지 | 추가. 도구가 추측하지 않고 비어 있는지만 본다. [responsibilities.md](responsibilities.md) 참고 |
-| `provenance` | 캐시, 비교, 재현 | 유지 |
-| 호출 `based`, 라우트 `reaches` | 매칭과 `reach` 간선의 근거 | 유지. 렌더러는 쓰지 않아도 되고 에이전트가 근거를 확인할 때 쓴다 |
+| `metadata.name` | flow id, Arazzo `workflowId`, finding keys | kept |
+| `metadata.labels` | grouping flows in a renderer | kept |
+| `metadata.annotations` | location information the tool attaches | kept |
+| `metadata.links` | the decision documents behind a flow | replaced by OKF `sources` |
+| `metadata.generated`, `verified` | whether an agent wrote the roles, whether a person reviewed them | added (OKF); this was the gap in the three-part split |
+| `metadata.stale_after` | when the intent should be reviewed again | added (OKF); agreement with the code is checked every run, but whether the intent still holds is not something a machine knows |
+| `spec.lifecycle` | building the backend first (planned), retiring (deprecated) | kept; a distinction repositories that build the backend first actually needed |
+| `spec.owner` | who answers for the flow | kept |
+| `spec.entry` | checking that the app calls the first step | kept; it catches, flow by flow, APIs the app does not call |
+| `spec.produces` | checking that the artifacts a flow issues are listed | kept; it ties artifacts without a producer to flows |
+| `spec.dependsOn` | in Arazzo, run order | dropped; a `flow` step, which uses another flow as one step, is enough for reuse, and run order is outside this tool |
+| `steps[].role` | what each component takes on | kept; the core of keeping responsibilities from mixing. The tool cannot check it; people and agents read it |
+| `steps[].surface`, `call`, `flow` | what a step points at | kept |
+| route `operationId` | Arazzo export, joining OpenAPI documents | added |
+| route paths written `{name}` | stable ids, joining OpenAPI and traces | changed; earlier ids kept framework notation such as `:id` |
+| condition `DependenciesDescribed` | checking `dependsOn` | dropped |
+| the other five conditions | renderer colours, agent branching | kept |
+| condition `Documented` | whether the author's fields (title, step roles) are written | added; the tool does not guess them, it only sees whether they are empty. See [responsibilities.md](responsibilities.md) |
+| `provenance` | caching, comparison, reproduction | kept |
+| call `based`, route `reaches` | the grounds for matching and for `reach` edges | kept; renderers can ignore them, agents use them to check the grounds |
 
-## 검증
+## Verification
 
-내보내기 결과를 공식 스키마로 확인한다. `test/standards/`에 SARIF 2.1.0과 Arazzo 1.0의 공식 스키마를 두고, 시험에서 픽스처의
-SARIF와 Arazzo 출력을 검사한다. Nest 기본 operationId 규칙은 @nestjs/swagger의 `swagger-explorer.js`에서
-`${controllerKey}_${methodKey}`로 확인했다.
+Exported documents are checked against the official schemas: `test/standards/` holds the official SARIF 2.1.0 and
+Arazzo 1.0 schemas, and the tests validate the fixture's SARIF and Arazzo output against them. Nest's default
+operationId rule was confirmed in @nestjs/swagger's `swagger-explorer.js` as `${controllerKey}_${methodKey}`.
 
-## 남은 판단
+## Open questions
 
-`role`은 글이라 도구가 확인하지 못한다. 컴포넌트가 맡지 않을 일을 기계가 읽을 수 있게 적는 방법(예: 단계가 거쳐서는 안
-되는 컴포넌트)은 실제로 쓰면서 필요가 드러나면 더한다.
+`role` is prose, so the tool cannot check it. A machine-readable way to state what a component must not take on (for
+example, components a step must not pass through) will be added if real use shows the need.
 
-e2e 시험은 `atlas export arazzo`로 이어 둔다. Arazzo를 실행하는 도구가 파라미터, 요청 본문, 성공 조건을 채워야 하고, 이것은
-코드에서 나오지 않으므로 에이전트나 사람이 채운다.
+End-to-end tests are joined through `atlas export arazzo`. A tool that runs Arazzo needs parameters, request bodies
+and success criteria; these do not come from the code, so an agent or a person fills them in.
 
-실행 중 트레이스로 정적 간선을 확인하는 일은 OpenTelemetry 대응표까지만 정했다. e2e 시험이 트레이스를 남기기 시작하면
-`service.name`, `http.request.method`, 정규화한 `http.route`로 그래프의 라우트와 맞춰 볼 수 있다.
+Checking static edges against runtime traces is settled only as far as the OpenTelemetry mapping. Once end-to-end
+tests leave traces, `service.name`, `http.request.method` and a normalized `http.route` can be set against the graph's
+routes.

@@ -1,3 +1,13 @@
+import { statSync } from "node:fs";
+
+/** Whether a path names a regular file on this machine; a directory or anything unreadable does not. */
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
 import type { Config } from "./config.js";
 import type { FlowObject, LoadedFile } from "./flows.js";
 import type { Graph } from "./model.js";
@@ -48,8 +58,9 @@ export function documentUrl(component: string, graph: Graph, config: Config): { 
   if (config.openapi[component]) {
     const url = config.openapi[component]!;
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return { url };
-    // A root-relative choice is a served path: the environment's origin goes in front of it, as for a found one.
-    if (url.startsWith("/")) {
+    // A root-relative choice is a served path, unless it names a file on this machine: the environment's origin goes
+    // in front of a served path, as for a found one.
+    if (url.startsWith("/") && !isFile(url)) {
       const origin = config.origins[component];
       return origin
         ? { url: `${origin.replace(/\/+$/, "")}${url}` }

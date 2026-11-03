@@ -1,8 +1,11 @@
 # OpenAPI documents from the framework
 
-atlas parses TypeScript and JavaScript routes (Nest, Express-style receivers) and FastAPI decorators. For every other
-server framework, and to see routes the code composes in ways atlas cannot follow, give atlas the OpenAPI document the
-framework itself generates. Generating it means running the application's code, so it is your job (or CI's), not
+atlas parses TypeScript and JavaScript routes (Nest, Express-style receivers), FastAPI decorators and Spring MVC
+annotations. For every other server framework, and to see routes the code composes in ways atlas cannot follow, give
+atlas the OpenAPI document the framework itself generates. For Spring, use both: `styles: [spring]` gives every Spring
+MVC route the annotations spell out (pages included, which springdoc leaves out) at its controller line, and the
+document adds springdoc's operationIds, which `export arazzo` needs, and the routes the annotations do not spell out
+(a path in a constant, routes registered in code), which only the generated document has. Generating it means running the application's code, so it is your job (or CI's), not
 atlas's: atlas only reads files.
 
 ```yaml
@@ -22,7 +25,8 @@ routes:
   (`describedPath`), which `export arazzo` uses for an `operationPath`.
 - Where the handler is, when the code gives it away: a function named as the framework derives the operationId (FastAPI
   `read_order_api_v1_orders__order_id__get` → `def read_order`, Nest `OrdersController_read` → `read(`, springdoc
-  `read` → `read(`), evidence `name`; else, when no name or several match, exactly one place in the component's
+  `read` → `read(`; a numbered id such as `read_1`, which springdoc gives the later methods sharing a name, is not
+  traced back, since nothing in the document says which generator wrote it), evidence `name`; else, when no name or several match, exactly one place in the component's
   route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
   exactly one place, the surface stays at the document, evidence `declared`. A TypeScript or JavaScript handler found

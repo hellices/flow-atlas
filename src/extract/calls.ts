@@ -15,6 +15,35 @@ function templateText(node: ts.TemplateExpression): string {
   return s;
 }
 
+const isPlus = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken;
+
+/**
+ * The text a string concatenation builds, its operands in order, with a hole for each operand that is not a literal:
+ * `BASE + "/reviews"` reads as a template `${BASE}/reviews` would. Undefined when no operand is a string.
+ */
+function concatenationText(node: ts.BinaryExpression): string | undefined {
+  const parts: string[] = [];
+  let strings = 0;
+  const walk = (n: ts.Expression): void => {
+    if (isPlus(n)) {
+      walk(n.left);
+      walk(n.right);
+    } else if (ts.isParenthesizedExpression(n) && isPlus(n.expression)) walk(n.expression);
+    else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      parts.push(n.text);
+      strings++;
+    } else if (ts.isTemplateExpression(n)) {
+      parts.push(templateText(n));
+      strings++;
+    } else parts.push(HOLE);
+  };
+  walk(node);
+  if (!strings) return undefined;
+  let text = parts.join("");
+  while (text.includes(HOLE + HOLE)) text = text.replace(HOLE + HOLE, HOLE);
+  return text;
+}
+
 /**
  * The method a `fetch(url, init)` call uses: GET when there is no init, or an init without a `method`; the stated
  * method when it is a known one; `*` when the method or the init is built at run time.
@@ -77,6 +106,9 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) raw = node.text;
     else if (ts.isTemplateExpression(node)) raw = templateText(node);
+    // A whole concatenation is one URL; its pieces alone are not requests.
+    const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
+    if (whole) raw = concatenationText(node);
     if (raw !== undefined) {
       const parsed = callPath(raw);
       if (parsed) {
@@ -91,7 +123,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
           scope: scopeOf(node),
         });
       }
-      if (!ts.isTemplateExpression(node)) return;
+      if (whole || !ts.isTemplateExpression(node)) return;
     }
     ts.forEachChild(node, visit);
   };
@@ -121,6 +153,23 @@ function enumMethodNear(line: string, start: number, end: number): string | unde
  * The text with every comment blanked (newlines kept, offsets unchanged) and strings left as they are: `#` comments in
  * Python, Ruby and shell, `//` and `/* *\/` in the C family (Kotlin, Java, Swift, Go, C#, Dart and the like).
  */
+/**
+ * Where a string literal opened by `quote` at `start` ends (just past its closing quote). A backslash escapes the next
+ * character, except in a Kotlin raw string (`"""` in a `.kt` file), which has no escapes and whose run of closing
+ * quotes ends at its last three. A one-character quote other than a backtick ends at a line break.
+ */
+export function literalEnd(text: string, start: number, quote: string, file: string): number {
+  const raw = quote === '"""' && /\.kts?$/.test(file);
+  let j = start + quote.length;
+  while (j < text.length && !text.startsWith(quote, j)) {
+    if (text[j] === "\\" && !raw) j++;
+    else if (quote.length === 1 && quote !== "`" && text[j] === "\n") return j;
+    j++;
+  }
+  if (raw) while (text[j + 3] === '"') j++;
+  return Math.min(j + quote.length, text.length);
+}
+
 export function withoutComments(file: string, text: string): string {
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
   const out = text.split("");
@@ -131,13 +180,7 @@ export function withoutComments(file: string, text: string): string {
   while (i < text.length) {
     const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(text[i]!) ? text[i]! : undefined;
     if (quote) {
-      let j = i + quote.length;
-      while (j < text.length && !text.startsWith(quote, j)) {
-        if (text[j] === "\\") j++;
-        else if (quote.length === 1 && quote !== "`" && text[j] === "\n") break;
-        j++;
-      }
-      i = j + quote.length;
+      i = literalEnd(text, i, quote, file);
       continue;
     }
     const line = hash ? text[i] === "#" : text.startsWith("//", i);
@@ -188,6 +231,309 @@ export function callsFromText(file: string, original: string, spec: CallSource):
   return out;
 }
 
+/** A `<script>` or `<style>` element: its start tag and where its raw-text body lies in the template. */
+interface RawText {
+  name: string;
+  attributes: Attribute[];
+  bodyStart: number;
+  bodyEnd: number;
+}
+
+// The template as HTML reads it, in one pass: comments blanked (newlines and offsets kept), and the <script> and
+// <style> elements found, whose bodies are raw text, where neither a comment nor markup can start. Thymeleaf's
+// parser-level comments start with "<!--" too and are blanked; its prototype-only block, opened by "<!--/*/" and
+// closed by "/*/-->", is processed, so only the two markers are blanked and comments inside it still are.
+function scanHtml(original: string): { text: string; raw: RawText[] } {
+  const out = original.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const raw: RawText[] = [];
+  const tag = new RegExp(START_TAG.source, "y");
+  let prototype = false;
+  let i = 0;
+  while (i < original.length) {
+    if (prototype && original.startsWith("/*/-->", i)) {
+      blank(i, i + 6);
+      prototype = false;
+      i += 6;
+    } else if (original.startsWith("<!--/*/", i)) {
+      blank(i, i + 7);
+      prototype = true;
+      i += 7;
+    } else if (original.startsWith("<!--", i)) {
+      const close = original.indexOf("-->", i + 4);
+      const end = close < 0 ? original.length : close + 3;
+      blank(i, end);
+      i = end;
+    } else if (original[i] === "<" && /^<(script|style)(?=[\s/>])/i.test(original.slice(i, i + 8))) {
+      tag.lastIndex = i;
+      const m = tag.exec(original);
+      if (!m) {
+        i++;
+        continue;
+      }
+      const name = m[1]!.toLowerCase();
+      const bodyStart = i + m[0].length;
+      // The end tag names the element exactly: `</script-widget>` in a script body does not close it.
+      const end = new RegExp(`</${name}(?=[\\s/>])`, "gi");
+      end.lastIndex = bodyStart;
+      const close = end.exec(original)?.index;
+      const bodyEnd = close ?? original.length;
+      raw.push({ name, attributes: attributesOf(m[2]!, i + 1 + m[1]!.length), bodyStart, bodyEnd });
+      i = bodyEnd;
+    } else i++;
+  }
+  return { text: out.join(""), raw };
+}
+
+/**
+ * The path of the Thymeleaf link expression starting at `@{`: its `/...` literal with `{name}` placeholders, up to
+ * the parameter list or the closing brace. The parameters may hold any expression; they are not read.
+ */
+function linkPath(text: string, at: number): string | undefined {
+  let i = at + 2;
+  while (/\s/.test(text[i] ?? "")) i++;
+  if (text[i] === "~") i++;
+  if (text[i] !== "/") return undefined;
+  let path = "";
+  while (i < text.length) {
+    const c = text[i]!;
+    if (c === "{") {
+      const close = text.indexOf("}", i);
+      if (close < 0) return undefined;
+      path += text.slice(i, close + 1);
+      i = close + 1;
+      continue;
+    }
+    if (c === "(" || c === "}" || /\s/.test(c)) break;
+    path += c;
+    i++;
+  }
+  return path;
+}
+
+const valueOf = (tag: StartTag, name: string): string | undefined => tag.attributes.find((a) => a.name === name)?.value;
+
+/**
+ * The method a submission named by `method` or `formmethod` (`plain`) uses, or undefined when the tag names none; null
+ * when it sends nothing.
+ *
+ * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. It writes `method="post"` and,
+ * for any other method, a hidden `_method` field that Spring turns into that method only when its
+ * HiddenHttpMethodFilter is on, which Spring Boot leaves off: GET and POST are kept, any other value is `*`.
+ *
+ * The plain attribute is the HTML standard's enumerated one: `get` and `post`; `dialog`, which closes a dialog and sends
+ * nothing; and GET for any other value, as a browser does.
+ */
+function submitMethod(tag: StartTag, plain: string): string | null | undefined {
+  for (const name of [`th:${plain}`, `data-th-${plain}`]) {
+    const value = valueOf(tag, name)?.trim().toLowerCase();
+    if (value === undefined) continue;
+    return value === "get" || value === "post" ? value.toUpperCase() : "*";
+  }
+  const value = valueOf(tag, plain)?.trim().toLowerCase();
+  if (value === undefined) return undefined;
+  if (value === "post") return "POST";
+  return value === "dialog" ? null : "GET";
+}
+
+/**
+ * The `<form>` a submit control belongs to: the one its `form` attribute names, else the one around it. Both are
+ * found among the template's start tags and in its markup, so text in a script body is neither.
+ */
+function formOf(page: Page, control: StartTag): StartTag | undefined {
+  const id = valueOf(control, "form");
+  if (id !== undefined) {
+    const named = page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
+    if (named) return named;
+  }
+  const open = page.tags.filter((t) => t.name === "form" && t.start < control.start).pop();
+  if (!open || page.markup.toLowerCase().lastIndexOf("</form", control.start) > open.start) return undefined;
+  return open;
+}
+
+interface Attribute {
+  /** Lower-cased. */
+  name: string;
+  value: string;
+  /** Where the value starts in the template. */
+  at: number;
+}
+
+interface StartTag {
+  /** Lower-cased. */
+  name: string;
+  start: number;
+  text: string;
+  attributes: Attribute[];
+}
+
+const START_TAG = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*\/?>/g;
+const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+
+/** The attributes of a start tag's attribute list, which begins at `listAt` in the template. */
+function attributesOf(list: string, listAt: number): Attribute[] {
+  const out: Attribute[] = [];
+  for (const a of list.matchAll(ATTRIBUTE)) {
+    const value = a[2] ?? a[3] ?? a[4];
+    if (value === undefined) continue;
+    const eq = a[0].indexOf("=");
+    let k = eq + 1;
+    while (/\s/.test(a[0][k] ?? "")) k++;
+    if (a[0][k] === '"' || a[0][k] === "'") k++;
+    out.push({ name: a[1]!.toLowerCase(), value, at: listAt + (a.index ?? 0) + k });
+  }
+  return out;
+}
+
+/** A template's markup (raw-text bodies blanked, offsets kept) and its start tags, values located in the template. */
+interface Page {
+  markup: string;
+  tags: StartTag[];
+}
+
+function pageOf(text: string, raw: RawText[]): Page {
+  const chars = text.split("");
+  for (const r of raw) for (let k = r.bodyStart; k < r.bodyEnd; k++) if (chars[k] !== "\n") chars[k] = " ";
+  const markup = chars.join("");
+  const tags: StartTag[] = [];
+  for (const m of markup.matchAll(START_TAG)) {
+    const start = m.index ?? 0;
+    tags.push({ name: m[1]!.toLowerCase(), start, text: text.slice(start, start + m[0].length), attributes: attributesOf(m[2]!, start + 1 + m[1]!.length) });
+  }
+  return { markup, tags };
+}
+
+/** The MIME type essences a browser runs a script of, besides `module`. */
+const JAVASCRIPT_TYPES = new Set([
+  "module",
+  "text/javascript",
+  "application/javascript",
+  "text/ecmascript",
+  "application/ecmascript",
+  "application/x-javascript",
+  "application/x-ecmascript",
+  "text/x-javascript",
+  "text/x-ecmascript",
+  "text/jscript",
+  "text/livescript",
+]);
+
+/** Attributes that make a request: links, form targets, sources, and data attributes a script reads a URL from. */
+const requests = (name: string): boolean => /^(href|src|action|formaction)$/.test(name) || name.startsWith("data-");
+
+/** The `th:attr` family item a value belongs to: the attribute named before the `=` that precedes it. */
+function itemName(value: string, offset: number): string | undefined {
+  const item = value.slice(0, offset).split(",").pop() ?? "";
+  return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+}
+
+/**
+ * The method a request from an attribute uses, or null when it sends none: GET for links and sources; a form's method
+ * (`submitMethod`), GET when it names none; a submit control's `formmethod`, else its form's; any method for a `data-*`
+ * URL, which a script reads.
+ */
+function templateMethod(page: Page, tag: StartTag, name: string): string | null {
+  if (name === "href" || name === "src") return "GET";
+  // `??` would also replace null, which means no request.
+  const or = (method: string | null | undefined, fallback: string | null) => (method === undefined ? fallback : method);
+  if (name === "action") return or(submitMethod(tag, "method"), "GET");
+  if (name === "formaction") {
+    const form = formOf(page, tag);
+    return or(submitMethod(tag, "formmethod"), or(form ? submitMethod(form, "method") : undefined, "GET"));
+  }
+  return "*";
+}
+
+/**
+ * Requests an HTML template makes, read from start tags only:
+ * - Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`,
+ *   `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
+ *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
+ * - root-relative URLs in `href`, `src`, `action`, `formaction` and `data-*`, in any case, unless Thymeleaf replaces the
+ *   attribute;
+ * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
+ *   `[[...]]` or `[(...)]`.
+ * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
+ * Text that is not an attribute, commented-out markup and absolute URLs, which name other sites, are not read.
+ */
+export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
+  const { text, raw } = scanHtml(original);
+  const page = pageOf(text, raw);
+  const out: Draft<Call>[] = [];
+  const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
+    const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
+    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
+    const method = tag ? templateMethod(page, tag, name) : "*";
+    if (!parsed || method === null) return;
+    out.push({
+      from: spec.from,
+      to: spec.to,
+      method,
+      path: parsed.path,
+      based: false,
+      at: { file, line: lineOf(text, index) },
+      evidence: "text",
+    });
+  };
+
+  for (const tag of page.tags) {
+    const plain = new Map(tag.attributes.filter((a) => !a.name.startsWith("th:") && !a.name.startsWith("data-th-")).map((a) => [a.name, a]));
+    const replaced = new Set<string>();
+    const joined = new Set<string>();
+    for (const a of tag.attributes) {
+      const th = /^(?:th:|data-th-)(.+)$/.exec(a.name)?.[1];
+      if (!th) continue;
+      const family = /^attr(append|prepend)?$/.exec(th);
+      for (let i = a.value.indexOf("@{"); i >= 0; i = a.value.indexOf("@{", i + 2)) {
+        const name = family ? itemName(a.value, i) : th;
+        const path = linkPath(a.value, i);
+        if (!name || !requests(name) || !path) continue;
+        if (!family || !family[1]) {
+          replaced.add(name);
+          add(path, a.at + i, tag, name);
+          continue;
+        }
+        // attrappend / attrprepend: the request is the static value with this added, if the static value is known.
+        joined.add(name);
+        const fixed = plain.get(name);
+        if (!fixed || !fixed.value.startsWith("/")) continue;
+        add(family[1] === "append" ? `${fixed.value}${path}` : `${path}${fixed.value}`, fixed.at, tag, name);
+      }
+      if (!family) replaced.add(th);
+      else if (!family[1]) for (const item of a.value.split(",")) {
+        const n = /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+        if (n) replaced.add(n);
+      }
+    }
+    for (const a of plain.values()) {
+      if (!requests(a.name) || replaced.has(a.name) || joined.has(a.name)) continue;
+      if (!a.value.startsWith("/") || a.value.startsWith("//")) continue;
+      add(a.value.replace(/[?#].*$/, ""), a.at, tag, a.name);
+    }
+  }
+
+  // Inline scripts, without a src: their requests, at their lines in the template.
+  for (const script of raw.filter((r) => r.name === "script")) {
+    const attribute = (name: string) => script.attributes.find((a) => a.name === name)?.value;
+    // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
+    const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
+    if (attribute("src") !== undefined || (type && !JAVASCRIPT_TYPES.has(type))) continue;
+    const body = text.slice(script.bodyStart, script.bodyEnd);
+    const shift = lineOf(text, script.bodyStart) - 1;
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
+    if (attribute("th:inline")?.toLowerCase() === "javascript") {
+      for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
+        const at = (e.index ?? 0) + e[0].length - 2;
+        const path = linkPath(body, at);
+        if (path) add(path, script.bodyStart + at, undefined, "script");
+      }
+    }
+  }
+  return out.sort((a, b) => a.at.line - b.at.line);
+}
+
 export function extractCalls(source: Source, config: Config, coverage: Coverage[] = []): Draft<Call>[] {
   const out: Draft<Call>[] = [];
   for (const spec of config.calls) {
@@ -197,6 +543,7 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const text = source.read(file);
       if (text === undefined) continue;
       if (/\.(c|m)?[tj]sx?$/.test(file)) out.push(...callsFromTypeScript(file, text, spec));
+      else if (/\.html?$/.test(file)) out.push(...callsFromTemplate(file, text, spec));
       else out.push(...callsFromText(file, text, spec));
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
