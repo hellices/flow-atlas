@@ -34,7 +34,7 @@ const CALL_SHAPES = [
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
-  /\b(?:action|data-[\w-]+-url)\s*=\s*["']\/[A-Za-z]/g,
+  /\b(?:action|formaction|data-[\w-]+-url)\s*=\s*["']?\/[A-Za-z]/gi,
 ];
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;

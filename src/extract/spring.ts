@@ -84,17 +84,19 @@ function annotationsStart(masked: string, at: number): number {
 /**
  * String literals of a value: `"a"`, `{"a", "b"}`, `["a"]`, `arrayOf("a")`, or a one-line Kotlin raw string
  * `"""a"""`, whose run of closing quotes ends at its last three; undefined when anything else is in it. A literal over
- * several lines (a Java text block) is not read, since its indentation is stripped.
+ * several lines (a Java text block) is not read, since its indentation is stripped, and neither is a Kotlin string
+ * template (`"$BASE/users"`, `"${x}"`), whose value is computed.
  */
-function literals(value: string): string[] | undefined {
+function literals(value: string, kotlin: boolean): string[] | undefined {
   const out: string[] = [];
-  let multiline = false;
+  let unknown = false;
   const rest = value.replace(/"""([\s\S]*?"*)"""(?!")|"((?:[^"\\\n]|\\.)*)"/g, (_, raw: string | undefined, s: string | undefined) => {
-    if (raw?.includes("\n")) multiline = true;
-    out.push(raw ?? s!);
+    const text = raw ?? s!;
+    if (raw?.includes("\n") || (kotlin && /\$[A-Za-z_{`]/.test(text))) unknown = true;
+    out.push(text);
     return "";
   });
-  if (multiline) return undefined;
+  if (unknown) return undefined;
   return /^[\s{}[\],]*$/.test(rest.replace(/\barrayOf\s*\(/, "").replace(/\)\s*$/, "")) ? out : undefined;
 }
 
@@ -127,12 +129,12 @@ function attributes(args: string): { positional?: string; named: Map<string, str
 }
 
 /** The paths a mapping names: none written means the root; a literal or a list of literals; undefined when built in code. */
-function mappingPaths(args: string | undefined): string[] | undefined {
+function mappingPaths(args: string | undefined, kotlin: boolean): string[] | undefined {
   if (args === undefined || !args.trim()) return [""];
   const { positional, named } = attributes(args);
   const value = named.get("path") ?? named.get("value") ?? positional;
   if (value === undefined) return [""];
-  const paths = literals(value);
+  const paths = literals(value, kotlin);
   return paths?.length ? paths : paths ? [""] : undefined;
 }
 
@@ -258,6 +260,7 @@ interface TypeScope {
 export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views): Surface[] {
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
+  const kotlin = /\.kts?$/.test(file);
   const mappings = [...masked.matchAll(MAPPING)].map((m) => {
     const at = m.index ?? 0;
     let open = at + m[0].length;
@@ -288,7 +291,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     types.push({
       start: i,
       end,
-      paths: own ? mappingPaths(own.args) : [""],
+      paths: own ? mappingPaths(own.args, kotlin) : [""],
       methods: own ? requestMethods(own.args) : [],
       responseBody: /@(?:[\w.]*\.)?(?:RestController|ResponseBody)\b/.test(annotations),
     });
@@ -300,7 +303,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     // The innermost type whose body holds the handler; a nested type closed before it does not count.
     const owner = types.filter((t) => t.start < m.at && m.at < t.end).sort((a, b) => b.start - a.start)[0];
     const bases = owner ? owner.paths : [""];
-    const paths = mappingPaths(m.args);
+    const paths = mappingPaths(m.args, kotlin);
     const own = m.kind === "RequestMapping" ? requestMethods(m.args) : [SHORTCUTS[m.kind]!];
     const inherited = owner ? owner.methods : [];
     if (!bases || !paths || !own || !inherited) continue;
@@ -318,7 +321,10 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
         for (const method of methods) {
           const id = surfaceId({ component: spec.component, method, path: full });
           if (rendered.length) views!.set(id, { file, names: [...new Set([...(views!.get(id)?.names ?? []), ...rendered])] });
-          out.push({ id, component: spec.component, method, path: full, at: { file, line: lineOf(text, m.at) }, evidence: "text" });
+          const line = lineOf(text, m.at);
+          // Paths that differ only in a trailing `/` are one route here, so a mapping that lists both registers it once.
+          if (out.some((o) => o.id === id && o.at.line === line)) continue;
+          out.push({ id, component: spec.component, method, path: full, at: { file, line }, evidence: "text" });
         }
       }
     }
@@ -331,9 +337,48 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
  * What a configurer call sets, in its configuration: the literal it passes, `null` when it is called with something
  * else (a constant, an expression), or undefined when it is not called.
  */
-function setting(code: string, masked: string, call: string): string | null | undefined {
-  // A builder keeps the last value a setter was given.
-  const m = [...masked.matchAll(new RegExp(`\\.${call}\\s*\\(`, "g"))].pop();
+/** Where the parenthesis that `close` closes opens, in masked code. */
+function opening(masked: string, close: number): number | undefined {
+  let depth = 0;
+  for (let i = close; i >= 0; i--) {
+    if (masked[i] === ")") depth++;
+    else if (masked[i] === "(" && --depth === 0) return i;
+  }
+  return undefined;
+}
+
+/**
+ * The identifier a call chain through the `.` at `dot` starts from: `f` for `f.permitAll().loginPage(`; empty when the
+ * chain starts at the beginning of the text (it continues a call made before it); undefined when it starts elsewhere.
+ */
+function chainRoot(masked: string, dot: number): string | undefined {
+  let i = dot - 1;
+  for (;;) {
+    while (i >= 0 && /\s/.test(masked[i]!)) i--;
+    if (i < 0) return "";
+    if (masked[i] === ")") {
+      const open = opening(masked, i);
+      if (open === undefined) return undefined;
+      i = open - 1;
+      while (i >= 0 && /\s/.test(masked[i]!)) i--;
+    }
+    const end = i + 1;
+    while (i >= 0 && /[\w$]/.test(masked[i]!)) i--;
+    const name = masked.slice(i + 1, end);
+    let j = i;
+    while (j >= 0 && /\s/.test(masked[j]!)) j--;
+    if (masked[j] === ".") {
+      i = j - 1;
+      continue;
+    }
+    return name || undefined;
+  }
+}
+
+function setting(code: string, masked: string, call: string, receiver: string | undefined): string | null | undefined {
+  // A builder keeps the last value a setter was given. Only a setter on the configurer counts: in a lambda, a chain
+  // that starts at its parameter; in the chained form, the chain that continues the configurer call itself.
+  const m = [...masked.matchAll(new RegExp(`\\.${call}\\s*\\(`, "g"))].filter((c) => chainRoot(masked, c.index ?? 0) === (receiver ?? "")).pop();
   if (!m) return undefined;
   const open = (m.index ?? 0) + m[0].length - 1;
   const close = closing(masked, open);
@@ -364,12 +409,14 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     let from = open + 1;
     let to = close;
     const argument = masked.slice(open + 1, close).trim();
+    let receiver: string | undefined;
     if (argument && !/^(?:Customizer\s*\.\s*)?withDefaults\s*\(\s*\)$/.test(argument)) {
       // A lambda is read where its parameter stays in it; a customizer held elsewhere (a variable, a method, a lambda
       // handing its parameter on) may set anything, so what it serves is unknown and nothing is registered.
       const lambda = /^(?:\(\s*)?(?:[\w<>?,.\s]+\s)?(\w+)\s*\)?\s*->/.exec(argument);
       const disabled = /^\w+\s*::\s*disable$/.test(argument);
       if (!disabled && (!lambda || new RegExp(`[(,]\\s*${lambda[1]}\\s*[,)]`).test(argument.slice(lambda[0].length)))) continue;
+      receiver = lambda?.[1];
     }
     if (!argument) {
       // The chained form: the configuration runs from here to `.and()` or the end of the statement.
@@ -382,13 +429,13 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     const regionMasked = masked.slice(from, to);
     if (/::disable\b|\.disable\s*\(/.test(regionMasked)) continue;
     if (m[1] === "formLogin") {
-      const processing = setting(region, regionMasked, "loginProcessingUrl");
-      const page = setting(region, regionMasked, "loginPage");
+      const processing = setting(region, regionMasked, "loginProcessingUrl", receiver);
+      const page = setting(region, regionMasked, "loginPage", receiver);
       const url = processing !== undefined ? processing : page !== undefined ? page : "/login";
       if (url) add(url, at);
     } else {
       if (/\.logoutRequestMatcher\s*\(/.test(regionMasked)) continue;
-      const url = setting(region, regionMasked, "logoutUrl");
+      const url = setting(region, regionMasked, "logoutUrl", receiver);
       if (url !== null) add(url ?? "/logout", at);
     }
   }

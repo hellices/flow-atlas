@@ -15,6 +15,35 @@ function templateText(node: ts.TemplateExpression): string {
   return s;
 }
 
+const isPlus = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken;
+
+/**
+ * The text a string concatenation builds, its operands in order, with a hole for each operand that is not a literal:
+ * `BASE + "/reviews"` reads as a template `${BASE}/reviews` would. Undefined when no operand is a string.
+ */
+function concatenationText(node: ts.BinaryExpression): string | undefined {
+  const parts: string[] = [];
+  let strings = 0;
+  const walk = (n: ts.Expression): void => {
+    if (isPlus(n)) {
+      walk(n.left);
+      walk(n.right);
+    } else if (ts.isParenthesizedExpression(n) && isPlus(n.expression)) walk(n.expression);
+    else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      parts.push(n.text);
+      strings++;
+    } else if (ts.isTemplateExpression(n)) {
+      parts.push(templateText(n));
+      strings++;
+    } else parts.push(HOLE);
+  };
+  walk(node);
+  if (!strings) return undefined;
+  let text = parts.join("");
+  while (text.includes(HOLE + HOLE)) text = text.replace(HOLE + HOLE, HOLE);
+  return text;
+}
+
 /**
  * The method a `fetch(url, init)` call uses: GET when there is no init, or an init without a `method`; the stated
  * method when it is a known one; `*` when the method or the init is built at run time.
@@ -77,6 +106,9 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) raw = node.text;
     else if (ts.isTemplateExpression(node)) raw = templateText(node);
+    // A whole concatenation is one URL; its pieces alone are not requests.
+    const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
+    if (whole) raw = concatenationText(node);
     if (raw !== undefined) {
       const parsed = callPath(raw);
       if (parsed) {
@@ -91,7 +123,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
           scope: scopeOf(node),
         });
       }
-      if (!ts.isTemplateExpression(node)) return;
+      if (whole || !ts.isTemplateExpression(node)) return;
     }
     ts.forEachChild(node, visit);
   };
@@ -234,7 +266,7 @@ function scanHtml(original: string): { text: string; raw: RawText[] } {
       const end = close < 0 ? original.length : close + 3;
       blank(i, end);
       i = end;
-    } else if (original[i] === "<" && /^<(script|style)\b/i.test(original.slice(i, i + 7))) {
+    } else if (original[i] === "<" && /^<(script|style)(?=[\s/>])/i.test(original.slice(i, i + 8))) {
       tag.lastIndex = i;
       const m = tag.exec(original);
       if (!m) {
@@ -243,8 +275,11 @@ function scanHtml(original: string): { text: string; raw: RawText[] } {
       }
       const name = m[1]!.toLowerCase();
       const bodyStart = i + m[0].length;
-      const close = original.toLowerCase().indexOf(`</${name}`, bodyStart);
-      const bodyEnd = close < 0 ? original.length : close;
+      // The end tag names the element exactly: `</script-widget>` in a script body does not close it.
+      const end = new RegExp(`</${name}(?=[\\s/>])`, "gi");
+      end.lastIndex = bodyStart;
+      const close = end.exec(original)?.index;
+      const bodyEnd = close ?? original.length;
       raw.push({ name, attributes: attributesOf(m[2]!, i + 1 + m[1]!.length), bodyStart, bodyEnd });
       i = bodyEnd;
     } else i++;
@@ -280,13 +315,27 @@ function linkPath(text: string, at: number): string | undefined {
 
 const valueOf = (tag: StartTag, name: string): string | undefined => tag.attributes.find((a) => a.name === name)?.value;
 
-/** A method a tag names, Thymeleaf's (`th:` or the HTML-friendly `data-th-`) before the plain attribute it replaces. */
-function methodOf(tag: StartTag, plain: string): string | undefined {
-  for (const name of [`th:${plain}`, `data-th-${plain}`, plain]) {
-    const value = valueOf(tag, name)?.trim();
-    if (value && /^[A-Za-z]+$/.test(value)) return value;
+/**
+ * The method a submission named by `method` or `formmethod` (`plain`) uses, or undefined when the tag names none; null
+ * when it sends nothing.
+ *
+ * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. It writes `method="post"` and,
+ * for any other method, a hidden `_method` field that Spring turns into that method only when its
+ * HiddenHttpMethodFilter is on, which Spring Boot leaves off: GET and POST are kept, any other value is `*`.
+ *
+ * The plain attribute is the HTML standard's enumerated one: `get` and `post`; `dialog`, which closes a dialog and sends
+ * nothing; and GET for any other value, as a browser does.
+ */
+function submitMethod(tag: StartTag, plain: string): string | null | undefined {
+  for (const name of [`th:${plain}`, `data-th-${plain}`]) {
+    const value = valueOf(tag, name)?.trim().toLowerCase();
+    if (value === undefined) continue;
+    return value === "get" || value === "post" ? value.toUpperCase() : "*";
   }
-  return undefined;
+  const value = valueOf(tag, plain)?.trim().toLowerCase();
+  if (value === undefined) return undefined;
+  if (value === "post") return "POST";
+  return value === "dialog" ? null : "GET";
 }
 
 /**
@@ -381,16 +430,18 @@ function itemName(value: string, offset: number): string | undefined {
 }
 
 /**
- * The method a request from an attribute uses: GET for links and sources; a form's `th:method` (PUT, DELETE through
- * Spring's hidden method field) or `method`; a submit control's `formmethod`, else its form's; any method for a `data-*`
+ * The method a request from an attribute uses, or null when it sends none: GET for links and sources; a form's method
+ * (`submitMethod`), GET when it names none; a submit control's `formmethod`, else its form's; any method for a `data-*`
  * URL, which a script reads.
  */
-function templateMethod(page: Page, tag: StartTag, name: string): string {
+function templateMethod(page: Page, tag: StartTag, name: string): string | null {
   if (name === "href" || name === "src") return "GET";
-  if (name === "action") return (methodOf(tag, "method") ?? "GET").toUpperCase();
+  // `??` would also replace null, which means no request.
+  const or = (method: string | null | undefined, fallback: string | null) => (method === undefined ? fallback : method);
+  if (name === "action") return or(submitMethod(tag, "method"), "GET");
   if (name === "formaction") {
     const form = formOf(page, tag);
-    return (methodOf(tag, "formmethod") ?? (form ? methodOf(form, "method") : undefined) ?? "GET").toUpperCase();
+    return or(submitMethod(tag, "formmethod"), or(form ? submitMethod(form, "method") : undefined, "GET"));
   }
   return "*";
 }
@@ -414,11 +465,12 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
     const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
-    if (!parsed) return;
+    const method = tag ? templateMethod(page, tag, name) : "*";
+    if (!parsed || method === null) return;
     out.push({
       from: spec.from,
       to: spec.to,
-      method: tag ? templateMethod(page, tag, name) : "*",
+      method,
       path: parsed.path,
       based: false,
       at: { file, line: lineOf(text, index) },

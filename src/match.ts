@@ -21,7 +21,8 @@ function springRank(path: string): number[] {
   const segs = segments(path);
   const catchAll = segs.some((s) => s === "**" || s.startsWith("{*")) ? 1 : 0;
   const variables = segs.filter((s) => (s.startsWith("{") && !s.startsWith("{*")) || s.startsWith(":")).length;
-  const wildcards = segs.filter((s) => s === "*").length;
+  // Every `*` outside a variable counts, inside a segment too (`*.txt`); a catch-all is counted above instead.
+  const wildcards = segs.filter((s) => s !== "**" && !s.startsWith("{*")).reduce((n, s) => n + (s.replace(/\{[^}]*\}/g, "").match(/\*/g)?.length ?? 0), 0);
   const normalizedLength = path.replace(/\{[^}]*\}/g, "?").length;
   return [catchAll, catchAll ? -normalizedLength : 0, variables + 100 * wildcards, -normalizedLength];
 }

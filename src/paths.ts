@@ -84,6 +84,15 @@ export function holeMatches(pattern: string, text: string): boolean {
 /** A last route segment that takes the rest of the path, none or many segments: Spring's `{*rest}` and `**`. */
 const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
 
+/** A segment with a wildcard inside it (`*.txt`, `v*`): `*` stands for any text within the segment, `{x}` for some. */
+function segmentPattern(seg: string): RegExp {
+  const body = seg
+    .split(/(\{[^}]*\}|\*)/)
+    .map((p) => (p === "*" ? "[^/]*" : p.startsWith("{") ? "[^/]+" : p.replace(/[.+?^$()|[\]\\]/g, "\\$&")))
+    .join("");
+  return new RegExp(`^${body}$`);
+}
+
 export function pathsMatch(routePath: string, call: string): boolean {
   let r = segments(routePath);
   let c = segments(call);
@@ -96,7 +105,8 @@ export function pathsMatch(routePath: string, call: string): boolean {
   return r.every((seg, i) => {
     const part = c[i]!;
     if (isParam(seg) || seg === part) return true;
-    return isHole(part) && holeMatches(part, seg);
+    if (isHole(part)) return holeMatches(part, seg);
+    return seg.includes("*") && segmentPattern(seg).test(part);
   });
 }
 

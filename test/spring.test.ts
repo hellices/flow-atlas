@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/commands.js";
 import { normalizeConfig } from "../src/config.js";
-import { callsFromTemplate } from "../src/extract/calls.js";
+import { callsFromTemplate, callsFromTypeScript } from "../src/extract/calls.js";
 import { handlerNames } from "../src/extract/openapi.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { routesFromSpring, type Views } from "../src/extract/spring.js";
@@ -38,7 +38,7 @@ describe("Spring routes", () => {
       "  @GetMapping Slice all() { return null; }",
       "}",
     ].join("\n");
-    expect(routes(text)).toEqual(["GET /api/reviews 4", "POST /api/movies/{tmdbId}/reviews 5", "DELETE /api/reviews/{id} 7", "DELETE /api/reviews/{id} 7", "GET /api 8"]);
+    expect(routes(text)).toEqual(["GET /api/reviews 4", "POST /api/movies/{tmdbId}/reviews 5", "DELETE /api/reviews/{id} 7", "GET /api 8"]);
   });
 
   it("reads @RequestMapping methods, regex variables and unannotated classes", () => {
@@ -170,7 +170,7 @@ describe("template calls", () => {
       "GET /movies/{} 2",
       "POST /movies/{}/reviews 3",
       "POST /reviews/{}/edit 3",
-      "DELETE /reviews/{} 4",
+      "* /reviews/{} 4",
       "GET /movies 5",
       "* /api/movies/search 6",
       "* /movies/{} 6",
@@ -218,8 +218,8 @@ describe("template calls", () => {
   });
 
   it("takes a submit button's method from formmethod, else its form", () => {
-    const html = ['<form method="post">', '  <button formaction="/save">s</button>', '  <button formmethod="delete" formaction="/drop">d</button>', "</form>", '<button form="f" formaction="/out">o</button><form id="f" method="put"></form>'].join("\n");
-    expect(calls(html)).toEqual(["POST /save 2", "DELETE /drop 3", "PUT /out 5"]);
+    const html = ['<form method="get">', '  <button formaction="/save">s</button>', '  <button formmethod="post" formaction="/drop">d</button>', "</form>", '<button form="f" formaction="/out">o</button><form id="f" method="post"></form>'].join("\n");
+    expect(calls(html)).toEqual(["GET /save 2", "POST /drop 3", "POST /out 5"]);
   });
 });
 
@@ -294,10 +294,9 @@ describe("a server-rendered Spring app", () => {
     ]);
   });
 
-  it("guesses a handler from springdoc's numbered operationIds only when the document holds the name too", () => {
-    expect(handlerNames("get_1", "GET", "/api/reviews/{id}", new Set(["get", "get_1"]))).toEqual(["get_1", "get"]);
-    expect(handlerNames("health_2024", "GET", "/health", new Set(["health_2024"]))).toEqual(["health_2024"]);
-    expect(handlerNames("health_0", "GET", "/health", new Set(["health", "health_0"]))).toEqual(["health_0"]);
+  it("does not trace a numbered operationId back to a name, since nothing says springdoc numbered it", () => {
+    expect(handlerNames("get_1", "GET", "/api/reviews/{id}")).toEqual(["get_1"]);
+    expect(handlerNames("health_2024", "GET", "/health")).toEqual(["health_2024"]);
   });
 });
 
@@ -433,6 +432,11 @@ describe("Spring handlers, continued", () => {
 });
 
 describe("inventory", () => {
+  it("proposes template files whose form targets are written in any case or unquoted", () => {
+    const files = { "web/a.html": '<FORM ACTION="/submit"></FORM>', "web/b.html": "<form action=/submit></form>" };
+    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`)).toEqual(["web/a.html 1", "web/b.html 1"]);
+  });
+
   it("proposes controllers that write the annotations' full names", () => {
     const files = { "Api.java": "@org.springframework.web.bind.annotation.RestController\nclass Api {\n  @org.springframework.web.bind.annotation.GetMapping(\"/x\") void x() {}\n}" };
     expect(inventory(memory(files), []).routes.map((r) => `${r.style} ${r.count}`)).toEqual(["spring 1"]);
@@ -467,14 +471,14 @@ describe("review fixes: templates", () => {
   });
 
   it("finds a button's form by its exact id", () => {
-    const html = ['<button form="f" formaction="/out">o</button>', '<form data-id="f" method="delete"></form>', '<form id="f" method="put"></form>'].join("\n");
-    expect(calls(html)).toEqual(["PUT /out 1"]);
+    const html = ['<button form="f" formaction="/out">o</button>', '<form data-id="f" method="get"></form>', '<form id="f" method="post"></form>'].join("\n");
+    expect(calls(html)).toEqual(["POST /out 1"]);
   });
 });
 
 describe("review fixes: Spring", () => {
-  it("puts springdoc's base name before the guesses that split the operationId", () => {
-    expect(handlerNames("Get_list_1", "GET", "/x", new Set(["Get_list", "Get_list_1"]))).toEqual(["Get_list_1", "Get_list", "list_1"]);
+  it("splits a class-like operationId as Nest does, without guessing a numbering", () => {
+    expect(handlerNames("Get_list_1", "GET", "/x")).toEqual(["Get_list_1", "list_1"]);
   });
 
   it("links no template that belongs to a nested build module", () => {
@@ -503,7 +507,7 @@ describe("review fixes, continued", () => {
 
   it("reads the method of Thymeleaf's HTML-friendly data-th- attributes", () => {
     const html = ['<form data-th-method="post" data-th-action="@{/save}"></form>', '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>'].join("\n");
-    expect(calls(html)).toEqual(["POST /save 1", "DELETE /drop 2"]);
+    expect(calls(html)).toEqual(["POST /save 1", "* /drop 2"]);
   });
 
   it("does not take a form written in a script body as a control's form", () => {
@@ -537,5 +541,61 @@ describe("review fixes, continued", () => {
     const request: Call = { id: "c", from: "w", to: "s", method: "GET", path: "/bar/foo/z", at: { file: "b", line: 1 }, evidence: "text", based: false };
     const { targetsOf } = matchCalls({ surfaces: [surface("/bar/{*rest}"), surface("/{x}/foo/{*rest}")], calls: [request] }, new Set(["s"]));
     expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /{x}/foo/{*rest}"]);
+  });
+});
+
+describe("scope: what a template states for certain", () => {
+  const call = { from: "web", to: "server", files: [] };
+  const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
+
+  it("reads plain form methods as a browser does: GET or POST, GET for any other value, nothing for dialog", () => {
+    const html = [
+      '<form method="put" action="/items"></form>',
+      '<form method="POST" action="/save"></form>',
+      '<form method="dialog" action="/close"></form>',
+      '<form method="post"><button formmethod="delete" formaction="/drop">d</button><button formmethod="dialog" formaction="/x">x</button></form>',
+    ].join("\n");
+    expect(calls(html)).toEqual(["GET /items 1", "POST /save 2", "GET /drop 4"]);
+  });
+
+  it("leaves a Thymeleaf method other than GET or POST unknown, since Spring Boot does not apply the hidden field by default", () => {
+    const html = ['<form th:action="@{/a}" th:method="post"></form>', '<form th:action="@{/b}" th:method="put"></form>', '<form th:action="@{/c}" th:method="${m}"></form>'].join("\n");
+    expect(calls(html)).toEqual(["POST /a 1", "* /b 2", "* /c 3"]);
+  });
+
+  it("treats only the exact script and style elements as raw text", () => {
+    const html = ['<script-widget><a href="/inside">i</a></script-widget>', '<script>const s = "</script-widget>"; fetch("/api/one");</script>', '<a href="/after">a</a>'].join("\n");
+    expect(calls(html)).toEqual(["GET /inside 1", "GET /api/one 2", "GET /after 3"]);
+  });
+});
+
+describe("scope: concatenated URLs", () => {
+  const ts = (text: string) => callsFromTypeScript("a.ts", text, { from: "web", to: "server", files: [] }).map((c) => `${c.method} ${c.path} ${c.based}`);
+
+  it("reads a concatenation as one URL with a hole for each part it cannot know, not as separate requests", () => {
+    expect(ts('fetch(BASE + "/reviews");')).toEqual(["GET /reviews true"]);
+    expect(ts('fetch("/api/movies/" + id + "/reviews", { method: "POST" });')).toEqual(["POST /api/movies/{}/reviews false"]);
+    expect(ts('const label = "Total: " + count;')).toEqual([]);
+  });
+});
+
+describe("scope: Spring reads only what the code spells out", () => {
+  it("registers nothing for a Kotlin string template, whose value is computed", () => {
+    expect(routes('@RestController\nclass A {\n  @GetMapping("$BASE/users") fun users() = 1\n  @GetMapping("${Paths.X}") fun x() = 1\n  @GetMapping("/plain") fun p() = 1\n}', "A.kt")).toEqual(["GET /plain 5"]);
+    expect(routes('@RestController\nclass A {\n  @GetMapping("/cost$") String c() { return ""; }\n}', "A.java")).toEqual(["GET /cost$ 3"]);
+  });
+
+  it("reads a Security setter only on the configurer, not on another object a customizer calls", () => {
+    const config = (chain: string) => routes(`SecurityFilterChain chain(HttpSecurity http) { ${chain} }`);
+    expect(config('http.formLogin(f -> helper.loginPage("/admin"));')).toEqual(["POST /login 1"]);
+    expect(config('http.formLogin(f -> f.permitAll().loginPage("/signin"));')).toEqual(["POST /signin 1"]);
+    expect(config('http.formLogin().successHandler(h -> helper.loginPage("/x")).loginPage("/signin").and();')).toEqual(["POST /signin 1"]);
+  });
+
+  it("scores a wildcard inside a segment as Spring does", () => {
+    const surface = (path: string): Surface => ({ id: `s|GET ${path}`, component: "s", method: "GET", path, at: { file: "a", line: 1 }, evidence: "text" });
+    const request: Call = { id: "c", from: "w", to: "s", method: "GET", path: "/files/a.txt", at: { file: "b", line: 1 }, evidence: "text", based: false };
+    const { targetsOf } = matchCalls({ surfaces: [surface("/files/*.txt"), surface("/files/{name}")], calls: [request] }, new Set(["s"]));
+    expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /files/{name}"]);
   });
 });

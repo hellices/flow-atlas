@@ -194,8 +194,12 @@ tree, `code` has no digest.
 | contract version | `family-vN` | `active`, `references` |
 
 Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`.
-The same route has the same id whichever framework registered it, and matches an OpenAPI `paths` key as is. A
-catch-all at the end of a Spring path (`{*rest}`, `**`) keeps its form and matches the rest of a request's path. An
+The same route has the same id whichever framework registered it, and matches an OpenAPI `paths` key as is. Two forms
+are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path
+(`{*rest}`, `**`), which matches the rest of a request's path, and a wildcard within a segment (`*.txt`), which matches
+any text in that segment. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
+description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
+tool cannot resolve. Paths that differ only in a trailing `/` are one route. An
 `operationId` is read where the code states it (route options, `@ApiOperation`); with `operationIds: nest-swagger` in
 the configuration, @nestjs/swagger's default rule (`Class_method`) is applied.
 
@@ -206,7 +210,8 @@ body, methods united as Spring combines them, and the POST endpoints Spring Secu
 For a framework atlas does not read (Django, Flask and others), the OpenAPI 2.0 or 3.x document the framework generates
 is given in `routes[].openapi`, and each operation becomes a route. The path takes Swagger 2.0's `basePath` or the path
 of the first OpenAPI 3 server URL in front, without the host or a trailing `/`. The handler is placed by the rule the
-framework derives operationIds by (FastAPI `function_path_method`, Nest `Class_method`, springdoc's method name) when
+framework derives operationIds by (FastAPI `function_path_method`, Nest `Class_method`, springdoc's method name; a
+numbered id such as springdoc's `get_1` is not traced back to `get`) when
 it finds one definition (`evidence: name`), else where code declares the operationId as a quoted value, once (`text`),
 else at the document (`declared`). A route that any entry of the same component also reads from code (same method and
 path, parameter names aside) keeps its code location and gains the document's operationId, `described` and

@@ -100,7 +100,9 @@ decorators are read from Python. The `spring` style reads `@RequestMapping` on a
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers
-nothing. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
+nothing, and so does a Kotlin string template (`"$BASE/users"`). A Security setter counts only on the configurer: in a
+lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
+`logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
 looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
@@ -108,15 +110,20 @@ looks; a `@RestController` or `@ResponseBody` handler's string is its response, 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
 (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, `th:data-*` and `th:attr` items,
 and root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*`; also the requests inline scripts make,
-and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET; a form action takes
-the form's `th:method` or `method`; a submit button's `formaction` takes its `formmethod`, else its form's; a `data-*`
-URL, read by a script, is any method, and one ending in `/` is a base the script appends a segment to. A plain
+and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET. A form action takes the
+form's method, and a submit button's `formaction` its `formmethod`, else its form's. A plain `method` or `formmethod`
+is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
+browser does. Thymeleaf's `th:method` (or `data-th-method`) replaces it: GET and POST as written, and any other value
+`*`, since Spring turns the hidden `_method` field into that method only when its HiddenHttpMethodFilter is on, which
+Spring Boot leaves off. A `data-*` URL, read by a script, is any method, and one ending in `/` is a base the script
+appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
 their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
 
 Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without
-a catch-all first; then the lower score, one per variable and a hundred per wildcard; then the longer pattern), so for
+a catch-all first, and of two catch-alls the longer; then the lower score, one per variable and a hundred per wildcard,
+within a segment too; then the longer pattern), so for
 a `spring` component a request whose path is fully known reaches that route only (`/movies/search`, not
 `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
 which atlas does not read, so there a request reaches every route it fits.

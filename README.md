@@ -28,8 +28,13 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 | Reads | From |
 |---|---|
 | routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers), FastAPI decorators, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
-| client calls | TypeScript and JavaScript parsed; HTML templates (Thymeleaf `@{...}` links, root-relative `href`, `action` and `data-*` URLs); Kotlin, Python and other languages as text |
+| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and `data-*` URLs, Thymeleaf `@{...}` links, inline scripts); Kotlin, Python and other languages as text |
 | what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
+
+atlas reads only what a file states for certain: a path written as a literal, with the meaning a standard or the
+framework's documentation gives it. A URL taken from a variable, another template engine, or htmx and Vue attributes
+are not read, and nothing is guessed in their place, so "no caller" means none among what atlas can read.
+[docs/direction.md](docs/direction.md) gives the scope, the research it rests on, and the extensions left open.
 
 For a Spring app, read its annotations (`styles: [spring]`) and give it springdoc's document as well: routes keep their
 controller lines and take the document's operationIds. For Django REST framework (drf-spectacular), Flask (flask-smorest, flasgger) and the rest,

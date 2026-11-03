@@ -314,10 +314,9 @@ function handlerPlace(
   operationId: string,
   method: string,
   key: string,
-  siblings: Set<string>,
 ): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
-  for (const name of handlerNames(operationId, method, key, siblings)) {
+  for (const name of handlerNames(operationId, method, key)) {
     for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
     if (hits.length) break;
   }
@@ -367,7 +366,6 @@ function documentedSurfaces(
   // Matched by method and path with parameters unnamed: the document may name them differently from the code.
   const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
   const out: Surface[] = [];
-  const ids = new Set(api.operations.flatMap((o) => (o.operationId ? [o.operationId] : [])));
   for (const op of api.operations) {
     const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
     const known = byShape.get(operationShape(op.method, op.path));
@@ -376,7 +374,7 @@ function documentedSurfaces(
       if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
       continue;
     }
-    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key, ids) : undefined;
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
     const handler = place && reach ? handlerNode(reach, place.at) : undefined;
     const surface: Surface = {
       id,

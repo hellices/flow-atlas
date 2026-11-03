@@ -85,19 +85,16 @@ export function describedOperations(file: string, text: string): DescribedApi | 
 /**
  * Names a handler may carry, given how common generators derive an operationId from it: the id itself, the method of
  * a NestJS `Class_method` id, and the function of a FastAPI `{function}{path}_{method}` id. springdoc uses the method
- * name as it is, with `_1`, `_2` appended to the later methods that share it (`siblings`: the document's other ids).
+ * name as it is. When several methods share a name springdoc appends `_1`, `_2` to the later ones; such an id is not
+ * traced back to its name, since an operationId may end in a number for its own reasons and nothing in the document
+ * says which generator wrote it.
  *
  * A Nest id joins the class and the method with `_`, and either may hold `_` itself, so every split after a class-like
  * prefix (an identifier that starts upper-case, as class names do) is a candidate, the longest method first:
  * `Admin_APIController_list` gives `APIController_list`, then `list`. The caller keeps the first that the code defines.
  */
-export function handlerNames(operationId: string, method: string, rawPath: string, siblings: Set<string> = new Set()): string[] {
+export function handlerNames(operationId: string, method: string, rawPath: string): string[] {
   const names = [operationId];
-  // springdoc numbers the later methods that share a name, so a numbered id stands for a name only when the document
-  // also holds the name itself; `health_2024` alone is an id of its own. That name is the operationId's own, so it
-  // comes before the guesses that split it.
-  const springdoc = /^([A-Za-z_$][\w$]*?)_[1-9]\d*$/.exec(operationId);
-  if (springdoc && siblings.has(springdoc[1]!)) names.push(springdoc[1]!);
   if (/^[A-Z$][\w$]*$/.test(operationId)) {
     for (let i = operationId.indexOf("_"); i > 0; i = operationId.indexOf("_", i + 1)) {
       const member = operationId.slice(i + 1);

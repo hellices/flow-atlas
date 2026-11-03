@@ -165,7 +165,10 @@ e2e tools, which still need parameters, request bodies and success criteria fill
   <name>`). A `~` by name through a generic name (`get`, `send`) needs a look at the code.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
-- Only configured files are read. No finding does not prove a flow is complete.
+- Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a
+  standard or the framework gives them. A URL from a variable, another template engine, or htmx and Vue attributes
+  is not read and not guessed. So "no caller" means none that atlas can read; check the code before removing anything,
+  and declare surfaces served outside the repository in `publicSurfaces`. No finding does not prove a flow is complete.
 
 ## References
 
