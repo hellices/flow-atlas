@@ -1,3 +1,4 @@
+import { chainRoot } from "./chains.js";
 import { statSync } from "node:fs";
 
 /** Whether a path names a regular file on this machine; a directory or anything unreadable does not. */
@@ -138,11 +139,11 @@ export function toArazzo(
   const sourceNameOf = sourceNames([
     ...graph.components.map((c) => c.name),
     ...graph.surfaces.map((x) => x.component),
-    ...flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : undefined)).filter((c): c is string => !!c)),
+    ...flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : s.chain ? parseSurfaceId(chainRoot(s.chain) ?? "")?.component : undefined)).filter((c): c is string => !!c)),
   ]);
   const sourceName = (component: string): string => sourceNameOf.get(component)!;
   const sourceCount = new Set(
-    flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : s.call ? calls.get(s.call)?.to : undefined))),
+    flows.flatMap((f) => f.spec.steps.map((s) => (s.surface ? parseSurfaceId(s.surface)?.component : s.call ? calls.get(s.call)?.to : s.chain ? parseSurfaceId(chainRoot(s.chain) ?? "")?.component : undefined))),
   );
   sourceCount.delete(undefined);
   const qualify = sourceCount.size > 1;
@@ -184,6 +185,10 @@ export function toArazzo(
         else limits.push(`${where}: flow ${s.flow} is not in this export`);
       } else if (s.surface) {
         target = operation(s.surface, where);
+      } else if (s.chain) {
+        // A chain step is its request: the operation of the surface that serves it.
+        const root = chainRoot(s.chain);
+        if (root) target = operation(root, where);
       } else if (s.call) {
         const reached = targets.get(s.call) ?? [];
         if (reached.length === 1) target = operation(reached[0]!, where);
@@ -195,7 +200,12 @@ export function toArazzo(
           stepId: s.stepId,
           ...(s.role ? { description: s.role } : {}),
           ...target,
-          "x-flow-atlas": { ...(s.surface ? { surface: s.surface } : {}), ...(s.call ? { call: s.call } : {}), ...(s.lifecycle ? { lifecycle: s.lifecycle } : {}) },
+          "x-flow-atlas": {
+            ...(s.surface ? { surface: s.surface } : {}),
+            ...(s.call ? { call: s.call } : {}),
+            ...(s.chain ? { chain: s.chain } : {}),
+            ...(s.lifecycle ? { lifecycle: s.lifecycle } : {}),
+          },
         },
       ];
     });

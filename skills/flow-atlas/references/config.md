@@ -130,7 +130,7 @@ which atlas does not read, so there a request reaches every route it fits.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several
-functions, read from a response) is not seen. Such routes show up as FA001; list them in `publicSurfaces` or add the file that holds the path.
+functions, read from a response) is not seen. Such routes show up as FA001; list them in `publicSurfaces` or add the file that holds the path. A route in `publicSurfaces` that no component calls starts a chain of its own, entered from `outside`, so a flow can name it.
 
 ## Where state lives
 

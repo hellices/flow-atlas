@@ -10,7 +10,8 @@
     "provenance",
     "surfaces",
     "componentEdges",
-    "findings"
+    "findings",
+    "chains"
   ],
   "additionalProperties": false,
   "properties": {
@@ -85,6 +86,59 @@
           "type": "array",
           "items": {
             "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/finding"
+          }
+        }
+      }
+    },
+    "chains": {
+      "description": "Chains that appear, disappear, or reach different surfaces between the two revisions.",
+      "type": "object",
+      "required": [
+        "added",
+        "removed",
+        "changed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId"
+          }
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "added",
+              "removed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/chainId"
+              },
+              "added": {
+                "type": "array",
+                "items": {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+                }
+              }
+            }
           }
         }
       }

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { LineCounter, parseAllDocuments } from "yaml";
+import { deriveChains, type Chain, type ChainReport } from "./chains.js";
 import type { Config } from "./config.js";
 import { FlowIndex } from "./flow.js";
 import { API_VERSION, type Document, type Edge, type Finding, type Graph, type Place, type ResourceDescriptor } from "./model.js";
@@ -53,6 +54,8 @@ export interface StepSpec {
   stepId: string;
   surface?: string;
   call?: string;
+  /** A chain atlas derives (`atlas chains`): one request and every surface it reaches. */
+  chain?: string;
   flow?: string;
   role?: string;
   lifecycle?: "active" | "planned";
@@ -79,13 +82,17 @@ export interface Condition {
 export interface StepStatus {
   stepId: string;
   line: number;
-  kind: "surface" | "call" | "flow";
+  kind: "surface" | "call" | "chain" | "flow";
   target: string;
   lifecycle: "active" | "planned";
   resolved: boolean;
   at?: Place;
-  /** The shortest chain of edges to the next step; absent on the last step or when either side is unresolved. */
-  toNext?: { connected: boolean; edges: Edge[] };
+  /**
+   * The shortest chain of edges to the next step; absent on the last step or when either side is unresolved. `order:
+   * declared` when both steps are requests one component makes and the code does not show which comes first: the
+   * order is the author's, neither confirmed nor contradicted.
+   */
+  toNext?: { connected: boolean; edges: Edge[]; order?: "declared" };
 }
 
 export interface FlowStatus {
@@ -174,9 +181,13 @@ const condition = (type: ConditionType, status: Condition["status"], reason: str
   ...(message ? { message } : {}),
 });
 
-/** `asOf` is when the code read was current (the commit's time for a commit); `stale_after` is compared with it. */
-export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): FlowReport {
+/**
+ * `asOf` is when the code read was current (the commit's time for a commit); `stale_after` is compared with it.
+ * `chains` are the ones atlas derives from the same graph; chain steps name them.
+ */
+export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, chains: ChainReport = deriveChains(graph, { publicSurfaces: [] })): FlowReport {
   const index = new FlowIndex(graph);
+  const chainById = new Map<string, Chain>(chains.chains.map((c) => [c.id, c]));
   const registries = new Set(graph.registries.map((r) => r.id));
   const byName = new Map<string, FlowObject>();
   for (const f of files) for (const { object } of f.flows) if (!byName.has(object.metadata.name)) byName.set(object.metadata.name, object);
@@ -186,11 +197,22 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): F
   const node = (step: StepSpec, end: "first" | "last", depth = 0): string | undefined => {
     if (step.surface) return index.surfaces.has(step.surface) ? step.surface : undefined;
     if (step.call) return index.calls.has(step.call) ? step.call : undefined;
+    if (step.chain) return chainById.get(step.chain)?.root;
     const sub = step.flow ? byName.get(step.flow) : undefined;
     if (!sub || depth > 4) return undefined;
     const steps = sub.spec.steps;
     const s = end === "first" ? steps[0] : steps[steps.length - 1];
     return s ? node(s, end, depth + 1) : undefined;
+  };
+
+  /** The chain a step enters by (first) or leaves by (last), looking through sub-flows to their end steps. */
+  const boundaryChain = (step: StepSpec, end: "first" | "last", depth = 0): Chain | undefined => {
+    if (step.chain) return chainById.get(step.chain);
+    const sub = step.flow ? byName.get(step.flow) : undefined;
+    if (!sub || depth > 4) return undefined;
+    const steps = sub.spec.steps;
+    const s = end === "first" ? steps[0] : steps[steps.length - 1];
+    return s ? boundaryChain(s, end, depth + 1) : undefined;
   };
 
   const items: FlowReport["items"] = [];
@@ -200,20 +222,34 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): F
       const { spec } = object;
       const lifecycle = spec.lifecycle ?? "active";
       const steps: StepStatus[] = spec.steps.map((s, i) => {
-        const kind = s.surface ? "surface" : s.call ? "call" : "flow";
-        const target = (s.surface ?? s.call ?? s.flow)!;
-        const at = s.surface ? index.surfaces.get(s.surface)?.at : s.call ? index.calls.get(s.call)?.at : undefined;
+        const kind = s.surface ? "surface" : s.call ? "call" : s.chain ? "chain" : "flow";
+        const target = (s.surface ?? s.call ?? s.chain ?? s.flow)!;
+        const root = s.chain ? chainById.get(s.chain)?.root : undefined;
+        const at = s.surface ? index.surfaces.get(s.surface)?.at : s.call ? index.calls.get(s.call)?.at : root ? index.surfaces.get(root)?.at : undefined;
         return {
           stepId: s.stepId,
           line: stepLine(i),
           kind,
           target,
           lifecycle: lifecycle === "planned" ? "planned" : (s.lifecycle ?? "active"),
-          resolved: kind === "flow" ? byName.has(target) : node(s, "first") !== undefined,
+          resolved: kind === "flow" ? byName.has(target) : kind === "chain" ? chainById.has(target) : node(s, "first") !== undefined,
           ...(at ? { at } : {}),
         };
       });
       for (let i = 0; i + 1 < spec.steps.length; i++) {
+        const a = boundaryChain(spec.steps[i]!, "last");
+        const b = boundaryChain(spec.steps[i + 1]!, "first");
+        if (a && b) {
+          // Between two requests, only what the first returns can lead to the second: a page that offers it.
+          const offer = a.next.find((n) => n.chain === b.id);
+          const edges = offer ? index.path(offer.from, b.root, 2) : undefined;
+          steps[i]!.toNext = edges
+            ? { connected: true, edges }
+            : a.entry.component === b.entry.component && a.entry.component !== "outside"
+              ? { connected: false, edges: [], order: "declared" }
+              : { connected: false, edges: [] };
+          continue;
+        }
         const from = node(spec.steps[i]!, "last");
         const to = node(spec.steps[i + 1]!, "first");
         if (!from || !to) continue;
@@ -221,7 +257,17 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): F
         steps[i]!.toNext = { connected: edges !== undefined, edges: edges ?? [] };
       }
       const first = spec.steps[0] ? node(spec.steps[0], "first") : undefined;
-      const entry = spec.entry
+      const firstChain = spec.steps[0] ? boundaryChain(spec.steps[0], "first") : undefined;
+      // A chain knows who makes its request; a flow that starts with one takes its entry from the code.
+      const outside = firstChain?.entry.component === "outside" && !spec.entry;
+      const entry = firstChain
+        ? outside
+          ? undefined
+          : {
+              component: spec.entry?.component ?? firstChain.entry.component,
+              callers: (spec.entry?.component ?? firstChain.entry.component) === firstChain.entry.component ? firstChain.entry.callers : [],
+            }
+        : spec.entry
         ? {
             component: spec.entry.component,
             callers: !first
@@ -234,9 +280,10 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string): F
           }
         : undefined;
       const produces = (spec.produces ?? []).map((id) => ({ id, found: registries.has(id) }));
-      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, entry, produces, object, asOf);
+      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, entry, produces, object, asOf, outside);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
+        for (const s of steps) if (s.kind === "chain") for (const id of chainById.get(s.target)?.surfaces ?? []) covered.add(id);
         // A call step passes through the surface it reaches, also when it is the last step.
         for (const s of steps) {
           if (s.kind !== "call" || !s.resolved) continue;
@@ -283,6 +330,7 @@ function conditionsFor(
   produces: FlowStatus["produces"],
   object: FlowObject,
   asOf: string,
+  outside = false,
 ): Condition[] {
   const unresolved = steps.filter((s) => !s.resolved);
   const missing = unresolved.filter((s) => s.lifecycle === "active");
@@ -294,7 +342,8 @@ function conditionsFor(
         : condition("Resolved", "False", "StepNotFound", `not in the code: ${missing.map((s) => `${s.stepId} (${s.target})`).join(", ")}`);
 
   const pairs = steps.slice(0, -1);
-  const gaps = pairs.filter((s) => s.toNext && !s.toNext.connected);
+  const gaps = pairs.filter((s) => s.toNext && !s.toNext.connected && s.toNext.order !== "declared");
+  const declared = pairs.filter((s) => s.toNext?.order === "declared");
   // A gap next to a planned step is the plan, not yet built; only a gap between two active steps is a fault.
   const broken = gaps.filter((s) => !touchesPlanned(steps, s));
   const planned = gaps.filter((s) => touchesPlanned(steps, s));
@@ -307,15 +356,21 @@ function conditionsFor(
         ? condition("Connected", "Unknown", "StepsUnresolved", `not checked: ${open.map((s) => s.stepId).join(", ")}`)
         : planned.length > 0
           ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${planned.map(pairName).join(", ")}`)
-          : condition("Connected", "True", "AllStepsConnected");
+          : declared.length > 0
+            ? condition("Connected", "Unknown", "OrderNotInCode", `the code shows no link, only that one component makes both requests: ${declared.map(pairName).join(", ")}`)
+            : condition("Connected", "True", "AllStepsConnected");
 
-  const entryCalled = !entry
+  const entryCalled = outside
+    ? condition("EntryCalled", "True", "ServedOutside")
+    : !entry
     ? condition("EntryCalled", "Unknown", "NoEntry")
     : !steps[0]?.resolved
       ? condition("EntryCalled", "Unknown", "FirstStepUnresolved")
       : entry.callers.length
         ? condition("EntryCalled", "True", "EntryCallsFirstStep")
-        : condition("EntryCalled", "False", "EntryDoesNotCall", `${entry.component} does not call ${steps[0].target}`);
+        : steps[0].lifecycle === "planned"
+          ? condition("EntryCalled", "Unknown", "PlannedStepsPending", `${entry.component} does not call ${steps[0].target} yet`)
+          : condition("EntryCalled", "False", "EntryDoesNotCall", `${entry.component} does not call ${steps[0].target}`);
 
   const notListed = produces.filter((p) => !p.found);
   const producesListed = !produces.length
@@ -348,9 +403,11 @@ function conditionsFor(
   const failing = rest.filter((c) => c.status === "False");
   const ready = failing.length
     ? condition("Ready", "False", "ConditionsFailed", failing.map((c) => c.type).join(", "))
-    : unresolved.length || planned.length
-      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName)].join(", ")}`)
-      : condition("Ready", "True", "NoConditionFailed");
+    : unresolved.length || planned.length || entryCalled.reason === "PlannedStepsPending"
+      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName), ...(entryCalled.reason === "PlannedStepsPending" ? ["entry"] : [])].join(", ")}`)
+      : declared.length
+        ? condition("Ready", "Unknown", "OrderNotInCode", `order stated by the flow only: ${declared.map(pairName).join(", ")}`)
+        : condition("Ready", "True", "NoConditionFailed");
   return [ready, ...rest];
 }
 
@@ -384,7 +441,7 @@ export function flowFindings(report: FlowReport): Finding[] {
     s.steps.forEach((step, i) => {
       const place = { file, line: step.line };
       if (!step.resolved && step.lifecycle === "active") add(`${name}|${step.stepId}|unresolved`, `step ${step.stepId} of ${name} names ${step.target}, which the code does not have.`, [place]);
-      if (step.toNext && !step.toNext.connected && !touchesPlanned(s.steps, step)) {
+      if (step.toNext && !step.toNext.connected && step.toNext.order !== "declared" && !touchesPlanned(s.steps, step)) {
         const next = s.steps[i + 1]!;
         add(`${name}|${step.stepId}|disconnected`, `nothing in the code leads from step ${step.stepId} (${step.target}) to step ${next.stepId} (${next.target}) of ${name}.`, [place, ...(step.at ? [step.at] : [])]);
       }

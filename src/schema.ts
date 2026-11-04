@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 
-const FILES = ["model", "graph", "subgraph", "findings", "diff", "inventory", "flow", "flow-report"] as const;
+const FILES = ["model", "graph", "subgraph", "findings", "diff", "inventory", "flow", "flow-report", "chains"] as const;
 export type SchemaName = (typeof FILES)[number];
 
 let ajv: Ajv2020 | undefined;
@@ -49,6 +49,7 @@ const BY_KIND: Record<string, SchemaName> = {
   Inventory: "inventory",
   Flow: "flow",
   FlowReport: "flow-report",
+  Chains: "chains",
 };
 
 /** The schema a document of a kind conforms to. */

@@ -106,14 +106,18 @@ exported later. Documents the tool generates use the timestamp-free `provenance`
 |---|---|---|
 | `lifecycle` | `active`: the code must follow the flow. `planned`: steps may not exist yet. `deprecated`: not checked | Backstage `spec.lifecycle` |
 | `owner` | the person or team who answers for the flow | Backstage `spec.owner` |
-| `entry` | the starting point outside the graph (a screen and the like); this component must call the first step | added |
+| `entry` | the starting point outside the graph (a screen and the like); this component must call the first step. A flow whose first step is a chain, or a sub-flow that starts with one, takes it from the chain and needs none | added |
 | `steps` | the hops the flow must pass | Arazzo `steps` |
 | `produces` | registry entries the flow issues (`registry:key`) | added |
 
-A step follows Arazzo's Step: it has a `stepId` and points at its target with one of `surface`, `call` or `flow`, where
-Arazzo has `operationId`, `operationPath` or `workflowId`. `role` is what the component does in that step; keeping
-modules' responsibilities from mixing needs this written down. Not every hop between steps has to be listed: atlas
-finds the shortest path along the graph's edges to the next step.
+A step follows Arazzo's Step: it has a `stepId` and points at its target with one of `chain`, `surface`, `call` or
+`flow`, where Arazzo has `operationId`, `operationPath` or `workflowId`. A `chain` step is one request and everything
+it reaches (see Chains); it is the form to write, since its structure comes from the code. `surface` and `call` steps
+are kept for plans that name a route not called yet and for older flows. `role` is what the component does in that
+step; keeping modules' responsibilities from mixing needs this written down. Not every hop between surface steps has to
+be listed: atlas finds the shortest path along the graph's edges to the next step. Between two chain steps the link is
+a request the first chain's result offers (`next`); with none, two chains one component starts are in the author's
+order (`Connected: Unknown`), and any other pair is not connected.
 
 Arazzo's `dependsOn` is not included. In Arazzo it means run order; this tool does not run flows, and reusing another
 flow is covered by a `flow` step.
@@ -232,6 +236,32 @@ request is in the template the handler's view name renders (`evidence: name`, `v
 `text`, matched as text; `name`, joined because a name agrees. A renderer can vary line styles by it, and an agent
 checks `name` and `text` grounds against the code once more.
 
+## Chains
+
+`atlas chains` derives, on every run, the requests the code makes. A chain starts at a call no handler makes in the
+same request (the client's call), or at a surface declared in `publicSurfaces` that no component calls (`outside`). It
+takes in the surface the call reaches and every surface that surface's handler reaches, along reach and match edges,
+fan-out included. Its id is `<entry>-><surface id>`, such as `mobile->bff|POST /orders`.
+
+A reach edge to a call in the template a page renders (`via view <name>`) is not part of the page's request: the user
+makes that call later. Those calls start chains of their own, and the page's chain lists them as `next`, which is where
+a journey's following step comes from.
+
+| Field | Meaning |
+|---|---|
+| `entry` | the component that makes the request and its call sites, or `outside` |
+| `root` | the surface the request reaches |
+| `surfaces` | the root and every surface reached in the same request, nearest first |
+| `edges` | the reach and match edges between them |
+| `next` | requests the result offers: the chain, the surface that offers it, and how |
+| `weak` | edges joined only because a name agrees; read those handlers before relying on them |
+| `digest` | changes when the surfaces or the links between them change, not when code moves within a file |
+
+`unchained` lists surfaces no chain reaches: no path of calls leads to them from a call that starts a request, and
+they are not declared public. Two handlers that only call each other, with nothing calling either from outside, leave
+both surfaces unchained. `atlas diff` reports
+chains added, removed, and changed with the surfaces they now reach or no longer reach.
+
 ## FlowReport and conditions
 
 Each item of a `FlowReport` is a Flow's `metadata` and the `status` atlas observed. `status.observedRef` is the commit
@@ -239,10 +269,10 @@ it was held against, KRM's `observedGeneration`. `conditions` always has the sam
 
 | type | True | False | Unknown |
 |---|---|---|---|
-| `Ready` | no condition failed (`NoConditionFailed`) | any is False (`ConditionsFailed`) | planned steps are not built yet (`PlannedStepsPending`), deprecated (`Deprecated`) |
+| `Ready` | no condition failed (`NoConditionFailed`) | any is False (`ConditionsFailed`) | planned steps are not built yet (`PlannedStepsPending`), the flow orders chains the code does not link (`OrderNotInCode`), deprecated (`Deprecated`) |
 | `Resolved` | every step is in the code (`AllStepsResolved`; `PlannedStepsPending` when only planned steps are missing) | a step is missing (`StepNotFound`) | |
-| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`) | a pair of active steps has no path (`NoPathBetweenSteps`) | not checked because a step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`) |
-| `EntryCalled` | the entry component calls the first step (`EntryCallsFirstStep`) | it does not (`EntryDoesNotCall`) | no `entry` (`NoEntry`), first step unresolved (`FirstStepUnresolved`) |
+| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`); between two chain steps (a sub-flow counts as the chains at its ends), the first chain's `next` offers the second | a pair of active steps has no path (`NoPathBetweenSteps`) | not checked because a step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`); two chains one component starts, with no link in the code, ordered by the author (`OrderNotInCode`) |
+| `EntryCalled` | the entry component calls the first step (`EntryCallsFirstStep`); a first chain step's surface is declared public and nothing in the repository calls it (`ServedOutside`) | it does not (`EntryDoesNotCall`) | no `entry` (`NoEntry`), first step unresolved (`FirstStepUnresolved`), a planned flow's entry not wired yet (`PlannedStepsPending`) |
 | `ProducesListed` | every listed registry entry exists (`AllListed`) | some does not (`NotInRegistry`) | none listed (`NotDeclared`) |
 | `Documented` | a title and each step's role are written (`TitleAndRolesWritten`) | no title (`TitleMissing`), a step without a role (`RoleMissing`) | |
 | `Fresh` | before `stale_after` (`BeforeStaleAfter`) | past it (`PastStaleAfter`) | no `stale_after` (`NoStaleAfter`) |

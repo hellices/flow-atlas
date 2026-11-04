@@ -31,10 +31,11 @@ Write the conclusion as the step's `role`: what the component does, and what it 
 
 ## Where does a flow start and end?
 
-Cut flows at units a person names: one screen's load, one user action, one background job. Start at the surface the
-client calls (`entry` is that client). End at the component that owns the result. When the handler fans out
-(`atlas draft flow` lists the candidates), include the services this flow is about; a call the handler makes for an
-unrelated reason (a feature flag, an analytics ping) does not make another step.
+Cut flows at units a person names: one screen's load, one user action, one background job. One request is one chain:
+atlas starts it at the component that makes the request and takes in everything the handler reaches, fan-out
+included, so you do not choose among the services a handler calls. A journey across several requests is a flow whose
+steps are chains in order; take each following chain from the previous chain's `next` where atlas lists one. Do not
+split a chain into steps by hand to tell a story the code does not hold.
 
 ## Defect, plan, or false positive?
 

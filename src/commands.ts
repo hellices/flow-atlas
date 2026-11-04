@@ -3,7 +3,8 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
 import { toArazzo } from "./arazzo.js";
-import { draftFlow } from "./draft.js";
+import { chainsText, deriveChains, type ChainReport } from "./chains.js";
+import { draftChainFlows, draftFlow } from "./draft.js";
 import { diffGraphs, diffMarkdown } from "./diff.js";
 import { FlowIndex, seedsFor, trace, traceText } from "./flow.js";
 import { flowFindings, loadFlows, LOCATION, resolveFlows, type FlowReport } from "./flows.js";
@@ -40,7 +41,9 @@ Commands
   scan                      build the flow graph and print what each configured source yielded
   query                     list surfaces and calls, filtered by --component, --path, --method, --kind
   trace <surface>           follow a surface back to its callers and forward to what it calls
-  draft flow <surface>      print a Flow draft from the code (--to <surface> to end there); fill its 'agent:' comments
+  chains                    list the requests the code makes and every surface each reaches (--unnamed: no flow names it)
+  draft flows               print a Flow draft for every chain no flow names (--component to narrow); fill 'agent:' lines
+  draft flow <chain>        print a Flow draft for one chain; a surface instead gives the older step-by-step draft
   flows                     hold the flow descriptions against the code: resolution, connections, uncovered surfaces
   check                     run the rules and show findings new since the baseline or --since
   diff <base>..<head>       compare the flow graph and findings of two revisions (head may be WORKTREE)
@@ -68,6 +71,7 @@ Options
   --kind <k>          query: surfaces, calls or both (default)
   --flow <name>       export: only this flow
   --to <surface>      draft: follow the code to this surface
+  --unnamed           chains: only the chains no flow names
 `;
 
 interface Options {
@@ -87,6 +91,7 @@ interface Options {
   kind?: "surfaces" | "calls" | "both";
   flow?: string;
   to?: string;
+  unnamed?: boolean;
   args: string[];
 }
 
@@ -119,6 +124,7 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--flow") o.flow = value();
     else if (a === "--to") o.to = value();
     else if (a === "--all") o.all = true;
+    else if (a === "--unnamed") o.unnamed = true;
     else if (a === "--fail-on-new") o.failOnNew = true;
     else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     else args.push(a);
@@ -154,6 +160,7 @@ function emit(o: Options, doc: unknown): boolean {
 
 interface Analysis {
   graph: Graph;
+  chains: ChainReport;
   flows: FlowReport;
   findings: Finding[];
 }
@@ -161,10 +168,11 @@ interface Analysis {
 function analyze(o: Options, config: Config, ref: string | undefined): Analysis {
   const source = openSource(o.root, ref);
   const graph = scan(source, config, { root: o.root, requested: ref ?? "WORKTREE" });
-  const flows = resolveFlows(graph, loadFlows(source, config, o.out), source.asOf());
+  const chains = deriveChains(graph, config);
+  const flows = resolveFlows(graph, loadFlows(source, config, o.out), source.asOf(), chains);
   const findings = evaluate(graph, config, graph.limits);
   if (ruleEnabled(config, "FA007")) findings.push(...flowFindings(flows));
-  return { graph, flows, findings: findings.sort((a, b) => a.key.localeCompare(b.key)) };
+  return { graph, chains, flows, findings: findings.sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
 function classify(findings: Finding[], o: Options, sinceKeys: Set<string> | undefined): Classified[] {
@@ -257,7 +265,7 @@ function cmdDiff(o: Options): number {
   const config = configFor(o);
   const b = analyze(o, config, base);
   const h = analyze(o, config, head || "WORKTREE");
-  const d = diffGraphs(b.graph, h.graph, b.findings, h.findings);
+  const d = diffGraphs(b.graph, h.graph, b.findings, h.findings, b.chains, h.chains);
   if (!emit(o, d)) process.stdout.write(`${diffMarkdown(d)}\n`);
   return 0;
 }
@@ -472,12 +480,55 @@ function cmdFlows(o: Options): number {
   return 0;
 }
 
+/** Which flows name each chain. */
+function chainUsers(flows: FlowReport): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const item of flows.items) {
+    if (item.status.lifecycle === "deprecated") continue;
+    for (const s of item.status.steps) if (s.kind === "chain") (out.get(s.target) ?? out.set(s.target, []).get(s.target)!).push(item.metadata.name);
+  }
+  return out;
+}
+
+const touches = (c: ChainReport["chains"][number], component: string | undefined): boolean =>
+  !component || c.entry.component === component || c.surfaces.some((s) => s.startsWith(`${component}|`));
+
+function cmdChains(o: Options): number {
+  const config = configFor(o);
+  const { graph, chains, flows } = analyze(o, config, o.ref);
+  const users = chainUsers(flows);
+  const doc = { ...chains, chains: chains.chains.filter((c) => touches(c, o.component) && (!o.unnamed || !users.has(c.id))) };
+  if (!emit(o, doc)) process.stdout.write(chainsText(doc, graph.surfaces.length, users));
+  return 0;
+}
+
 function cmdDraft(o: Options): number {
   const [what, ...rest] = o.args;
   const seedText = rest.join(" ");
-  if (what !== "flow" || !seedText) throw new Error("usage: atlas draft flow <surface> [--to <surface>]");
+  if (what === "flows") {
+    if (rest.length) throw new Error(`usage: atlas draft flows [--component <c>]; unexpected ${rest.join(" ")}`);
+    const config = configFor(o);
+    const { graph, chains, flows } = analyze(o, config, o.ref);
+    const users = chainUsers(flows);
+    const open = chains.chains.filter((c) => !users.has(c.id) && touches(c, o.component));
+    if (open.length === 0) {
+      process.stderr.write("every chain is named by a flow\n");
+      return 0;
+    }
+    process.stdout.write(draftChainFlows(graph, open, flows.items.map((i) => i.metadata.name)));
+    process.stderr.write(`${open.length} drafts; left for the author: metadata.title, metadata.labels, spec.steps[0].role\n`);
+    return 0;
+  }
+  if (what !== "flow" || !seedText) throw new Error("usage: atlas draft flows | atlas draft flow <chain or surface> [--to <surface>]");
   const config = configFor(o);
-  const { graph } = analyze(o, config, o.ref);
+  const { graph, chains, flows } = analyze(o, config, o.ref);
+  if (seedText.includes("->")) {
+    const chain = chains.chains.find((c) => c.id === seedText);
+    if (!chain) throw new Error(`no chain ${seedText}; see \`atlas chains\``);
+    process.stdout.write(draftChainFlows(graph, [chain], flows.items.map((i) => i.metadata.name)));
+    process.stderr.write("left for the author: metadata.title, metadata.labels, spec.steps[0].role\n");
+    return 0;
+  }
   const pick = (text: string): ReturnType<typeof seedsFor>[number] => {
     const found = seedsFor(graph, text);
     if (found.length !== 1) throw new Error(`${text} names ${found.length} surfaces; give one as component|METHOD /path (see \`atlas query\`)`);
@@ -510,6 +561,7 @@ const COMMANDS: Record<string, (o: Options) => number> = {
   scan: cmdScan,
   query: cmdQuery,
   trace: cmdTrace,
+  chains: cmdChains,
   flows: cmdFlows,
   check: cmdCheck,
   diff: cmdDiff,

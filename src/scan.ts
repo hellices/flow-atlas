@@ -43,7 +43,7 @@ export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map
         continue;
       }
       if (c.from !== s.component) continue;
-      if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", ...(c.scope ? { via: c.scope } : {}) });
+      if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
   }
