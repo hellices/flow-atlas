@@ -184,6 +184,33 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
 
 /**
+ * Where the f-string replacement field whose text starts at `from` ends, after its `}`. In the expression, quoted strings
+ * (`{'}'}`) and brackets hold their braces; after a top-level `:` comes the format spec, literal text in which only a
+ * nested field (`{width}`) opens.
+ */
+function fieldEnd(body: string, from: number): number {
+  let depth = 0;
+  let spec = false;
+  for (let i = from; i < body.length; i++) {
+    const c = body[i]!;
+    if (spec) {
+      if (c === "{") i = fieldEnd(body, i + 1) - 1;
+      else if (c === "}") return i + 1;
+    } else if (c === "'" || c === '"') {
+      const quote = body.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      for (i += quote.length; i < body.length && !body.startsWith(quote, i); i++) if (body[i] === "\\") i++;
+      i += quote.length - 1;
+    } else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]") depth--;
+    else if (c === "}") {
+      if (depth === 0) return i + 1;
+      depth--;
+    } else if (c === ":" && depth === 0) spec = true;
+  }
+  return body.length;
+}
+
+/**
  * A Python f-string's text with each replacement field a hole, nested fields (`{value:{width}}`) included, and `{{`
  * and `}}` the literal braces they write.
  */
@@ -195,8 +222,7 @@ function fStringText(body: string): string {
       out += c;
       i += 2;
     } else if (c === "{") {
-      let depth = 1;
-      for (i++; i < body.length && depth; i++) depth += body[i] === "{" ? 1 : body[i] === "}" ? -1 : 0;
+      i = fieldEnd(body, i + 1);
       out += HOLE;
     } else {
       out += c;

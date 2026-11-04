@@ -40,7 +40,7 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
     style: "next",
-    re: /^[\t ]*export\s+(?:async\s+)?(?:function|const)\s+(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b|^[\t ]*export\s*\{([^}]*)\}|^[\t ]*export\s*\*\s*from\b/gm,
+    re: /^[\t ]*export\s+(?:async\s+)?(?:function|const|let|var)\s+(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b|^[\t ]*export\s*\{([^}]*)\}|^[\t ]*export\s*\*\s*from\b/gm,
     files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/,
     accept: (m) => m[2] === undefined || exportedNames(m[2]).some((n) => NEXT_METHOD.test(n)),
   },

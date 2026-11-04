@@ -13,9 +13,9 @@ surfaces:
 findings:
   - FA001|backend|POST /api/v1/courses
 chains:
-  - app->backend|GET /api/v1/courses/{id}/detail [1]
-  - app->backend|GET /api/v1/courses/{id}/related [1]
-  - app->backend|POST /api/v1/forum/courses/{courseId}/posts [1]
+  - app->backend|GET /api/v1/courses/{id}/detail
+  - app->backend|GET /api/v1/courses/{id}/related
+  - app->backend|POST /api/v1/forum/courses/{courseId}/posts
 inventory:
   routes:
     - backend/src/main/java/com/example/course/CourseController.java spring 4

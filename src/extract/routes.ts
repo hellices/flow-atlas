@@ -404,6 +404,14 @@ function pythonString(text: string): { value: string; length: number } | undefin
     } else if (next === "u" && /^[0-9a-fA-F]{4}$/.test(text.slice(i + 2, i + 6))) {
       value += String.fromCharCode(parseInt(text.slice(i + 2, i + 6), 16));
       i += 4;
+    } else if (next === "U" && /^[0-9a-fA-F]{8}$/.test(text.slice(i + 2, i + 10)) && parseInt(text.slice(i + 2, i + 10), 16) <= 0x10ffff) {
+      value += String.fromCodePoint(parseInt(text.slice(i + 2, i + 10), 16));
+      i += 8;
+    } else if (/[0-7]/.test(next)) {
+      // Up to three octal digits: `\057` is `/`, `\0` NUL.
+      const digits = /^[0-7]{1,3}/.exec(text.slice(i + 1))![0];
+      value += String.fromCharCode(parseInt(digits, 8));
+      i += digits.length - 1;
     } else value += PY_ESCAPES[next] ?? c + next;
     i += 2;
   }

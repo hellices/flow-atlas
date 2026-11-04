@@ -43,7 +43,8 @@ function run(dir: string) {
   return {
     surfaces: graph.surfaces.map((s) => `${s.id}${s.implicit ? " (implicit)" : ""}`).sort(),
     findings: findings.map((f) => f.key).sort(),
-    chains: chains.chains.map((c) => `${c.id} [${c.surfaces.length}]`).sort(),
+    // A chain by its id, then every other surface it reaches.
+    chains: chains.chains.map((c) => [c.id, ...c.surfaces.filter((s) => s !== c.root).sort()].join(" + ")).sort(),
     limits: graph.limits,
     inventory: {
       routes: offered.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort(),

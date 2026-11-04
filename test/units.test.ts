@@ -210,11 +210,11 @@ describe("Reach", () => {
   });
 
   it("leaves out what the framework's handler parameters answer, and keeps what is kept on them", () => {
-    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); });';
+    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); (res).end(); (res).status(204).sendStatus(); });';
     const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
     const call = (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression;
     const names = reach.from("src/h.ts", call);
-    expect([names.includes("send"), names.includes("json")]).toEqual([true, false]);
+    expect(names).toEqual(["send"]);
   });
 });
 

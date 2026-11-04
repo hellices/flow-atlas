@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { declarationOf, resolveModule } from "./binding.js";
+import { declarationOf, resolveModule, unwrap } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
@@ -191,8 +191,8 @@ export class Reach {
     // `res.send()`, and `res.status(500).send()` on what such a call returns. Something kept on a parameter
     // (`req.services.mail.send()`) is the component's own, and is followed.
     const fromFramework = (receiver: ts.Expression): boolean => {
-      let at = receiver;
-      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression)) at = at.expression.expression;
+      let at = unwrap(receiver);
+      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression)) at = unwrap(at.expression.expression);
       return ts.isIdentifier(at) && framework.has(declarationOf(at)!);
     };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
@@ -207,7 +207,8 @@ export class Reach {
         if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
           executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
         }
-        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
+        if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
           const member = n.expression.name.text;
           const receiver = n.expression.expression;
           // `ns.run()` on an imported namespace runs that module's function: follow it rather than count a member call.

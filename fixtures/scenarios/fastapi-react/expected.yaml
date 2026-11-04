@@ -28,16 +28,16 @@ findings:
 limits:
   - mounts an application at /admin whose routes are not read
 chains:
-  - outside->backend|GET /api/auth/callback [1]
-  - outside->backend|GET /api/health [1]
-  - web->backend|GET /api/reports [1]
-  - web->backend|GET /api/reports/{*filename} [1]
-  - web->backend|GET /api/auth/session [1]
-  - web->backend|GET /api/templates/{name} [1]
-  - web->backend|GET /api/downloads/** [1]
-  - web->backend|POST /api/reports/run [1]
-  - web->backend|POST /api/auth/logout [1]
-  - web->backend|POST /api/chat [1]
+  - outside->backend|GET /api/auth/callback
+  - outside->backend|GET /api/health
+  - web->backend|GET /api/reports
+  - web->backend|GET /api/reports/{*filename}
+  - web->backend|GET /api/auth/session
+  - web->backend|GET /api/templates/{name}
+  - web->backend|GET /api/downloads/**
+  - web->backend|POST /api/reports/run
+  - web->backend|POST /api/auth/logout
+  - web->backend|POST /api/chat
 inventory:
   routes:
     - backend/server.py fastapi 11

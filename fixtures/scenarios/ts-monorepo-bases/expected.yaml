@@ -23,12 +23,12 @@ surfaces:
 findings:
   - FA001|bff|GET /legacy/profiles
 chains:
-  - agent->store|POST /store/internal/v2/agent/images [1]
-  - app->bff|POST /uploads [2]
-  - app->bff|POST /messages [2]
-  - core->store|GET /store/internal/object-info/* [1]
-  - core->store|POST /store/internal/v2/shares [1]
-  - core->store|POST /store/internal/v2/upload-tickets [1]
+  - agent->store|POST /store/internal/v2/agent/images
+  - app->bff|POST /uploads + core|POST /uploads
+  - app->bff|POST /messages + core|POST /replies
+  - core->store|GET /store/internal/object-info/*
+  - core->store|POST /store/internal/v2/shares
+  - core->store|POST /store/internal/v2/upload-tickets
 flows:
   ask: Ready=True
   image-question: Ready=Unknown

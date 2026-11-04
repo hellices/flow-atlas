@@ -11,13 +11,17 @@ function bindingIn(name: ts.BindingName, text: string): ts.Node | undefined {
   return undefined;
 }
 
-/** A `var` of a function's or file's own scope, wherever it is written in it: JavaScript hoists it to the whole scope. */
+/**
+ * A `var` of a function's, namespace's or file's own scope, wherever it is written in it: JavaScript hoists it to the
+ * whole scope.
+ */
 function hoistedVar(scope: ts.Node, text: string): ts.Node | undefined {
   let found: ts.Node | undefined;
   const visit = (n: ts.Node): void => {
-    // A function's body and a class static block each keep their own `var`s.
-    if (found || (n !== scope && (ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n)))) return;
-    if (ts.isVariableDeclarationList(n) && !(n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
+    // A function's body, a class static block and a namespace each keep their own `var`s.
+    if (found || (n !== scope && (ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isModuleBlock(n)))) return;
+    // `let`, `const` and `using` belong to their block.
+    if (ts.isVariableDeclarationList(n) && !(n.flags & ts.NodeFlags.BlockScoped)) {
       for (const d of n.declarations) found ??= bindingIn(d.name, text);
     }
     ts.forEachChild(n, visit);
@@ -26,10 +30,11 @@ function hoistedVar(scope: ts.Node, text: string): ts.Node | undefined {
   return found;
 }
 
+/** A declaration of these statements that binds `text`; in a block, a `var` is left to the scope it is hoisted to. */
 function inStatements(statements: readonly ts.Statement[], text: string, file: boolean): ts.Node | undefined {
   for (const st of statements) {
     if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name?.text === text) return st;
-    if (ts.isVariableStatement(st)) {
+    if (ts.isVariableStatement(st) && (file || st.declarationList.flags & ts.NodeFlags.BlockScoped)) {
       for (const d of st.declarationList.declarations) {
         const found = bindingIn(d.name, text);
         if (found) return found;
@@ -62,8 +67,10 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
         if (found) return found;
       }
       if (ts.isFunctionExpression(a) && a.name?.text === text) return a;
+      // The body's `var`s are not seen from the parameters: `f(a = x) { var x }` reads an outer `x`.
       const body = "body" in a ? (a.body as ts.Node | undefined) : undefined;
-      const hoisted = body ? hoistedVar(body, text) : undefined;
+      const inBody = body && id.pos >= body.pos && id.end <= body.end;
+      const hoisted = inBody ? hoistedVar(body, text) : undefined;
       if (hoisted) return hoisted;
     }
     // A named class expression binds its name inside itself.
@@ -83,7 +90,7 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
       }
     }
     if (ts.isBlock(a) || ts.isModuleBlock(a)) {
-      const found = inStatements(a.statements, text, false);
+      const found = inStatements(a.statements, text, false) ?? (ts.isModuleBlock(a) ? hoistedVar(a, text) : undefined);
       if (found) return found;
     }
     // The clauses of a switch share one scope: a declaration in one case is seen by the cases after it.

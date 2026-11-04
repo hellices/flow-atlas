@@ -136,8 +136,11 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
 function checkRoute(route: RouteSource): RouteSource {
   for (const c of route.calls ?? []) {
     const fixed = typeof c.method === "string";
-    if (typeof c.name !== "string" || typeof c.pathArg !== "number" || fixed === (typeof c.methodArg === "number")) {
-      throw new Error(`routes of ${route.component}: a registration helper needs name, pathArg and either methodArg or method (${JSON.stringify(c)})`);
+    const indexed = c.methodArg !== undefined;
+    // An argument position is a whole number from 0.
+    const position = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
+    if (typeof c.name !== "string" || !position(c.pathArg) || fixed === indexed || (indexed && !position(c.methodArg))) {
+      throw new Error(`routes of ${route.component}: a registration helper needs name, a pathArg position and either a methodArg position or method (${JSON.stringify(c)})`);
     }
   }
   return route;

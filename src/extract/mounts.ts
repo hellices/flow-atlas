@@ -111,12 +111,21 @@ function factsOf(text: string, file: string): FileFacts {
         else if (ts.isIdentifier(local)) facts.exports.set(el.name.text, local);
       }
     }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(unwrap(node.right))) {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const left = node.left.getText(sf);
-      const right = unwrap(node.right) as ts.Identifier;
-      if (left === "module.exports") facts.exports.set("default", right);
+      const right = unwrap(node.right);
       const named = /^(?:module\.)?exports\.(\w+)$/.exec(left);
-      if (named) facts.exports.set(named[1]!, right);
+      if (ts.isIdentifier(right) && left === "module.exports") facts.exports.set("default", right);
+      if (ts.isIdentifier(right) && named) facts.exports.set(named[1]!, right);
+      // `module.exports = { router, api: apiRouter }` exports each name a property holds.
+      if (left === "module.exports" && ts.isObjectLiteralExpression(right)) {
+        for (const p of right.properties) {
+          if (ts.isShorthandPropertyAssignment(p)) facts.exports.set(p.name.text, p.name);
+          if (!ts.isPropertyAssignment(p)) continue;
+          const value = unwrap(p.initializer);
+          if (ts.isIdentifier(value) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) facts.exports.set(p.name.text, value);
+        }
+      }
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "use" && ts.isIdentifier(node.expression.expression)) {
       const args = node.arguments;
@@ -140,7 +149,9 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   const facts = new Map([...texts].map(([file, text]) => [file, factsOf(text, file)]));
   const resolve = (from: string, spec: string) => resolveModule(from, spec, (f) => facts.has(f));
 
-  const exportedRouter = (file: string, name: string, seen: Set<string>): string | undefined => {
+  type At<T> = (file: string, id: ts.Identifier, seen: Set<string>) => T | undefined;
+  /** What `at` finds for the name a module exports, following re-exports through relative modules. */
+  const exported = <T>(file: string, name: string, seen: Set<string>, at: At<T>): T | undefined => {
     const key = `${file}#${name}`;
     const f = facts.get(file);
     if (!f || seen.has(key)) return undefined;
@@ -148,9 +159,16 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     if (!e) return undefined;
     if ("spec" in e) {
       const target = resolve(file, e.spec);
-      return target ? exportedRouter(target, e.name, new Set([...seen, key])) : undefined;
+      return target ? exported(target, e.name, new Set([...seen, key]), at) : undefined;
     }
-    return routerAt(file, e, new Set([...seen, key]));
+    return at(file, e, new Set([...seen, key]));
+  };
+  /** What `at` finds for the binding a name imports from a relative module. */
+  const imported = <T>(file: string, id: ts.Identifier, seen: Set<string>, at: At<T>): T | undefined => {
+    const from = importOf(declarationOf(id));
+    if (!from || from.name === "*") return undefined;
+    const target = resolve(file, from.spec);
+    return target ? exported(target, from.name, seen, at) : undefined;
   };
 
   const routerAt = (file: string, id: ts.Identifier, seen = new Set<string>()): string | undefined => {
@@ -160,11 +178,11 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       const key = keyOf(file, decl);
       if (facts.get(file)?.routers.has(key)) return key;
     }
-    const from = importOf(decl);
-    if (!from || from.name === "*") return undefined;
-    const target = resolve(file, from.spec);
-    return target ? exportedRouter(target, from.name, seen) : undefined;
+    return imported(file, id, seen, routerAt);
   };
+  // An application created here, or one a relative module exports (`export const app = express()`).
+  const appAt = (file: string, id: ts.Identifier, seen = new Set<string>()): true | undefined =>
+    isExpressApp(id) ? true : imported(file, id, seen, appAt);
 
   // Each mount, keyed by the router it serves; the parent is the router it is mounted on, or none for an application.
   const mounts = new Map<string, Array<{ parent: string | undefined; path: string | undefined }>>();
@@ -174,7 +192,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       if (!child) continue;
       // Mounted on a router, or on an Express application; `use` on anything else is no mount atlas can place.
       const parent = routerAt(file, use.receiver);
-      if (!parent && !isExpressApp(use.receiver)) continue;
+      if (!parent && !appAt(file, use.receiver)) continue;
       (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path: use.path });
     }
   }

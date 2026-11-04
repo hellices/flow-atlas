@@ -60,8 +60,8 @@ describe("reading commits without a checkout", () => {
   it("diff reports the change in markdown", () => {
     const write = process.stdout.write.bind(process.stdout);
     let text = "";
-    process.stdout.write = ((chunk: string) => {
-      text += chunk;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      text += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
       return true;
     });
     try {

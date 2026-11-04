@@ -24,7 +24,7 @@ routes:
       "services/orders/src/routes/collect.js": /collect
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
-    calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler)
+    calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler); positions count from 0
       - { name: registerRoute, methodArg: 1, pathArg: 2 }
       - { name: add_agent_endpoint, pathArg: 2, method: POST }   # a helper that always registers one method ("*" for all)
   - component: payments       # any framework: its generated OpenAPI 2.0/3.x document (references/openapi.md)
@@ -99,11 +99,13 @@ by the scopes around the use; a constant used only that way is a base, not a req
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
-those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework; an
+those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
+registration call itself; an
 outbound call of the same component held in a method of that name continues the trace. A route file that is also one
 of its component's call files does not turn its own registrations into calls. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
 its routes under each literal path it is mounted at with `use` (an inline middleware first is the pathless overload),
-nested and imported routers included, `./r.js` standing for `r.ts`; routers are told apart by their bindings, so a
+nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
+router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
 read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or

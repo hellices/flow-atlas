@@ -20,9 +20,9 @@ findings:
   - FA001|node|GET /events/opt_out
   - FA001|node|POST /events/page_view
 chains:
-  - k6->node|POST /events/click [1]
-  - k6->node|POST /events/session [1]
-  - k6->node|POST /events/consent [1]
+  - k6->node|POST /events/click
+  - k6->node|POST /events/session
+  - k6->node|POST /events/consent
 limits:
   - router admin in nodejs/routes/admin.js is mounted where the code gives no literal path
 inventory:

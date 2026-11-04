@@ -6,6 +6,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { documentUrl, toArazzo } from "../src/arazzo.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
+import { declarationOf } from "../src/extract/binding.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
@@ -202,7 +203,8 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     expect(graph.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /users"]);
-    expect(graph.edges.filter((e) => e.kind === "reach")).toHaveLength(1);
+    // The handler's request belongs to the bff route that holds it, not to core's route of the same path.
+    expect(graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${graph.calls.find((c) => c.id === e.to)!.path}`)).toEqual(["bff|GET /users -> /users"]);
   });
 
   it("reaches what a framework answers by itself only by a request that names the method", () => {
@@ -241,6 +243,15 @@ describe("framework rules", () => {
         },
         ["api|GET /v1/ping", "api|GET /v1/shop/list"],
       ],
+      [
+        "a router exported in an object, mounted on an app another module creates",
+        {
+          "server.js": 'const express = require("express");\nexport const app = express();',
+          "main.js": 'import { app } from "./server.js";\nconst { router } = require("./routes");\napp.use("/api", router);',
+          "routes.js": 'const express = require("express");\nconst router = express.Router();\nrouter.get("/items", h);\nmodule.exports = { router };',
+        },
+        ["api|GET /api/items"],
+      ],
       ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
       ["use on something that is not an Express application", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\nregistry.use("/admin", r);' }, []],
       ["a Router from another library", { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' }, []],
@@ -254,16 +265,29 @@ describe("framework rules", () => {
   });
 });
 
+describe("registration helpers in the configuration", () => {
+  it("take argument positions as whole numbers from 0", () => {
+    const helper = (call: Record<string, unknown>) => () => normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["*.ts"], calls: [{ name: "reg", ...call }] }] });
+    expect(helper({ pathArg: 1, methodArg: 0 })).not.toThrow();
+    expect(helper({ pathArg: 0, method: "GET" })).not.toThrow();
+    for (const bad of [{ pathArg: 1.5, method: "GET" }, { pathArg: -1, method: "GET" }, { pathArg: 0, methodArg: -1 }, { pathArg: 0 }, { pathArg: 0, methodArg: 1, method: "GET" }]) {
+      expect(helper(bad), JSON.stringify(bad)).toThrow(/registration helper/);
+    }
+  });
+});
+
 describe("inventory", () => {
   it("offers a Next.js file by the names it exports, however the export is indented", () => {
     const files: Record<string, string> = {
       "app/a/route.ts": "  export async function GET() {}",
       "app/b/route.ts": "const GET = h;\nexport { GET as helper };",
+      "app/e/route.ts": "export let GET = async () => new Response();",
+      "app/f/route.ts": "export var POST = handler;",
       "pages/api/c.ts": 'export { default as helper } from "./impl";',
       "pages/api/d.ts": 'export { handler as default } from "./impl";',
     };
     const offered = inventory(memory(files), []).routes.map((r) => r.file).sort();
-    expect(offered).toEqual(["app/a/route.ts", "pages/api/d.ts"]);
+    expect(offered).toEqual(["app/a/route.ts", "app/e/route.ts", "app/f/route.ts", "pages/api/d.ts"]);
   });
 });
 
@@ -282,15 +306,52 @@ describe("names resolve by their bindings", () => {
       ['const base = "/api";\nfunction f() { class C { static { var base = y; } } return fetch(`${base}/users`); }', ["GET /api/users"]],
       ['const base = "/api";\nconst C = class base { static u = fetch(`${base}/users`); };', ["* /api", "GET /users based"]],
       ['switch (k) {\n  case 0: const base = "/api";\n  case 1: fetch(`${base}/users`);\n}', ["GET /api/users"]],
+      // `using` belongs to its block; the body's `var` is not seen from a parameter's default.
+      ['const base = "/api";\nfunction f() { { using base = y; } return fetch(`${base}/users`); }', ["GET /api/users"]],
+      ['const base = "/api";\nfunction f(u = fetch(`${base}/users`)) { var base = y; }', ["GET /api/users"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });
 
+  it("takes the innermost scope's binding, as JavaScript does", () => {
+    // The line of the declaration the last use of `name` resolves to; undefined for a global.
+    const bound = (code: string, name: string) => {
+      const sf = ts.createSourceFile("a.ts", code, ts.ScriptTarget.Latest, true);
+      const uses: ts.Identifier[] = [];
+      const visit = (n: ts.Node): void => {
+        if (ts.isIdentifier(n) && n.text === name) uses.push(n);
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
+      const decl = declarationOf(uses[uses.length - 1]!);
+      return decl && sf.getLineAndCharacterOfPosition(decl.getStart(sf)).line + 1;
+    };
+    const rows: Array<[string, string, number | undefined]> = [
+      // The catch binding, not the `var` its block hoists to the function.
+      ["try {} catch (e) {\n  var e;\n  consume(e);\n}", "e", 1],
+      // A namespace keeps its own `var`s.
+      ["namespace N {\n  var hidden = 1;\n}\nconsume(hidden);", "hidden", undefined],
+      ["namespace N {\n  if (x) { var inner = 1; }\n  consume(inner);\n}", "inner", 2],
+    ];
+    expect(rows.map(([code, name]) => bound(code, name))).toEqual(rows.map(([, , line]) => line));
+  });
+
   it("keeps the escaped braces of a Python f-string literal", () => {
-    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")\nw = client.get(f"/sizes/{value:{width}}/x")';
-    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items", "GET /sizes/{}/x"]);
+    const text = [
+      'r = client.get(f"/tenants/{{tenant}}/{tid}/items")',
+      'w = client.get(f"/sizes/{value:{width}}/x")',
+      // A brace in a quoted string of the expression is text; a quote in the format spec is a fill character.
+      "q = client.get(f\"/keys/{'}'}/users\")",
+      "p = client.get(f\"/pad/{n:'>10}/x\")",
+    ].join("\n");
+    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /tenants/{tenant}/{}/items",
+      "GET /sizes/{}/x",
+      "GET /keys/{}/users",
+      "GET /pad/{}/x",
+    ]);
     // A route literal is read as Python reads it: escapes decoded.
-    const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...';
-    expect(routesFromPython("r.py", routes, { component: "c", files: [] }).map((s) => s.path)).toEqual(['/say/"hi"', "/a/b"]);
+    const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...\n@app.get("/foo\\057bar")\ndef c(): ...\n@app.get("/e/\\U0001F600")\ndef d(): ...';
+    expect(routesFromPython("r.py", routes, { component: "c", files: [] }).map((s) => s.path)).toEqual(['/say/"hi"', "/a/b", "/foo/bar", "/e/\u{1F600}"]);
   });
 });

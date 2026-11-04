@@ -16,8 +16,8 @@ surfaces:
 findings:
   - FA001|web|GET /api/health
 chains:
-  - web->web|GET /api/public-config [1]
-  - web->web|POST /api/chat/stream [1]
+  - web->web|GET /api/public-config
+  - web->web|POST /api/chat/stream
 inventory:
   routes:
     - apps/web/app/api/chat/stream/route.ts next 1
