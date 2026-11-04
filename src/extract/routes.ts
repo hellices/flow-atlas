@@ -98,21 +98,24 @@ function operationIdIn(args: readonly ts.Expression[]): string | undefined {
 const NEXT_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
 
 /**
- * The path Next.js serves a file at: a route handler `app/**\/route.ts` or an API route under `pages/api`, with `app/`
- * and `pages/` at the component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
+ * The path Next.js serves a file at, and what the file is there: a route handler `app/**\/route.ts`, a page
+ * `app/**\/page.tsx`, or under `pages/`, an API route (`pages/api/**`) or a page; `app/` and `pages/` at the
+ * component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
  * (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots `@x` add no
- * segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under `pages/api`
- * those are plain segments.
+ * segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under `pages/` those
+ * are plain segments, and `_app`, `_document`, `_error`, `404` and `500` are not routes.
  */
-export function nextRoute(file: string, root?: string): { path: string; pages: boolean } | undefined {
+export function nextRoute(file: string, root?: string): { path: string; kind: "handler" | "api" | "page" } | undefined {
   // Inside the component, `app/` and `pages/` sit at its root or under `src/`; without a root, the first one found.
   const inside = root === undefined ? file : root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
   if (inside === undefined) return undefined;
   const lead = root === undefined ? "(?:^|\\/)" : "^(?:src\\/)?";
-  const app = new RegExp(`${lead}app\\/((?:[^]*\\/)?)route\\.(?:c|m)?[jt]sx?$`).exec(inside);
-  const pages = app ? undefined : new RegExp(`${lead}pages\\/(api(?:\\/[^]*)?)\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  const app = new RegExp(`${lead}app\\/((?:[^]*\\/)?)(route|page)\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  const pages = app ? undefined : new RegExp(`${lead}pages\\/([^]+)\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  if (pages && /^(?:_app|_document|_error|404|500)$/.test(pages[1]!)) return undefined;
   const rest = app?.[1] ?? pages?.[1];
   if (rest === undefined) return undefined;
+  const kind = app ? (app[2] === "route" ? "handler" : "page") : /^api(?:\/|$)/.test(rest) ? "api" : "page";
   const segments: string[] = [];
   for (const seg of rest.split("/").filter(Boolean)) {
     if (app) {
@@ -128,7 +131,7 @@ export function nextRoute(file: string, root?: string): { path: string; pages: b
     else segments.push(one ? `{${one[1]}}` : seg);
   }
   if (pages && segments[segments.length - 1] === "index") segments.pop();
-  return { path: joinRoute(...segments), pages: !!pages };
+  return { path: joinRoute(...segments), kind };
 }
 
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
@@ -192,10 +195,15 @@ export function routesFromTypeScript(
     const found = target ? reach!.exported(target, (e.propertyName ?? e.name).text) : undefined;
     return found ? { handler: found.node, file: found.file } : {};
   };
-  if (next) {
+  if (next?.kind === "page") {
+    // A page answers GET (and HEAD) by rendering; a link in it starts another request, so no handler is followed.
+    const page = sf.statements.find((st) => ts.isExportAssignment(st) || (ts.isFunctionDeclaration(st) && exported(st))) ?? sf;
+    add("GET", next.path, page);
+    add("HEAD", next.path, page, undefined, undefined, { implicit: true });
+  } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
-      if (next.pages) {
+      if (next.kind === "api") {
         // An API route's default export answers every method.
         if (ts.isExportAssignment(st) && !st.isExportEquals) add("*", next.path, st, st.expression);
         if (ts.isFunctionDeclaration(st) && exported(st) && ts.getModifiers(st)!.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) add("*", next.path, st, st);

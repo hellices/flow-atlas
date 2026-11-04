@@ -148,7 +148,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     return undefined;
   };
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+    // A literal type (`path: "/m" | "/r"`) names values; it is no request.
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) raw = urlText(node, 0);
     // A whole concatenation is one URL; its pieces alone are not requests.

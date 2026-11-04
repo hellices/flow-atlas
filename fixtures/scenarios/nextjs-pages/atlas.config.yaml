@@ -1,0 +1,9 @@
+components:
+  - { name: web, path: apps/web }
+routes:
+  # Route handlers and pages: Next.js serves both from apps/web/src/app.
+  - { component: web, files: ["apps/web/src/app/**/*.{ts,tsx}"], styles: [next] }
+calls:
+  - { from: web, to: web, files: ["apps/web/src/lib/**/*.ts", "apps/web/src/components/**/*.tsx"] }
+publicSurfaces:
+  - "web|GET /"   # the home page, entered by its address

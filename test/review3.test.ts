@@ -139,7 +139,11 @@ describe("framework rules", () => {
       ["pages/api/_health.ts", "/api/_health"],
       ["app/items/[product-id]/route.ts", "/items/{product-id}"],
       ["pages/api/(v1)/@me.ts", "/api/(v1)/@me"],
-      ["app/page.tsx", undefined],
+      ["app/page.tsx", "/"],
+      ["app/stories/[slug]/page.tsx", "/stories/{slug}"],
+      ["app/layout.tsx", undefined],
+      ["pages/blog/index.tsx", "/blog"],
+      ["pages/_app.tsx", undefined],
     ];
     expect(rows.map(([file]) => nextRoute(file)?.path)).toEqual(rows.map(([, path]) => path));
     // Read from the component's root: a project in a directory named app keeps its own app/ as the router.

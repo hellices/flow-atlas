@@ -48,10 +48,11 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
     files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/,
     accept: (m) => m[2] === undefined || exportedNames(m[2]).some((n) => NEXT_METHOD.test(n)),
   },
+  // Pages: an App Router page, a Pages Router page or API route; each serves its default export.
   {
     style: "next",
     re: /^[\t ]*export\s+default\b|^[\t ]*export\s*\{([^}]*)\}/gm,
-    files: /(?:^|\/)pages\/api\/.*\.(c|m)?[jt]sx?$/,
+    files: /(?:^|\/)(?:app\/(?:.*\/)?page|pages\/(?!_app\.|_document\.|_error\.)[^]*)\.(c|m)?[jt]sx?$/,
     accept: (m) => m[1] === undefined || exportedNames(m[1]).includes("default"),
   },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },

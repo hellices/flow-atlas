@@ -95,7 +95,8 @@ TypeScript and JavaScript are parsed with the TypeScript compiler: string and te
 call files, the method from `.get(`/`.post(` callees, a method string in the same argument list
 (`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
-by the scopes around the use; a constant used only that way is a base, not a request of its own. Routes come
+by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
+(`path: "/m" | "/r"`) names a value and is no request. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
@@ -116,7 +117,10 @@ OPTIONS; those surfaces are `implicit`,
 reached only by a request that names the method, and no rule expects a caller for them. As Next.js does, a request is
 matched to the most specific route path first (a static name, then `[x]`, then catch-alls), and a method that route lacks
 matches nothing else. API routes under `pages/api` answer every method from their default export, written or
-re-exported, and their folders are plain segments. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
+`pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself; a `<Link href>` or a pushed address
+reaches the page it names as a request of its own, so a page's handler is not followed. Include `.tsx` in the route
+files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI

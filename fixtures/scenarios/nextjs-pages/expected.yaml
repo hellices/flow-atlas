@@ -1,0 +1,46 @@
+case: |
+  A Next.js app whose pages link to each other and whose client code calls one route handler.
+  Seen in a real run: 13 of the app's 15 request strings were page addresses, written as `<Link href>` or built by a
+  helper for a share link, and atlas read no page as a route, so none of them matched and nothing said so; the helper's
+  parameter type `"/m" | "/r"` was read as two more requests. Now each page is a GET surface at its folder path (with the
+  HEAD Next.js answers itself), a link reaches the page it names, a literal type is no request, and inventory offers the
+  pages. The home page, entered by its address, is declared public.
+surfaces:
+  - web|GET /
+  - web|GET /api/assistant
+  - web|GET /create
+  - web|GET /create/manual
+  - web|GET /m
+  - web|GET /notes/{slug}
+  - web|GET /r
+  - web|HEAD / (implicit)
+  - web|HEAD /api/assistant (implicit)
+  - web|HEAD /create (implicit)
+  - web|HEAD /create/manual (implicit)
+  - web|HEAD /m (implicit)
+  - web|HEAD /notes/{slug} (implicit)
+  - web|HEAD /r (implicit)
+  - web|OPTIONS /api/assistant (implicit)
+  - web|POST /api/assistant
+findings: []
+chains:
+  - outside->web|GET /
+  - web->web|GET /api/assistant
+  - web->web|GET /create
+  - web->web|GET /create/manual
+  - web->web|GET /m
+  - web->web|GET /notes/{slug}
+  - web->web|GET /r
+  - web->web|POST /api/assistant
+inventory:
+  routes:
+    - apps/web/src/app/api/assistant/route.ts next 2
+    - apps/web/src/app/create/manual/page.tsx next 1
+    - apps/web/src/app/create/page.tsx next 1
+    - apps/web/src/app/m/page.tsx next 1
+    - apps/web/src/app/notes/[slug]/page.tsx next 1
+    - apps/web/src/app/page.tsx next 1
+    - apps/web/src/app/r/page.tsx next 1
+  calls:
+    - apps/web/src/lib/assistant-client.ts 2
+    - apps/web/src/lib/share-links.ts 1
