@@ -144,6 +144,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "implicit": {
+          "description": "Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS with an Allow header. No rule expects a caller for it.",
+          "const": true
         }
       }
     },

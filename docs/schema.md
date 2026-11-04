@@ -189,7 +189,7 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls) |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
 | call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based` |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |

@@ -64,6 +64,11 @@ export interface Surface {
   describedPath?: string;
   /** Member methods the handler calls, following local and relatively imported functions. */
   reaches?: string[];
+  /**
+   * Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS
+   * with an Allow header. A request can reach it; no rule expects a caller for it.
+   */
+  implicit?: boolean;
 }
 
 export interface Call {

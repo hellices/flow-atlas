@@ -476,9 +476,12 @@ export function flowsText(doc: FlowReport, total: number): string {
 function cmdFlows(o: Options): number {
   const config = configFor(o);
   const { graph, flows } = analyze(o, config, o.ref);
-  if (!emit(o, flows)) process.stdout.write(flowsText(flows, graph.surfaces.length));
+  if (!emit(o, flows)) process.stdout.write(flowsText(flows, written(graph)));
   return 0;
 }
+
+/** The surfaces a handler is written for; the ones a framework answers by itself are no one's to cover. */
+const written = (graph: Graph): number => graph.surfaces.filter((s) => !s.implicit).length;
 
 /** Which flows name each chain. */
 function chainUsers(flows: FlowReport): Map<string, string[]> {
@@ -499,7 +502,7 @@ function cmdChains(o: Options): number {
   const users = chainUsers(flows);
   const mine = { ...chains, chains: chains.chains.filter((c) => touches(c, o.component)) };
   const doc = o.unnamed ? { ...mine, chains: mine.chains.filter((c) => !users.has(c.id)) } : mine;
-  if (!emit(o, doc)) process.stdout.write(chainsText(mine, graph.surfaces.length, users, o.unnamed ? "unnamed" : undefined));
+  if (!emit(o, doc)) process.stdout.write(chainsText(mine, written(graph), users, o.unnamed ? "unnamed" : undefined));
   return 0;
 }
 

@@ -28,7 +28,7 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp }> = [
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
   { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
-  { style: "next", re: /^export\s+(?:async\s+)?(?:function|const)\s+(?:GET|POST|PUT|PATCH|DELETE)\b/gm, files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/ },
+  { style: "next", re: /^export\s+(?:async\s+)?(?:function|const)\s+(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b/gm, files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/ },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
 

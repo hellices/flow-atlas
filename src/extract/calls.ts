@@ -4,6 +4,7 @@ import type { Call, Coverage, Draft } from "../model.js";
 import { callPath, HOLE, joinRoute } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
+import { declarationOf, unwrap } from "./binding.js";
 import { scopeOf, textScopes } from "./reach.js";
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
@@ -110,25 +111,10 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   return undefined;
 }
 
-const bindsName = (name: ts.BindingName, text: string): boolean =>
-  ts.isIdentifier(name) ? name.text === text : name.elements.some((e) => !ts.isOmittedExpression(e) && bindsName(e.name, text));
-
-/**
- * The `const` an identifier refers to, by the lexical scopes around it: the nearest function parameter or block-level
- * declaration of the name wins. Undefined when that is not a `const` with an initializer.
- */
+/** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
 function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
-  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
-    if (ts.isFunctionLike(n) && n.parameters.some((p) => bindsName(p.name, id.text))) return undefined;
-    if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n)) {
-      for (const st of n.statements) {
-        if (!ts.isVariableStatement(st)) continue;
-        const d = st.declarationList.declarations.find((x) => bindsName(x.name, id.text));
-        if (d) return st.declarationList.flags & ts.NodeFlags.Const && ts.isIdentifier(d.name) && d.initializer ? d : undefined;
-      }
-    }
-  }
-  return undefined;
+  const d = declarationOf(id);
+  return d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && d.initializer && d.parent.flags & ts.NodeFlags.Const ? d : undefined;
 }
 
 export function callsFromTypeScript(file: string, text: string, spec: CallSource): Draft<Call>[] {
@@ -148,7 +134,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
     if (ts.isTemplateExpression(node)) return templateText(node, lead);
     if (isPlus(node)) return concatenationText(node, lead);
-    if (ts.isParenthesizedExpression(node)) return urlText(node.expression, depth);
+    if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);
     return undefined;
   };
   const visit = (node: ts.Node): void => {
@@ -183,11 +169,12 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     let other = false;
     const uses = (n: ts.Node): void => {
       if (other) return;
-      if (ts.isIdentifier(n) && n.text === name && n !== decl.name && !ids.has(n) && constFor(n) === decl) other = true;
+      if (ts.isIdentifier(n) && n.text === name && n !== decl.name && !ids.has(n) && declarationOf(n) === decl) other = true;
       ts.forEachChild(n, uses);
     };
     uses(sf);
-    if (!other) bases.add(decl.initializer!);
+    // The request list holds the literal itself, inside any parentheses or assertion around it.
+    if (!other) bases.add(unwrap(decl.initializer!));
   }
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
@@ -274,10 +261,12 @@ export function callsFromText(file: string, original: string, spec: CallSource):
     const body = m[1] ?? m[2]!;
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
     const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
-    const inner = (fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" || x === "}}" ? x[0]! : HOLE)) : body).replace(
-      /\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g,
-      HOLE,
-    );
+    // Escaped braces stand aside as sentinels until every hole is in, so `{{tenant}}` stays the literal `{tenant}`.
+    const fields = fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" ? "\u0001" : x === "}}" ? "\u0002" : HOLE)) : body;
+    const inner = fields
+      .replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE)
+      .replace(/\u0001/g, "{")
+      .replace(/\u0002/g, "}");
     const parsed = callPath(inner);
     if (!parsed) continue;
     const lineStart = text.lastIndexOf("\n", index) + 1;

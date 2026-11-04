@@ -136,7 +136,7 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
     kind: "Chains",
     provenance: derived(graph.provenance, "Chains", {}),
     chains,
-    unchained: graph.surfaces.map((s) => s.id).filter((id) => !reached.has(id)),
+    unchained: graph.surfaces.filter((s) => !s.implicit && !reached.has(s.id)).map((s) => s.id),
   };
 }
 

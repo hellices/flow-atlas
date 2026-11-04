@@ -27,7 +27,7 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
 | Reads | From |
 |---|---|
-| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers), FastAPI decorators and Starlette mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
+| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers), FastAPI decorators and Starlette StaticFiles mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
 | client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and `data-*` URLs, Thymeleaf `@{...}` links, inline scripts); Kotlin, Python and other languages as text |
 | what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
 

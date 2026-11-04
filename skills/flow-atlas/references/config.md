@@ -99,16 +99,22 @@ by the scopes around the use; a constant used only that way is a base, not a req
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept; an
-outbound call of the same component held in a method of that name continues the trace. An Express router, from `express.Router()`, serves its routes under each literal path it is mounted at with `use`,
-nested routers included; where a mount path is not a literal and `mounts` does not give it, its routes are not read
-and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and the
-like, at the folder path (route groups and slots add no segment, `[id]` is `{id}`, `[...rest]` is `{*rest}`), and API
-routes under `pages/api` for every method. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+outbound call of the same component held in a method of that name continues the trace. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
+its routes under each literal path it is mounted at with `use` (an inline middleware first is the pathless overload),
+nested and imported routers included, `./r.js` standing for `r.ts`; routers are told apart by their bindings, so a
+shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
+read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
+the like, also re-exported from another module, at the folder path: route groups and slots add no segment, private
+folders and intercepting routes are not served, `[id]` is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and
+`[[...rest]]` is `{*rest}` (none or more). Next.js answers HEAD with the GET handler and OPTIONS by itself when the file
+exports neither; those surfaces are `implicit` and no rule expects a caller for them. API routes under `pages/api` answer
+every method, and their folders are plain segments. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
 decorators are read from Python, with Starlette's converters (`{name:path}` takes the rest of the path, as `{*name}`;
-`{id:int}` is one segment), and `app.mount("/x", ...)` serves every method under `/x/**`. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+`{id:int}` is one segment), and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under `/x/**`; another mounted application
+is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers

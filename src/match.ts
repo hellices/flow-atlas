@@ -65,6 +65,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Set
     const candidates: Array<{ surface: Surface; index: number }> = [];
     graph.surfaces.forEach((surface, si) => {
       if (surface.component !== call.to) return;
+      // What the framework answers by itself is reached only by a request that names that method.
+      if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
       if (pathsMatch(surface.path, call.path) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
     });
     for (const { surface, index: si } of reached(call, candidates, ranked)) {

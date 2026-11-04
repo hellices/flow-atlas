@@ -38,7 +38,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     // A component's own API document is read by tools and people, not by the components the configuration lists.
     const documents = new Set(graph.apiDocuments.filter((d) => d.kind === "served").map((d) => `${d.component}|${d.location}`));
     graph.surfaces.forEach((s, i) => {
-      if (!called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
+      if (s.implicit || !called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
       const id = surfaceId(s);
       if (isPublic(id) || callersOf.has(i)) return;
       out.push(finding("FA001", id, `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites.`, [s.at]));

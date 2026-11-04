@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { resolveModule } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
@@ -143,33 +144,11 @@ export class Reach {
    * first, then the specifier as written, then the extensions and index files TypeScript and Node try.
    */
   resolve(from: string, spec: string): string | undefined {
-    if (!spec.startsWith(".")) return undefined;
-    const parts = from.split("/").slice(0, -1);
-    for (const seg of spec.split("/")) {
-      if (seg === "." || seg === "") continue;
-      if (seg === "..") parts.pop();
-      else parts.push(seg);
-    }
-    const written = parts.join("/");
-    const js = /\.(m|c)?jsx?$/.exec(written);
-    const base = js ? written.slice(0, -js[0].length) : written;
-    const typescriptFor: Record<string, string[]> = { ".js": ["ts", "tsx"], ".jsx": ["tsx"], ".mjs": ["mts"], ".cjs": ["cts"] };
-    const substituted = js ? (typescriptFor[js[0]] ?? []).map((e) => `${base}.${e}`) : [];
-    const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
-    const candidates = [
-      ...substituted,
-      written,
-      ...extensions.map((e) => `${written}.${e}`),
-      ...extensions.map((e) => `${written}/index.${e}`),
-    ];
-    for (const candidate of candidates) {
-      if (/\.(m|c)?[jt]sx?$/.test(candidate) && this.source.read(candidate) !== undefined) return candidate;
-    }
-    return undefined;
+    return resolveModule(from, spec, (f) => this.source.read(f) !== undefined);
   }
 
   /** The function a module exports under a name, following re-exports to any depth; a re-export cycle ends the search. */
-  private exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
+  exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
     const key = `${file}#${name}`;
     const p = this.parse(file);
     if (!p || visiting.has(key)) return undefined;

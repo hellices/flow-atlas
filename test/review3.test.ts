@@ -10,6 +10,7 @@ import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
 import { nextRoute, routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
+import { pathsMatch } from "../src/paths.js";
 import { loadFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import { inventory } from "../src/inventory.js";
 import type { Graph } from "../src/model.js";
@@ -170,7 +171,16 @@ describe("Python registrations", () => {
       "def add_agent_endpoint(app, agent, path): ...",
     ].join("\n");
     const spec = { component: "c", files: [], styles: ["fastapi" as const], calls: [{ name: "add_agent_endpoint", pathArg: 2, method: "POST" }] };
-    expect(routesFromPython("a.py", text, spec).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /files/{*name}", "GET /items/{id}", "* /downloads/**", "POST /api/chat"]);
+    expect(routesFromPython("a.py", text, spec).map((s) => `${s.method} ${s.path}${s.implicit ? " implicit" : ""}`)).toEqual([
+      "GET /files/{*name}",
+      "GET /items/{id}",
+      "GET /downloads/**",
+      "HEAD /downloads/** implicit",
+      "POST /api/chat",
+    ]);
+    const limits: string[] = [];
+    expect(routesFromPython("b.py", 'app.mount("/admin", admin_app)', spec, limits)).toEqual([]);
+    expect(limits).toEqual(["routes c: b.py:1 mounts an application at /admin whose routes are not read"]);
   });
 
   it("refuses a helper with neither or both of methodArg and method", () => {
@@ -209,15 +219,23 @@ describe("Python client calls", () => {
 });
 
 describe("inventory styles", () => {
-  it("offers a route style only in the files its extractor reads, and counts fetch wrappers", () => {
-    const files: Record<string, string> = {
+  const inventoryOf = (files: Record<string, string>) =>
+    inventory({ ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" }, []);
+
+  it("offers a route style only in the files its extractor reads", () => {
+    const inv = inventoryOf({
       "api/main.py": '@app.get("/health")\ndef health(): ...',
-      "web/src/a.ts": 'app.get("/x", h);\nauthFetch("/api/items");',
-    };
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-    const inv = inventory(source, []);
-    expect(inv.routes.map((r) => `${r.file} ${r.style}`)).toEqual(["api/main.py fastapi", "web/src/a.ts express"]);
-    expect(inv.calls.reduce((n, c) => n + c.count, 0)).toBe(1);
+      "web/src/routes.ts": 'app.get("/x", h);',
+      "web/app/api/health/route.ts": "export function HEAD() {}\nexport const OPTIONS = () => new Response();",
+    });
+    expect(inv.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort()).toEqual(["api/main.py fastapi 1", "web/app/api/health/route.ts next 2", "web/src/routes.ts express 1"]);
+    // A route registration, in any of these languages, is no client call.
+    expect(inv.calls).toEqual([]);
+  });
+
+  it("counts calls made through a fetch wrapper", () => {
+    const inv = inventoryOf({ "web/src/items.ts": 'export const items = () => authFetch("/api/items");' });
+    expect(inv.calls.map((c) => `${c.file} ${c.count}`)).toEqual(["web/src/items.ts 1"]);
   });
 });
 
@@ -252,7 +270,13 @@ describe("Next.js routes", () => {
   it("serves a route handler at its folder path, without groups and slots, with dynamic segments as parameters", () => {
     expect(nextRoute("apps/web/app/api/chat/stream/route.ts")).toEqual({ path: "/api/chat/stream", pages: false });
     expect(nextRoute("src/app/(shop)/@modal/orders/[id]/route.ts")?.path).toBe("/orders/{id}");
-    expect(nextRoute("app/files/[...path]/route.js")?.path).toBe("/files/{*path}");
+    // A required catch-all takes one segment or more, an optional one none or more.
+    expect(nextRoute("app/files/[...path]/route.js")?.path).toBe("/files/{path}/**");
+    expect(nextRoute("app/files/[[...path]]/route.js")?.path).toBe("/files/{*path}");
+    expect([pathsMatch("/files/{path}/**", "/files"), pathsMatch("/files/{path}/**", "/files/a/b"), pathsMatch("/files/{*path}", "/files")]).toEqual([false, true, true]);
+    // Pages Router folders are plain segments: no private folders, groups or slots there.
+    expect(nextRoute("pages/api/_health.ts")?.path).toBe("/api/_health");
+    expect(nextRoute("pages/api/(v1)/@me.ts")?.path).toBe("/api/(v1)/@me");
     expect(nextRoute("app/_lib/route.ts")).toBeUndefined();
     expect(nextRoute("app/(.)photo/route.ts")).toBeUndefined();
     expect(nextRoute("pages/api/users/index.ts")).toEqual({ path: "/api/users", pages: true });
@@ -262,7 +286,13 @@ describe("Next.js routes", () => {
   it("reads each exported method of a route handler and the default export of an API route", () => {
     const spec = { component: "web", files: [], styles: ["next" as const] };
     const handler = "export async function POST(req) {}\nexport const GET = () => new Response();\nfunction put() {}\nexport { put as PUT };\nexport const dynamic = 'force-dynamic';";
-    expect(routesFromTypeScript("app/api/items/route.ts", handler, spec).map((s) => s.id)).toEqual(["web|POST /api/items", "web|GET /api/items", "web|PUT /api/items"]);
+    expect(routesFromTypeScript("app/api/items/route.ts", handler, spec).map((s) => `${s.id}${s.implicit ? " implicit" : ""}`)).toEqual([
+      "web|POST /api/items",
+      "web|GET /api/items",
+      "web|PUT /api/items",
+      "web|HEAD /api/items implicit",
+      "web|OPTIONS /api/items implicit",
+    ]);
     expect(routesFromTypeScript("pages/api/ping.ts", "export default function handler(req, res) {}", spec).map((s) => s.id)).toEqual(["web|* /api/ping"]);
   });
 });
@@ -300,5 +330,82 @@ describe("clients with a base path", () => {
     const graph = scan(source, config);
     expect(graph.calls.map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`)).toEqual(["GET /api/v1/careers/{}/detail", "POST /raw based"]);
     expect(graph.edges.filter((e) => e.kind === "match").map((e) => e.to)).toEqual(["api|GET /api/v1/careers/{id}/detail"]);
+  });
+});
+
+describe("review of the real-repository fixes", () => {
+  const callSpec = { from: "a", to: "b", files: [] };
+  const read = (code: string) => callsFromTypeScript("a.ts", code, callSpec).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+
+  it("does not take a loop, catch or hoisted var binding for an outer const", () => {
+    expect(read('const base = "/api";\nfor (const base of bases) fetch(`${base}/users`);')).toEqual(["* /api", "GET /users based"]);
+    expect(read('const base = "/api";\ntry {} catch (base) { fetch(`${base}/users`); }')).toEqual(["* /api", "GET /users based"]);
+    expect(read('const base = "/api";\nfunction f() { if (x) { var base = y; } return fetch(`${base}/users`); }')).toEqual(["* /api", "GET /users based"]);
+  });
+
+  it("drops a parenthesized base used only as a base", () => {
+    expect(read("const base = ('/api');\nfetch(`${base}/users`);")).toEqual(["GET /api/users"]);
+  });
+
+  it("keeps escaped braces of an f-string literal", () => {
+    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")';
+    expect(callsFromText("a.py", text, callSpec).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items"]);
+  });
+
+  const scanned = (files: Record<string, string>) => {
+    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
+    const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.{js,ts}"], styles: ["express", "next"] }] });
+    return scan(source, config).surfaces.map((s) => s.id).sort();
+  };
+
+  it("mounts a router after an inline middleware at the receiver's path", () => {
+    const files = { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' };
+    expect(scanned(files)).toEqual(["api|GET /x"]);
+  });
+
+  it("resolves a NodeNext import of a TypeScript router and an imported router used as a mount parent", () => {
+    const files = {
+      "app.ts": 'import api from "./api.js";\napp.use("/v1", api);',
+      "api.ts": 'import { Router } from "express";\nimport orders from "./orders.js";\nconst api = Router();\napi.use("/shop", orders);\napi.get("/ping", h);\nexport default api;',
+      "orders.ts": 'import express from "express";\nconst orders = express.Router();\norders.get("/list", h);\nexport default orders;',
+    };
+    expect(scanned(files)).toEqual(["api|GET /v1/ping", "api|GET /v1/shop/list"]);
+  });
+
+  it("takes a Router only from express, and a router by its binding, not its name", () => {
+    const notExpress = { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' };
+    expect(scanned(notExpress)).toEqual([]);
+    const shadowed = {
+      "app.js": [
+        'const express = require("express");',
+        "const r = express.Router();",
+        'r.get("/x", h);',
+        'app.use("/a", r);',
+        'function other() { const r = makeSomething(); app.use("/b", r); }',
+      ].join("\n"),
+    };
+    expect(scanned(shadowed)).toEqual(["api|GET /a/x"]);
+  });
+
+  it("reads a Next.js handler re-exported from another module", () => {
+    const files = { "app/api/items/route.ts": 'export { GET } from "./handlers";\nexport { create as POST } from "./handlers";', "app/api/items/handlers.ts": "export function GET() {}\nexport function create() {}" };
+    expect(scanned(files)).toEqual(["api|GET /api/items", "api|HEAD /api/items", "api|OPTIONS /api/items", "api|POST /api/items"]);
+  });
+
+  it("reaches an implicit surface only by a request that names its method", () => {
+    const files: Record<string, string> = {
+      "app/api/items/route.ts": "export function GET() {}",
+      "web/a.ts": 'export const any = () => request("/api/items");\nexport const head = () => fetch("/api/items", { method: "HEAD" });',
+    };
+    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
+    const config = normalizeConfig({
+      components: [{ name: "api", path: "app" }, { name: "web", path: "web" }],
+      routes: [{ component: "api", files: ["app/**/*.ts"], styles: ["next"] }],
+      calls: [{ from: "web", to: "api", files: ["web/**/*.ts"] }],
+    });
+    const graph = scan(source, config);
+    const matched = graph.edges.filter((e) => e.kind === "match").map((e) => `${graph.calls.find((c) => c.id === e.from)!.method} -> ${e.to}`);
+    expect(matched.sort()).toEqual(["* -> api|GET /api/items", "HEAD -> api|HEAD /api/items"]);
+    expect(evaluate(graph, config).map((f) => f.key)).toEqual([]);
   });
 });
