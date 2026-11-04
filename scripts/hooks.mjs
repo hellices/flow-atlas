@@ -6,7 +6,8 @@ import { existsSync } from "node:fs";
 if (existsSync(".git") && existsSync(".githooks")) {
   try {
     execFileSync("git", ["config", "core.hooksPath", ".githooks"], { stdio: "ignore" });
-  } catch {
-    // git is not installed: there are no hooks to run either.
+  } catch (error) {
+    // Without git there are no hooks to run either; any other failure leaves the hooks off, so it is not hidden.
+    if (error?.code !== "ENOENT") throw error;
   }
 }

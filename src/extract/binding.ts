@@ -15,7 +15,8 @@ function bindingIn(name: ts.BindingName, text: string): ts.Node | undefined {
 function hoistedVar(scope: ts.Node, text: string): ts.Node | undefined {
   let found: ts.Node | undefined;
   const visit = (n: ts.Node): void => {
-    if (found || (n !== scope && ts.isFunctionLike(n))) return;
+    // A function's body and a class static block each keep their own `var`s.
+    if (found || (n !== scope && (ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n)))) return;
     if (ts.isVariableDeclarationList(n) && !(n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
       for (const d of n.declarations) found ??= bindingIn(d.name, text);
     }
@@ -60,9 +61,15 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
         const found = bindingIn(p.name, text);
         if (found) return found;
       }
-      if ((ts.isFunctionExpression(a) || ts.isClassExpression(a)) && a.name?.text === text) return a;
+      if (ts.isFunctionExpression(a) && a.name?.text === text) return a;
       const body = "body" in a ? (a.body as ts.Node | undefined) : undefined;
       const hoisted = body ? hoistedVar(body, text) : undefined;
+      if (hoisted) return hoisted;
+    }
+    // A named class expression binds its name inside itself.
+    if (ts.isClassExpression(a) && a.name?.text === text) return a;
+    if (ts.isClassStaticBlockDeclaration(a)) {
+      const hoisted = hoistedVar(a.body, text);
       if (hoisted) return hoisted;
     }
     if (ts.isCatchClause(a) && a.variableDeclaration) {
@@ -75,8 +82,13 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
         if (found) return found;
       }
     }
-    if (ts.isBlock(a) || ts.isModuleBlock(a) || ts.isCaseClause(a) || ts.isDefaultClause(a)) {
+    if (ts.isBlock(a) || ts.isModuleBlock(a)) {
       const found = inStatements(a.statements, text, false);
+      if (found) return found;
+    }
+    // The clauses of a switch share one scope: a declaration in one case is seen by the cases after it.
+    if (ts.isCaseBlock(a)) {
+      const found = inStatements(a.clauses.flatMap((c) => [...c.statements]), text, false);
       if (found) return found;
     }
     if (ts.isSourceFile(a)) return inStatements(a.statements, text, true) ?? hoistedVar(a, text);

@@ -3,7 +3,7 @@ export interface StoreSharesOptions {
   fetch: typeof fetch;
 }
 
-/** The file service's v3 operations all take a POST under one base. */
+/** The storage service's v2 operations all take a POST under one base. */
 export function createStoreShares(options: StoreSharesOptions) {
   const base = `${options.baseUrl.replace(/\/+$/, "")}/store/internal/v2`;
   async function send(route: string, request: unknown): Promise<unknown> {

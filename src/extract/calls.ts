@@ -164,23 +164,47 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  // One pass over the file: a base used anywhere but at the start of a URL is a request of its own too.
+  const names = new Set([...leads.keys()].map((d) => (d.name as ts.Identifier).text));
+  const usedElsewhere = new Set<ts.VariableDeclaration>();
+  const uses = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && names.has(n.text)) {
+      const decl = declarationOf(n);
+      if (decl && ts.isVariableDeclaration(decl) && n !== decl.name && leads.has(decl) && !leads.get(decl)!.has(n)) usedElsewhere.add(decl);
+    }
+    ts.forEachChild(n, uses);
+  };
+  if (names.size) uses(sf);
   const bases = new Set<ts.Node>();
-  for (const [decl, ids] of leads) {
-    const name = (decl.name as ts.Identifier).text;
-    let other = false;
-    const uses = (n: ts.Node): void => {
-      if (other) return;
-      if (ts.isIdentifier(n) && n.text === name && n !== decl.name && !ids.has(n) && declarationOf(n) === decl) other = true;
-      ts.forEachChild(n, uses);
-    };
-    uses(sf);
-    // The request list holds the literal itself, inside any parentheses or assertion around it.
-    if (!other) bases.add(unwrap(decl.initializer!));
-  }
+  // The request list holds the literal itself, inside any parentheses or assertion around it.
+  for (const decl of leads.keys()) if (!usedElsewhere.has(decl)) bases.add(unwrap(decl.initializer!));
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
 
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
+
+/**
+ * A Python f-string's text with each replacement field a hole, nested fields (`{value:{width}}`) included, and `{{`
+ * and `}}` the literal braces they write.
+ */
+function fStringText(body: string): string {
+  let out = "";
+  for (let i = 0; i < body.length; ) {
+    const c = body[i]!;
+    if ((c === "{" || c === "}") && body[i + 1] === c) {
+      out += c;
+      i += 2;
+    } else if (c === "{") {
+      let depth = 1;
+      for (i++; i < body.length && depth; i++) depth += body[i] === "{" ? 1 : body[i] === "}" ? -1 : 0;
+      out += HOLE;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
 /** A verb call whose first argument the string is, also when the string starts the next line; `\w{0,2}` takes a prefix such as `f` or `rb`. */
 const VERB_BEFORE = /\.(get|post|put|patch|delete|head|options)\s*(?:<[^()]*>\s*)?\(\s*\w{0,2}$/i;
 const ENUM_METHOD = /HttpMethod\.(Get|Post|Put|Patch|Delete|Head|Options)\b/g;
@@ -263,12 +287,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const body = m[1] ?? m[2]!;
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
     const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
-    // Escaped braces stand aside as sentinels until every hole is in, so `{{tenant}}` stays the literal `{tenant}`.
-    const fields = fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" ? "\uE001" : x === "}}" ? "\uE002" : HOLE)) : body;
-    const inner = fields
-      .replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE)
-      .replace(/\uE001/g, "{")
-      .replace(/\uE002/g, "}");
+    const inner = fString ? fStringText(body) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     const parsed = callPath(inner);
     if (!parsed) continue;
     const lineStart = text.lastIndexOf("\n", index) + 1;

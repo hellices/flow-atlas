@@ -119,9 +119,10 @@ export function nextRoute(file: string, root?: string): { path: string; pages: b
       if (seg.startsWith("_") || /^\(\.{1,3}\)/.test(seg)) return undefined;
       if (seg.startsWith("@") || /^\(.*\)$/.test(seg)) continue;
     }
-    const optional = /^\[\[\.\.\.(\w+)\]\]$/.exec(seg);
-    const required = /^\[\.\.\.(\w+)\]$/.exec(seg);
-    const one = /^\[(\w+)\]$/.exec(seg);
+    // A dynamic segment's name is any text but `]` (`[product-id]`).
+    const optional = /^\[\[\.\.\.([^\]]+)\]\]$/.exec(seg);
+    const required = /^\[\.\.\.([^\]]+)\]$/.exec(seg);
+    const one = /^\[([^\].][^\]]*)\]$/.exec(seg);
     if (optional) segments.push(`{*${optional[1]}}`);
     else if (required) segments.push(`{${required[1]}}`, "**");
     else segments.push(one ? `{${one[1]}}` : seg);
@@ -371,8 +372,46 @@ function apiRouteMethods(text: string, code: string, argsStart: number): string[
 }
 
 /** A plain, raw or unicode literal at the start of `text`; an f-string or a name is a path the file does not spell out. */
-const pythonLiteral = (text: string): string | undefined => /^[rRuU]?(["'])((?:(?!\1).)+)\1/.exec(text)?.[2];
-const pythonLiteralLength = (text: string): number | undefined => /^[rRuU]?(["'])((?:(?!\1).)+)\1/.exec(text)?.[0].length;
+const PY_ESCAPES: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"', a: "\x07", b: "\b", f: "\f", v: "\v", "0": "\0" };
+
+/**
+ * A plain, raw or unicode Python string literal at the start of `text`: its value, escapes decoded as Python does
+ * (a raw literal keeps its backslashes), and its length in the text. An f-string or a name is a path the file does not
+ * spell out: undefined.
+ */
+function pythonString(text: string): { value: string; length: number } | undefined {
+  const m = /^([rRuU]?)("""|'''|"|')/.exec(text);
+  if (!m) return undefined;
+  const raw = /[rR]/.test(m[1]!);
+  const quote = m[2]!;
+  let value = "";
+  for (let i = m[0].length; i < text.length; ) {
+    if (text.startsWith(quote, i)) return { value, length: i + quote.length };
+    const c = text[i]!;
+    if (quote.length === 1 && c === "\n") return undefined;
+    if (c !== "\\" || i + 1 >= text.length) {
+      value += c;
+      i++;
+      continue;
+    }
+    const next = text[i + 1]!;
+    // A backslash keeps a quote from ending the literal, in a raw one too, where both characters stay.
+    if (raw) value += c + next;
+    else if (next === "\n") value += "";
+    else if (next === "x" && /^[0-9a-fA-F]{2}$/.test(text.slice(i + 2, i + 4))) {
+      value += String.fromCharCode(parseInt(text.slice(i + 2, i + 4), 16));
+      i += 2;
+    } else if (next === "u" && /^[0-9a-fA-F]{4}$/.test(text.slice(i + 2, i + 6))) {
+      value += String.fromCharCode(parseInt(text.slice(i + 2, i + 6), 16));
+      i += 4;
+    } else value += PY_ESCAPES[next] ?? c + next;
+    i += 2;
+  }
+  return undefined;
+}
+
+const pythonLiteral = (text: string): string | undefined => pythonString(text)?.value || undefined;
+const pythonLiteralLength = (text: string): number | undefined => pythonString(text)?.length;
 
 /**
  * A Starlette path in atlas's form: `{name:path}` takes the rest of the path, as Spring's `{*name}` does; any other

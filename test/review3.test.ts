@@ -9,7 +9,8 @@ import { loadConfig, normalizeConfig } from "../src/config.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
-import { nextRoute } from "../src/extract/routes.js";
+import { nextRoute, routesFromPython } from "../src/extract/routes.js";
+import { inventory } from "../src/inventory.js";
 import { pathsMatch } from "../src/paths.js";
 import { loadFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import type { Graph } from "../src/model.js";
@@ -135,6 +136,7 @@ describe("framework rules", () => {
       ["app/(.)photo/route.ts", undefined],
       ["pages/api/users/index.ts", "/api/users"],
       ["pages/api/_health.ts", "/api/_health"],
+      ["app/items/[product-id]/route.ts", "/items/{product-id}"],
       ["pages/api/(v1)/@me.ts", "/api/(v1)/@me"],
       ["app/page.tsx", undefined],
     ];
@@ -224,7 +226,7 @@ describe("framework rules", () => {
       [
         "nested routers, required from relative modules",
         {
-          "app.js": 'const api = require("./api");\napp.use("/v1", api);\napp.get("/health", h);',
+          "app.js": 'const app = require("express")();\nconst api = require("./api");\napp.use("/v1", api);\napp.get("/health", h);',
           "api.js": 'const { Router } = require("express");\nconst api = Router();\nconst orders = require("./orders");\napi.use("/shop", orders);\nmodule.exports = api;',
           "orders.js": 'const express = require("express");\nconst router = express.Router();\nrouter.get("/orders", h);\nmodule.exports = router;',
         },
@@ -233,21 +235,35 @@ describe("framework rules", () => {
       [
         "TypeScript routers imported as ./x.js, one mounted on the other",
         {
-          "app.ts": 'import api from "./api.js";\napp.use("/v1", api);',
+          "app.ts": 'import express from "express";\nimport api from "./api.js";\nconst app = express();\napp.use("/v1", api);',
           "api.ts": 'import { Router } from "express";\nimport orders from "./orders.js";\nconst api = Router();\napi.use("/shop", orders);\napi.get("/ping", h);\nexport default api;',
           "orders.ts": 'import express from "express";\nconst orders = express.Router();\norders.get("/list", h);\nexport default orders;',
         },
         ["api|GET /v1/ping", "api|GET /v1/shop/list"],
       ],
-      ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
+      ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
+      ["use on something that is not an Express application", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\nregistry.use("/admin", r);' }, []],
       ["a Router from another library", { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' }, []],
       [
         "another value under the router's name",
-        { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use("/a", r);\nfunction other() { const r = makeSomething(); app.use("/b", r); }' },
+        { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use("/a", r);\nfunction other() { const r = makeSomething(); app.use("/b", r); }' },
         ["api|GET /a/x"],
       ],
     ];
     for (const [, files, surfaces] of rows) expect(scanned(files)).toEqual(surfaces);
+  });
+});
+
+describe("inventory", () => {
+  it("offers a Next.js file by the names it exports, however the export is indented", () => {
+    const files: Record<string, string> = {
+      "app/a/route.ts": "  export async function GET() {}",
+      "app/b/route.ts": "const GET = h;\nexport { GET as helper };",
+      "pages/api/c.ts": 'export { default as helper } from "./impl";',
+      "pages/api/d.ts": 'export { handler as default } from "./impl";',
+    };
+    const offered = inventory(memory(files), []).routes.map((r) => r.file).sort();
+    expect(offered).toEqual(["app/a/route.ts", "pages/api/d.ts"]);
   });
 });
 
@@ -263,12 +279,18 @@ describe("names resolve by their bindings", () => {
       ['const base = "/api";\nfor (const base of bases) fetch(`${base}/users`);', ["* /api", "GET /users based"]],
       ['const base = "/api";\ntry {} catch (base) { fetch(`${base}/users`); }', ["* /api", "GET /users based"]],
       ['const base = "/api";\nfunction f() { if (x) { var base = y; } return fetch(`${base}/users`); }', ["* /api", "GET /users based"]],
+      ['const base = "/api";\nfunction f() { class C { static { var base = y; } } return fetch(`${base}/users`); }', ["GET /api/users"]],
+      ['const base = "/api";\nconst C = class base { static u = fetch(`${base}/users`); };', ["* /api", "GET /users based"]],
+      ['switch (k) {\n  case 0: const base = "/api";\n  case 1: fetch(`${base}/users`);\n}', ["GET /api/users"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });
 
   it("keeps the escaped braces of a Python f-string literal", () => {
-    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")';
-    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items"]);
+    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")\nw = client.get(f"/sizes/{value:{width}}/x")';
+    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items", "GET /sizes/{}/x"]);
+    // A route literal is read as Python reads it: escapes decoded.
+    const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...';
+    expect(routesFromPython("r.py", routes, { component: "c", files: [] }).map((s) => s.path)).toEqual(['/say/"hi"', "/a/b"]);
   });
 });

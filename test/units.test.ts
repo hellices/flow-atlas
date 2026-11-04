@@ -155,6 +155,8 @@ describe("surfacePattern", () => {
     expect(isPublic("api|PUT /admin/home/cards")).toBe(true);
     expect(isPublic("api|POST /health")).toBe(false);
     expect(isPublic("web|GET /admin/x")).toBe(false);
+    // Only `*` and `**` are wildcards; every other character of an entry is itself.
+    expect(surfacePattern(["api|GET /a\uE000b"])("api|GET /axxb")).toBe(false);
   });
 });
 
@@ -205,6 +207,14 @@ describe("Reach", () => {
     const sf = reach.parse("src/http.ts")!.sf;
     const call = (sf.statements[1] as ts.ExpressionStatement).expression;
     expect(reach.from("src/http.ts", call)).toEqual(["map", "other", "readThing"]);
+  });
+
+  it("leaves out what the framework's handler parameters answer, and keeps what is kept on them", () => {
+    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); });';
+    const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
+    const call = (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression;
+    const names = reach.from("src/h.ts", call);
+    expect([names.includes("send"), names.includes("json")]).toEqual([true, false]);
   });
 });
 

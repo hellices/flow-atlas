@@ -26,7 +26,7 @@ routes:
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
     calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler)
       - { name: registerRoute, methodArg: 1, pathArg: 2 }
-      - { name: add_agent_endpoint, pathArg: 2, method: POST }   # a helper that always registers one method (* for all)
+      - { name: add_agent_endpoint, pathArg: 2, method: POST }   # a helper that always registers one method ("*" for all)
   - component: payments       # any framework: its generated OpenAPI 2.0/3.x document (references/openapi.md)
     openapi: services/payments/openapi.json
     files: ["services/payments/src/main/**/*.java"]   # searched for the handlers of documented operations

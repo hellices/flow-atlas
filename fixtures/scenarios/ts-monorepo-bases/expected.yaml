@@ -38,6 +38,7 @@ inventory:
     - core/src/routes.ts express 3
     - store/src/routes.ts express 4
   calls:
+    - agent/src/agent/images.py 1
     - app/src/main/kotlin/com/example/app/BffApi.kt 2
     - bff/src/routes.ts 3
     - core/src/adapters/store-objects.ts 1

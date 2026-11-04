@@ -188,11 +188,12 @@ export class Reach {
           ? [start.parent]
           : [];
     const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
-    // `res.send()` and `res.status(500).send()` alike: a chain that starts at one of those parameters.
+    // `res.send()`, and `res.status(500).send()` on what such a call returns. Something kept on a parameter
+    // (`req.services.mail.send()`) is the component's own, and is followed.
     const fromFramework = (receiver: ts.Expression): boolean => {
-      let root = receiver;
-      while (ts.isPropertyAccessExpression(root) || ts.isCallExpression(root) || ts.isElementAccessExpression(root) || ts.isNonNullExpression(root)) root = root.expression;
-      return ts.isIdentifier(root) && framework.has(declarationOf(root)!);
+      let at = receiver;
+      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression)) at = at.expression.expression;
+      return ts.isIdentifier(at) && framework.has(declarationOf(at)!);
     };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;

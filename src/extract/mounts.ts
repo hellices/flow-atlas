@@ -72,6 +72,17 @@ function createsRouter(e: ts.Expression | undefined): boolean {
   return false;
 }
 
+/** Whether a name is bound to an Express application: `express()` with `express` imported or required from "express". */
+function isExpressApp(id: ts.Identifier): boolean {
+  const decl = declarationOf(id);
+  const init = decl && ts.isVariableDeclaration(decl) && decl.initializer ? unwrap(decl.initializer) : undefined;
+  if (!init || !ts.isCallExpression(init)) return false;
+  const callee = unwrap(init.expression);
+  if (required(callee) === "express") return true;
+  const from = ts.isIdentifier(callee) ? importOf(declarationOf(callee)) : undefined;
+  return from?.spec === "express" && from.name === "default";
+}
+
 const keyOf = (file: string, decl: ts.VariableDeclaration): string => `${file}@${decl.name.getStart()}`;
 
 interface FileFacts {
@@ -161,7 +172,10 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     for (const use of f.uses) {
       const child = routerAt(file, use.target);
       if (!child) continue;
-      (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent: routerAt(file, use.receiver), path: use.path });
+      // Mounted on a router, or on an Express application; `use` on anything else is no mount atlas can place.
+      const parent = routerAt(file, use.receiver);
+      if (!parent && !isExpressApp(use.receiver)) continue;
+      (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path: use.path });
     }
   }
   const prefixes = (key: string, seen: Set<string>): string[] | undefined => {

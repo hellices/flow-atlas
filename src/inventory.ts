@@ -22,8 +22,17 @@ const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.g
 
 const SCRIPT = /\.(c|m)?[jt]sx?$/;
 
+const NEXT_METHOD = /^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/;
+
+/** The names an `export { a, b as c }` list exports: `a` and `c`, never the local name before an `as`. */
+const exportedNames = (list: string): string[] =>
+  list
+    .split(",")
+    .map((spec) => spec.trim().split(/\s+as\s+/).pop()!.trim())
+    .filter(Boolean);
+
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
-const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp }> = [
+const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
   { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
@@ -31,10 +40,16 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp }> = [
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
     style: "next",
-    re: /^export\s+(?:async\s+)?(?:function|const)\s+(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b|^export\s*\{[^}]*\b(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b[^}]*\}|^export\s*\*\s*from\b/gm,
+    re: /^[\t ]*export\s+(?:async\s+)?(?:function|const)\s+(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b|^[\t ]*export\s*\{([^}]*)\}|^[\t ]*export\s*\*\s*from\b/gm,
     files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/,
+    accept: (m) => m[2] === undefined || exportedNames(m[2]).some((n) => NEXT_METHOD.test(n)),
   },
-  { style: "next", re: /^export\s+default\b|^export\s*\{[^}]*\bdefault\b[^}]*\}/gm, files: /(?:^|\/)pages\/api\/.*\.(c|m)?[jt]sx?$/ },
+  {
+    style: "next",
+    re: /^[\t ]*export\s+default\b|^[\t ]*export\s*\{([^}]*)\}/gm,
+    files: /(?:^|\/)pages\/api\/.*\.(c|m)?[jt]sx?$/,
+    accept: (m) => m[1] === undefined || exportedNames(m[1]).includes("default"),
+  },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
 
@@ -45,6 +60,8 @@ const CALL_SHAPES = [
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
+  // A Python f-string that joins a value to a path: f"{base}/orders".
+  /\b[fF][rR]?(?:"\{[^}"]+\}\/[A-Za-z][^"]*"|'\{[^}']+\}\/[A-Za-z][^']*')/g,
   /\b(?:action|formaction|data-[\w-]+-url)\s*=\s*["']?\/[A-Za-z]/gi,
 ];
 
@@ -119,9 +136,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (!text) continue;
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
-    for (const { style, re, files } of ROUTE_STYLES) {
+    for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file)) continue;
-      const hits = [...text.matchAll(re)];
+      const hits = [...text.matchAll(re)].filter((m) => !accept || accept(m));
       if (!hits.length) continue;
       const first = hits[0]!;
       const label = style === "registration" ? `registration ${first[1]}` : style;

@@ -9,6 +9,8 @@ const endpoints = [
 ];
 
 export default function () {
-  const ep = endpoints[Math.floor(Math.random() * endpoints.length)];
+  // Each endpoint by its weight.
+  let pick = Math.random() * endpoints.reduce((sum, e) => sum + e.weight, 0);
+  const ep = endpoints.find((e) => (pick -= e.weight) < 0) ?? endpoints[endpoints.length - 1];
   http.post(`${BASE_URL}${ep.path}`, JSON.stringify({}), { headers: { "content-type": "application/json" } });
 }

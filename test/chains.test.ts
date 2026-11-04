@@ -220,6 +220,13 @@ describe("chains of a synthetic graph", () => {
     moved.calls = moved.calls.map((c) => ({ ...c, at: { ...c.at, line: c.at.line + 10 } }));
     expect(digest(moved)).toBe(digest(graphOf(2)));
     expect(digest(graphOf(2, "otherHandler"))).not.toBe(digest(graphOf(2)));
+    // Two edges between the same ends found in different ways are both kept, whatever order they come in.
+    const twice = graphOf(1);
+    twice.edges.push({ ...twice.edges[1]!, evidence: "name" });
+    const forward = deriveChains(twice, normalizeConfig({})).chains[0]!;
+    const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
+    expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
+    expect([backward.weak, backward.digest]).toEqual([forward.weak, forward.digest]);
   });
 
   it("names long chains apart however they are drafted", () => {
