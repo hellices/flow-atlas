@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
 import type { Call, Coverage, Draft } from "../model.js";
-import { callPath, HOLE, joinRoute } from "../paths.js";
+import { callPath, HOLE, joinRoute, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, unwrap } from "./binding.js";
@@ -119,6 +119,22 @@ function operands(e: ts.Expression): ts.Expression[] {
   return isPlus(u) ? [...operands(u.left), ...operands(u.right)] : [e];
 }
 
+/**
+ * The home page `/` where a string is plainly an address to go to: a JSX `href`, or the first argument of
+ * `push`, `replace` or `redirect`. Elsewhere a lone `/` is a separator far more often than a request.
+ */
+function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
+  if (raw.replace(/[?#].*$/, "") !== "/") return undefined;
+  const parent = ts.isJsxExpression(node.parent) ? node.parent.parent : node.parent;
+  if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
+  if (ts.isCallExpression(node.parent) && node.parent.arguments[0] === node) {
+    const callee = node.parent.expression;
+    const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
+    if (/^(push|replace|redirect|permanentRedirect)$/.test(name)) return { path: "/", based: false };
+  }
+  return undefined;
+}
+
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
 function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   const d = declarationOf(id);
@@ -148,7 +164,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     return undefined;
   };
   const visit = (node: ts.Node): void => {
-    // A literal type (`path: "/m" | "/r"`) names values; it is no request.
+    // A literal type (`path: "/m" | "/r"`) names values; it is no request. `extends make(fetch(x))` runs its expression.
+    if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) raw = urlText(node, 0);
@@ -156,7 +173,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
-      const parsed = registered(node) ? undefined : callPath(raw);
+      const parsed = registered(node) ? undefined : (callPath(raw) ?? rootNavigation(node, raw));
       if (parsed) {
         found.push({ node, call: {
           from: spec.from,
@@ -486,20 +503,18 @@ const valueOf = (tag: StartTag, name: string): string | undefined => tag.attribu
  * The method a submission named by `method` or `formmethod` (`plain`) uses, or undefined when the tag names none; null
  * when it sends nothing.
  *
- * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. It writes `method="post"` and,
- * for any other method, a hidden `_method` field that Spring turns into that method only when its
+ * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. For a form's `method` it writes
+ * `method="post"` and, for any other method, a hidden `_method` field that Spring turns into that method only when its
  * HiddenHttpMethodFilter is on, which Spring Boot leaves off: GET and POST are kept, any other value is `*`.
  *
  * The plain attribute is the HTML standard's enumerated one: `get` and `post`; `dialog`, which closes a dialog and sends
  * nothing; and GET for any other value, as a browser does.
  */
 function submitMethod(tag: StartTag, plain: string): string | null | undefined {
-  for (const name of [`th:${plain}`, `data-th-${plain}`]) {
-    const value = valueOf(tag, name)?.trim().toLowerCase();
-    if (value === undefined) continue;
-    return value === "get" || value === "post" ? value.toUpperCase() : "*";
-  }
-  const value = valueOf(tag, plain)?.trim().toLowerCase();
+  const th = [`th:${plain}`, `data-th-${plain}`].map((name) => valueOf(tag, name)).find((v) => v !== undefined)?.trim().toLowerCase();
+  // Only a form's method gets the hidden `_method` field; `th:formmethod` just writes the `formmethod` attribute.
+  if (th !== undefined && plain === "method") return th === "get" || th === "post" ? th.toUpperCase() : "*";
+  const value = th ?? valueOf(tag, plain)?.trim().toLowerCase();
   if (value === undefined) return undefined;
   if (value === "post") return "POST";
   return value === "dialog" ? null : "GET";
@@ -510,11 +525,9 @@ function submitMethod(tag: StartTag, plain: string): string | null | undefined {
  * found among the template's start tags and in its markup, so text in a script body is neither.
  */
 function formOf(page: Page, control: StartTag): StartTag | undefined {
+  // A `form` attribute decides the owner: the form with that id, or none when no form has it.
   const id = valueOf(control, "form");
-  if (id !== undefined) {
-    const named = page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
-    if (named) return named;
-  }
+  if (id !== undefined) return page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
   const open = page.tags.filter((t) => t.name === "form" && t.start < control.start).pop();
   if (!open || page.markup.toLowerCase().lastIndexOf("</form", control.start) > open.start) return undefined;
   return open;
@@ -587,8 +600,15 @@ const JAVASCRIPT_TYPES = new Set([
   "text/livescript",
 ]);
 
-/** Attributes that make a request: links, form targets, sources, and data attributes a script reads a URL from. */
-const requests = (name: string): boolean => /^(href|src|action|formaction)$/.test(name) || name.startsWith("data-");
+/**
+ * Attributes that make a request: links, form targets and sources, as HTML defines them; and the `data-*` attributes
+ * the configuration names (`dataUrls`), whose URL the project's scripts request. A `data-*` value has no meaning of its
+ * own in HTML.
+ */
+const requestAttributes =
+  (dataUrls: Set<string>) =>
+  (name: string): boolean =>
+    /^(href|src|action|formaction)$/.test(name) || dataUrls.has(name);
 
 /** The `th:attr` family item a value belongs to: the attribute named before the `=` that precedes it. */
 function itemName(value: string, offset: number): string | undefined {
@@ -607,8 +627,10 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
   const or = (method: string | null | undefined, fallback: string | null) => (method === undefined ? fallback : method);
   if (name === "action") return or(submitMethod(tag, "method"), "GET");
   if (name === "formaction") {
+    // A submit control with no form owner submits nothing.
     const form = formOf(page, tag);
-    return or(submitMethod(tag, "formmethod"), or(form ? submitMethod(form, "method") : undefined, "GET"));
+    if (!form) return null;
+    return or(submitMethod(tag, "formmethod"), or(submitMethod(form, "method"), "GET"));
   }
   return "*";
 }
@@ -616,9 +638,9 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
 /**
  * Requests an HTML template makes, read from start tags only:
  * - Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`,
- *   `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
+ *   the configured `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
  *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
- * - root-relative URLs in `href`, `src`, `action`, `formaction` and `data-*`, in any case, unless Thymeleaf replaces the
+ * - root-relative URLs in `href`, `src`, `action`, `formaction` and the configured `data-*`, unless Thymeleaf replaces the
  *   attribute;
  * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
  *   `[[...]]` or `[(...)]`.
@@ -628,6 +650,7 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
 export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
   const { text, raw } = scanHtml(original);
   const page = pageOf(text, raw);
+  const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
   const out: Draft<Call>[] = [];
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
@@ -686,7 +709,10 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const attribute = (name: string) => script.attributes.find((a) => a.name === name)?.value;
     // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
     const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
-    if (attribute("src") !== undefined || (type && !JAVASCRIPT_TYPES.has(type))) continue;
+    // A src, written or rendered by Thymeleaf, makes the script external: the browser does not run its body.
+    const rendered = ["th:attr", "data-th-attr"].some((n) => /(?:^|,)\s*src\s*=/i.test(attribute(n) ?? ""));
+    const external = ["src", "th:src", "data-th-src"].some((n) => attribute(n) !== undefined) || rendered;
+    if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;
     for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });

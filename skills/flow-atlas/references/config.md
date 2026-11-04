@@ -35,6 +35,7 @@ routes:
 calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
   - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path (Dio baseUrl, axios baseURL)
+  - { from: web, to: api, files: ["src/main/resources/templates/**/*.html"], dataUrls: [data-api-url] }   # data-* a script requests
   - { from: android, to: bff, files: ["apps/android/**/api/**/*.kt"] }
 
 # Registries whose entries one side produces and another consumes.
@@ -139,15 +140,19 @@ looks; a `@RestController` or `@ResponseBody` handler's string is its response, 
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
-(`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, `th:data-*` and `th:attr` items,
-and root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*`; also the requests inline scripts make,
+(`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and
+`th:attr` items, and root-relative URLs in `href`, `action`, `src`, `formaction` and the configured `data-*`; also the
+requests inline scripts without a `src` (written, or rendered by `th:src` or `th:attr`) make,
 and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET. A form action takes the
-form's method, and a submit button's `formaction` its `formmethod`, else its form's. A plain `method` or `formmethod`
+form's method, and a submit button's `formaction` its `formmethod`, else its form's; a submit control with no form
+owner (none around it, or a `form` attribute naming no form) submits nothing. A plain `method` or `formmethod`
 is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
-browser does. Thymeleaf's `th:method` (or `data-th-method`) replaces it: GET and POST as written, and any other value
+browser does; `th:formmethod` just writes `formmethod`. Thymeleaf's `th:method` (or `data-th-method`) replaces a
+form's method: GET and POST as written, and any other value
 `*`, since Spring turns the hidden `_method` field into that method only when its HiddenHttpMethodFilter is on, which
-Spring Boot leaves off. A `data-*` URL, read by a script, is any method, and one ending in `/` is a base the script
-appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
+Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attributes a call source names in
+`dataUrls` (those the project's scripts request, as `data-api-url`) are read: any method, and one ending in `/` is a
+base the script appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
 their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.

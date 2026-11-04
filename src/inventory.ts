@@ -17,7 +17,7 @@ export interface Inventory {
   apiDocuments: ApiDocument[];
 }
 
-const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
+const CODE = "**/*.{ts,tsx,js,jsx,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
 const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
 
 const SCRIPT = /\.(c|m)?[jt]sx?$/;

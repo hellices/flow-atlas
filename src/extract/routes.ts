@@ -169,7 +169,7 @@ export function routesFromTypeScript(
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string } = {},
+    more: { implicit?: boolean; handlerFile?: string; render?: boolean } = {},
   ) => {
     const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
@@ -181,7 +181,7 @@ export function routesFromTypeScript(
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
-      ...(reach && handler ? { reaches: reach.from(more.handlerFile ?? file, handler, lines) } : {}),
+      ...(reach && handler ? { reaches: reach.from(more.handlerFile ?? file, handler, lines, more.render) } : {}),
       ...(more.implicit ? { implicit: true } : {}),
     });
   };
@@ -196,10 +196,14 @@ export function routesFromTypeScript(
     return found ? { handler: found.node, file: found.file } : {};
   };
   if (next?.kind === "page") {
-    // A page answers GET (and HEAD) by rendering; a link in it starts another request, so no handler is followed.
-    const page = sf.statements.find((st) => ts.isExportAssignment(st) || (ts.isFunctionDeclaration(st) && exported(st))) ?? sf;
-    add("GET", next.path, page);
-    add("HEAD", next.path, page, undefined, undefined, { implicit: true });
+    // A page answers GET (and HEAD) by rendering its default export. What the server runs while rendering is part of
+    // the request; a link, or a handler the browser runs later, starts another one.
+    const isDefault = (st: ts.Statement) =>
+      (ts.isExportAssignment(st) && !st.isExportEquals) || (ts.isFunctionDeclaration(st) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+    const page = sf.statements.find(isDefault);
+    const component = page && ts.isExportAssignment(page) ? page.expression : page;
+    add("GET", next.path, page ?? sf, component, undefined, { render: true });
+    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true });
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {

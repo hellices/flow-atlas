@@ -180,7 +180,7 @@ describe("chains of a server-rendered app", () => {
       { name: "web", path: "src/main/resources" },
     ],
     routes: [{ component: "server", files: ["src/main/java/**/*.java"], styles: ["spring"] }],
-    calls: [{ from: "web", to: "server", files: ["src/main/resources/templates/**/*.html"] }],
+    calls: [{ from: "web", to: "server", files: ["src/main/resources/templates/**/*.html"], dataUrls: ["data-api-url"] }],
   });
 
   it("ends a chain at the page and offers the requests its template makes as next chains", () => {

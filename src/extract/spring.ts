@@ -59,6 +59,39 @@ function declarationStart(masked: string, at: number): number {
   return 0;
 }
 
+const MODIFIERS = new Set(["public", "protected", "private", "internal", "open", "abstract", "final", "static", "sealed", "data", "inner", "enum", "annotation", "value", "strictfp"]);
+
+/**
+ * Whether only annotations and modifiers stand between `from` and `to`, so an annotation ending at `from` belongs to
+ * the declaration at `to`. Kotlin members need no `;`, so a mapping on the member before a nested type is otherwise
+ * hard to tell from one on the type.
+ */
+function onlyAnnotations(masked: string, from: number, to: number): boolean {
+  let i = from;
+  while (i < to) {
+    if (/\s/.test(masked[i]!)) {
+      i++;
+      continue;
+    }
+    const annotation = /^@[\w.]+/.exec(masked.slice(i, to));
+    if (annotation) {
+      i += annotation[0].length;
+      let j = i;
+      while (/\s/.test(masked[j] ?? "")) j++;
+      if (masked[j] === "(") {
+        const close = closing(masked, j);
+        if (close === undefined) return false;
+        i = close + 1;
+      }
+      continue;
+    }
+    const word = /^[A-Za-z]+/.exec(masked.slice(i, to));
+    if (!word || !MODIFIERS.has(word[0])) return false;
+    i += word[0].length;
+  }
+  return true;
+}
+
 /**
  * Where the run of annotations that holds the one at `at` begins: annotations written one after another, with only
  * spaces between, belong to one declaration. Members in Kotlin need no `;`, so the previous member's text is not a
@@ -92,9 +125,10 @@ function literals(value: string, kotlin: boolean): string[] | undefined {
   const out: string[] = [];
   let unknown = false;
   const rest = value.replace(/"""([\s\S]*?"*)"""(?!")|"((?:[^"\\\n]|\\.)*)"/g, (_, raw: string | undefined, s: string | undefined) => {
-    const text = raw ?? s!;
-    if (raw?.includes("\n") || (kotlin && /\$[A-Za-z_{`]/.test(text))) unknown = true;
-    out.push(text);
+    // In a Kotlin raw string every `$name` is a template; in a plain one `\$` is an escaped, literal dollar.
+    const template = raw !== undefined ? /\$[A-Za-z_{`]/ : /(?<!\\)(?:\\\\)*\$[A-Za-z_{`]/;
+    if (raw?.includes("\n") || (kotlin && template.test(raw ?? s!))) unknown = true;
+    out.push(raw ?? s!.replace(/\\([$\\"])/g, "$1"));
     return "";
   });
   if (unknown) return undefined;
@@ -286,7 +320,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     }
     const end = masked[i] === "{" ? closing(masked, i) : undefined;
     if (end === undefined) continue;
-    const own = mappings.find((m) => m.kind === "RequestMapping" && m.at >= header && m.at < at);
+    const own = mappings.find((m) => m.kind === "RequestMapping" && m.at >= header && m.at < at && onlyAnnotations(masked, m.end, at));
     if (own) typeLevel.add(own.at);
     const annotations = code.slice(header, at);
     types.push({
@@ -404,8 +438,12 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     const full = springTemplate(joinRoute(path));
     out.push({ id: surfaceId({ component: spec.component, method: "POST", path: full }), component: spec.component, method: "POST", path: full, at: { file, line: lineOf(text, index) }, evidence: "text" });
   };
+  // The names the file gives an HttpSecurity: `HttpSecurity http` in Java, `http: HttpSecurity` in Kotlin.
+  const security = new Set([...masked.matchAll(/\bHttpSecurity\s+(\w+)|(\w+)\s*:\s*HttpSecurity\b/g)].map((m) => (m[1] ?? m[2])!));
   for (const m of masked.matchAll(/\.(formLogin|logout)\s*\(/g)) {
     const at = m.index ?? 0;
+    // Only a call on that configurer, directly or down its chain; `request.logout()` is a servlet call.
+    if (!security.has(chainRoot(masked, at) ?? "")) continue;
     const open = at + m[0].length - 1;
     const close = closing(masked, open);
     if (close === undefined) continue;

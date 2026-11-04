@@ -166,7 +166,8 @@ through a sample of findings with a person. Only then record the baseline.
   requests and come back as FA002.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
-  router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`). A `limit:` line
+  router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`), the `data-*`
+  attributes a template's scripts request (`calls[].dataUrls`). A `limit:` line
   tells you when one is missing; never declare one to make a finding go away.
 
 ## Handling a finding

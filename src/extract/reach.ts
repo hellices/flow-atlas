@@ -175,7 +175,11 @@ export class Reach {
    * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
    * local name, is followed only where it is used; a function written inline (a callback argument) counts as run.
    */
-  from(file: string, start: ts.Node, executed?: Set<string>): string[] {
+  /**
+   * `render`: the start is a server-rendered page. What runs while it renders is followed; client modules (`"use
+   * client"`) and JSX attributes (an `href`, an `onClick` handler) are left out: the browser makes those requests later.
+   */
+  from(file: string, start: ts.Node, executed?: Set<string>, render = false): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -230,10 +234,15 @@ export class Reach {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
       if (!parsed) continue;
+      if (render && clientModule(parsed.sf)) continue;
       const classOf = enclosingClass(node);
       // `inCall`: inside a call the code runs, other than the registration call a route handler may start from.
       const visit = (n: ts.Node, inCall = false): void => {
+        // `extends make(fetch(x))` runs its expression; its type arguments, like every other type, do not.
+        if (ts.isExpressionWithTypeArguments(n)) return visit(n.expression, inCall);
         if (ts.isTypeNode(n) || ts.isImportDeclaration(n)) return;
+        // A JSX attribute is a prop: a link's address or a handler the browser runs, not work done while rendering.
+        if (render && ts.isJsxAttribute(n)) return;
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
         if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
           executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
@@ -303,6 +312,12 @@ export class Reach {
     return [...names].sort();
   }
 }
+
+/** A module the `"use client"` directive marks as running in the browser. */
+const clientModule = (sf: ts.SourceFile): boolean => {
+  const first = sf.statements[0];
+  return !!first && ts.isExpressionStatement(first) && ts.isStringLiteral(first.expression) && first.expression.text === "use client";
+};
 
 function enclosingClass(node: ts.Node): ts.ClassLikeDeclaration | undefined {
   for (let n: ts.Node | undefined = node; n; n = n.parent) if (ts.isClassLike(n)) return n;

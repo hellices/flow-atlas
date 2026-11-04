@@ -4,7 +4,7 @@ case: |
   helper for a share link, and atlas read no page as a route, so none of them matched and nothing said so; the helper's
   parameter type `"/m" | "/r"` was read as two more requests. Now each page is a GET surface at its folder path (with the
   HEAD Next.js answers itself), a link reaches the page it names, a literal type is no request, and inventory offers the
-  pages. The home page, entered by its address, is declared public.
+  pages. A link to the home page, `/`, reaches it too, though a lone `/` elsewhere is a separator, not a request.
 surfaces:
   - web|GET /
   - web|GET /api/assistant
@@ -24,7 +24,7 @@ surfaces:
   - web|POST /api/assistant
 findings: []
 chains:
-  - outside->web|GET /
+  - web->web|GET /
   - web->web|GET /api/assistant
   - web->web|GET /create
   - web->web|GET /create/manual
