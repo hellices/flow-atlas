@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Chain } from "./chains.js";
 import { FlowIndex } from "./flow.js";
 import type { Graph, Surface } from "./model.js";
@@ -43,10 +44,16 @@ export function flowName(seed: Surface): string {
   return fit(slug(`${seed.component}-${seed.method === "*" ? "any" : seed.method}-${seed.path}`), MAX_NAME);
 }
 
-/** Every part of a chain's id, path parameters included, so that two chains seldom slug to the same name. */
-function chainName(entry: string, root: Surface): string {
-  return slug(`${entry}-${root.component}-${root.method === "*" ? "any" : root.method}-${root.path.replace(/[{}]/g, "")}`) || "flow";
+/**
+ * A chain's flow name, decided by the chain alone: every part of its id, path parameters included. A name longer than
+ * 63 characters is cut and ends in a hash of the chain id, so two chains that share a long prefix keep apart.
+ */
+function chainName(c: Chain, root: Surface): string {
+  const full = slug(`${c.entry.component}-${root.component}-${root.method === "*" ? "any" : root.method}-${root.path.replace(/[{}]/g, "")}`) || "flow";
+  return full.length <= MAX_NAME ? full : `${fit(full, MAX_NAME - 7)}-${chainHash(c)}`;
 }
+
+const chainHash = (c: Chain): string => createHash("sha256").update(c.id).digest("hex").slice(0, 6);
 
 const q = (s: string): string => JSON.stringify(s);
 
@@ -60,16 +67,20 @@ const OKF = [
 /**
  * Flow drafts for chains, one YAML document each. The structure is the code's: each flow is one chain step, its entry
  * comes from the chain, and the requests the result offers next are listed for the author to pick from. The author
- * writes only the marked comments: the title, the labels and the step's role. A name is the chain's whole identity,
- * so drafting one chain at a time gives the same names as drafting all; `taken` holds the names flows already use.
+ * writes only the marked comments: the title, the labels and the step's role. A name is decided by its chain, so
+ * drafting one chain at a time gives the same names as drafting all. Only when the name is already held, by a flow in
+ * `taken` or by another chain of the batch whose id slugs to the same text, does it end in its chain id's hash instead
+ * of a number that would depend on the order of drafting.
  */
 export function draftChainFlows(graph: Graph, chains: Chain[], taken: Iterable<string> = []): string {
   const index = new FlowIndex(graph);
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit ?? "WORKTREE";
-  const names = uniqueIds(taken);
+  const used = new Set(taken);
   const docs = chains.map((c) => {
     const root = index.surfaces.get(c.root)!;
-    const name = names(chainName(c.entry.component, root));
+    const own = chainName(c, root);
+    const name = used.has(own) ? `${fit(own, MAX_NAME - 7)}-${chainHash(c)}` : own;
+    used.add(name);
     const callers = c.entry.callers.map((id) => index.calls.get(id)!).map((x) => `${x.at.file}:${x.at.line}`);
     const lines = [
       `# Draft from \`atlas draft flows\` at ${commit}.`,

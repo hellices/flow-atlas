@@ -104,7 +104,9 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       }
       frontier = following;
     }
-    const unique = [...new Map(edges.map((e) => [`${e.kind}|${e.from}|${e.to}`, e])).values()];
+    // Two edges between the same ends that differ in how they were found are both kept, in a stable order.
+    const edgeKey = (e: Edge) => JSON.stringify([e.kind, e.from, e.to, e.via ?? "", e.evidence]);
+    const unique = [...new Map(edges.map((e) => [edgeKey(e), e])).values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
     const offered = [...new Map(next.map((n) => [`${n.chain}|${n.from}|${n.via}`, n])).values()].sort(
       (a, b) => a.chain.localeCompare(b.chain) || a.from.localeCompare(b.from) || a.via.localeCompare(b.via),
     );

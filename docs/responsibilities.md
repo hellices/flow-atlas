@@ -87,8 +87,9 @@ False `Documented` means a field the author writes is empty.
 ## What keeps the line in place
 
 The structure of a flow is atlas's: a chain step carries no surfaces, edges or entry written by hand, and a journey
-can only order chains atlas lists. A check fails only on a fact from the code; what the author writes is checked for
-presence, and a person's review is recorded apart (`verified`). The `Documented` condition and FA007 report empty
-author fields. The flow schema says in each field's description who
+can only order chains atlas lists. The structural conditions (`Resolved`, `Connected`, `EntryCalled`) fail only on a fact from the code. What
+the author writes is checked for presence and validity, not for meaning: `Documented` and FA007 fail on an empty title
+or role, `Fresh` once `stale_after` has passed, the schema check on an invalid field; none of those says the code is
+wrong. A person's review is recorded apart (`verified`). The flow schema says in each field's description who
 writes it (`author`, `from atlas`). The tool writes neither flow files nor the exceptions file, and prints drafts to
 standard output only. The baseline is updated only when a person asks.

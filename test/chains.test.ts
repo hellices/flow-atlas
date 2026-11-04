@@ -156,7 +156,7 @@ describe("chains", () => {
   it("names drafts by the whole chain, so separate drafts and saved flows never share a name", () => {
     const one = (id: string, taken: string[] = []) => parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS().metadata.name;
     expect(one("web->bff|GET /screen")).toBe("web-bff-get-screen");
-    expect(one("web->bff|GET /screen", ["web-bff-get-screen"])).toBe("web-bff-get-screen-2");
+    expect(one("web->bff|GET /screen", ["web-bff-get-screen"])).toMatch(/^web-bff-get-screen-[0-9a-f]{6}$/);
   });
 
   it("reports a chain that reaches other surfaces after a change", () => {
@@ -227,6 +227,27 @@ describe("chains of a synthetic graph", () => {
     moved.calls = moved.calls.map((c) => ({ ...c, at: { ...c.at, line: c.at.line + 10 } }));
     expect(digest(moved)).toBe(digest(graphOf(2)));
     expect(digest(graphOf(2, "otherHandler"))).not.toBe(digest(graphOf(2)));
+  });
+
+  it("names long chains apart however they are drafted, and keeps edges that differ only in how they were found", () => {
+    const long = "/" + "segment/".repeat(10);
+    const g = graphOf(0);
+    g.surfaces = [`${long}a`, `${long}b`].map((path, i) => ({ ...surface(i), id: `svc|GET ${path}`, path }));
+    g.calls = g.surfaces.map((x, i) => ({ ...call("app", i), id: `app->svc|GET ${x.path}@a.ts#f${i}`, path: x.path }));
+    g.edges = g.calls.map((c, i) => ({ kind: "match" as const, from: c.id, to: g.surfaces[i]!.id, evidence: "static" as const }));
+    const chains = deriveChains(g, normalizeConfig({})).chains;
+    const names = (cs: typeof chains) => parseAllDocuments(draftChainFlows(g, cs)).map((d) => d.toJS().metadata.name as string);
+    const together = names(chains);
+    expect(new Set(together).size).toBe(2);
+    expect(together.every((n) => n.length <= 63)).toBe(true);
+    expect([...names([chains[1]!]), ...names([chains[0]!])].sort()).toEqual([...together].sort());
+
+    const twice = graphOf(1);
+    twice.edges.push({ ...twice.edges[1]!, evidence: "name" });
+    const forward = deriveChains(twice, normalizeConfig({})).chains[0]!;
+    const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
+    expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
+    expect([forward.weak, forward.digest]).toEqual([backward.weak, backward.digest]);
   });
 
   it("keeps every offer of the same next request", () => {
