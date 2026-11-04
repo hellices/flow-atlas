@@ -6,7 +6,7 @@ import { isDateTime } from "../src/schema.js";
 const AjvDraft04 = (AjvDraft04Module as unknown as { default: typeof AjvDraft04Module }).default ?? AjvDraft04Module;
 
 /** The text of a vendored standard schema, parsed. Throws when the file is not complete JSON. */
-const loadStandard = (name: string): object => JSON.parse(readFileSync(new URL(`./standards/${name}`, import.meta.url), "utf8"));
+const loadStandard = (name: string): object => JSON.parse(readFileSync(new URL(`./standards/${name}`, import.meta.url), "utf8")) as object;
 
 /** RFC 3986 URI-reference: only characters a URI may hold, `%` followed by two hex digits, at most one `#`. */
 function isUriReference(value: string): boolean {

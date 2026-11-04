@@ -21,7 +21,7 @@ function finding(rule: Finding["rule"], key: string, message: string, at: Findin
 /** `component|METHOD /path` entries; `*` matches within one segment, `**` across segments. */
 export function surfacePattern(entries: string[]): (id: string) => boolean {
   const patterns = entries.map((e) => {
-    const body = e.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+    const body = e.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\uE000").replace(/\*/g, "[^/]*").replace(/\uE000/g, ".*");
     return new RegExp(`^${body}$`);
   });
   return (id) => patterns.some((p) => p.test(id));

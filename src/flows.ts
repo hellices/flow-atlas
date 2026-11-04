@@ -129,7 +129,7 @@ function parse(file: string, text: string): LoadedFile {
       loaded.errors.push(...doc.errors.map((e) => `${where}${e.message}`));
       return;
     }
-    const value = doc.toJS();
+    const value: unknown = doc.toJS();
     if (value === null || value === undefined) return;
     const errors = validate("flow", value);
     if (errors.length) {

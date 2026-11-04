@@ -1,0 +1,9 @@
+#!/bin/sh
+# The tests before a push, then a pre-push hook kept locally in .git/hooks, with the same arguments and refs.
+refs=$(cat)
+pnpm -s test || exit 1
+local_hook="$(git rev-parse --git-common-dir)/hooks/pre-push"
+if [ -x "$local_hook" ]; then
+  printf '%s\n' "$refs" | grep -v '^$' | "$local_hook" "$@" || exit 1
+fi
+exit 0

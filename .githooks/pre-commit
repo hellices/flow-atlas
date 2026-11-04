@@ -1,0 +1,3 @@
+#!/bin/sh
+# Static checks before a commit: the types (strict, no unused locals), then the type-aware lint.
+exec pnpm -s check

@@ -139,10 +139,14 @@ the same inputs give the same document. Route paths are OpenAPI path templates (
 ## Develop
 
 ```bash
-pnpm install
+pnpm install   # also points git at the hooks in .githooks
+pnpm check     # strict types (tsc) and the type-aware lint (typescript-eslint)
 pnpm build
 pnpm test
 ```
+
+The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
+`.git/hooks` still runs after them, with the same refs. CI runs the same checks.
 
 `fixtures/shop` is a small monorepo with nine planted problems; the tests check that exactly those are found, that
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client

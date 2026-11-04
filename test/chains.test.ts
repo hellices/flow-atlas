@@ -142,7 +142,7 @@ describe("chains", () => {
 
   it("drafts flows whose structure is the chain's, leaving only the title, labels and role to the author", () => {
     const text = draftChainFlows(graph, report.chains);
-    const docs = parseAllDocuments(text).map((d) => d.toJS());
+    const docs = parseAllDocuments(text).map((d) => d.toJS() as FlowObject);
     expect(docs.map((d) => d.spec.steps)).toEqual([
       [{ stepId: "get-admin-report", chain: "outside->backend|GET /admin/report" }],
       [{ stepId: "get-screen", chain: "web->bff|GET /screen" }],
@@ -154,7 +154,7 @@ describe("chains", () => {
   });
 
   it("names drafts by the whole chain, so separate drafts and saved flows never share a name", () => {
-    const one = (id: string, taken: string[] = []) => parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS().metadata.name;
+    const one = (id: string, taken: string[] = []) => (parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS() as FlowObject).metadata.name;
     expect(one("web->bff|GET /screen")).toBe("web-bff-get-screen");
     expect(one("web->bff|GET /screen", ["web-bff-get-screen"])).toMatch(/^web-bff-get-screen-[0-9a-f]{6}$/);
   });
@@ -229,7 +229,7 @@ describe("chains of a synthetic graph", () => {
     g.calls = g.surfaces.map((x, i) => ({ ...call("app", i), id: `app->svc|GET ${x.path}@a.ts#f${i}`, path: x.path }));
     g.edges = g.calls.map((c, i) => ({ kind: "match" as const, from: c.id, to: g.surfaces[i]!.id, evidence: "static" as const }));
     const chains = deriveChains(g, normalizeConfig({})).chains;
-    const names = (cs: typeof chains) => parseAllDocuments(draftChainFlows(g, cs)).map((d) => d.toJS().metadata.name as string);
+    const names = (cs: typeof chains) => parseAllDocuments(draftChainFlows(g, cs)).map((d) => (d.toJS() as FlowObject).metadata.name);
     const together = names(chains);
     expect(new Set(together).size).toBe(2);
     expect(together.every((n) => n.length <= 63)).toBe(true);

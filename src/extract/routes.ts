@@ -57,7 +57,7 @@ function decoratorPaths(args: readonly ts.Expression[]): string[] | undefined {
   }
   if (ts.isArrayLiteralExpression(arg)) {
     const paths = arg.elements.map((e) => stringValue(e));
-    return paths.length && paths.every((p) => p !== undefined) ? (paths as string[]) : undefined;
+    return paths.length && paths.every((p) => p !== undefined) ? paths : undefined;
   }
   const path = stringValue(arg);
   return path === undefined ? undefined : [path];
@@ -245,7 +245,7 @@ export function routesFromTypeScript(
       }
       for (const c of spec.calls ?? []) {
         if (name !== c.name) continue;
-        const method = c.method ?? stringValue(node.arguments[c.methodArg!]);
+        const method = c.method ?? stringValue(node.arguments[c.methodArg]);
         const path = stringValue(node.arguments[c.pathArg]);
         if (method && path?.startsWith("/")) add(method, path, node, node, operationIdIn(node.arguments));
       }
@@ -393,7 +393,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     for (const m of code.matchAll(new RegExp(`(?<![\\w.])(?:\\w+\\.)?${escapeRegExp(c.name)}\\(`, "g"))) {
       const args = pythonArgStarts(code, (m.index ?? 0) + m[0].length);
       const path = args[c.pathArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.pathArg]));
-      const method = c.method ?? (args[c.methodArg!] === undefined ? undefined : pythonLiteral(text.slice(args[c.methodArg!]))?.toUpperCase());
+      const method = c.method ?? (args[c.methodArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.methodArg]))?.toUpperCase());
       if (path?.startsWith("/") && method) add(method, path, m.index ?? 0);
     }
   }

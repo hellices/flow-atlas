@@ -111,7 +111,7 @@ export const DEFAULT_EXCLUDE = [
 
 export function loadConfig(path: string): Config {
   const bytes = readFileSync(path);
-  const raw = parse(bytes.toString("utf8")) ?? {};
+  const raw = (parse(bytes.toString("utf8")) as Record<string, unknown> | null) ?? {};
   return { ...normalizeConfig(raw), file: { path, sha256: createHash("sha256").update(bytes).digest("hex") } };
 }
 

@@ -99,7 +99,7 @@ describe("registry locations", () => {
   it("places each active value on its own line", () => {
     const active = '{\n  "notes": "mentions invoice-v1 first",\n  "items": [\n    "invoice-v1",\n    "a\\u002fb-v1"\n  ]\n}\n';
     const config = normalizeConfig({ registries: [{ name: "doc", active: { file: "active.json", pattern: "(.+)-v\\d+" }, producers: [], consumers: [] }] });
-    const entries = extractRegistries(memory({ "active.json": active }), config as Config);
+    const entries = extractRegistries(memory({ "active.json": active }), config);
     expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["mentions invoice:2", "invoice:4", "a/b:5"]);
   });
 });

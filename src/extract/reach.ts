@@ -180,7 +180,7 @@ export class Reach {
     // The handler's own parameters are what the framework hands it (`req`, `res`, `reply`): `res.send()` is the
     // framework's method, not a port of the component, so it names nothing to follow.
     const handlers = ts.isFunctionLike(start) ? [start] : ts.isCallExpression(start) ? start.arguments.filter((a) => ts.isFunctionLike(a)) : [];
-    const framework = new Set<ts.Node>(handlers.flatMap((h) => [...(h as ts.SignatureDeclaration).parameters]));
+    const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);

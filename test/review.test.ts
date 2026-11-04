@@ -83,9 +83,9 @@ describe("commands", () => {
     writeFileSync(join(out, "atlas.config.yaml"), 'exclude: ["skip/**"]\n');
     const r = capture(["inventory", "--root", root, "--out", out, "--format", "json"]);
     expect(r.code).toBe(0);
-    const doc = JSON.parse(r.out);
+    const doc = JSON.parse(r.out) as { routes: unknown[]; provenance: { resolvedDependencies: Array<{ name: string }> } };
     expect(doc.routes).toEqual([]);
-    expect(doc.provenance.resolvedDependencies.map((d: { name: string }) => d.name)).toContain("config");
+    expect(doc.provenance.resolvedDependencies.map((d) => d.name)).toContain("config");
   });
 });
 

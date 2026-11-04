@@ -38,7 +38,7 @@ export function writeBaseline(out: string, baseline: Baseline): void {
 
 export function readExceptions(path: string | undefined): Exception[] {
   if (!path || !existsSync(path)) return [];
-  const raw = parse(readFileSync(path, "utf8"));
+  const raw: unknown = parse(readFileSync(path, "utf8"));
   return Array.isArray(raw) ? (raw as Exception[]) : [];
 }
 

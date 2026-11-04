@@ -47,7 +47,7 @@ function importOf(decl: ts.Node | undefined): { spec: string; name: string } | u
     }
   }
   if (ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
-    const from = required(decl.parent.parent.kind === ts.SyntaxKind.VariableDeclaration ? (decl.parent.parent as ts.VariableDeclaration).initializer : undefined);
+    const from = required(decl.parent.parent.kind === ts.SyntaxKind.VariableDeclaration ? decl.parent.parent.initializer : undefined);
     const key = decl.propertyName ?? decl.name;
     if (from !== undefined && ts.isIdentifier(key)) return { spec: from, name: key.text };
   }
@@ -166,7 +166,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   }
   const prefixes = (key: string, seen: Set<string>): string[] | undefined => {
     const file = key.slice(0, key.lastIndexOf("@"));
-    if (declared[file] !== undefined) return [joinRoute(declared[file]!)];
+    if (declared[file] !== undefined) return [joinRoute(declared[file])];
     const all = mounts.get(key);
     if (!all?.length || seen.has(key)) return undefined;
     const out: string[] = [];

@@ -262,11 +262,11 @@ export function callsFromText(file: string, original: string, spec: CallSource):
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
     const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
     // Escaped braces stand aside as sentinels until every hole is in, so `{{tenant}}` stays the literal `{tenant}`.
-    const fields = fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" ? "\u0001" : x === "}}" ? "\u0002" : HOLE)) : body;
+    const fields = fString ? body.replace(/\{\{|\}\}|\{[^{}]*\}/g, (x) => (x === "{{" ? "\uE001" : x === "}}" ? "\uE002" : HOLE)) : body;
     const inner = fields
       .replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE)
-      .replace(/\u0001/g, "{")
-      .replace(/\u0002/g, "}");
+      .replace(/\uE001/g, "{")
+      .replace(/\uE002/g, "}");
     const parsed = callPath(inner);
     if (!parsed) continue;
     const lineStart = text.lastIndexOf("\n", index) + 1;

@@ -30,8 +30,8 @@ export function extractComponents(source: Source, config: Config): { components:
       byName.set(m.name, {
         name: m.name,
         path: existing?.path ?? dirname(file),
-        provides: (m.provides as string[] | undefined) ?? [],
-        consumes: (m.consumes as string[] | undefined) ?? [],
+        provides: m.provides ?? [],
+        consumes: m.consumes ?? [],
       });
     }
   }

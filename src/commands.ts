@@ -400,8 +400,8 @@ export function query(graph: Graph, filter: QueryFilter): Subgraph {
   return {
     apiVersion: API_VERSION,
     kind: "Query",
-    provenance: derived(graph.provenance, "Query", Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined)) as Record<string, string>),
-    filter: Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined)) as Record<string, string>,
+    provenance: derived(graph.provenance, "Query", Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined))),
+    filter: Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined)),
     surfaces: graph.surfaces.filter((s) => nodes.has(s.id)),
     calls: graph.calls.filter((c) => nodes.has(c.id)),
     edges,
