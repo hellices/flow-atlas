@@ -143,6 +143,19 @@ None of these is committed. Each fits the decision above and would be taken up w
   executing it as well as against the code.
 - **Bridges.** Publish routes and flows to a Backstage catalog, or read Pact contracts as declared calls.
 
+## Boundaries other than HTTP
+
+Reviewed against the repositories atlas was run on (the 42 of one workspace). None is taken up now; each says what
+would change that.
+
+| Boundary | What the code holds | Decision |
+|---|---|---|
+| Messaging (Kafka, Event Hubs, queues) | One service both publishes and listens; the topic is a configuration property (`${EVENTS_TOPIC:events}`), not a literal, and the environment may override it | Not read from code, which cannot settle the topic. When a repository declares its channels in an AsyncAPI document, read its channels as the HTTP side reads OpenAPI: as declared surfaces, a publish and a subscribe meeting on one channel |
+| Python handlers into their outbound calls | FastAPI handlers in three repositories call only services outside the repository; the Python agent of the TypeScript monorepo is served by a vendored library whose routes no code in the repository registers | Not built: no handler with an in-repository next hop to check it against. Taken up with the first one, by linking a route's `def` body to the calls in it, as TypeScript handlers are |
+| MCP tools | `@McpTool` registrations are literal; which tool an agent calls is chosen by the model at run time | A call to a tool is never a code fact, so no chain runs through one. At most the tools are listed as surfaces, with the agents configured to reach their servers, when a repository needs that |
+| Tauri commands | `invoke("name")` against `#[tauri::command]`, both literal | Out of scope: a desktop application's boundary, without a method or a path to match |
+| Jinja and Django templates | Links by route name (`{% url 'name' %}`, `url_for`) | Out of scope by the rule above: Django's routes come from its generated OpenAPI document (drf-spectacular); its templates' links are not read |
+
 ## Before widening the scope
 
 Measure, on at least two repositories over two to four weeks:
