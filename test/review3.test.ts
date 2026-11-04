@@ -6,7 +6,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { documentUrl, toArazzo } from "../src/arazzo.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
-import { declarationOf } from "../src/extract/binding.js";
+import { declarationOf, resolveModule } from "../src/extract/binding.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
@@ -252,6 +252,15 @@ describe("framework rules", () => {
         },
         ["api|GET /api/items"],
       ],
+      [
+        "a router through a barrel's export *, and through a const alias",
+        {
+          "app.ts": 'import express from "express";\nimport { orders } from "./routes/index.js";\nconst app = express();\nconst shop = orders;\napp.use("/shop", shop);',
+          "routes/index.ts": 'export * from "./orders.js";',
+          "routes/orders.ts": 'import { Router } from "express";\nexport const orders = Router();\norders.get("/list", h);',
+        },
+        ["api|GET /shop/list"],
+      ],
       ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
       ["use on something that is not an Express application", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\nregistry.use("/admin", r);' }, []],
       ["a Router from another library", { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' }, []],
@@ -270,7 +279,7 @@ describe("registration helpers in the configuration", () => {
     const helper = (call: Record<string, unknown>) => () => normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["*.ts"], calls: [{ name: "reg", ...call }] }] });
     expect(helper({ pathArg: 1, methodArg: 0 })).not.toThrow();
     expect(helper({ pathArg: 0, method: "GET" })).not.toThrow();
-    for (const bad of [{ pathArg: 1.5, method: "GET" }, { pathArg: -1, method: "GET" }, { pathArg: 0, methodArg: -1 }, { pathArg: 0 }, { pathArg: 0, methodArg: 1, method: "GET" }]) {
+    for (const bad of [{ pathArg: 1.5, method: "GET" }, { pathArg: -1, method: "GET" }, { pathArg: 0, methodArg: -1 }, { pathArg: 0, methodArg: 1.5 }, { pathArg: 0 }, { pathArg: 0, methodArg: 1, method: "GET" }]) {
       expect(helper(bad), JSON.stringify(bad)).toThrow(/registration helper/);
     }
   });
@@ -288,6 +297,15 @@ describe("inventory", () => {
     };
     const offered = inventory(memory(files), []).routes.map((r) => r.file).sort();
     expect(offered).toEqual(["app/a/route.ts", "app/e/route.ts", "app/f/route.ts", "pages/api/d.ts"]);
+  });
+
+  it("offers request shapes, and not a Dart router's registrations", () => {
+    const files: Record<string, string> = {
+      "agent/a.py": 'r = client.get(rf"{base}/orders")',
+      "lib/api.dart": "final r = await dio.get('/orders');",
+      "lib/server.dart": "router.get('/orders', handler);\napp.post('/items', create);",
+    };
+    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`).sort()).toEqual(["agent/a.py 1", "lib/api.dart 1"]);
   });
 });
 
@@ -309,8 +327,16 @@ describe("names resolve by their bindings", () => {
       // `using` belongs to its block; the body's `var` is not seen from a parameter's default.
       ['const base = "/api";\nfunction f() { { using base = y; } return fetch(`${base}/users`); }', ["GET /api/users"]],
       ['const base = "/api";\nfunction f(u = fetch(`${base}/users`)) { var base = y; }', ["GET /api/users"]],
+      // A const that names another has its value.
+      ['const API = "/api";\nconst BASE = API;\nfetch(`${BASE}/users`);', ["GET /api/users"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("resolves a relative module only inside the repository", () => {
+    const exists = (f: string) => ["x.ts", "src/x.ts"].includes(f);
+    // `../../x` from src/a.ts is above the repository; it is not the root's x.ts.
+    expect([resolveModule("src/a.ts", "../x.js", exists), resolveModule("src/a.ts", "./x", exists), resolveModule("src/a.ts", "../../x", exists)]).toEqual(["x.ts", "src/x.ts", undefined]);
   });
 
   it("takes the innermost scope's binding, as JavaScript does", () => {
@@ -332,6 +358,7 @@ describe("names resolve by their bindings", () => {
       // A namespace keeps its own `var`s.
       ["namespace N {\n  var hidden = 1;\n}\nconsume(hidden);", "hidden", undefined],
       ["namespace N {\n  if (x) { var inner = 1; }\n  consume(inner);\n}", "inner", 2],
+      ["import X = Outer.A;\nnamespace N {\n  import X = Inner.B;\n  consume(X);\n}", "X", 3],
     ];
     expect(rows.map(([code, name]) => bound(code, name))).toEqual(rows.map(([, , line]) => line));
   });
@@ -351,7 +378,8 @@ describe("names resolve by their bindings", () => {
       "GET /pad/{}/x",
     ]);
     // A route literal is read as Python reads it: escapes decoded.
-    const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...\n@app.get("/foo\\057bar")\ndef c(): ...\n@app.get("/e/\\U0001F600")\ndef d(): ...';
+    // `\N{name}` needs Unicode's name table: that route is not read rather than read with the escape left in.
+    const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...\n@app.get("/foo\\057bar")\ndef c(): ...\n@app.get("/e/\\U0001F600")\ndef d(): ...\n@app.get("/caf\\N{LATIN SMALL LETTER E WITH ACUTE}")\ndef e(): ...';
     expect(routesFromPython("r.py", routes, { component: "c", files: [] }).map((s) => s.path)).toEqual(['/say/"hi"', "/a/b", "/foo/bar", "/e/\u{1F600}"]);
   });
 });

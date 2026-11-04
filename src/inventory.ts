@@ -61,7 +61,7 @@ const CALL_SHAPES = [
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
   // A Python f-string that joins a value to a path: f"{base}/orders".
-  /\b[fF][rR]?(?:"\{[^}"]+\}\/[A-Za-z][^"]*"|'\{[^}']+\}\/[A-Za-z][^']*')/g,
+  /\b(?:[fF][rR]?|[rR][fF])(?:"\{[^}"]+\}\/[A-Za-z][^"]*"|'\{[^}']+\}\/[A-Za-z][^']*')/g,
   /\b(?:action|formaction|data-[\w-]+-url)\s*=\s*["']?\/[A-Za-z]/gi,
 ];
 
@@ -69,7 +69,8 @@ const CALL_SHAPES = [
  * A verb call whose first argument is a path, type arguments allowed: Dio's `dio.get<T>("/x")`, `http.post("/x")`.
  * Not in JavaScript or TypeScript, where `app.get("/x")` registers a route, nor in a decorator such as FastAPI's.
  */
-const VERB_CALL = /(?<!@[\w.]*)\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
+// `router.get("/x", handler)` and `app.get(...)` register a route in Dart's shelf_router too: not a request.
+const VERB_CALL = /(?<!@[\w.]*)(?<!\b(?:app|router|_router)\s*)\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 

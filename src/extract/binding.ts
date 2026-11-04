@@ -40,6 +40,8 @@ function inStatements(statements: readonly ts.Statement[], text: string, file: b
         if (found) return found;
       }
     }
+    // `import X = A.B` binds in a namespace as in a file.
+    if (ts.isImportEqualsDeclaration(st) && st.name.text === text) return st;
     if (!file) continue;
     if (ts.isImportDeclaration(st) && st.importClause) {
       const clause = st.importClause;
@@ -48,7 +50,6 @@ function inStatements(statements: readonly ts.Statement[], text: string, file: b
       if (nb && ts.isNamespaceImport(nb) && nb.name.text === text) return nb;
       if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (el.name.text === text) return el;
     }
-    if (ts.isImportEqualsDeclaration(st) && st.name.text === text) return st;
   }
   return undefined;
 }
@@ -119,7 +120,11 @@ export function resolveModule(from: string, spec: string, exists: (file: string)
   const parts = from.split("/").slice(0, -1);
   for (const seg of spec.split("/")) {
     if (seg === "." || seg === "") continue;
-    if (seg === "..") parts.pop();
+    // A specifier that climbs above the repository names nothing atlas reads.
+    if (seg === "..") {
+      if (!parts.length) return undefined;
+      parts.pop();
+    }
     else parts.push(seg);
   }
   const written = parts.join("/");

@@ -133,6 +133,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       return value;
     };
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    // A const that names another (`const BASE = API`) has its value.
+    if (ts.isIdentifier(node)) return lead(node);
     if (ts.isTemplateExpression(node)) return templateText(node, lead);
     if (isPlus(node)) return concatenationText(node, lead);
     if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);

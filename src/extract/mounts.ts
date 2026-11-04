@@ -91,12 +91,14 @@ interface FileFacts {
   routers: Set<string>;
   /** What the module exports, by exported name: a name of the file, or a name another module exports. */
   exports: Map<string, ts.Identifier | { spec: string; name: string }>;
+  /** Modules re-exported whole (`export * from "./routes"`). */
+  stars: string[];
   uses: Array<{ receiver: ts.Identifier; path: string | undefined; target: ts.Identifier }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, routers: new Set(), exports: new Map(), uses: [] };
+  const facts: FileFacts = { sf, routers: new Set(), exports: new Map(), stars: [], uses: [] };
   const exported = (n: ts.Node): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
   const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && createsRouter(node.initializer)) facts.routers.add(keyOf(file, node));
@@ -104,6 +106,7 @@ function factsOf(text: string, file: string): FileFacts {
       for (const d of node.declarationList.declarations) if (ts.isIdentifier(d.name)) facts.exports.set(d.name.text, d.name);
     }
     if (ts.isExportAssignment(node) && ts.isIdentifier(unwrap(node.expression))) facts.exports.set("default", unwrap(node.expression) as ts.Identifier);
+    if (ts.isExportDeclaration(node) && !node.exportClause && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) facts.stars.push(node.moduleSpecifier.text);
     if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
       for (const el of node.exportClause.elements) {
         const local = el.propertyName ?? el.name;
@@ -156,7 +159,16 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const f = facts.get(file);
     if (!f || seen.has(key)) return undefined;
     const e = f.exports.get(name);
-    if (!e) return undefined;
+    if (!e) {
+      // A name a module does not export itself may come through its `export *`; `default` never does.
+      if (name === "default") return undefined;
+      for (const spec of f.stars) {
+        const target = resolve(file, spec);
+        const found = target ? exported(target, name, new Set([...seen, key]), at) : undefined;
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    }
     if ("spec" in e) {
       const target = resolve(file, e.spec);
       return target ? exported(target, e.name, new Set([...seen, key]), at) : undefined;
@@ -171,6 +183,13 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     return target ? exported(target, from.name, seen, at) : undefined;
   };
 
+  /** What `at` finds for the name a `const` alias holds (`const api = router`). */
+  const aliased = <T>(file: string, id: ts.Identifier, seen: Set<string>, at: At<T>): T | undefined => {
+    const decl = declarationOf(id);
+    const init = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
+    const key = `${file}@${id.getStart()}`;
+    return init && ts.isIdentifier(init) && !seen.has(key) ? at(file, init, new Set([...seen, key])) : undefined;
+  };
   const routerAt = (file: string, id: ts.Identifier, seen = new Set<string>()): string | undefined => {
     const decl = declarationOf(id);
     if (!decl) return undefined;
@@ -178,11 +197,11 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       const key = keyOf(file, decl);
       if (facts.get(file)?.routers.has(key)) return key;
     }
-    return imported(file, id, seen, routerAt);
+    return imported(file, id, seen, routerAt) ?? aliased(file, id, seen, routerAt);
   };
   // An application created here, or one a relative module exports (`export const app = express()`).
   const appAt = (file: string, id: ts.Identifier, seen = new Set<string>()): true | undefined =>
-    isExpressApp(id) ? true : imported(file, id, seen, appAt);
+    isExpressApp(id) ? true : (imported(file, id, seen, appAt) ?? aliased(file, id, seen, appAt));
 
   // Each mount, keyed by the router it serves; the parent is the router it is mounted on, or none for an application.
   const mounts = new Map<string, Array<{ parent: string | undefined; path: string | undefined }>>();

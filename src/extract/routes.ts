@@ -398,6 +398,8 @@ function pythonString(text: string): { value: string; length: number } | undefin
     // A backslash keeps a quote from ending the literal, in a raw one too, where both characters stay.
     if (raw) value += c + next;
     else if (next === "\n") value += "";
+    // `\N{name}` names a character by its Unicode name, which this reading has no table of: the value is unknown.
+    else if (next === "N" && text[i + 2] === "{") return undefined;
     else if (next === "x" && /^[0-9a-fA-F]{2}$/.test(text.slice(i + 2, i + 4))) {
       value += String.fromCharCode(parseInt(text.slice(i + 2, i + 4), 16));
       i += 2;

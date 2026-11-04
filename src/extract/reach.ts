@@ -3,6 +3,8 @@ import { declarationOf, resolveModule, unwrap } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
+/** Response methods that return the response itself, in Express (`res.status(500)`) and Fastify (`reply.code(201)`). */
+const CHAINABLE = new Set(["status", "set", "header", "headers", "type", "cookie", "clearCookie", "location", "links", "vary", "append", "attachment", "code", "removeHeader", "serializer"]);
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -188,11 +190,12 @@ export class Reach {
           ? [start.parent]
           : [];
     const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
-    // `res.send()`, and `res.status(500).send()` on what such a call returns. Something kept on a parameter
-    // (`req.services.mail.send()`) is the component's own, and is followed.
+    // `res.send()`, and `res.status(500).send()` on what a chainable response method returns (Express's and Fastify's
+    // return the response). Something kept on a parameter (`req.services.mail.send()`), or returned by another of its
+    // methods (`req.getClient().send()`), is the component's own, and is followed.
     const fromFramework = (receiver: ts.Expression): boolean => {
       let at = unwrap(receiver);
-      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression)) at = unwrap(at.expression.expression);
+      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression) && CHAINABLE.has(at.expression.name.text)) at = unwrap(at.expression.expression);
       return ts.isIdentifier(at) && framework.has(declarationOf(at)!);
     };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
