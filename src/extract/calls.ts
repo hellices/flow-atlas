@@ -125,10 +125,20 @@ function operands(e: ts.Expression): ts.Expression[] {
  */
 function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
   if (raw.replace(/[?#].*$/, "") !== "/") return undefined;
-  const parent = ts.isJsxExpression(node.parent) ? node.parent.parent : node.parent;
+  // Parentheses, `as`, `satisfies` and `!` leave the value as it is: `push(("/" as const))` still goes to `/`.
+  let value = node;
+  while (
+    ts.isParenthesizedExpression(value.parent) ||
+    ts.isAsExpression(value.parent) ||
+    ts.isSatisfiesExpression(value.parent) ||
+    ts.isNonNullExpression(value.parent) ||
+    ts.isTypeAssertionExpression(value.parent)
+  )
+    value = value.parent;
+  const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
-  if (ts.isCallExpression(node.parent) && node.parent.arguments[0] === node) {
-    const callee = node.parent.expression;
+  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value) {
+    const callee = value.parent.expression;
     const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
     if (/^(push|replace|redirect|permanentRedirect)$/.test(name)) return { path: "/", based: false };
   }
@@ -610,10 +620,36 @@ const requestAttributes =
   (name: string): boolean =>
     /^(href|src|action|formaction)$/.test(name) || dataUrls.has(name);
 
-/** The `th:attr` family item a value belongs to: the attribute named before the `=` that precedes it. */
+/**
+ * The items of a `th:attr` family value (`src=@{/a}, title='x, y'`), each with the attribute it names. Items are split
+ * at the commas outside quoted text and brackets: a comma inside `'x, src=y'` or `${f(a, b)}` belongs to its item.
+ */
+function attrItems(value: string): Array<{ name: string | undefined; start: number; end: number }> {
+  const items: Array<{ name: string | undefined; start: number; end: number }> = [];
+  let depth = 0;
+  let quote: string | undefined;
+  let start = 0;
+  const close = (end: number) => {
+    items.push({ name: /^\s*([\w:.-]+)\s*=/.exec(value.slice(start, end))?.[1]?.toLowerCase(), start, end });
+    start = end + 1;
+  };
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = undefined;
+    } else if (c === "'" || c === '"') quote = c;
+    else if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) close(i);
+  }
+  close(value.length);
+  return items;
+}
+
+/** The `th:attr` family item a value belongs to: the attribute its item names. */
 function itemName(value: string, offset: number): string | undefined {
-  const item = value.slice(0, offset).split(",").pop() ?? "";
-  return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+  return attrItems(value).find((item) => offset >= item.start && offset <= item.end)?.name;
 }
 
 /**
@@ -710,7 +746,7 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
     const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
     // A src, written or rendered by Thymeleaf, makes the script external: the browser does not run its body.
-    const rendered = ["th:attr", "data-th-attr"].some((n) => /(?:^|,)\s*src\s*=/i.test(attribute(n) ?? ""));
+    const rendered = ["th:attr", "data-th-attr"].some((n) => attrItems(attribute(n) ?? "").some((item) => item.name === "src"));
     const external = ["src", "th:src", "data-th-src"].some((n) => attribute(n) !== undefined) || rendered;
     if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);

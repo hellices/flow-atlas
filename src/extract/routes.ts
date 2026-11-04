@@ -199,9 +199,16 @@ export function routesFromTypeScript(
     // A page answers GET (and HEAD) by rendering its default export. What the server runs while rendering is part of
     // the request; a link, or a handler the browser runs later, starts another one.
     const isDefault = (st: ts.Statement) =>
-      (ts.isExportAssignment(st) && !st.isExportEquals) || (ts.isFunctionDeclaration(st) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+      (ts.isExportAssignment(st) && !st.isExportEquals) ||
+      ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
     const page = sf.statements.find(isDefault);
-    const component = page && ts.isExportAssignment(page) ? page.expression : page;
+    // A class component renders through its `render` method; `this.x()` called there is followed from it.
+    const component =
+      page && ts.isExportAssignment(page)
+        ? page.expression
+        : page && ts.isClassDeclaration(page)
+          ? page.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(sf) === "render")
+          : page;
     add("GET", next.path, page ?? sf, component, undefined, { render: true });
     add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true });
   } else if (next) {

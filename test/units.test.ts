@@ -168,7 +168,9 @@ describe("pathsMatch with partial interpolations", () => {
     expect(pathsMatch("/devices", "/resolve{}")).toBe(false);
     expect(pathsMatch("/resolve", "/resolve{}")).toBe(true);
     expect(pathsMatch("/v2-orders", "/v{}-orders")).toBe(true);
-    // A route variable inside a segment matches the text it stands for, and keeps the text around it.
+  });
+  it("matches a route variable inside a segment by the text around it", () => {
+    // The route comes first: `{name}` here is the route's variable, not an interpolation in the call.
     expect([pathsMatch("/files/{name}.txt", "/files/readme.txt"), pathsMatch("/files/{name}.txt", "/files/readme.md")]).toEqual([true, false]);
   });
 });

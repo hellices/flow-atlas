@@ -80,6 +80,15 @@ describe("fetch", () => {
   });
 });
 
+describe("navigation to the root", () => {
+  const paths = (code: string) => callsFromTypeScript("a.tsx", code, { from: "a", to: "a", files: [] }).map((c) => c.path);
+  it("is read through wrappers that leave the value as it is", () => {
+    const rows = ['router.push("/");', 'router.push(("/"));', 'redirect("/" as const);', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;'];
+    expect(rows.map(paths)).toEqual(rows.map(() => ["/"]));
+    expect(paths('log("/");')).toEqual([]);
+  });
+});
+
 describe("manifests", () => {
   it("leave out excluded manifests", () => {
     const source = memory({ "web/component.json": '{"name":"web"}', "test/fakes/component.json": '{"name":"web","consumes":["x"]}' });
@@ -193,13 +202,17 @@ describe("framework rules", () => {
       "app/notes/[id]/page.tsx": [
         'import Link from "next/link";',
         'import { Card } from "../../../components/card";',
+        'import { ServerCard } from "../../../components/server-card";',
         "export async function generateMetadata() { return {}; }",
+        'const stats = () => fetch("/api/stats");',
+        'const renderRow = () => fetch("/api/rows");',
         "export default async function Note() {",
         '  const note = await fetch("/api/notes/1");',
-        '  return <Card note={note}><Link href="/create">new</Link></Card>;',
+        '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /></Card>;',
         "}",
       ].join("\n"),
       "components/card.tsx": '"use client";\nexport function Card({ note }) { return <button onClick={() => router.push("/create")}>{note}</button>; }',
+      "components/server-card.tsx": 'export async function ServerCard({ data }) { const tags = await fetch("/api/tags"); return <p>{tags}</p>; }',
       "app/api/notes/[id]/route.ts": "export function GET() {}",
       "app/create/page.tsx": "export default function Create() { return null; }",
     };
@@ -210,9 +223,31 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
-    expect(page.at.line).toBe(4);
+    expect(page.at.line).toBe(7);
     const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
-    expect(reach).toEqual(["/api/notes/1"]);
+    expect(reach.sort()).toEqual(["/api/notes/1", "/api/stats", "/api/tags"]);
+  });
+
+  it("renders a Pages Router class page through its render method", () => {
+    const files = {
+      "pages/notes.tsx": [
+        'import React from "react";',
+        "export default class Notes extends React.Component {",
+        "  render() { const notes = this.load(); return <ul>{notes}</ul>; }",
+        '  load() { return fetch("/api/notes"); }',
+        '  clicked() { return fetch("/api/clicked"); }',
+        "}",
+      ].join("\n"),
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["pages/**/*.tsx"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["pages/**/*.tsx"] }],
+    });
+    const graph = scan(memory(files), config);
+    const page = graph.surfaces.find((s) => s.id === "web|GET /notes")!;
+    const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    expect(reach).toEqual(["/api/notes"]);
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {

@@ -119,8 +119,11 @@ reached only by a request that names the method, and no rule expects a caller fo
 matched to the most specific route path first (a static name, then `[x]`, then catch-alls), and a method that route lacks
 matches nothing else. API routes under `pages/api` answer every method from their default export, written or
 re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
-`pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself; a `<Link href>` or a pushed address
-reaches the page it names as a request of its own, so a page's handler is not followed. Include `.tsx` in the route
+`pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
+the default export (a function component, or a class component's `render`) belongs to the page's request, prop values
+included; client modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions
+passed as props do not: a `<Link href>` or a pushed address (`push("/")`, also parenthesized or with `as const`) reaches
+the page it names as a request of its own. Include `.tsx` in the route
 files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope

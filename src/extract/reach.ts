@@ -5,6 +5,8 @@ import type { Source } from "../source.js";
 const MAX_FUNCTIONS = 400;
 /** Response methods that return the response itself, in Express (`res.status(500)`) and Fastify (`reply.code(201)`). */
 const CHAINABLE = new Set(["status", "set", "header", "headers", "type", "cookie", "clearCookie", "location", "links", "vary", "append", "attachment", "code", "removeHeader", "serializer"]);
+/** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
+const LATER_PROPS = /^(?:href|src|action|formAction|on[A-Z]\w*)$/;
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -176,8 +178,9 @@ export class Reach {
    * local name, is followed only where it is used; a function written inline (a callback argument) counts as run.
    */
   /**
-   * `render`: the start is a server-rendered page. What runs while it renders is followed; client modules (`"use
-   * client"`) and JSX attributes (an `href`, an `onClick` handler) are left out: the browser makes those requests later.
+   * `render`: the start is a server-rendered page. What runs while it renders is followed, prop values included; client
+   * modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions passed as
+   * props are left out: the browser makes those requests later.
    */
   from(file: string, start: ts.Node, executed?: Set<string>, render = false): string[] {
     const names = new Set<string>();
@@ -241,8 +244,14 @@ export class Reach {
         // `extends make(fetch(x))` runs its expression; its type arguments, like every other type, do not.
         if (ts.isExpressionWithTypeArguments(n)) return visit(n.expression, inCall);
         if (ts.isTypeNode(n) || ts.isImportDeclaration(n)) return;
-        // A JSX attribute is a prop: a link's address or a handler the browser runs, not work done while rendering.
-        if (render && ts.isJsxAttribute(n)) return;
+        if (render && ts.isJsxAttribute(n)) {
+          // A prop's value is computed while the page renders (`data={load()}`). An address (`href`, `src`) the browser
+          // requests later, a handler it runs later (`onClick`), and a function handed down as a prop are not.
+          const name = n.name.getText(parsed.sf);
+          const value = n.initializer && ts.isJsxExpression(n.initializer) ? n.initializer.expression : undefined;
+          if (!value || LATER_PROPS.test(name) || isFunctionValue(value) || ts.isIdentifier(value)) return;
+          return visit(value, false);
+        }
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
         if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
           executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);

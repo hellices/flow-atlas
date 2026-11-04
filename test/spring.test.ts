@@ -84,6 +84,11 @@ describe("Spring routes", () => {
     expect(routes(nested, "Outer.kt")).toEqual(["* /old 3", "GET /new 6"]);
     const servlet = 'SecurityFilterChain chain(HttpSecurity http) { http.logout(l -> l.disable()); }\nvoid out(HttpServletRequest request) { request.logout(); }';
     expect(routes(servlet)).toEqual([]);
+    // One name, two methods: the servlet request's logout is not the configurer's.
+    const shadowed = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(withDefaults()); }\nvoid out(HttpServletRequest http) { http.logout(); }';
+    expect(routes(shadowed)).toEqual(["POST /login 1"]);
+    const kotlin = ["fun chain(http: HttpSecurity): SecurityFilterChain =", "  http.formLogin(withDefaults())", "    .build()", "fun out(http: HttpServletRequest) = http.logout()"].join("\n");
+    expect(routes(kotlin, "S.kt")).toEqual(["POST /login 2"]);
   });
 
   it("registers nothing for a disabled configurer or a URL held in a constant", () => {
@@ -107,6 +112,9 @@ describe("Spring routes", () => {
       "}",
     ].join("\n");
     expect(routes(text)).toEqual(["GET /api/items 4", "GET /nested/x 6", "GET /api/after 8"]);
+    // Any modifier the languages allow before a type keeps the mapping on it.
+    expect(routes('@RestController @RequestMapping("/api") actual open class C {\n  @GetMapping("/x") fun x() = 1\n}', "C.kt")).toEqual(["GET /api/x 2"]);
+    expect(routes('@RestController @RequestMapping("/api") public non-sealed class C extends B {\n  @GetMapping("/x") String x() { return null; }\n}')).toEqual(["GET /api/x 2"]);
   });
 
   it("unites a type's methods with a handler's, as Spring combines them", () => {
@@ -529,6 +537,8 @@ describe("review fixes, continued", () => {
       // A file is no request; the point is the body, which a browser does not run when the script has a src.
       ['<script th:src="@{/app.js}">fetch("/fallback")</script>', []],
       ['<script th:attr="src=@{/app.js}">fetch("/fallback")</script>', []],
+      // A `, src=` inside a quoted value is that item's text: the script has no src, and its body runs.
+      ["<script th:attr=\"data-note='x, src=y'\">fetch('/api')</script>", ["GET /api 1"]],
       ['<div data-url="/preview"></div>', []],
     ];
     expect(rows.map(([html]) => calls(html))).toEqual(rows.map(([, out]) => out));
