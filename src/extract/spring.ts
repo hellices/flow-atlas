@@ -208,27 +208,100 @@ function splitTop(text: string, sep: string): string[] {
   return parts.map((p) => p.trim());
 }
 
-/** The value of a constant expression, or undefined when it is not one this file spells out. */
-type Constant = (expression: string) => string | undefined;
+/** The value of a constant expression used at `at`, or undefined when it is not one this file spells out. */
+type Constant = (expression: string, at: number) => string | undefined;
+
+/** A type the file declares: its name, its body, and whether it names a supertype a constant could come from. */
+interface DeclaredType {
+  name: string;
+  start: number;
+  end: number;
+  inherits: boolean;
+  /** A Kotlin companion object, whose members its class sees as its own. */
+  companion: boolean;
+}
+
+function declaredTypes(masked: string): DeclaredType[] {
+  const out: DeclaredType[] = [];
+  for (const t of masked.matchAll(TYPE)) {
+    const at = t.index ?? 0;
+    let i = at + t[0].length;
+    let depth = 0;
+    let inherits = false;
+    for (; i < masked.length; i++) {
+      const c = masked[i]!;
+      if (c === "(" || c === "<") depth++;
+      else if (c === ")" || c === ">") depth--;
+      else if (depth === 0 && (c === "{" || c === ";")) break;
+      else if (depth === 0 && (c === ":" || /^(?:extends|implements)\b/.test(masked.slice(i, i + 10)))) inherits = true;
+    }
+    const end = masked[i] === "{" ? closing(masked, i) : undefined;
+    if (end === undefined) continue;
+    const companion = /\bcompanion\s+$/.test(masked.slice(Math.max(0, at - 20), at));
+    out.push({ name: t[0].split(/\s+/).pop()!, start: i, end, inherits, companion });
+  }
+  return out;
+}
 
 /**
- * The string constants a file declares: Java `static final String NAME = ...` and Kotlin `const val NAME = ...`, whose
- * values are literals and other such constants joined with `+`. An annotation argument must be a compile-time constant,
- * so a mapping that names one (`PATH`, `Type.PATH` for a type of the file) has its value. A name declared with two
- * values is not read: which one a use sees depends on scopes this reading does not follow.
+ * The string constants a file declares: Java `static final String A = ..., B = ...;` and Kotlin `const val A = ...`,
+ * whose values are literals and other such constants joined with `+`. An annotation argument must be a compile-time
+ * constant, so a mapping that names one has its value, found as the languages find a name: in the types around the use,
+ * innermost first, then (Kotlin) the file's top level; `Type.NAME` in a type the file declares once. A name is not read
+ * where it could mean something this file does not show: past a type that names a supertype (an inherited constant),
+ * or one imported by name (`import static a.Paths.PATH`). A type's own annotation sits outside its body, so a name used
+ * there is not one of its members.
  */
 function stringConstants(code: string, masked: string, kotlin: boolean): Constant {
-  const declared = new Map<string, Set<string>>();
-  const pattern = kotlin ? /\bconst\s+val\s+([A-Za-z_]\w*)\s*(?::\s*String\s*)?=/g : /\b(?:static\s+final|final\s+static)\s+String\s+([A-Za-z_]\w*)\s*=/g;
-  for (const m of masked.matchAll(pattern)) {
-    const from = (m.index ?? 0) + m[0].length;
-    const end = kotlin ? expressionEnd(masked, from) : masked.indexOf(";", from);
-    if (end < 0) continue;
-    const values = declared.get(m[1]!) ?? declared.set(m[1]!, new Set()).get(m[1]!)!;
-    values.add(code.slice(from, end).trim());
+  const types = declaredTypes(masked);
+  // The type whose members a position is among: the innermost body around it, a companion counting as its class.
+  const chain = (at: number): DeclaredType[] => types.filter((t) => t.start < at && at < t.end).sort((a, b) => b.start - a.start);
+  const ownerOf = (at: number): DeclaredType | undefined => chain(at).find((t) => !t.companion);
+  const declared: Array<{ name: string; owner: DeclaredType | undefined; at: number; expression: string }> = [];
+  const add = (name: string, at: number, expression: string) => declared.push({ name, owner: ownerOf(at), at, expression: expression.trim() });
+  if (kotlin) {
+    for (const m of masked.matchAll(/\bconst\s+val\s+([A-Za-z_]\w*)\s*(?::\s*String\s*)?=/g)) {
+      const from = (m.index ?? 0) + m[0].length;
+      const semicolon = masked.indexOf(";", from);
+      const end = Math.min(expressionEnd(masked, from), semicolon < 0 ? masked.length : semicolon);
+      add(m[1]!, m.index ?? 0, code.slice(from, end));
+    }
+  } else {
+    for (const m of masked.matchAll(/\b(?:static\s+final|final\s+static)\s+String\s+(?=[A-Za-z_]\w*\s*=)/g)) {
+      const from = (m.index ?? 0) + m[0].length;
+      const end = masked.indexOf(";", from);
+      if (end < 0) continue;
+      // One declaration may hold several: `A = "/a", B = A + "/b"`.
+      let offset = from;
+      for (const part of splitTop(masked.slice(from, end), ",")) {
+        const start = masked.indexOf(part, offset);
+        offset = start + part.length;
+        const declarator = /^([A-Za-z_]\w*)\s*=/.exec(part);
+        if (declarator) add(declarator[1]!, start, code.slice(start + declarator[0].length, start + part.length));
+      }
+    }
   }
-  const types = new Set([...masked.matchAll(TYPE)].map((t) => t[0].split(/\s+/).pop()!));
-  const evaluate = (expression: string, seen: Set<string>): string | undefined => {
+  const imported = new Set(
+    [...masked.matchAll(kotlin ? /^\s*import\s+[\w.]+\.(\w+)(?:\s+as\s+(\w+))?/gm : /^\s*import\s+static\s+[\w.]+\.(\w+)\s*;/gm)].map((m) => m[2] ?? m[1]!),
+  );
+  const only = (found: typeof declared) => (new Set(found.map((d) => d.expression)).size === 1 ? found[0] : undefined);
+  const lookup = (name: string, at: number): (typeof declared)[number] | undefined => {
+    for (const type of chain(at)) {
+      if (type.companion) continue;
+      const own = declared.filter((d) => d.name === name && d.owner === type);
+      if (own.length) return only(own);
+      if (type.inherits) return undefined;
+    }
+    if (imported.has(name)) return undefined;
+    return kotlin ? only(declared.filter((d) => d.name === name && d.owner === undefined)) : undefined;
+  };
+  const qualified = (type: string, name: string): (typeof declared)[number] | undefined => {
+    const named = types.filter((t) => t.name === type && !t.companion);
+    if (named.length !== 1) return undefined;
+    const own = declared.filter((d) => d.name === name && d.owner === named[0]);
+    return own.length ? only(own) : undefined;
+  };
+  const evaluate = (expression: string, at: number, seen: Set<number>): string | undefined => {
     let out = "";
     for (const term of splitTop(expression, "+")) {
       const value = /^"/.test(term) ? literals(term, kotlin) : undefined;
@@ -237,22 +310,22 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
         continue;
       }
       const name = /^(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)$/.exec(term);
-      const values = name && (!name[1] || types.has(name[1])) ? declared.get(name[2]!) : undefined;
-      if (!values || values.size !== 1 || seen.has(name![2]!)) return undefined;
-      const resolved = evaluate([...values][0]!, new Set([...seen, name![2]!]));
+      const found = name ? (name[1] ? qualified(name[1], name[2]!) : lookup(name[2]!, at)) : undefined;
+      if (!found || seen.has(found.at)) return undefined;
+      const resolved = evaluate(found.expression, found.at, new Set([...seen, found.at]));
       if (resolved === undefined) return undefined;
       out += resolved;
     }
     return out;
   };
-  return (expression) => evaluate(expression, new Set());
+  return (expression, at) => evaluate(expression, at, new Set());
 }
 
 /**
  * The paths a mapping names: none written means the root; literals, or constants the file declares, alone or in a
  * list; undefined when they are built in code.
  */
-function mappingPaths(args: string | undefined, kotlin: boolean, constant: Constant): string[] | undefined {
+function mappingPaths(args: string | undefined, kotlin: boolean, constant: Constant, at: number): string[] | undefined {
   if (args === undefined || !args.trim()) return [""];
   const { positional, named } = attributes(args);
   const value = named.get("path") ?? named.get("value") ?? positional;
@@ -262,7 +335,7 @@ function mappingPaths(args: string | undefined, kotlin: boolean, constant: Const
   // `{A, B}` in Java, `[A, B]` or `arrayOf(A, B)` in Kotlin.
   const list = /^(?:\{([\s\S]*)\}|\[([\s\S]*)\]|arrayOf\s*\(([\s\S]*)\))$/.exec(value.trim());
   const items = list ? splitTop(list[1] ?? list[2] ?? list[3] ?? "", ",").filter(Boolean) : [value];
-  const resolved = items.map(constant);
+  const resolved = items.map((item) => constant(item, at));
   return resolved.every((p) => p !== undefined) ? (resolved.length ? resolved : [""]) : undefined;
 }
 
@@ -376,6 +449,8 @@ interface TypeScope {
   methods: string[] | undefined;
   /** `@RestController` or `@ResponseBody` on the type: handlers write their return value as the response. */
   responseBody: boolean;
+  /** The type's own `@RequestMapping`, where a limit names it when its paths or methods are not read. */
+  mapping?: { at: number; args: string | undefined };
 }
 
 /**
@@ -423,13 +498,15 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     types.push({
       start: i,
       end,
-      paths: own ? mappingPaths(own.args, kotlin, constant) : [""],
+      paths: own ? mappingPaths(own.args, kotlin, constant, own.at) : [""],
       methods: own ? requestMethods(own.args) : [],
       responseBody: /@(?:[\w.]*\.)?(?:RestController|ResponseBody)\b/.test(annotations),
+      ...(own ? { mapping: { at: own.at, args: own.args } } : {}),
     });
   }
 
   const out: Surface[] = [];
+  const unreadTypes = new Set<TypeScope>();
   // A mapping annotation's arguments are its paths, not requests, type-level ones included.
   for (const m of mappings) spans?.add(file, m.at, m.end);
   for (const m of mappings) {
@@ -437,12 +514,16 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     // The innermost type whose body holds the handler; a nested type closed before it does not count.
     const owner = types.filter((t) => t.start < m.at && m.at < t.end).sort((a, b) => b.start - a.start)[0];
     const bases = owner ? owner.paths : [""];
-    const paths = mappingPaths(m.args, kotlin, constant);
+    const paths = mappingPaths(m.args, kotlin, constant, m.at);
     const own = m.kind === "RequestMapping" ? requestMethods(m.args) : [SHORTCUTS[m.kind]!];
     const inherited = owner ? owner.methods : [];
     if (!paths) unread(m.at, m.args, "a path");
     else if (!own) unread(m.at, m.args, "a method");
-    else if (!bases || !inherited) unread(m.at, m.args, "a handler under a type mapping");
+    // A type mapping not read is named once, where it is written.
+    else if ((!bases || !inherited) && owner?.mapping && !unreadTypes.has(owner)) {
+      unreadTypes.add(owner);
+      unread(owner.mapping.at, owner.mapping.args, bases ? "a method" : "a path");
+    }
     if (!bases || !paths || !own || !inherited) continue;
     const united = [...new Set([...inherited, ...own])];
     const methods = united.length ? united : ["*"];

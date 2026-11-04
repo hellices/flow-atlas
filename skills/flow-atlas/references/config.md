@@ -139,9 +139,11 @@ is not read, and a limit says so. The `spring` style reads `@RequestMapping` on 
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
-constants), since an annotation argument is a compile-time constant; a constant of another file, an expression or a
-Kotlin string template (`"$BASE/users"`) registers nothing, and a limit names the mapping. A Security URL held in a
-constant registers nothing. A Security setter counts only on the configurer: in a
+constants), since an annotation argument is a compile-time constant. A name is found as the language finds it: in the
+types around the mapping, innermost first, then a Kotlin file's top level, or `Type.PATH` for a type the file declares
+once. A name that could be inherited (past a type with a supertype), one imported by name, a constant of another
+file, any other expression and a Kotlin string template (`"$BASE/users"`) register nothing, and a limit names the
+mapping where it is written. A Security URL held in a constant registers nothing. A Security setter counts only on the configurer: in a
 lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
 `logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
