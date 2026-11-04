@@ -229,17 +229,17 @@ describe("matching", () => {
     const call = (method: string, path: string): Call => ({ id: `c|${method} ${path}`, from: "w", to: "s", method, path, at: { file: "b", line: 1 }, evidence: "text", based: false });
     const surfaces = [surface("GET", "/api/movies/search"), surface("GET", "/api/movies/{tmdbId}"), surface("POST", "/api/movies/{tmdbId}")];
     const calls = [call("*", "/api/movies/search"), call("GET", "/api/movies/{}")];
-    const ranked = matchCalls({ surfaces, calls }, new Set(["s"])).targetsOf;
+    const ranked = matchCalls({ surfaces, calls }, new Map([["s", "spring"]])).targetsOf;
     expect(ranked.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|POST /api/movies/{tmdbId}"]);
     expect(ranked.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
     // Express and the like follow registration order, which is not read: every route the request fits stays.
     expect(matchCalls({ surfaces, calls }).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
     // Spring scores a variable 1 and a wildcard 100: /a/{x}/{y} over /a/*/*.
     const scored = [surface("GET", "/a/*/*"), surface("GET", "/a/{x}/{y}")];
-    expect(matchCalls({ surfaces: scored, calls: [call("GET", "/a/p/q")] }, new Set(["s"])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/{y}"]);
+    expect(matchCalls({ surfaces: scored, calls: [call("GET", "/a/p/q")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/{y}"]);
     // Spring prefers fewer variables: /a/{x}/c/d over /a/b/{x}/{y}.
     const spring = [surface("GET", "/a/b/{x}/{y}"), surface("GET", "/a/{x}/c/d")];
-    expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Set(["s"])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
+    expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
   });
 
   it("matches a catch-all against the rest of the path", () => {
@@ -539,7 +539,7 @@ describe("review fixes, continued", () => {
   it("prefers the longer of two catch-all routes before their scores, as Spring does", () => {
     const surface = (path: string): Surface => ({ id: `s|GET ${path}`, component: "s", method: "GET", path, at: { file: "a", line: 1 }, evidence: "text" });
     const request: Call = { id: "c", from: "w", to: "s", method: "GET", path: "/bar/foo/z", at: { file: "b", line: 1 }, evidence: "text", based: false };
-    const { targetsOf } = matchCalls({ surfaces: [surface("/bar/{*rest}"), surface("/{x}/foo/{*rest}")], calls: [request] }, new Set(["s"]));
+    const { targetsOf } = matchCalls({ surfaces: [surface("/bar/{*rest}"), surface("/{x}/foo/{*rest}")], calls: [request] }, new Map([["s", "spring"]]));
     expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /{x}/foo/{*rest}"]);
   });
 });
@@ -595,7 +595,7 @@ describe("scope: Spring reads only what the code spells out", () => {
   it("scores a wildcard inside a segment as Spring does", () => {
     const surface = (path: string): Surface => ({ id: `s|GET ${path}`, component: "s", method: "GET", path, at: { file: "a", line: 1 }, evidence: "text" });
     const request: Call = { id: "c", from: "w", to: "s", method: "GET", path: "/files/a.txt", at: { file: "b", line: 1 }, evidence: "text", based: false };
-    const { targetsOf } = matchCalls({ surfaces: [surface("/files/*.txt"), surface("/files/{name}")], calls: [request] }, new Set(["s"]));
+    const { targetsOf } = matchCalls({ surfaces: [surface("/files/*.txt"), surface("/files/{name}")], calls: [request] }, new Map([["s", "spring"]]));
     expect(targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /files/{name}"]);
   });
 });

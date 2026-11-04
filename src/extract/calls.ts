@@ -5,6 +5,7 @@ import { callPath, HOLE, joinRoute } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, unwrap } from "./binding.js";
+import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
@@ -117,7 +118,7 @@ function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   return d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && d.initializer && d.parent.flags & ts.NodeFlags.Const ? d : undefined;
 }
 
-export function callsFromTypeScript(file: string, text: string, spec: CallSource): Draft<Call>[] {
+export function callsFromTypeScript(file: string, text: string, spec: CallSource, spans?: Spans): Draft<Call>[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Array<{ node: ts.Node; call: Draft<Call> }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
@@ -145,7 +146,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
-      const parsed = callPath(raw);
+      const parsed = spans?.holds(file, node.getStart(sf)) ? undefined : callPath(raw);
       if (parsed) {
         found.push({ node, call: {
           from: spec.from,
@@ -252,12 +253,13 @@ export function withoutComments(file: string, text: string): string {
 }
 
 /** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
-export function callsFromText(file: string, original: string, spec: CallSource): Draft<Call>[] {
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans): Draft<Call>[] {
   const out: Draft<Call>[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
   for (const m of text.matchAll(STRING)) {
     const index = m.index ?? 0;
+    if (spans?.holds(file, index)) continue;
     const body = m[1] ?? m[2]!;
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
     const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
@@ -591,7 +593,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   return out.sort((a, b) => a.at.line - b.at.line);
 }
 
-export function extractCalls(source: Source, config: Config, coverage: Coverage[] = []): Draft<Call>[] {
+/** `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests. */
+export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans): Draft<Call>[] {
   const out: Draft<Call>[] = [];
   for (const spec of config.calls) {
     const files = select(source, spec.files, config.exclude);
@@ -599,7 +602,11 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
-      const read = /\.(c|m)?[tj]sx?$/.test(file) ? callsFromTypeScript(file, text, spec) : /\.html?$/.test(file) ? callsFromTemplate(file, text, spec) : callsFromText(file, text, spec);
+      const read = /\.(c|m)?[tj]sx?$/.test(file)
+        ? callsFromTypeScript(file, text, spec, spans)
+        : /\.html?$/.test(file)
+          ? callsFromTemplate(file, text, spec)
+          : callsFromText(file, text, spec, spans);
       // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
       out.push(...(spec.prefix ? read.map((c) => (c.based ? c : { ...c, path: joinRoute(spec.prefix!, c.path) })) : read));
     }

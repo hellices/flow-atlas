@@ -179,8 +179,21 @@ export class Reach {
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
     // The handler's own parameters are what the framework hands it (`req`, `res`, `reply`): `res.send()` is the
     // framework's method, not a port of the component, so it names nothing to follow.
-    const handlers = ts.isFunctionLike(start) ? [start] : ts.isCallExpression(start) ? start.arguments.filter((a) => ts.isFunctionLike(a)) : [];
+    // The start is the handler, the registration call that holds it, or its body (a re-exported function's).
+    const handlers = ts.isFunctionLike(start)
+      ? [start]
+      : ts.isCallExpression(start)
+        ? start.arguments.filter((a) => ts.isFunctionLike(a))
+        : ts.isBlock(start) && ts.isFunctionLike(start.parent)
+          ? [start.parent]
+          : [];
     const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
+    // `res.send()` and `res.status(500).send()` alike: a chain that starts at one of those parameters.
+    const fromFramework = (receiver: ts.Expression): boolean => {
+      let root = receiver;
+      while (ts.isPropertyAccessExpression(root) || ts.isCallExpression(root) || ts.isElementAccessExpression(root) || ts.isNonNullExpression(root)) root = root.expression;
+      return ts.isIdentifier(root) && framework.has(declarationOf(root)!);
+    };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
@@ -205,7 +218,7 @@ export class Reach {
               seen.add(key);
               queue.push(implementation);
             }
-          } else if (!(ts.isIdentifier(receiver) && framework.has(declarationOf(receiver)!))) names.add(member);
+          } else if (!fromFramework(receiver)) names.add(member);
           if (n.expression.expression.kind === ts.SyntaxKind.ThisKeyword && classOf) {
             const method = classOf.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(parsed.sf) === member);
             const key = `${f}#this.${member}`;

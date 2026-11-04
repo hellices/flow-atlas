@@ -139,6 +139,9 @@ describe("framework rules", () => {
       ["app/page.tsx", undefined],
     ];
     expect(rows.map(([file]) => nextRoute(file)?.path)).toEqual(rows.map(([, path]) => path));
+    // Read from the component's root: a project in a directory named app keeps its own app/ as the router.
+    expect(nextRoute("apps/app/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
+    expect(nextRoute("apps/app/src/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
     // A required catch-all takes one segment or more, an optional one none or more.
     expect([pathsMatch("/files/{path}/**", "/files"), pathsMatch("/files/{path}/**", "/files/a/b"), pathsMatch("/files/{*path}", "/files")]).toEqual([false, true, true]);
   });
@@ -148,9 +151,14 @@ describe("framework rules", () => {
       "app/items/route.ts": "export async function POST(req) {}\nexport const GET = () => new Response();\nfunction put() {}\nexport { put as PUT };",
       "app/orders/route.ts": 'export { GET } from "./handlers";\nexport { create as DELETE } from "./handlers";',
       "app/orders/handlers.ts": "export function GET() {}\nexport function create() {}",
+      "app/stock/route.ts": 'export * from "./handlers";',
+      "app/stock/handlers.ts": "export function POST() {}",
       "pages/api/ping.ts": "export default function handler(req, res) {}",
+      "pages/api/legacy.ts": 'export { default } from "../../server/legacy";',
+      "server/legacy.ts": "export default function legacy(req, res) {}",
     };
     expect(scanned(files)).toEqual([
+      "api|* /api/legacy",
       "api|* /api/ping",
       "api|DELETE /orders",
       "api|GET /items",
@@ -159,19 +167,50 @@ describe("framework rules", () => {
       "api|HEAD /orders (implicit)",
       "api|OPTIONS /items (implicit)",
       "api|OPTIONS /orders (implicit)",
+      "api|OPTIONS /stock (implicit)",
       "api|POST /items",
+      "api|POST /stock",
       "api|PUT /items",
     ]);
   });
 
+  it("picks a Next.js route by its path, then its method, as Next.js does", () => {
+    const files = {
+      "app/api/users/me/route.ts": "export function GET() {}",
+      "app/api/users/[id]/route.ts": "export function GET() {}\nexport function DELETE() {}",
+      "web/a.ts": 'export const me = () => fetch("/api/users/me");\nexport const leave = () => fetch("/api/users/me", { method: "DELETE" });',
+    };
+    const config = normalizeConfig({
+      components: [{ name: "api", path: "" }, { name: "web", path: "web" }],
+      routes: [{ component: "api", files: ["app/**/*.ts"], styles: ["next"] }],
+      calls: [{ from: "web", to: "api", files: ["web/**/*.ts"] }],
+    });
+    const graph = scan(memory(files), config);
+    expect(graph.edges.filter((e) => e.kind === "match").map((e) => e.to)).toEqual(["api|GET /api/users/me"]);
+    // The me route has no DELETE: Next.js answers 405 rather than trying /api/users/[id].
+    expect(evaluate(graph, config).map((f) => f.key)).toContain("FA002|web->api|DELETE /api/users/me");
+  });
+
+  it("drops a route registration from the calls, and keeps the request its handler makes on the same path", () => {
+    const files = { "bff/routes.ts": 'app.get("/users", async (req, res) => res.json(await client.get("/users")));', "core/routes.ts": 'app.get("/users", h);' };
+    const config = normalizeConfig({
+      components: [{ name: "bff", path: "bff" }, { name: "core", path: "core" }],
+      routes: [{ component: "bff", files: ["bff/*.ts"], styles: ["express"] }, { component: "core", files: ["core/*.ts"], styles: ["express"] }],
+      calls: [{ from: "bff", to: "core", files: ["bff/*.ts"] }],
+    });
+    const graph = scan(memory(files), config);
+    expect(graph.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /users"]);
+    expect(graph.edges.filter((e) => e.kind === "reach")).toHaveLength(1);
+  });
+
   it("reaches what a framework answers by itself only by a request that names the method", () => {
     const files = {
-      "app/api/items/route.ts": "export function GET() {}",
+      "site/app/api/items/route.ts": "export function GET() {}",
       "web/a.ts": 'export const any = () => request("/api/items");\nexport const head = () => fetch("/api/items", { method: "HEAD" });',
     };
     const config = normalizeConfig({
-      components: [{ name: "api", path: "app" }, { name: "web", path: "web" }],
-      routes: [{ component: "api", files: ["app/**/*.ts"], styles: ["next"] }],
+      components: [{ name: "api", path: "site" }, { name: "web", path: "web" }],
+      routes: [{ component: "api", files: ["site/**/*.ts"], styles: ["next"] }],
       calls: [{ from: "web", to: "api", files: ["web/**/*.ts"] }],
     });
     const graph = scan(memory(files), config);

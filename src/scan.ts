@@ -5,8 +5,9 @@ import { extractComponents } from "./extract/components.js";
 import { Reach } from "./extract/reach.js";
 import { extractRegistries, extractVersions } from "./extract/registries.js";
 import { extractRoutes } from "./extract/routes.js";
-import { matchCalls, rankedComponents } from "./match.js";
-import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph, type Surface } from "./model.js";
+import { Spans } from "./extract/spans.js";
+import { matchCalls, rankedComponents, type Ranking } from "./match.js";
+import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph } from "./model.js";
 import { select, type Source } from "./source.js";
 import { codeDependency, configDependency, provenance } from "./provenance.js";
 
@@ -26,7 +27,7 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * lead to: a call the handler's code runs (its line is in `executed`, evidence `static`), or one held in a method the
  * handler calls by name (evidence `name`).
  */
-export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>, ranked?: Set<string>): Edge[] {
+export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>, ranked?: Map<string, Ranking>): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf } = matchCalls(graph, ranked);
   graph.calls.forEach((c, i) => {
@@ -51,19 +52,6 @@ export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map
 }
 
 /** `root` names the configuration relative to the repository; `requested` is the revision as the caller gave it. */
-/**
- * A component's own route registration is no request, also where its route file is one of its call files: the path
- * string of `app.post("/x", ...)`, on the registration's line or just below it, is dropped.
- */
-function withoutRegistrations(calls: Draft<Call>[], surfaces: Surface[]): Draft<Call>[] {
-  const lines = new Map<string, number[]>();
-  for (const s of surfaces) {
-    const key = `${s.component}|${s.at.file}|${s.path}`;
-    (lines.get(key) ?? lines.set(key, []).get(key)!).push(s.at.line);
-  }
-  return calls.filter((c) => c.based || !lines.get(`${c.from}|${c.at.file}|${c.path}`)?.some((l) => c.at.line >= l && c.at.line <= l + 2));
-}
-
 export function scan(source: Source, config: Config, context: { root?: string; requested?: string } = {}): Graph {
   const { components, declared, limits } = extractComponents(source, config);
   const known = new Set(components.map((c) => c.name));
@@ -79,9 +67,10 @@ export function scan(source: Source, config: Config, context: { root?: string; r
 
   const coverage: Coverage[] = [];
   const executed = new Map<string, Set<string>>();
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed);
+  const spans = new Spans();
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
-  const calls = assignCallIds(withoutRegistrations(extractCalls(source, config, coverage), surfaces));
+  const calls = assignCallIds(extractCalls(source, config, coverage, spans));
   const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config));
   const graph: Graph = {
     apiVersion: API_VERSION,

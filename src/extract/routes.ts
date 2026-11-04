@@ -11,6 +11,7 @@ import { routesFromSpring, type Views } from "./spring.js";
 import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, type Mounts } from "./mounts.js";
+import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 
 const NEST_METHODS: Record<string, string> = {
@@ -97,15 +98,19 @@ function operationIdIn(args: readonly ts.Expression[]): string | undefined {
 const NEXT_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
 
 /**
- * The path Next.js serves a file at: a route handler `app/**\/route.ts` (the first `app` directory in the path) or an
- * API route under `pages/api`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
+ * The path Next.js serves a file at: a route handler `app/**\/route.ts` or an API route under `pages/api`, with `app/`
+ * and `pages/` at the component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
  * (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots `@x` add no
  * segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under `pages/api`
  * those are plain segments.
  */
-export function nextRoute(file: string): { path: string; pages: boolean } | undefined {
-  const app = /(?:^|\/)app\/((?:[^]*\/)?)route\.(?:c|m)?[jt]sx?$/.exec(file);
-  const pages = app ? undefined : /(?:^|\/)pages\/(api(?:\/[^]*)?)\.(?:c|m)?[jt]sx?$/.exec(file);
+export function nextRoute(file: string, root?: string): { path: string; pages: boolean } | undefined {
+  // Inside the component, `app/` and `pages/` sit at its root or under `src/`; without a root, the first one found.
+  const inside = root === undefined ? file : root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
+  if (inside === undefined) return undefined;
+  const lead = root === undefined ? "(?:^|\\/)" : "^(?:src\\/)?";
+  const app = new RegExp(`${lead}app\\/((?:[^]*\\/)?)route\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  const pages = app ? undefined : new RegExp(`${lead}pages\\/(api(?:\\/[^]*)?)\\.(?:c|m)?[jt]sx?$`).exec(inside);
   const rest = app?.[1] ?? pages?.[1];
   if (rest === undefined) return undefined;
   const segments: string[] = [];
@@ -132,11 +137,21 @@ export function routesFromTypeScript(
   file: string,
   text: string,
   spec: RouteSource,
-  reach?: Reach,
-  executed?: Map<string, Set<string>>,
-  mounts?: Mounts,
-  limits?: string[],
+  context: {
+    reach?: Reach;
+    executed?: Map<string, Set<string>>;
+    mounts?: Mounts;
+    limits?: string[];
+    /** Where registrations write their paths, collected for the call extractors. */
+    spans?: Spans;
+    /** The component's directory, which the Next.js paths are read from. */
+    root?: string;
+  } = {},
 ): Surface[] {
+  const { reach, executed, mounts, limits, spans, root } = context;
+  const span = (node: ts.Node | undefined) => {
+    if (node) spans?.add(file, node.getStart(sf), node.getEnd());
+  };
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const styles = new Set(spec.styles ?? []);
   const receivers = new Set(spec.receivers ?? ["app", "router", "server", "fastify"]);
@@ -167,7 +182,15 @@ export function routesFromTypeScript(
     });
   };
 
-  const next = styles.has("next") ? nextRoute(file) : undefined;
+  const next = styles.has("next") ? nextRoute(file, root) : undefined;
+  /** The handler an export names, in the module it is re-exported from when there is one. */
+  const reexported = (st: ts.ExportDeclaration, e: ts.ExportSpecifier): { handler?: ts.Node; file?: string } => {
+    const from = st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : undefined;
+    if (!from) return { handler: e };
+    const target = reach?.resolve(file, from);
+    const found = target ? reach!.exported(target, (e.propertyName ?? e.name).text) : undefined;
+    return found ? { handler: found.node, file: found.file } : {};
+  };
   if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
@@ -175,6 +198,14 @@ export function routesFromTypeScript(
         // An API route's default export answers every method.
         if (ts.isExportAssignment(st) && !st.isExportEquals) add("*", next.path, st, st.expression);
         if (ts.isFunctionDeclaration(st) && exported(st) && ts.getModifiers(st)!.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) add("*", next.path, st, st);
+        // `export { default } from "../server/handler"`, `export { handler as default }`.
+        if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
+          for (const e of st.exportClause.elements) {
+            if (e.name.text !== "default") continue;
+            const r = reexported(st, e);
+            add("*", next.path, e, r.handler, undefined, { handlerFile: r.file });
+          }
+        }
         continue;
       }
       if (ts.isFunctionDeclaration(st) && exported(st) && st.name && NEXT_METHODS.has(st.name.text)) handlers.set(st.name.text, { node: st, handler: st });
@@ -184,13 +215,17 @@ export function routesFromTypeScript(
         }
       }
       if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
-        const from = st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : undefined;
         for (const e of st.exportClause.elements) {
-          if (!NEXT_METHODS.has(e.name.text)) continue;
           // `export { GET } from "./handlers"` serves the other module's function; without it the route still stands.
-          const target = from && reach ? reach.resolve(file, from) : undefined;
-          const found = target ? reach!.exported(target, (e.propertyName ?? e.name).text) : undefined;
-          handlers.set(e.name.text, found ? { node: e, handler: found.node, file: found.file } : { node: e, handler: from ? undefined : e });
+          if (NEXT_METHODS.has(e.name.text)) handlers.set(e.name.text, { node: e, ...reexported(st, e) });
+        }
+      }
+      // `export * from "./handlers"` serves every method that module exports, followed as far as re-exports go.
+      if (ts.isExportDeclaration(st) && !st.exportClause && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) && reach) {
+        const target = reach.resolve(file, st.moduleSpecifier.text);
+        for (const method of NEXT_METHODS) {
+          const found = target && !handlers.has(method) ? reach.exported(target, method) : undefined;
+          if (found) handlers.set(method, { node: st, handler: found.node, file: found.file });
         }
       }
     }
@@ -206,7 +241,10 @@ export function routesFromTypeScript(
       let bases: string[] | undefined;
       for (const d of decorators(node)) {
         const call = decoratorCall(d);
-        if (call?.name === "Controller") bases = decoratorPaths(call.args);
+        if (call?.name === "Controller") {
+          bases = decoratorPaths(call.args);
+          for (const a of call.args) span(a);
+        }
       }
       if (bases !== undefined) {
         const className = node.name?.text;
@@ -223,6 +261,7 @@ export function routesFromTypeScript(
             const method = call ? NEST_METHODS[call.name] : undefined;
             const paths = call && method ? decoratorPaths(call.args) : undefined;
             if (!paths) continue;
+            for (const a of call!.args) span(a);
             for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
           }
         }
@@ -234,7 +273,8 @@ export function routesFromTypeScript(
         const receiver = node.expression.expression;
         const path = stringValue(node.arguments[0]);
         const router = ts.isIdentifier(receiver) ? mounts?.routerOf(file, receiver) : undefined;
-        if (ts.isIdentifier(receiver) && path?.startsWith("/")) {
+        if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
+          span(node.arguments[0]);
           const method = name === "all" ? "*" : name;
           if (router) {
             const prefixes = mounts!.prefixes(router);
@@ -247,12 +287,18 @@ export function routesFromTypeScript(
         if (name !== c.name) continue;
         const method = c.method ?? stringValue(node.arguments[c.methodArg]);
         const path = stringValue(node.arguments[c.pathArg]);
-        if (method && path?.startsWith("/")) add(method, path, node, node, operationIdIn(node.arguments));
+        if (method && path?.startsWith("/")) {
+          span(node.arguments[c.pathArg]);
+          add(method, path, node, node, operationIdIn(node.arguments));
+        }
       }
     }
     if (constPattern && ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && constPattern.test(node.name.text)) {
       const path = stringValue(node.initializer);
-      if (path?.startsWith("/")) add("GET", path, node);
+      if (path?.startsWith("/")) {
+        span(node.initializer);
+        add("GET", path, node);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -326,6 +372,7 @@ function apiRouteMethods(text: string, code: string, argsStart: number): string[
 
 /** A plain, raw or unicode literal at the start of `text`; an f-string or a name is a path the file does not spell out. */
 const pythonLiteral = (text: string): string | undefined => /^[rRuU]?(["'])((?:(?!\1).)+)\1/.exec(text)?.[2];
+const pythonLiteralLength = (text: string): number | undefined => /^[rRuU]?(["'])((?:(?!\1).)+)\1/.exec(text)?.[0].length;
 
 /**
  * A Starlette path in atlas's form: `{name:path}` takes the rest of the path, as Spring's `{*name}` does; any other
@@ -347,11 +394,17 @@ function pythonArgStarts(code: string, from: number): number[] {
   return starts.map((s) => s + (/^\s*/.exec(code.slice(s))?.[0].length ?? 0));
 }
 
-export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[]): Surface[] {
+export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans): Surface[] {
   const out: Surface[] = [];
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
   const code = pythonCode(text);
-  const add = (method: string, raw: string, at: number, implicit = false) => {
+  const add = (verb: string, raw: string, at: number, implicit = false) => {
+    // A `path` converter takes the rest of the path only at its end; one before a suffix is a match atlas does not do.
+    if (/\{\w+:path\}./.test(raw)) {
+      limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} has a path converter before the end of ${raw}; the route is not read`);
+      return;
+    }
+    const method = verb.toUpperCase();
     const path = starlettePath(raw);
     out.push({
       id: surfaceId({ component: spec.component, method, path }),
@@ -370,6 +423,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const argsStart = (m.index ?? 0) + m[0].length;
     const path = pythonLiteral(text.slice(argsStart));
     if (!path) continue;
+    spans?.add(file, argsStart, closingParen(code, argsStart));
     const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
     for (const method of methods ?? []) add(method, path, m.index ?? 0);
   }
@@ -380,6 +434,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const argsStart = (m.index ?? 0) + m[0].length;
     const path = pythonLiteral(text.slice(argsStart));
     if (!path?.startsWith("/")) continue;
+    spans?.add(file, argsStart, argsStart + (pythonLiteralLength(text.slice(argsStart)) ?? 0));
     const args = pythonArgStarts(code, argsStart).slice(1);
     const mounted = args.find((a) => /^app\s*=/.test(code.slice(a))) ?? args.find((a) => !/^\w+\s*=(?!=)/.test(code.slice(a)));
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
@@ -394,7 +449,10 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       const args = pythonArgStarts(code, (m.index ?? 0) + m[0].length);
       const path = args[c.pathArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.pathArg]));
       const method = c.method ?? (args[c.methodArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.methodArg]))?.toUpperCase());
-      if (path?.startsWith("/") && method) add(method, path, m.index ?? 0);
+      if (path?.startsWith("/") && method) {
+        spans?.add(file, args[c.pathArg]!, args[c.pathArg]! + (pythonLiteralLength(text.slice(args[c.pathArg])) ?? 0));
+        add(method, path, m.index ?? 0);
+      }
     }
   }
   return out;
@@ -577,8 +635,10 @@ export function extractRoutes(
   coverage: Coverage[] = [],
   limits: string[] = [],
   executed?: Map<string, Set<string>>,
+  spans?: Spans,
 ): Surface[] {
   const out: Surface[] = [];
+  const roots = new Map(config.components.map((c) => [c.name, c.path]));
   // View names Spring handlers render; their templates' requests are what the route leads to.
   const views: Views = new Map();
   const codeFiles = new Map<string, Set<string>>();
@@ -593,9 +653,9 @@ export function extractRoutes(
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, reach, executed, mounts, limits));
-      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits));
-      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component) }));
+      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans));
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }

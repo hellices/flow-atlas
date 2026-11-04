@@ -106,16 +106,20 @@ its routes under each literal path it is mounted at with `use` (an inline middle
 nested and imported routers included, `./r.js` standing for `r.ts`; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
 read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
-the like, also re-exported from another module, at the folder path: route groups and slots add no segment, private
-folders and intercepting routes are not served, `[id]` is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and
-`[[...rest]]` is `{*rest}` (none or more). Next.js answers HEAD with the GET handler and OPTIONS by itself when the file
-exports neither; those surfaces are `implicit` and no rule expects a caller for them. API routes under `pages/api` answer
-every method, and their folders are plain segments. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
+under its `src/`: route groups and slots add no segment, private folders and intercepting routes are not served, `[id]`
+is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and `[[...rest]]` is `{*rest}` (none or more). Next.js
+answers HEAD with the GET handler and OPTIONS by itself when the file exports neither; those surfaces are `implicit`,
+reached only by a request that names the method, and no rule expects a caller for them. As Next.js does, a request is
+matched to the most specific route path first (a static name, then `[x]`, then catch-alls), and a method that route lacks
+matches nothing else. API routes under `pages/api` answer every method from their default export, written or
+re-exported, and their folders are plain segments. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
 decorators are read from Python, with Starlette's converters (`{name:path}` takes the rest of the path, as `{*name}`;
-`{id:int}` is one segment), and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under `/x/**`; another mounted application
+`{id:int}` is one segment; a `path` converter before a suffix is not matched, so that route is left out with a limit),
+and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under `/x/**`; another mounted application
 is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
