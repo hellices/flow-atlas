@@ -120,8 +120,9 @@ matched to the most specific route path first (a static name, then `[x]`, then c
 matches nothing else. API routes under `pages/api` answer every method from their default export, written or
 re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
 `pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
-the default export (a function component, or a class component's `render`) belongs to the page's request, prop values
-included; client modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions
+the default export (a function component, also one named by `export { Page as default }` or re-exported from another
+module, or a class component's `render`) belongs to the page's request, prop values and what computes a handler or an
+address included; client modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions
 passed as props do not: a `<Link href>` or a pushed address (`push("/")`, also parenthesized or with `as const`) reaches
 the page it names as a request of its own. Include `.tsx` in the route
 files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
@@ -150,7 +151,8 @@ and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A
 form's method, and a submit button's `formaction` its `formmethod`, else its form's; a submit control with no form
 owner (none around it, or a `form` attribute naming no form) submits nothing. A plain `method` or `formmethod`
 is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
-browser does; `th:formmethod` just writes `formmethod`. Thymeleaf's `th:method` (or `data-th-method`) replaces a
+browser does; `th:formmethod` just writes `formmethod`, so a literal (`post`, `'post'`) is read the same way and a
+computed value (`${m}`) is `*`. Thymeleaf's `th:method` (or `data-th-method`) replaces a
 form's method: GET and POST as written, and any other value
 `*`, since Spring turns the hidden `_method` field into that method only when its HiddenHttpMethodFilter is on, which
 Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attributes a call source names in

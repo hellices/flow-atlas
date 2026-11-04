@@ -115,7 +115,7 @@ export function nextRoute(file: string, root?: string): { path: string; kind: "h
   if (pages && /^(?:_app|_document|_error|404|500)$/.test(pages[1]!)) return undefined;
   const rest = app?.[1] ?? pages?.[1];
   if (rest === undefined) return undefined;
-  const kind = app ? (app[2] === "route" ? "handler" : "page") : /^api(?:\/|$)/.test(rest) ? "api" : "page";
+  const kind = app ? (app[2] === "route" ? "handler" : "page") : rest.startsWith("api/") ? "api" : "page";
   const segments: string[] = [];
   for (const seg of rest.split("/").filter(Boolean)) {
     if (app) {
@@ -201,16 +201,24 @@ export function routesFromTypeScript(
     const isDefault = (st: ts.Statement) =>
       (ts.isExportAssignment(st) && !st.isExportEquals) ||
       ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
-    const page = sf.statements.find(isDefault);
+    let page: ts.Statement | undefined = sf.statements.find(isDefault);
     // A class component renders through its `render` method; `this.x()` called there is followed from it.
-    const component =
+    let component: ts.Node | undefined =
       page && ts.isExportAssignment(page)
         ? page.expression
         : page && ts.isClassDeclaration(page)
           ? page.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(sf) === "render")
           : page;
-    add("GET", next.path, page ?? sf, component, undefined, { render: true });
-    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true });
+    let handlerFile: string | undefined;
+    if (!page) {
+      // `export { Page as default }`, or `export { default } from "./Page"`: the function it names renders.
+      page = sf.statements.find((st) => ts.isExportDeclaration(st) && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === "default"));
+      const found = page ? reach?.exported(file, "default") : undefined;
+      component = found?.node;
+      handlerFile = found?.file;
+    }
+    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile });
+    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile });
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {

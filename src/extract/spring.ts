@@ -436,20 +436,24 @@ function chainRoot(masked: string, dot: number): string | undefined {
 }
 
 /**
- * The names the file gives an HttpSecurity (`HttpSecurity http` in Java, `http: HttpSecurity` in Kotlin), each with the
- * text it is in scope for: a parameter's function body (a block, or a Kotlin expression body), a local's enclosing block
- * from its declaration on. A parameter of a function without a body, or of a lambda, binds nothing read here.
+ * The names the file declares, each with its type (empty when the declaration states none: `val x = ...`, `var x`) and
+ * the text it is in scope for: a parameter's function body (a block, or a Kotlin expression body), a local's enclosing
+ * block from its declaration on. A parameter of a function without a body, or of a lambda, binds nothing read here.
  */
-function securityBindings(masked: string): Array<{ name: string; start: number; end: number }> {
-  const out: Array<{ name: string; start: number; end: number }> = [];
-  for (const m of masked.matchAll(/\bHttpSecurity\s+(\w+)|(\w+)\s*:\s*HttpSecurity\b/g)) {
-    const name = (m[1] ?? m[2])!;
-    const at = m.index ?? 0;
+function bindings(masked: string, kotlin: boolean): Array<{ name: string; type: string; start: number; end: number }> {
+  const out: Array<{ name: string; type: string; start: number; end: number }> = [];
+  // `Type name` in Java, `name: Type` in Kotlin, and an untyped `val`/`var` in either.
+  const typed = kotlin ? /\b([a-z_]\w*)\s*:\s*([A-Z][\w.]*)/g : /\b([A-Z][\w.]*)(?:<[^<>()]*>)?(?:\[\])?\s+([a-z_$][\w$]*)\s*(?=[,)=;:])/g;
+  const found = [
+    ...[...masked.matchAll(typed)].map((m) => ({ at: m.index ?? 0, name: kotlin ? m[1]! : m[2]!, type: kotlin ? m[2]! : m[1]! })),
+    ...[...masked.matchAll(/\b(?:val|var)\s+([a-z_]\w*)\s*=/g)].map((m) => ({ at: m.index ?? 0, name: m[1]!, type: "" })),
+  ];
+  for (const { at, name, type } of found) {
     const owner = enclosingOpen(masked, at);
     if (owner === undefined) continue;
     if (masked[owner] === "{") {
       const end = closing(masked, owner);
-      if (end !== undefined) out.push({ name, start: at, end });
+      if (end !== undefined) out.push({ name, type, start: at, end });
       continue;
     }
     const params = closing(masked, owner);
@@ -465,8 +469,8 @@ function securityBindings(masked: string): Array<{ name: string; start: number; 
     }
     if (masked[i] === "{") {
       const end = closing(masked, i);
-      if (end !== undefined) out.push({ name, start: i, end });
-    } else if (masked[i] === "=" && masked[i + 1] !== "=") out.push({ name, start: i, end: expressionEnd(masked, i + 1) });
+      if (end !== undefined) out.push({ name, type, start: i, end });
+    } else if (masked[i] === "=" && masked[i + 1] !== "=") out.push({ name, type, start: i, end: expressionEnd(masked, i + 1) });
   }
   return out;
 }
@@ -511,13 +515,15 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     const full = springTemplate(joinRoute(path));
     out.push({ id: surfaceId({ component: spec.component, method: "POST", path: full }), component: spec.component, method: "POST", path: full, at: { file, line: lineOf(text, index) }, evidence: "text" });
   };
-  const security = securityBindings(masked);
+  const declared = bindings(masked, /\.kts?$/.test(file));
   for (const m of masked.matchAll(/\.(formLogin|logout)\s*\(/g)) {
     const at = m.index ?? 0;
     // Only a call on that configurer, directly or down its chain, where its name is in scope; `request.logout()` on a
     // servlet request, even one named like an HttpSecurity elsewhere in the file, is a servlet call.
     const root = chainRoot(masked, at);
-    if (!security.some((b) => b.name === root && at >= b.start && at < b.end)) continue;
+    // The innermost declaration of the name decides: a nested `http: HttpServletRequest` hides an outer HttpSecurity.
+    const binding = declared.filter((b) => b.name === root && at >= b.start && at < b.end).sort((a, b) => b.start - a.start)[0];
+    if (!binding || !/(?:^|\.)HttpSecurity$/.test(binding.type)) continue;
     const open = at + m[0].length - 1;
     const close = closing(masked, open);
     if (close === undefined) continue;

@@ -522,9 +522,13 @@ const valueOf = (tag: StartTag, name: string): string | undefined => tag.attribu
  */
 function submitMethod(tag: StartTag, plain: string): string | null | undefined {
   const th = [`th:${plain}`, `data-th-${plain}`].map((name) => valueOf(tag, name)).find((v) => v !== undefined)?.trim().toLowerCase();
+  // A Thymeleaf value is an expression: a literal token (`post`, `'post'`) writes itself; anything else (`${m}`) is
+  // known only when the page renders.
+  const literal = th === undefined ? undefined : /^'?([a-z]+)'?$/.exec(th)?.[1];
   // Only a form's method gets the hidden `_method` field; `th:formmethod` just writes the `formmethod` attribute.
-  if (th !== undefined && plain === "method") return th === "get" || th === "post" ? th.toUpperCase() : "*";
-  const value = th ?? valueOf(tag, plain)?.trim().toLowerCase();
+  if (th !== undefined && plain === "method") return literal === "get" || literal === "post" ? literal.toUpperCase() : "*";
+  if (th !== undefined && literal === undefined) return "*";
+  const value = literal ?? valueOf(tag, plain)?.trim().toLowerCase();
   if (value === undefined) return undefined;
   if (value === "post") return "POST";
   return value === "dialog" ? null : "GET";

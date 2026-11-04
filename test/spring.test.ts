@@ -87,6 +87,9 @@ describe("Spring routes", () => {
     // One name, two methods: the servlet request's logout is not the configurer's.
     const shadowed = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(withDefaults()); }\nvoid out(HttpServletRequest http) { http.logout(); }';
     expect(routes(shadowed)).toEqual(["POST /login 1"]);
+    // A nested function's own `http` hides the outer HttpSecurity.
+    const inner = ["fun config(http: HttpSecurity) {", "  http.formLogin(withDefaults())", "  fun handle(http: HttpServletRequest) { http.logout() }", "}"].join("\n");
+    expect(routes(inner, "N.kt")).toEqual(["POST /login 2"]);
     const kotlin = ["fun chain(http: HttpSecurity): SecurityFilterChain =", "  http.formLogin(withDefaults())", "    .build()", "fun out(http: HttpServletRequest) = http.logout()"].join("\n");
     expect(routes(kotlin, "S.kt")).toEqual(["POST /login 2"]);
   });
@@ -526,8 +529,13 @@ describe("review fixes, continued", () => {
   const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
 
   it("reads the method of Thymeleaf's HTML-friendly data-th- attributes, a formmethod as HTML does", () => {
-    const html = ['<form data-th-method="post" data-th-action="@{/save}"></form>', '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>'].join("\n");
-    expect(calls(html)).toEqual(["POST /save 1", "GET /drop 2"]);
+    const html = [
+      '<form data-th-method="post" data-th-action="@{/save}"></form>',
+      '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>',
+      // A value Thymeleaf computes is known only when the page renders; a quoted literal writes itself.
+      '<form><button th:formmethod="${m}" formaction="/maybe">d</button><button th:formmethod="\'post\'" formaction="/sure">s</button></form>',
+    ].join("\n");
+    expect(calls(html)).toEqual(["POST /save 1", "GET /drop 2", "* /maybe 3", "POST /sure 3"]);
   });
 
   it("reads only what HTML makes a request of", () => {

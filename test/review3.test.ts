@@ -148,6 +148,8 @@ describe("framework rules", () => {
       ["pages/api/_health.ts", "/api/_health"],
       ["app/items/[product-id]/route.ts", "/items/{product-id}"],
       ["pages/api/(v1)/@me.ts", "/api/(v1)/@me"],
+      // Only files under pages/api/ are API routes; pages/api.tsx is the page at /api.
+      ["pages/api.tsx", "/api"],
       ["app/page.tsx", "/"],
       ["app/stories/[slug]/page.tsx", "/stories/{slug}"],
       ["app/layout.tsx", undefined],
@@ -155,6 +157,7 @@ describe("framework rules", () => {
       ["pages/_app.tsx", undefined],
     ];
     expect(rows.map(([file]) => nextRoute(file)?.path)).toEqual(rows.map(([, path]) => path));
+    expect([nextRoute("pages/api.tsx")?.kind, nextRoute("pages/api/users.ts")?.kind]).toEqual(["page", "api"]);
     // Read from the component's root: a project in a directory named app keeps its own app/ as the router.
     expect(nextRoute("apps/app/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
     expect(nextRoute("apps/app/src/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
@@ -206,12 +209,17 @@ describe("framework rules", () => {
         "export async function generateMetadata() { return {}; }",
         'const stats = () => fetch("/api/stats");',
         'const renderRow = () => fetch("/api/rows");',
+        'const makeHandler = () => {',
+        '  fetch("/api/setup");',
+        '  return () => fetch("/api/clicked");',
+        "};",
+        'const address = (p) => p;',
         "export default async function Note() {",
         '  const note = await fetch("/api/notes/1");',
-        '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /></Card>;',
+        '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /><button onClick={makeHandler()} /><a href={address("/later")} /></Card>;',
         "}",
       ].join("\n"),
-      "components/card.tsx": '"use client";\nexport function Card({ note }) { return <button onClick={() => router.push("/create")}>{note}</button>; }',
+      "components/card.tsx": '"use strict";\n"use client";\nexport function Card({ note }) { const extra = fetch("/api/card"); return <button onClick={() => router.push("/create")}>{note}{extra}</button>; }',
       "components/server-card.tsx": 'export async function ServerCard({ data }) { const tags = await fetch("/api/tags"); return <p>{tags}</p>; }',
       "app/api/notes/[id]/route.ts": "export function GET() {}",
       "app/create/page.tsx": "export default function Create() { return null; }",
@@ -223,13 +231,18 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
-    expect(page.at.line).toBe(7);
+    expect(page.at.line).toBe(12);
     const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
-    expect(reach.sort()).toEqual(["/api/notes/1", "/api/stats", "/api/tags"]);
+    // makeHandler runs while rendering; the handler it returns, the address the link holds and the client module do not.
+    expect(reach.sort()).toEqual(["/api/notes/1", "/api/setup", "/api/stats", "/api/tags"]);
   });
 
-  it("renders a Pages Router class page through its render method", () => {
+  it("renders a Pages Router page through whatever its default export names", () => {
     const files = {
+      // `export { Page as default }`, and a default re-exported from another module.
+      "pages/alias.tsx": 'const Page = () => { const n = fetch("/api/alias"); return <p>{n}</p>; };\nexport { Page as default };',
+      "pages/re.tsx": 'export { default } from "../views/re";',
+      "views/re.tsx": 'export default function Re() { const n = fetch("/api/re"); return <p>{n}</p>; }',
       "pages/notes.tsx": [
         'import React from "react";',
         "export default class Notes extends React.Component {",
@@ -242,12 +255,11 @@ describe("framework rules", () => {
     const config = normalizeConfig({
       components: [{ name: "web", path: "" }],
       routes: [{ component: "web", files: ["pages/**/*.tsx"], styles: ["next"] }],
-      calls: [{ from: "web", to: "web", files: ["pages/**/*.tsx"] }],
+      calls: [{ from: "web", to: "web", files: ["pages/**/*.tsx", "views/**/*.tsx"] }],
     });
     const graph = scan(memory(files), config);
-    const page = graph.surfaces.find((s) => s.id === "web|GET /notes")!;
-    const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
-    expect(reach).toEqual(["/api/notes"]);
+    const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    expect(["web|GET /notes", "web|GET /alias", "web|GET /re"].map(reached)).toEqual([["/api/notes"], ["/api/alias"], ["/api/re"]]);
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {
