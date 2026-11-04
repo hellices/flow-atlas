@@ -111,6 +111,27 @@ describe("Spring routes", () => {
     expect(routes("class C { void out(HttpServletRequest request) { request.logout(); } }")).toEqual([]);
   });
 
+  it("reads a path from a string constant the file declares, and says when it cannot", () => {
+    // The shape of a real controller: its paths are constants, one built from the other.
+    const java = [
+      "@RestController",
+      "class SubscriptionController {",
+      '  static final String PATH = "/v1/internal/subscription";',
+      '  private static final String BULK = PATH + "s";',
+      "  @GetMapping(PATH) Sub find() { return null; }",
+      "  @PostMapping(SubscriptionController.BULK) void replace() {}",
+      '  @DeleteMapping({PATH, "/v1/legacy"}) void remove() {}',
+      "  @PutMapping(Paths.ELSEWHERE) void elsewhere() {}",
+      "}",
+    ].join("\n");
+    const limits: string[] = [];
+    const read = routesFromSpring("S.java", java, spec, undefined, undefined, limits).map((r) => `${r.method} ${r.path} ${r.at.line}`);
+    expect(read).toEqual(["GET /v1/internal/subscription 5", "POST /v1/internal/subscriptions 6", "DELETE /v1/internal/subscription 7", "DELETE /v1/legacy 7"]);
+    expect(limits).toEqual(["routes server: S.java:8 maps a path the file does not spell out (Paths.ELSEWHERE); its routes are not read"]);
+    const kotlin = ["@RestController", "@RequestMapping(BASE)", "class K {", "  @GetMapping(arrayOf(ONE)) fun one() = 1", "  companion object {", '    const val BASE = "/k"', '    const val ONE = "/one"', "  }", "}"].join("\n");
+    expect(routes(kotlin, "K.kt")).toEqual(["GET /k/one 4"]);
+  });
+
   it("takes a type's mapping only for the type whose body holds the handler", () => {
     const text = [
       '@RestController @RequestMapping("/api")',

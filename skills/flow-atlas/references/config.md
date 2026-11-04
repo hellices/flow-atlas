@@ -137,8 +137,11 @@ and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under 
 is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
-`formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers
-nothing, and so does a Kotlin string template (`"$BASE/users"`). A Security setter counts only on the configurer: in a
+`formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
+declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
+constants), since an annotation argument is a compile-time constant; a constant of another file, an expression or a
+Kotlin string template (`"$BASE/users"`) registers nothing, and a limit names the mapping. A Security URL held in a
+constant registers nothing. A Security setter counts only on the configurer: in a
 lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
 `logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver

@@ -186,14 +186,84 @@ function attributes(args: string): { positional?: string; named: Map<string, str
   return { positional, named };
 }
 
-/** The paths a mapping names: none written means the root; a literal or a list of literals; undefined when built in code. */
-function mappingPaths(args: string | undefined, kotlin: boolean): string[] | undefined {
+/** `text` split at each top-level `sep`: one inside a string or brackets belongs to its part. */
+function splitTop(text: string, sep: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      const quote = text.startsWith('"""', i) ? '"""' : '"';
+      for (i += quote.length; i < text.length && !text.startsWith(quote, i); i++) if (quote === '"' && text[i] === "\\") i++;
+      i += quote.length - 1;
+    } else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === sep && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.map((p) => p.trim());
+}
+
+/** The value of a constant expression, or undefined when it is not one this file spells out. */
+type Constant = (expression: string) => string | undefined;
+
+/**
+ * The string constants a file declares: Java `static final String NAME = ...` and Kotlin `const val NAME = ...`, whose
+ * values are literals and other such constants joined with `+`. An annotation argument must be a compile-time constant,
+ * so a mapping that names one (`PATH`, `Type.PATH` for a type of the file) has its value. A name declared with two
+ * values is not read: which one a use sees depends on scopes this reading does not follow.
+ */
+function stringConstants(code: string, masked: string, kotlin: boolean): Constant {
+  const declared = new Map<string, Set<string>>();
+  const pattern = kotlin ? /\bconst\s+val\s+([A-Za-z_]\w*)\s*(?::\s*String\s*)?=/g : /\b(?:static\s+final|final\s+static)\s+String\s+([A-Za-z_]\w*)\s*=/g;
+  for (const m of masked.matchAll(pattern)) {
+    const from = (m.index ?? 0) + m[0].length;
+    const end = kotlin ? expressionEnd(masked, from) : masked.indexOf(";", from);
+    if (end < 0) continue;
+    const values = declared.get(m[1]!) ?? declared.set(m[1]!, new Set()).get(m[1]!)!;
+    values.add(code.slice(from, end).trim());
+  }
+  const types = new Set([...masked.matchAll(TYPE)].map((t) => t[0].split(/\s+/).pop()!));
+  const evaluate = (expression: string, seen: Set<string>): string | undefined => {
+    let out = "";
+    for (const term of splitTop(expression, "+")) {
+      const value = /^"/.test(term) ? literals(term, kotlin) : undefined;
+      if (value?.length === 1) {
+        out += value[0];
+        continue;
+      }
+      const name = /^(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)$/.exec(term);
+      const values = name && (!name[1] || types.has(name[1])) ? declared.get(name[2]!) : undefined;
+      if (!values || values.size !== 1 || seen.has(name![2]!)) return undefined;
+      const resolved = evaluate([...values][0]!, new Set([...seen, name![2]!]));
+      if (resolved === undefined) return undefined;
+      out += resolved;
+    }
+    return out;
+  };
+  return (expression) => evaluate(expression, new Set());
+}
+
+/**
+ * The paths a mapping names: none written means the root; literals, or constants the file declares, alone or in a
+ * list; undefined when they are built in code.
+ */
+function mappingPaths(args: string | undefined, kotlin: boolean, constant: Constant): string[] | undefined {
   if (args === undefined || !args.trim()) return [""];
   const { positional, named } = attributes(args);
   const value = named.get("path") ?? named.get("value") ?? positional;
   if (value === undefined) return [""];
   const paths = literals(value, kotlin);
-  return paths?.length ? paths : paths ? [""] : undefined;
+  if (paths) return paths.length ? paths : [""];
+  // `{A, B}` in Java, `[A, B]` or `arrayOf(A, B)` in Kotlin.
+  const list = /^(?:\{([\s\S]*)\}|\[([\s\S]*)\]|arrayOf\s*\(([\s\S]*)\))$/.exec(value.trim());
+  const items = list ? splitTop(list[1] ?? list[2] ?? list[3] ?? "", ",").filter(Boolean) : [value];
+  const resolved = items.map(constant);
+  return resolved.every((p) => p !== undefined) ? (resolved.length ? resolved : [""]) : undefined;
 }
 
 /**
@@ -312,13 +382,17 @@ interface TypeScope {
  * Spring MVC routes in Java or Kotlin: `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`,
  * `@PatchMapping` and `@RequestMapping` on methods, combined with the `@RequestMapping` on the type that holds them
  * (paths joined, methods united as Spring does), and the login and logout endpoints Spring Security configures. A path
- * or method the file does not spell out (a constant, an expression) is unknown, and no route is registered for it.
+ * may be a string constant the file declares; one the file does not spell out (a constant of another file, an
+ * expression) is unknown: no route is registered for it, and `limits` says so.
  * `views` collects, per route, the view names its handler renders.
  */
-export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans): Surface[] {
+export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans, limits?: string[]): Surface[] {
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
+  const constant = stringConstants(code, masked, kotlin);
+  const unread = (at: number, args: string | undefined, what: string) =>
+    limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} maps ${what} the file does not spell out (${(args ?? "").trim()}); its routes are not read`);
   const mappings = [...masked.matchAll(MAPPING)].map((m) => {
     const at = m.index ?? 0;
     let open = at + m[0].length;
@@ -349,7 +423,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     types.push({
       start: i,
       end,
-      paths: own ? mappingPaths(own.args, kotlin) : [""],
+      paths: own ? mappingPaths(own.args, kotlin, constant) : [""],
       methods: own ? requestMethods(own.args) : [],
       responseBody: /@(?:[\w.]*\.)?(?:RestController|ResponseBody)\b/.test(annotations),
     });
@@ -363,9 +437,12 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     // The innermost type whose body holds the handler; a nested type closed before it does not count.
     const owner = types.filter((t) => t.start < m.at && m.at < t.end).sort((a, b) => b.start - a.start)[0];
     const bases = owner ? owner.paths : [""];
-    const paths = mappingPaths(m.args, kotlin);
+    const paths = mappingPaths(m.args, kotlin, constant);
     const own = m.kind === "RequestMapping" ? requestMethods(m.args) : [SHORTCUTS[m.kind]!];
     const inherited = owner ? owner.methods : [];
+    if (!paths) unread(m.at, m.args, "a path");
+    else if (!own) unread(m.at, m.args, "a method");
+    else if (!bases || !inherited) unread(m.at, m.args, "a handler under a type mapping");
     if (!bases || !paths || !own || !inherited) continue;
     const united = [...new Set([...inherited, ...own])];
     const methods = united.length ? united : ["*"];
