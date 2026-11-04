@@ -1,0 +1,15 @@
+components:
+  - { name: web, path: frontend }
+  - { name: backend, path: backend }
+routes:
+  - component: backend
+    files: ["backend/**/*.py"]
+    styles: [fastapi]
+    calls:
+      # backend/server.py: the agent framework's helper always registers POST
+      - { name: add_agent_framework_fastapi_endpoint, pathArg: 2, method: POST }
+calls:
+  - { from: web, to: backend, files: ["frontend/src/**/*.{ts,tsx}"] }
+publicSurfaces:
+  - "backend|GET /api/health"          # the platform's probe
+  - "backend|GET /api/auth/callback"   # the identity provider's redirect

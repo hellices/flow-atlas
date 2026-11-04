@@ -1,0 +1,24 @@
+apiVersion: flow-atlas.dev/v1alpha1
+kind: Flow
+metadata:
+  name: ask
+  title: The customer asks the assistant a question
+spec:
+  steps:
+    - stepId: ask
+      chain: "app->bff|POST /messages"
+      role: the BFF takes the turn and the core service answers it
+---
+apiVersion: flow-atlas.dev/v1alpha1
+kind: Flow
+metadata:
+  name: image-question
+  title: The customer attaches an image, then asks about it
+spec:
+  steps:
+    - stepId: attach
+      chain: "app->bff|POST /uploads"
+      role: the core service stores the image
+    - stepId: ask
+      chain: "app->bff|POST /messages"
+      role: the turn refers to the stored image

@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { resolveModule } from "./binding.js";
+import { declarationOf, resolveModule } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
@@ -177,6 +177,10 @@ export class Reach {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
+    // The handler's own parameters are what the framework hands it (`req`, `res`, `reply`): `res.send()` is the
+    // framework's method, not a port of the component, so it names nothing to follow.
+    const handlers = ts.isFunctionLike(start) ? [start] : ts.isCallExpression(start) ? start.arguments.filter((a) => ts.isFunctionLike(a)) : [];
+    const framework = new Set<ts.Node>(handlers.flatMap((h) => [...(h as ts.SignatureDeclaration).parameters]));
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
@@ -201,7 +205,7 @@ export class Reach {
               seen.add(key);
               queue.push(implementation);
             }
-          } else names.add(member);
+          } else if (!(ts.isIdentifier(receiver) && framework.has(declarationOf(receiver)!))) names.add(member);
           if (n.expression.expression.kind === ts.SyntaxKind.ThisKeyword && classOf) {
             const method = classOf.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(parsed.sf) === member);
             const key = `${f}#this.${member}`;

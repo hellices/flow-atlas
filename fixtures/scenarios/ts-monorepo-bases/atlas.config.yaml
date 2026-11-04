@@ -1,0 +1,15 @@
+components:
+  - { name: app, path: app }
+  - { name: bff, path: bff }
+  - { name: core, path: core }
+  - { name: store, path: store }
+  - { name: agent, path: agent }
+routes:
+  - { component: bff, files: ["bff/src/**/*.ts"], styles: [express] }
+  - { component: core, files: ["core/src/routes.ts"], styles: [express] }
+  - { component: store, files: ["store/src/**/*.ts"], styles: [express] }
+calls:
+  - { from: app, to: bff, files: ["app/src/main/kotlin/**/*.kt"] }
+  - { from: bff, to: core, files: ["bff/src/**/*.ts"] }
+  - { from: core, to: store, files: ["core/src/adapters/**/*.ts"] }
+  - { from: agent, to: store, files: ["agent/src/agent/images.py"] }

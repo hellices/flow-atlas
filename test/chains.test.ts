@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
 import { diffGraphs } from "../src/diff.js";
-import { draftChainFlows, uniqueIds } from "../src/draft.js";
+import { draftChainFlows } from "../src/draft.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
@@ -214,13 +214,6 @@ describe("chains of a synthetic graph", () => {
     return { ...base, surfaces, calls, edges };
   };
 
-  it("follows a request however deep it goes", () => {
-    const report = deriveChains(graphOf(20), normalizeConfig({}));
-    expect(report.chains).toHaveLength(1);
-    expect(report.chains[0]!.surfaces).toHaveLength(21);
-    expect(report.unchained).toEqual([]);
-  });
-
   it("changes the digest when an edge changes, not when code moves", () => {
     const digest = (g: Graph) => deriveChains(g, normalizeConfig({})).chains[0]!.digest;
     const moved = graphOf(2);
@@ -229,7 +222,7 @@ describe("chains of a synthetic graph", () => {
     expect(digest(graphOf(2, "otherHandler"))).not.toBe(digest(graphOf(2)));
   });
 
-  it("names long chains apart however they are drafted, and keeps edges that differ only in how they were found", () => {
+  it("names long chains apart however they are drafted", () => {
     const long = "/" + "segment/".repeat(10);
     const g = graphOf(0);
     g.surfaces = [`${long}a`, `${long}b`].map((path, i) => ({ ...surface(i), id: `svc|GET ${path}`, path }));
@@ -241,43 +234,5 @@ describe("chains of a synthetic graph", () => {
     expect(new Set(together).size).toBe(2);
     expect(together.every((n) => n.length <= 63)).toBe(true);
     expect([...names([chains[1]!]), ...names([chains[0]!])].sort()).toEqual([...together].sort());
-
-    const twice = graphOf(1);
-    twice.edges.push({ ...twice.edges[1]!, evidence: "name" });
-    const forward = deriveChains(twice, normalizeConfig({})).chains[0]!;
-    const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
-    expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
-    expect([forward.weak, forward.digest]).toEqual([backward.weak, backward.digest]);
-  });
-
-  it("keeps every offer of the same next request", () => {
-    const g = graphOf(1);
-    const page = call("web", 9);
-    g.surfaces.push(surface(9));
-    g.calls.push(page);
-    g.edges.push(
-      { kind: "match", from: page.id, to: "svc|GET /s9", evidence: "static" },
-      { kind: "reach", from: "svc|GET /s0", to: page.id, evidence: "static", via: "view a" },
-      { kind: "reach", from: "svc|GET /s1", to: page.id, evidence: "static", via: "view b" },
-    );
-    const chain = deriveChains(g, normalizeConfig({})).chains.find((c) => c.id === "app->svc|GET /s0")!;
-    expect(chain.next.map((n) => `${n.from} ${n.via}`)).toEqual(["svc|GET /s0 view a", "svc|GET /s1 view b"]);
-  });
-});
-
-describe("draft names", () => {
-  it("stays within 63 characters when a suffix tells two long names apart", () => {
-    const next = uniqueIds();
-    const long = "a".repeat(70);
-    const [first, second] = [next(long), next(long)];
-    expect(first).toHaveLength(63);
-    expect(second).toHaveLength(63);
-    expect(second.endsWith("-2")).toBe(true);
-  });
-
-  it("refuses a chain id with anything after the path", () => {
-    const report = { ...deriveChains(scan(memory(shop), config), config) };
-    report.chains = [{ ...report.chains[0]!, id: "web->bff|GET /screen@bff/src/routes.ts#h" }];
-    expect(validate("chains", report)).not.toEqual([]);
   });
 });

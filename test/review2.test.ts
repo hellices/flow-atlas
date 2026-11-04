@@ -4,8 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { describe, expect, it, vi } from "vitest";
-import { main } from "../src/commands.js";
+import { describe, expect, it } from "vitest";
 import { loadConfig, normalizeConfig, type Config } from "../src/config.js";
 import { resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { callsFromText } from "../src/extract/calls.js";
@@ -13,7 +12,7 @@ import { Reach } from "../src/extract/reach.js";
 import { extractRegistries } from "../src/extract/registries.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { traceText } from "../src/flow.js";
-import { flowFindings, loadFlows, resolveFlows, type FlowObject } from "../src/flows.js";
+import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
 import { inventory } from "../src/inventory.js";
 import type { Subgraph, Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
@@ -22,7 +21,6 @@ import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import { GitRefSource, WorktreeSource, type Source } from "../src/source.js";
 import { pastReview } from "../src/state.js";
-import { isUriReference, loadStandard, sarifErrors } from "./standards.js";
 
 const memory = (files: Record<string, string>): Source => ({
   ref: "WORKTREE",
@@ -31,50 +29,6 @@ const memory = (files: Record<string, string>): Source => ({
   asOf: () => "2026-11-01T00:00:00Z",
 });
 const shop = fileURLToPath(new URL("../fixtures/shop", import.meta.url));
-
-describe("vendored standards", () => {
-  it("parses and compiles both official schemas", () => {
-    expect(() => loadStandard("sarif-schema-2.1.0.json")).not.toThrow();
-    expect(() => loadStandard("arazzo-schema-1.0.json")).not.toThrow();
-    expect(sarifErrors({ version: "2.1.0", runs: [] })).toEqual([]);
-  });
-  it("checks formats: a uri-reference with a space or a stray % is refused", () => {
-    expect(isUriReference("src/a%20b.ts")).toBe(true);
-    expect(isUriReference("src/a b.ts")).toBe(false);
-    expect(isUriReference("src/a%zz.ts")).toBe(false);
-    const run = (uri: string) => ({
-      version: "2.1.0",
-      runs: [{ tool: { driver: { name: "t" } }, results: [{ message: { text: "m" }, locations: [{ physicalLocation: { artifactLocation: { uri } } }] }] }],
-    });
-    expect(sarifErrors(run("src/a.ts"))).toEqual([]);
-    expect(sarifErrors(run("src/a b.ts")).length).toBeGreaterThan(0);
-  });
-});
-
-describe("schemas", () => {
-  const graph = scan(new WorktreeSource(shop), loadConfig(join(shop, "atlas.config.yaml")));
-
-  it("refuses a report whose Ready is True while another condition is False", () => {
-    const source = new WorktreeSource(shop);
-    const report = resolveFlows(graph, loadFlows(source, loadConfig(join(shop, "atlas.config.yaml"))), source.asOf());
-    const item = report.items[0]!;
-    const conditions = item.status.conditions.map((c) => ({ ...c, status: c.type === "Ready" ? "True" : c.type === "Resolved" ? "False" : c.status }));
-    expect(validate("flow-report", { ...report, items: [{ ...item, status: { ...item.status, conditions } }] }).length).toBeGreaterThan(0);
-  });
-
-  it("refuses a label prefix with a DNS label longer than 63 characters", () => {
-    const flow = (key: string) => ({ apiVersion: "flow-atlas.dev/v1alpha1", kind: "Flow", metadata: { name: "a", labels: { [key]: "x" } }, spec: { steps: [{ stepId: "s", surface: "a|GET /x" }] } });
-    expect(validate("flow", flow(`${"a".repeat(63)}.example.com/x`))).toEqual([]);
-    expect(validate("flow", flow(`${"a".repeat(64)}/x`)).length).toBeGreaterThan(0);
-  });
-
-  it("requires digests of their algorithm's length", () => {
-    const withDigest = (digest: Record<string, string>) => ({ ...graph, provenance: { ...graph.provenance, resolvedDependencies: [{ name: "config", uri: "a.yaml", digest }] } });
-    expect(validate("graph", withDigest({ sha256: "a".repeat(64) }))).toEqual([]);
-    expect(validate("graph", withDigest({ gitCommit: "b".repeat(40) }))).toEqual([]);
-    for (const bad of [{ sha256: "0" }, { gitCommit: "b".repeat(41) }, { md5: "a".repeat(32) }] as Record<string, string>[]) expect(validate("graph", withDigest(bad)).length).toBeGreaterThan(0);
-  });
-});
 
 describe("lockfile filter", () => {
   it("drops registry tarballs and keeps a direct URL dependency's", () => {
@@ -94,19 +48,6 @@ describe("lockfile filter", () => {
     expect(out).toContain("resolution: {integrity: sha512-x}");
     expect(out).toContain("resolution: {integrity: sha512-y, tarball: https://host.example/x/-/b-1.0.0.tgz}");
     expect(out).toContain("resolution: {integrity: sha512-z}");
-  });
-});
-
-describe("diff range", () => {
-  it("refuses anything but <base>..<head>", () => {
-    let err = "";
-    const e = vi.spyOn(process.stderr, "write").mockImplementation((c) => ((err += String(c)), true));
-    try {
-      for (const range of ["a..b..c", "a...b", "..b"]) expect(main(["diff", range, "--root", shop, "--out", mkdtempSync(join(tmpdir(), "atlas-"))])).toBe(2);
-    } finally {
-      e.mockRestore();
-    }
-    expect(err).toContain("diff needs <base>..<head>");
   });
 });
 

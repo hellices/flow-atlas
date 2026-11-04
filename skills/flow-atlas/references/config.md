@@ -98,8 +98,10 @@ starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is 
 by the scopes around the use; a constant used only that way is a base, not a request of its own. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
-followed through local functions, relative imports and re-exports, and the member methods it calls are kept; an
-outbound call of the same component held in a method of that name continues the trace. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
+followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
+those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework; an
+outbound call of the same component held in a method of that name continues the trace. A route file that is also one
+of its component's call files does not turn its own registrations into calls. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
 its routes under each literal path it is mounted at with `use` (an inline middleware first is the pathless overload),
 nested and imported routers included, `./r.js` standing for `r.ts`; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not

@@ -148,6 +148,10 @@ pnpm test
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
 through a BFF handler's port call to a service, and that SARIF and Arazzo output pass the official schemas.
 
+[`fixtures/scenarios`](fixtures/scenarios/README.md) holds small repositories in the shapes of real ones atlas was run
+on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
+scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
+
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 
 ```bash

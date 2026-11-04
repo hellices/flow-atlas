@@ -1,0 +1,28 @@
+case: |
+  A Next.js app whose browser code calls the route handlers of the same app.
+  Seen in a real run: atlas read no route at all, since route handlers are files (app/**/route.ts exporting GET,
+  POST), and the app calling itself came back as an FA003 cycle. Now each handler is a surface at its folder path,
+  the HEAD and OPTIONS Next.js answers by itself are implicit surfaces no rule expects a caller for, a component
+  calling its own routes is no cycle, and the one finding is the health route only a probe calls.
+surfaces:
+  - web|GET /api/health
+  - web|GET /api/public-config
+  - web|HEAD /api/health (implicit)
+  - web|HEAD /api/public-config (implicit)
+  - web|OPTIONS /api/chat/stream (implicit)
+  - web|OPTIONS /api/health (implicit)
+  - web|OPTIONS /api/public-config (implicit)
+  - web|POST /api/chat/stream
+findings:
+  - FA001|web|GET /api/health
+chains:
+  - web->web|GET /api/public-config [1]
+  - web->web|POST /api/chat/stream [1]
+inventory:
+  routes:
+    - apps/web/app/api/chat/stream/route.ts next 1
+    - apps/web/app/api/health/route.ts next 1
+    - apps/web/app/api/public-config/route.ts next 1
+  calls:
+    - apps/web/components/chat-panel.tsx 1
+    - apps/web/lib/public-config-client.ts 1

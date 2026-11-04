@@ -1,0 +1,13 @@
+components:
+  - { name: node, path: nodejs }
+  - { name: java, path: java }
+  - { name: k6, path: k8s }
+routes:
+  - component: node
+    files: ["nodejs/**/*.js"]
+    styles: [express]
+    # nodejs/app.js mounts it at `${constants.API_PREFIX}/events`; API_PREFIX is "" in nodejs/common/constants.js
+    mounts: { "nodejs/routes/events.js": /events }
+  - { component: java, files: ["java/src/main/java/**/*.java"], styles: [spring] }
+calls:
+  - { from: k6, to: node, files: ["k8s/*.js"] }

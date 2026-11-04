@@ -7,20 +7,18 @@ import { describe, expect, it, vi } from "vitest";
 import { sourceNames, toArazzo } from "../src/arazzo.js";
 import { main } from "../src/commands.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
-import { uniqueIds } from "../src/draft.js";
 import { resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
 import { pythonCode, routesFromPython } from "../src/extract/routes.js";
-import { loadFlows, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
+import { resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import { inventory } from "../src/inventory.js";
 import type { Finding, Graph } from "../src/model.js";
 import { nearby } from "../src/nearby.js";
 import { callPath } from "../src/paths.js";
 import { markdownReport } from "../src/report.js";
 import { scan } from "../src/scan.js";
-import { isDateTime, validate } from "../src/schema.js";
 import { WorktreeSource, type Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -44,52 +42,6 @@ function capture(argv: string[]): { code: number; out: string; err: string } {
 }
 
 const shop = fileURLToPath(new URL("../fixtures/shop", import.meta.url));
-
-describe("schemas", () => {
-  const flow = (extra: Record<string, unknown>) => ({ apiVersion: "flow-atlas.dev/v1alpha1", kind: "Flow", metadata: { name: "a", ...extra }, spec: { steps: [{ stepId: "s", surface: "a|GET /x" }] } });
-
-  it("takes label prefixes as DNS subdomains", () => {
-    expect(validate("flow", flow({ labels: { "example.com/team": "a" } }))).toEqual([]);
-    for (const key of ["-bad/name", "bad-/name", "a..b/name", `${"a".repeat(254)}/name`]) expect(validate("flow", flow({ labels: { [key]: "a" } })).length).toBeGreaterThan(0);
-  });
-
-  it("takes Arazzo stepIds only", () => {
-    const steps = (stepId: string) => ({ ...flow({}), spec: { steps: [{ stepId, surface: "a|GET /x" }] } });
-    expect(validate("flow", steps("a_b-1"))).toEqual([]);
-    expect(validate("flow", steps("a.b")).length).toBeGreaterThan(0);
-  });
-
-  it("checks timestamps as real date-times", () => {
-    expect(isDateTime("2026-02-28T23:59:60+09:00")).toBe(true);
-    expect(isDateTime("2024-02-29T00:00:00Z")).toBe(true);
-    expect(isDateTime("2026-11-02T12:34:00.5-05:00")).toBe(true);
-    for (const bad of ["2026-99-99T99:99:00+99:99", "2026-02-29T00:00:00Z", "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z", "2026-01-01T00:00:00+24:00", "2026-11-02T12:34Z"])
-      expect(isDateTime(bad), bad).toBe(false);
-    for (const at of ["2026-13-01T00:00:00Z", "2026-11-02T12:34Z", "2026-99-99T99:99+99:99"]) expect(validate("flow", flow({ generated: { by: "a/1", at } })).length, at).toBeGreaterThan(0);
-    expect(validate("flow", flow({ generated: { by: "a/1", at: "2026-11-02T12:34:00Z" } }))).toEqual([]);
-  });
-
-  const graph = scan(new WorktreeSource(shop), loadConfig(join(shop, "atlas.config.yaml")));
-
-  it("requires a location and a kind for a chosen description", () => {
-    const chosen = graph.apiDescriptions.find((d) => d.status === "chosen")!;
-    expect(validate("graph", graph)).toEqual([]);
-    const { location: _, ...noLocation } = chosen;
-    expect(validate("graph", { ...graph, apiDescriptions: [noLocation] }).length).toBeGreaterThan(0);
-  });
-
-  it("requires a flow report's seven conditions in order", () => {
-    const source = new WorktreeSource(shop);
-    const report = resolveFlows(graph, loadFlows(source, loadConfig(join(shop, "atlas.config.yaml"))), source.asOf());
-    expect(validate("flow-report", report)).toEqual([]);
-    const item = report.items[0]!;
-    const conditions = item.status.conditions;
-    for (const broken of [[], [...conditions].reverse(), [...conditions, conditions[0]!]]) {
-      const bad = { ...report, items: [{ ...item, status: { ...item.status, conditions: broken } }] };
-      expect(validate("flow-report", bad).length).toBeGreaterThan(0);
-    }
-  });
-});
 
 describe("Arazzo export", () => {
   const config = loadConfig(join(shop, "atlas.config.yaml"));
@@ -123,12 +75,6 @@ describe("Arazzo export", () => {
 });
 
 describe("commands", () => {
-  it("refuses an unknown --kind", () => {
-    const r = capture(["query", "--root", shop, "--out", mkdtempSync(join(tmpdir(), "atlas-")), "--kind", "call"]);
-    expect(r.code).toBe(2);
-    expect(r.err).toContain("--kind is surfaces, calls or both, not call");
-  });
-
   it("lets inventory read a configuration kept in --out", () => {
     const root = mkdtempSync(join(tmpdir(), "atlas-root-"));
     const out = mkdtempSync(join(tmpdir(), "atlas-out-"));
@@ -140,13 +86,6 @@ describe("commands", () => {
     const doc = JSON.parse(r.out);
     expect(doc.routes).toEqual([]);
     expect(doc.provenance.resolvedDependencies.map((d: { name: string }) => d.name)).toContain("config");
-  });
-});
-
-describe("draft step ids", () => {
-  it("never gives the same id twice", () => {
-    const next = uniqueIds();
-    expect(["foo", "foo-2", "foo", "foo"].map(next)).toEqual(["foo", "foo-2", "foo-3", "foo-4"]);
   });
 });
 

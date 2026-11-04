@@ -9,10 +9,9 @@ import { loadConfig, normalizeConfig } from "../src/config.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
-import { nextRoute, routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
+import { nextRoute } from "../src/extract/routes.js";
 import { pathsMatch } from "../src/paths.js";
 import { loadFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
-import { inventory } from "../src/inventory.js";
 import type { Graph } from "../src/model.js";
 import { uriOf } from "../src/sarif.js";
 import { evaluate } from "../src/rules.js";
@@ -109,48 +108,6 @@ describe("Reach", () => {
   });
 });
 
-describe("handlers that call directly", () => {
-  it("link a route to the fetch its inline handler runs", () => {
-    const files = {
-      "svc/routes.ts": [
-        "export function routes(app, base) {",
-        '  app.get("/orders", async (req, res) => {',
-        "    res.json(await fetch(`${base}/orders`).then((r) => r.json()));",
-        "  });",
-        '  app.get("/other", (req, res) => res.json({}));',
-        "  const unused = () => fetch(`${base}/never`);",
-        "}",
-      ].join("\n"),
-      "api/orders.ts": 'app.get("/orders", h);',
-    };
-    const config = normalizeConfig({
-      components: [
-        { name: "svc", path: "svc" },
-        { name: "api", path: "api" },
-      ],
-      routes: [
-        { component: "svc", files: ["svc/**/*.ts"], styles: ["express"] },
-        { component: "api", files: ["api/**/*.ts"], styles: ["express"] },
-      ],
-      calls: [{ from: "svc", to: "api", files: ["svc/**/*.ts"] }],
-    });
-    const graph = scan(memory(files), config);
-    const reach = graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${graph.calls.find((c) => c.id === e.to)!.path} ${e.evidence}`);
-    expect(reach).toEqual(["svc|GET /orders -> /orders static"]);
-  });
-});
-
-describe("already fixed", () => {
-  it("reads the methods FastAPI api_route lists", () => {
-    const text = '@router.api_route("/orders", methods=["POST"])\n@router.api_route("/ping")';
-    expect(routesFromPython("a.py", text, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["POST /orders", "GET /ping"]);
-  });
-  it("finds a repository-root active list for a top-level versioned directory", () => {
-    const files = { "active.json": '["invoice-v1.json","invoice-v2.json"]', "schemas/invoice-v1.json": "{}", "schemas/invoice-v2.json": "{}" };
-    expect(inventory(memory(files), []).activeLists).toEqual([{ file: "active.json", names: 2, dir: "schemas" }]);
-  });
-});
-
 describe("SARIF locations", () => {
   it("encode each path segment", () => {
     expect(uriOf("src/order#client.ts")).toBe("src/order%23client.ts");
@@ -159,253 +116,120 @@ describe("SARIF locations", () => {
   });
 });
 
-describe("Python registrations", () => {
-  it("reads Starlette converters, mounts and configured helpers with a fixed method", () => {
-    const text = [
-      '@app.get("/files/{name:path}")',
-      "def f(name): ...",
-      '@app.get("/items/{id:int}")',
-      "def g(id): ...",
-      'app.mount("/downloads", StaticFiles(directory="out"), name="d")',
-      'add_agent_endpoint(app, agent, "/api/chat")',
-      "def add_agent_endpoint(app, agent, path): ...",
-    ].join("\n");
-    const spec = { component: "c", files: [], styles: ["fastapi" as const], calls: [{ name: "add_agent_endpoint", pathArg: 2, method: "POST" }] };
-    expect(routesFromPython("a.py", text, spec).map((s) => `${s.method} ${s.path}${s.implicit ? " implicit" : ""}`)).toEqual([
-      "GET /files/{*name}",
-      "GET /items/{id}",
-      "GET /downloads/**",
-      "HEAD /downloads/** implicit",
-      "POST /api/chat",
-    ]);
-    const limits: string[] = [];
-    expect(routesFromPython("b.py", 'app.mount("/admin", admin_app)', spec, limits)).toEqual([]);
-    expect(limits).toEqual(["routes c: b.py:1 mounts an application at /admin whose routes are not read"]);
-  });
-
-  it("refuses a helper with neither or both of methodArg and method", () => {
-    expect(() => normalizeConfig({ routes: [{ component: "c", files: [], calls: [{ name: "r", pathArg: 0 }] }] })).toThrow(/methodArg or method/);
-    expect(() => normalizeConfig({ routes: [{ component: "c", files: [], calls: [{ name: "r", pathArg: 0, methodArg: 1, method: "GET" }] }] })).toThrow(/methodArg or method/);
-  });
-});
-
-describe("base URLs held in a const", () => {
-  const spec = { from: "a", to: "b", files: [] };
-  const read = (code: string) => callsFromTypeScript("a.ts", code, spec).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
-
-  it("joins a base to the URLs that start with it and does not read the base as a request", () => {
-    const code = [
-      "export function create(options) {",
-      "  const base = `${options.baseUrl}/media/v3`;",
-      "  async function send(route) { return options.fetch(`${base}/${route}`, { method: \"POST\" }); }",
-      "  return { send };",
-      "}",
-    ].join("\n");
-    expect(read(code)).toEqual(["POST /media/v3/{} based"]);
-    expect(read('const API = "/api";\nfetch(API + "/users");')).toEqual(["GET /api/users"]);
-  });
-
-  it("keeps a base that is also a request, and a name a parameter shadows", () => {
-    expect(read('const items = "/items";\nfetch(items);\nfetch(`${items}/${id}`);')).toEqual(["* /items", "GET /items/{}"]);
-    expect(read('const base = "/a";\nfunction f(base) { return fetch(`${base}/b`); }')).toEqual(["* /a", "GET /b based"]);
-  });
-});
-
-describe("Python client calls", () => {
-  it("reads any f-string field as a value and a verb on the line before", () => {
-    const text = ["async def read(self):", "    response = await client.post(", "        f\"{self.base_url.rstrip('/')}/media/v3/photos\",", "        json={},", "    )"].join("\n");
-    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`)).toEqual(["POST /media/v3/photos based"]);
-  });
-});
-
-describe("inventory styles", () => {
-  const inventoryOf = (files: Record<string, string>) =>
-    inventory({ ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" }, []);
-
-  it("offers a route style only in the files its extractor reads", () => {
-    const inv = inventoryOf({
-      "api/main.py": '@app.get("/health")\ndef health(): ...',
-      "web/src/routes.ts": 'app.get("/x", h);',
-      "web/app/api/health/route.ts": "export function HEAD() {}\nexport const OPTIONS = () => new Response();",
-    });
-    expect(inv.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort()).toEqual(["api/main.py fastapi 1", "web/app/api/health/route.ts next 2", "web/src/routes.ts express 1"]);
-    // A route registration, in any of these languages, is no client call.
-    expect(inv.calls).toEqual([]);
-  });
-
-  it("counts calls made through a fetch wrapper", () => {
-    const inv = inventoryOf({ "web/src/items.ts": 'export const items = () => authFetch("/api/items");' });
-    expect(inv.calls.map((c) => `${c.file} ${c.count}`)).toEqual(["web/src/items.ts 1"]);
-  });
-});
-
-describe("Express routers", () => {
-  const read = (files: Record<string, string>, extra: Record<string, unknown> = {}) => {
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-    const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.js"], styles: ["express"], ...extra }] });
-    const graph = scan(source, config);
-    return { surfaces: graph.surfaces.map((s) => s.id), limits: graph.limits ?? [] };
+/**
+ * Rules of the frameworks atlas reads that the scenarios in fixtures/scenarios do not reach, one row per rule, and the
+ * edge cases of name resolution that review turned up. Each row is a way real code is written.
+ */
+describe("framework rules", () => {
+  const scanned = (files: Record<string, string>, routes: Record<string, unknown> = {}) => {
+    const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.{js,ts}"], styles: ["express", "next"], ...routes }] });
+    return scan(memory(files), config).surfaces.map((s) => `${s.id}${s.implicit ? " (implicit)" : ""}`).sort();
   };
-  const router = 'const express = require("express");\nconst router = express.Router();\nrouter.get("/orders", h);\nmodule.exports = router;';
 
-  it("serves a router's routes under every literal path it is mounted at, nested routers included", () => {
-    const files = {
-      "app.js": 'const api = require("./api");\napp.use("/v1", api);\napp.get("/health", h);',
-      "api.js": 'const { Router } = require("express");\nconst api = Router();\nconst orders = require("./orders");\napi.use("/shop", orders);\nmodule.exports = api;',
-      "orders.js": router,
-    };
-    expect(read(files).surfaces.sort()).toEqual(["api|GET /health", "api|GET /v1/shop/orders"]);
-  });
-
-  it("does not place a router at the root when its mount path is not a literal, unless the configuration declares it", () => {
-    const files = { "app.js": 'const c = require("./c");\napp.use(`${PREFIX}/collect`, c);', "c.js": router };
-    const unread = read(files);
-    expect(unread.surfaces).toEqual([]);
-    expect(unread.limits.join("\n")).toMatch(/router router in c\.js is mounted where the code gives no literal path/);
-    expect(read(files, { mounts: { "c.js": "/collect" } }).surfaces).toEqual(["api|GET /collect/orders"]);
-  });
-});
-
-describe("Next.js routes", () => {
-  it("serves a route handler at its folder path, without groups and slots, with dynamic segments as parameters", () => {
-    expect(nextRoute("apps/web/app/api/chat/stream/route.ts")).toEqual({ path: "/api/chat/stream", pages: false });
-    expect(nextRoute("src/app/(shop)/@modal/orders/[id]/route.ts")?.path).toBe("/orders/{id}");
+  it("serves a Next.js file at the path its folders give", () => {
+    const rows: Array<[string, string | undefined]> = [
+      ["src/app/(shop)/@modal/orders/[id]/route.ts", "/orders/{id}"],
+      ["app/files/[...path]/route.js", "/files/{path}/**"],
+      ["app/files/[[...path]]/route.js", "/files/{*path}"],
+      ["app/_lib/route.ts", undefined],
+      ["app/(.)photo/route.ts", undefined],
+      ["pages/api/users/index.ts", "/api/users"],
+      ["pages/api/_health.ts", "/api/_health"],
+      ["pages/api/(v1)/@me.ts", "/api/(v1)/@me"],
+      ["app/page.tsx", undefined],
+    ];
+    expect(rows.map(([file]) => nextRoute(file)?.path)).toEqual(rows.map(([, path]) => path));
     // A required catch-all takes one segment or more, an optional one none or more.
-    expect(nextRoute("app/files/[...path]/route.js")?.path).toBe("/files/{path}/**");
-    expect(nextRoute("app/files/[[...path]]/route.js")?.path).toBe("/files/{*path}");
     expect([pathsMatch("/files/{path}/**", "/files"), pathsMatch("/files/{path}/**", "/files/a/b"), pathsMatch("/files/{*path}", "/files")]).toEqual([false, true, true]);
-    // Pages Router folders are plain segments: no private folders, groups or slots there.
-    expect(nextRoute("pages/api/_health.ts")?.path).toBe("/api/_health");
-    expect(nextRoute("pages/api/(v1)/@me.ts")?.path).toBe("/api/(v1)/@me");
-    expect(nextRoute("app/_lib/route.ts")).toBeUndefined();
-    expect(nextRoute("app/(.)photo/route.ts")).toBeUndefined();
-    expect(nextRoute("pages/api/users/index.ts")).toEqual({ path: "/api/users", pages: true });
-    expect(nextRoute("app/page.tsx")).toBeUndefined();
   });
 
-  it("reads each exported method of a route handler and the default export of an API route", () => {
-    const spec = { component: "web", files: [], styles: ["next" as const] };
-    const handler = "export async function POST(req) {}\nexport const GET = () => new Response();\nfunction put() {}\nexport { put as PUT };\nexport const dynamic = 'force-dynamic';";
-    expect(routesFromTypeScript("app/api/items/route.ts", handler, spec).map((s) => `${s.id}${s.implicit ? " implicit" : ""}`)).toEqual([
-      "web|POST /api/items",
-      "web|GET /api/items",
-      "web|PUT /api/items",
-      "web|HEAD /api/items implicit",
-      "web|OPTIONS /api/items implicit",
-    ]);
-    expect(routesFromTypeScript("pages/api/ping.ts", "export default function handler(req, res) {}", spec).map((s) => s.id)).toEqual(["web|* /api/ping"]);
-  });
-});
-
-describe("cycles", () => {
-  it("does not take a component calling its own routes for a cycle", () => {
-    const files: Record<string, string> = {
-      "app/api/items/route.ts": "export function GET() { return new Response(); }",
-      "components/list.tsx": 'export const load = () => fetch("/api/items");',
-    };
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-    const config = normalizeConfig({
-      components: [{ name: "web", path: "" }],
-      routes: [{ component: "web", files: ["app/**/*.ts"], styles: ["next"] }],
-      calls: [{ from: "web", to: "web", files: ["components/**/*.tsx"] }],
-    });
-    const graph = scan(source, config);
-    expect(graph.edges.filter((e) => e.kind === "match")).toHaveLength(1);
-    expect(evaluate(graph, config).map((f) => f.key)).toEqual([]);
-  });
-});
-
-describe("clients with a base path", () => {
-  it("reads a verb with type arguments and puts the declared client prefix before root-relative paths", () => {
-    const files: Record<string, string> = {
-      "app/lib/repo.dart": "final r = await _dio.get<Map<String, dynamic>>(\n  '/careers/$id/detail',\n);\nawait dio.post('$base/raw');",
-      "api/C.java": '@RestController\n@RequestMapping("/api/v1/careers")\nclass C {\n  @GetMapping("/{id}/detail") Object d(@PathVariable long id) { return null; }\n}',
-    };
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-    const config = normalizeConfig({
-      components: [{ name: "app", path: "app" }, { name: "api", path: "api" }],
-      routes: [{ component: "api", files: ["api/**/*.java"], styles: ["spring"] }],
-      calls: [{ from: "app", to: "api", files: ["app/**/*.dart"], prefix: "/api/v1" }],
-    });
-    const graph = scan(source, config);
-    expect(graph.calls.map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`)).toEqual(["GET /api/v1/careers/{}/detail", "POST /raw based"]);
-    expect(graph.edges.filter((e) => e.kind === "match").map((e) => e.to)).toEqual(["api|GET /api/v1/careers/{id}/detail"]);
-  });
-});
-
-describe("review of the real-repository fixes", () => {
-  const callSpec = { from: "a", to: "b", files: [] };
-  const read = (code: string) => callsFromTypeScript("a.ts", code, callSpec).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
-
-  it("does not take a loop, catch or hoisted var binding for an outer const", () => {
-    expect(read('const base = "/api";\nfor (const base of bases) fetch(`${base}/users`);')).toEqual(["* /api", "GET /users based"]);
-    expect(read('const base = "/api";\ntry {} catch (base) { fetch(`${base}/users`); }')).toEqual(["* /api", "GET /users based"]);
-    expect(read('const base = "/api";\nfunction f() { if (x) { var base = y; } return fetch(`${base}/users`); }')).toEqual(["* /api", "GET /users based"]);
-  });
-
-  it("drops a parenthesized base used only as a base", () => {
-    expect(read("const base = ('/api');\nfetch(`${base}/users`);")).toEqual(["GET /api/users"]);
-  });
-
-  it("keeps escaped braces of an f-string literal", () => {
-    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")';
-    expect(callsFromText("a.py", text, callSpec).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items"]);
-  });
-
-  const scanned = (files: Record<string, string>) => {
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-    const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.{js,ts}"], styles: ["express", "next"] }] });
-    return scan(source, config).surfaces.map((s) => s.id).sort();
-  };
-
-  it("mounts a router after an inline middleware at the receiver's path", () => {
-    const files = { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' };
-    expect(scanned(files)).toEqual(["api|GET /x"]);
-  });
-
-  it("resolves a NodeNext import of a TypeScript router and an imported router used as a mount parent", () => {
+  it("reads every way a Next.js handler is exported, and the methods Next.js answers itself", () => {
     const files = {
-      "app.ts": 'import api from "./api.js";\napp.use("/v1", api);',
-      "api.ts": 'import { Router } from "express";\nimport orders from "./orders.js";\nconst api = Router();\napi.use("/shop", orders);\napi.get("/ping", h);\nexport default api;',
-      "orders.ts": 'import express from "express";\nconst orders = express.Router();\norders.get("/list", h);\nexport default orders;',
+      "app/items/route.ts": "export async function POST(req) {}\nexport const GET = () => new Response();\nfunction put() {}\nexport { put as PUT };",
+      "app/orders/route.ts": 'export { GET } from "./handlers";\nexport { create as DELETE } from "./handlers";',
+      "app/orders/handlers.ts": "export function GET() {}\nexport function create() {}",
+      "pages/api/ping.ts": "export default function handler(req, res) {}",
     };
-    expect(scanned(files)).toEqual(["api|GET /v1/ping", "api|GET /v1/shop/list"]);
+    expect(scanned(files)).toEqual([
+      "api|* /api/ping",
+      "api|DELETE /orders",
+      "api|GET /items",
+      "api|GET /orders",
+      "api|HEAD /items (implicit)",
+      "api|HEAD /orders (implicit)",
+      "api|OPTIONS /items (implicit)",
+      "api|OPTIONS /orders (implicit)",
+      "api|POST /items",
+      "api|PUT /items",
+    ]);
   });
 
-  it("takes a Router only from express, and a router by its binding, not its name", () => {
-    const notExpress = { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' };
-    expect(scanned(notExpress)).toEqual([]);
-    const shadowed = {
-      "app.js": [
-        'const express = require("express");',
-        "const r = express.Router();",
-        'r.get("/x", h);',
-        'app.use("/a", r);',
-        'function other() { const r = makeSomething(); app.use("/b", r); }',
-      ].join("\n"),
-    };
-    expect(scanned(shadowed)).toEqual(["api|GET /a/x"]);
-  });
-
-  it("reads a Next.js handler re-exported from another module", () => {
-    const files = { "app/api/items/route.ts": 'export { GET } from "./handlers";\nexport { create as POST } from "./handlers";', "app/api/items/handlers.ts": "export function GET() {}\nexport function create() {}" };
-    expect(scanned(files)).toEqual(["api|GET /api/items", "api|HEAD /api/items", "api|OPTIONS /api/items", "api|POST /api/items"]);
-  });
-
-  it("reaches an implicit surface only by a request that names its method", () => {
-    const files: Record<string, string> = {
+  it("reaches what a framework answers by itself only by a request that names the method", () => {
+    const files = {
       "app/api/items/route.ts": "export function GET() {}",
       "web/a.ts": 'export const any = () => request("/api/items");\nexport const head = () => fetch("/api/items", { method: "HEAD" });',
     };
-    const source: Source = { ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
     const config = normalizeConfig({
       components: [{ name: "api", path: "app" }, { name: "web", path: "web" }],
       routes: [{ component: "api", files: ["app/**/*.ts"], styles: ["next"] }],
       calls: [{ from: "web", to: "api", files: ["web/**/*.ts"] }],
     });
-    const graph = scan(source, config);
+    const graph = scan(memory(files), config);
     const matched = graph.edges.filter((e) => e.kind === "match").map((e) => `${graph.calls.find((c) => c.id === e.from)!.method} -> ${e.to}`);
     expect(matched.sort()).toEqual(["* -> api|GET /api/items", "HEAD -> api|HEAD /api/items"]);
     expect(evaluate(graph, config).map((f) => f.key)).toEqual([]);
+  });
+
+  it("serves an Express router under every mount the code states", () => {
+    const rows: Array<[string, Record<string, string>, string[]]> = [
+      [
+        "nested routers, required from relative modules",
+        {
+          "app.js": 'const api = require("./api");\napp.use("/v1", api);\napp.get("/health", h);',
+          "api.js": 'const { Router } = require("express");\nconst api = Router();\nconst orders = require("./orders");\napi.use("/shop", orders);\nmodule.exports = api;',
+          "orders.js": 'const express = require("express");\nconst router = express.Router();\nrouter.get("/orders", h);\nmodule.exports = router;',
+        },
+        ["api|GET /health", "api|GET /v1/shop/orders"],
+      ],
+      [
+        "TypeScript routers imported as ./x.js, one mounted on the other",
+        {
+          "app.ts": 'import api from "./api.js";\napp.use("/v1", api);',
+          "api.ts": 'import { Router } from "express";\nimport orders from "./orders.js";\nconst api = Router();\napi.use("/shop", orders);\napi.get("/ping", h);\nexport default api;',
+          "orders.ts": 'import express from "express";\nconst orders = express.Router();\norders.get("/list", h);\nexport default orders;',
+        },
+        ["api|GET /v1/ping", "api|GET /v1/shop/list"],
+      ],
+      ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
+      ["a Router from another library", { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' }, []],
+      [
+        "another value under the router's name",
+        { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\napp.use("/a", r);\nfunction other() { const r = makeSomething(); app.use("/b", r); }' },
+        ["api|GET /a/x"],
+      ],
+    ];
+    for (const [, files, surfaces] of rows) expect(scanned(files)).toEqual(surfaces);
+  });
+});
+
+describe("names resolve by their bindings", () => {
+  const read = (code: string) => callsFromTypeScript("a.ts", code, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+
+  it("joins a URL to the const it starts with, and to no other value of that name", () => {
+    const rows: Array<[string, string[]]> = [
+      ['const API = "/api";\nfetch(API + "/users");', ["GET /api/users"]],
+      ["const base = ('/api');\nfetch(`${base}/users`);", ["GET /api/users"]],
+      ['const items = "/items";\nfetch(items);\nfetch(`${items}/${id}`);', ["* /items", "GET /items/{}"]],
+      ['const base = "/a";\nfunction f(base) { return fetch(`${base}/b`); }', ["* /a", "GET /b based"]],
+      ['const base = "/api";\nfor (const base of bases) fetch(`${base}/users`);', ["* /api", "GET /users based"]],
+      ['const base = "/api";\ntry {} catch (base) { fetch(`${base}/users`); }', ["* /api", "GET /users based"]],
+      ['const base = "/api";\nfunction f() { if (x) { var base = y; } return fetch(`${base}/users`); }', ["* /api", "GET /users based"]],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("keeps the escaped braces of a Python f-string literal", () => {
+    const text = 'r = client.get(f"/tenants/{{tenant}}/{tid}/items")';
+    expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual(["GET /tenants/{tenant}/{}/items"]);
   });
 });

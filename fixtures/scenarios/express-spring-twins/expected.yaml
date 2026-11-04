@@ -1,0 +1,34 @@
+case: |
+  The same events API written twice, in Express and in Spring, with a k6 load script as its only client.
+  Seen in a real run: the Express router is mounted at `${constants.API_PREFIX}/events`, a prefix from a module
+  required through an alias, and atlas placed its routes at the root (/opt_out), so no client call matched them.
+  Now a router's routes are read only under a mount path the code states as a literal or the configuration declares;
+  the declared events router is served under /events and every load-script call matches, and the admin router,
+  whose mount nobody declared, is left out with a limit instead of being placed at the root.
+surfaces:
+  - java|GET /events/opt_out
+  - java|POST /events/click
+  - java|POST /events/session
+  - java|POST /events/consent
+  - java|POST /events/page_view
+  - node|GET /events/opt_out
+  - node|POST /events/click
+  - node|POST /events/session
+  - node|POST /events/consent
+  - node|POST /events/page_view
+findings:
+  - FA001|node|GET /events/opt_out
+  - FA001|node|POST /events/page_view
+chains:
+  - k6->node|POST /events/click [1]
+  - k6->node|POST /events/session [1]
+  - k6->node|POST /events/consent [1]
+limits:
+  - router admin in nodejs/routes/admin.js is mounted where the code gives no literal path
+inventory:
+  routes:
+    - java/src/main/java/com/example/events/EventController.java spring 6
+    - nodejs/routes/events.js express 5
+  calls:
+    - k8s/events-load.js 3
+    - nodejs/app.js 2
