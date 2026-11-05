@@ -123,7 +123,8 @@ re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and
 the default export (a function component, also one named by `export { Page as default }` or re-exported from another
 module, or a class component's `render`) belongs to the page's request, prop values and what computes a handler or an
 address included; client modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions
-passed as props do not: a `<Link href>` or a pushed address (`push("/")`, also parenthesized or with `as const`) reaches
+passed as props do not: a `<Link href>` or an address Next.js navigates to (`push` or `replace` on its router, `redirect` from
+`next/navigation`; also parenthesized or with `as const`) reaches
 the page it names as a request of its own. Include `.tsx` in the route
 files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb

@@ -87,6 +87,8 @@ describe("Spring routes", () => {
     // One name, two methods: the servlet request's logout is not the configurer's.
     const shadowed = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(withDefaults()); }\nvoid out(HttpServletRequest http) { http.logout(); }';
     expect(routes(shadowed)).toEqual(["POST /login 1"]);
+    // A field is seen throughout its type, before its declaration too.
+    expect(routes("class C {\n  void configure() { http.formLogin(withDefaults()); }\n  private HttpSecurity http;\n}")).toEqual(["POST /login 2"]);
     // A nested function's own `http` hides the outer HttpSecurity.
     const inner = ["fun config(http: HttpSecurity) {", "  http.formLogin(withDefaults())", "  fun handle(http: HttpServletRequest) { http.logout() }", "}"].join("\n");
     expect(routes(inner, "N.kt")).toEqual(["POST /login 2"]);
@@ -547,6 +549,7 @@ describe("review fixes, continued", () => {
       ['<script th:attr="src=@{/app.js}">fetch("/fallback")</script>', []],
       // A `, src=` inside a quoted value is that item's text: the script has no src, and its body runs.
       ["<script th:attr=\"data-note='x, src=y'\">fetch('/api')</script>", ["GET /api 1"]],
+      ["<script th:attr=\"title=|x, src=y|\">fetch('/api')</script>", ["GET /api 1"]],
       ['<div data-url="/preview"></div>', []],
     ];
     expect(rows.map(([html]) => calls(html))).toEqual(rows.map(([, out]) => out));

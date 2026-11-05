@@ -134,6 +134,16 @@ export function nextRoute(file: string, root?: string): { path: string; kind: "h
   return { path: joinRoute(...segments), kind };
 }
 
+/** A class component's `render`: a method, or a field holding a function (`render = () => ...`). */
+function classRender(cls: ts.ClassDeclaration, sf: ts.SourceFile): ts.Node | undefined {
+  for (const m of cls.members) {
+    if (m.name?.getText(sf) !== "render") continue;
+    if (ts.isMethodDeclaration(m)) return m;
+    if (ts.isPropertyDeclaration(m) && m.initializer && (ts.isArrowFunction(m.initializer) || ts.isFunctionExpression(m.initializer))) return m.initializer;
+  }
+  return undefined;
+}
+
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
 /** `executed` collects, per surface id, the `file:line` of each call its handler runs (see `Reach.from`). */
@@ -207,7 +217,7 @@ export function routesFromTypeScript(
       page && ts.isExportAssignment(page)
         ? page.expression
         : page && ts.isClassDeclaration(page)
-          ? page.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(sf) === "render")
+          ? classRender(page, sf)
           : page;
     let handlerFile: string | undefined;
     if (!page) {

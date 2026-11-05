@@ -137,12 +137,52 @@ function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
     value = value.parent;
   const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
-  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value) {
-    const callee = value.parent.expression;
-    const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
-    if (/^(push|replace|redirect|permanentRedirect)$/.test(name)) return { path: "/", based: false };
-  }
+  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression))) return { path: "/", based: false };
   return undefined;
+}
+
+const NEXT_ROUTERS = ["next/navigation", "next/router"];
+
+/** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
+function importedFrom(id: ts.Identifier, modules: string[]): string | undefined {
+  const d = declarationOf(id);
+  const spec = (n: ts.Node | undefined) => (n && ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined);
+  if (d && ts.isImportSpecifier(d) && modules.includes(spec(d.parent.parent.parent) ?? "")) return (d.propertyName ?? d.name).text;
+  if (d && ts.isImportClause(d) && modules.includes(spec(d.parent) ?? "")) return "default";
+  return undefined;
+}
+
+/** Whether an expression is Next.js's router: what `useRouter()` returns, or the `Router` `next/router` exports. */
+function isNextRouter(e: ts.Expression): boolean {
+  if (!ts.isIdentifier(e)) return false;
+  const imported = importedFrom(e, ["next/router"]);
+  if (imported === "default" || imported === "Router") return true;
+  const d = declarationOf(e);
+  const init = d && ts.isVariableDeclaration(d) && d.initializer ? unwrap(d.initializer) : undefined;
+  return !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && importedFrom(init.expression, NEXT_ROUTERS) === "useRouter";
+}
+
+/**
+ * Whether a callee is a Next.js navigation: `redirect` or `permanentRedirect` from `next/navigation`, or `push` and
+ * `replace` on its router, also taken apart (`const { push } = useRouter()`). An array's `push` is no navigation.
+ */
+function navigates(callee: ts.Expression): boolean {
+  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression));
+  if (!ts.isIdentifier(callee)) return false;
+  const imported = importedFrom(callee, ["next/navigation"]);
+  if (imported === "redirect" || imported === "permanentRedirect") return true;
+  const d = declarationOf(callee);
+  if (!d || !ts.isBindingElement(d) || !ts.isObjectBindingPattern(d.parent)) return false;
+  const key = (d.propertyName ?? d.name) as ts.Identifier;
+  const holder = d.parent.parent;
+  const init = ts.isVariableDeclaration(holder) && holder.initializer ? unwrap(holder.initializer) : undefined;
+  return (
+    /^(push|replace)$/.test(key.text) &&
+    !!init &&
+    ts.isCallExpression(init) &&
+    ts.isIdentifier(init.expression) &&
+    importedFrom(init.expression, NEXT_ROUTERS) === "useRouter"
+  );
 }
 
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
@@ -642,7 +682,8 @@ function attrItems(value: string): Array<{ name: string | undefined; start: numb
     if (quote) {
       if (c === "\\") i++;
       else if (c === quote) quote = undefined;
-    } else if (c === "'" || c === '"') quote = c;
+    // `|x, y|` is Thymeleaf's literal substitution: its text, commas included, is one value.
+    } else if (c === "'" || c === '"' || c === "|") quote = c;
     else if (c === "(" || c === "{" || c === "[") depth++;
     else if (c === ")" || c === "}" || c === "]") depth = Math.max(0, depth - 1);
     else if (c === "," && depth === 0) close(i);

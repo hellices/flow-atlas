@@ -453,7 +453,9 @@ function bindings(masked: string, kotlin: boolean): Array<{ name: string; type: 
     if (owner === undefined) continue;
     if (masked[owner] === "{") {
       const end = closing(masked, owner);
-      if (end !== undefined) out.push({ name, type, start: at, end });
+      // A field or property is seen throughout its type's body; a local, from its declaration on.
+      const member = /\b(?:class|interface|object|enum|record)\b/.test(masked.slice(declarationStart(masked, owner), owner));
+      if (end !== undefined) out.push({ name, type, start: member ? owner : at, end });
       continue;
     }
     const params = closing(masked, owner);

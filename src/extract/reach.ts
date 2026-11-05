@@ -252,10 +252,26 @@ export class Reach {
           // requests later, a handler it runs later (`onClick`), and a function handed down as a prop are not.
           const name = n.name.getText(parsed.sf);
           const value = n.initializer && ts.isJsxExpression(n.initializer) ? n.initializer.expression : undefined;
-          if (!value || isFunctionValue(value) || ts.isIdentifier(value) || ts.isPropertyAccessExpression(value)) return;
           // An address or a handler is used later, but what computes it runs now: `onClick={makeHandler()}` calls
-          // makeHandler while rendering.
-          return visit(value, false, !LATER_PROPS.test(name));
+          // makeHandler while rendering. Only the value it ends in is the address: `(track(), "/next")` runs track,
+          // and `ok() ? "/a" : "/b"` runs ok.
+          const later = LATER_PROPS.test(name);
+          const prop = (v: ts.Expression): void => {
+            if (ts.isParenthesizedExpression(v)) return prop(v.expression);
+            if (ts.isBinaryExpression(v) && v.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+              visit(v.left, false, true);
+              return prop(v.right);
+            }
+            if (ts.isConditionalExpression(v)) {
+              visit(v.condition, false, true);
+              prop(v.whenTrue);
+              return prop(v.whenFalse);
+            }
+            if (isFunctionValue(v) || ts.isIdentifier(v) || ts.isPropertyAccessExpression(v)) return;
+            visit(v, false, !later);
+          };
+          if (value) prop(value);
+          return;
         }
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
         // An inline function runs when it is handed to a call (`then(() => ...)`, `new Promise(...)`) or called on the
@@ -334,7 +350,15 @@ export class Reach {
 /** Whether an inline function is an argument of a call or `new`, or the callee of a call made on the spot. */
 function handedToCall(fn: ts.Expression): boolean {
   let at: ts.Node = fn;
-  while (ts.isParenthesizedExpression(at.parent)) at = at.parent;
+  // Parentheses and type assertions (`as`, `!`, `satisfies`, `<T>`) leave the function as it is.
+  while (
+    ts.isParenthesizedExpression(at.parent) ||
+    ts.isAsExpression(at.parent) ||
+    ts.isNonNullExpression(at.parent) ||
+    ts.isSatisfiesExpression(at.parent) ||
+    ts.isTypeAssertionExpression(at.parent)
+  )
+    at = at.parent;
   const p = at.parent;
   return (ts.isCallExpression(p) || ts.isNewExpression(p)) && (p.expression === at || !!p.arguments?.includes(at as ts.Expression));
 }
