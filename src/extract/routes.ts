@@ -134,10 +134,20 @@ export function nextRoute(file: string, root?: string): { path: string; kind: "h
   return { path: joinRoute(...segments), kind };
 }
 
+/** A member's name as written in any static form: `render`, `"render"`, `["render"]`. */
+function memberName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name)) {
+    const e = name.expression;
+    return ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e) ? e.text : undefined;
+  }
+  return undefined;
+}
+
 /** A class component's `render`: a method, or a field holding a function (`render = () => ...`). */
-function classRender(cls: ts.ClassDeclaration, sf: ts.SourceFile): ts.Node | undefined {
+function classRender(cls: ts.ClassDeclaration): ts.Node | undefined {
   for (const m of cls.members) {
-    if (m.name?.getText(sf) !== "render") continue;
+    if (!m.name || memberName(m.name) !== "render") continue;
     if (ts.isMethodDeclaration(m)) return m;
     if (ts.isPropertyDeclaration(m) && m.initializer && (ts.isArrowFunction(m.initializer) || ts.isFunctionExpression(m.initializer))) return m.initializer;
   }
@@ -217,7 +227,7 @@ export function routesFromTypeScript(
       page && ts.isExportAssignment(page)
         ? page.expression
         : page && ts.isClassDeclaration(page)
-          ? classRender(page, sf)
+          ? classRender(page)
           : page;
     let handlerFile: string | undefined;
     if (!page) {

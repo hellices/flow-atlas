@@ -791,7 +791,12 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
     const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
     // A src, written or rendered by Thymeleaf, makes the script external: the browser does not run its body.
-    const rendered = ["th:attr", "data-th-attr"].some((n) => attrItems(attribute(n) ?? "").some((item) => item.name === "src"));
+    // Only a src Thymeleaf surely writes (a link expression or a literal) makes the script external: `src=null` removes
+    // the attribute, and a computed value may, so the body is read then.
+    const rendered = ["th:attr", "data-th-attr"].some((n) => {
+      const value = attribute(n) ?? "";
+      return attrItems(value).some((item) => item.name === "src" && /^\s*src\s*=\s*(?:@\{[^}]*\}|'[^']*'|\|[^|]*\|)\s*$/i.test(value.slice(item.start, item.end)));
+    });
     const external = ["src", "th:src", "data-th-src"].some((n) => attribute(n) !== undefined) || rendered;
     if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);

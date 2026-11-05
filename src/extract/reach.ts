@@ -268,6 +268,15 @@ export class Reach {
               return prop(v.whenFalse);
             }
             if (isFunctionValue(v) || ts.isIdentifier(v) || ts.isPropertyAccessExpression(v)) return;
+            // A call that builds the value runs now; only the text it is given is the address or handler's
+            // (`address("/later")`), while a call among its arguments makes its own requests (`build(fetch("/api"))`).
+            if (later && ts.isCallExpression(v)) {
+              visit(v.expression, false, true);
+              for (const arg of v.arguments) {
+                if (!(ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) || ts.isTemplateExpression(arg))) visit(arg, true, true);
+              }
+              return;
+            }
             visit(v, false, !later);
           };
           if (value) prop(value);

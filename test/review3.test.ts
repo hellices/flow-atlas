@@ -220,9 +220,11 @@ describe("framework rules", () => {
         "};",
         'const address = (p) => p;',
         'const track = () => fetch("/api/track");',
+        'const build = (r) => "/built";',
         "export default async function Note() {",
         '  const note = await fetch("/api/notes/1");',
         '  ((() => fetch("/api/spot")) as () => void)();',
+        '  const built = <a href={build(fetch("/api/built"))} />;',
         '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /><button onClick={makeHandler()} /><a href={address("/later")} /><a href={(track(), "/next")} /></Card>;',
         "}",
       ].join("\n"),
@@ -238,11 +240,11 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
-    expect(page.at.line).toBe(13);
+    expect(page.at.line).toBe(14);
     const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     // makeHandler, track and the function called on the spot run while rendering; the handler makeHandler returns, the
     // address a link holds and the client module do not.
-    expect(reach.sort()).toEqual(["/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
+    expect(reach.sort()).toEqual(["/api/built", "/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
   });
 
   it("renders a Pages Router page through whatever its default export names", () => {
@@ -253,6 +255,9 @@ describe("framework rules", () => {
       "views/re.tsx": 'export default function Re() { const n = fetch("/api/re"); return <p>{n}</p>; }',
       // A class whose render is a field holding a function.
       "pages/field.tsx": 'export default class Field extends React.Component {\n  render = () => { const n = this.fields(); return <p>{n}</p>; };\n  fields() { return fetch("/api/field"); }\n}',
+      // A render named by a string or a computed string.
+      "pages/quoted.tsx": 'export default class Q extends React.Component {\n  "render"() { return <p>{this.quoted()}</p>; }\n  quoted() { return fetch("/api/quoted"); }\n}',
+      "pages/computed.tsx": 'export default class C extends React.Component {\n  ["render"] = () => <p>{this.computed()}</p>;\n  computed() { return fetch("/api/computed"); }\n}',
       "pages/notes.tsx": [
         'import React from "react";',
         "export default class Notes extends React.Component {",
@@ -269,7 +274,8 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
-    expect(["web|GET /notes", "web|GET /alias", "web|GET /re", "web|GET /field"].map(reached)).toEqual([["/api/notes"], ["/api/alias"], ["/api/re"], ["/api/field"]]);
+    const pages = ["notes", "alias", "re", "field", "quoted", "computed"];
+    expect(pages.map((p) => reached(`web|GET /${p}`))).toEqual(pages.map((p) => [`/api/${p}`]));
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {
