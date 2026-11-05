@@ -150,6 +150,18 @@ describe("Spring routes", () => {
         '@RestController\n@RequestMapping(Paths.BASE)\nclass C {\n  @GetMapping("/x") void x() {}\n  @GetMapping("/y") void y() {}\n}',
         { routes: [], limits: ["S.java:2 maps a path the file does not spell out (Paths.BASE); its routes are not read"] },
       ],
+      // Both levels unread: each is named where it is written.
+      [
+        "S.java",
+        "@RestController\n@RequestMapping(Paths.BASE)\nclass D {\n  @GetMapping(Paths.ONE) void one() {}\n}",
+        {
+          routes: [],
+          limits: [
+            "S.java:2 maps a path the file does not spell out (Paths.BASE); its routes are not read",
+            "S.java:4 maps a path the file does not spell out (Paths.ONE); its routes are not read",
+          ],
+        },
+      ],
       // Kotlin: a const ending in `;`, a companion's constants, and a class annotation that names its type.
       [
         "K.kt",

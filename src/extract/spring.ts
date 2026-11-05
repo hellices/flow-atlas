@@ -517,13 +517,13 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     const paths = mappingPaths(m.args, kotlin, constant, m.at);
     const own = m.kind === "RequestMapping" ? requestMethods(m.args) : [SHORTCUTS[m.kind]!];
     const inherited = owner ? owner.methods : [];
-    if (!paths) unread(m.at, m.args, "a path");
-    else if (!own) unread(m.at, m.args, "a method");
-    // A type mapping not read is named once, where it is written.
-    else if ((!bases || !inherited) && owner?.mapping && !unreadTypes.has(owner)) {
+    // A type mapping not read is named once, where it is written; a handler's own mapping, where it is.
+    if ((!bases || !inherited) && owner?.mapping && !unreadTypes.has(owner)) {
       unreadTypes.add(owner);
       unread(owner.mapping.at, owner.mapping.args, bases ? "a method" : "a path");
     }
+    if (!paths) unread(m.at, m.args, "a path");
+    else if (!own) unread(m.at, m.args, "a method");
     if (!bases || !paths || !own || !inherited) continue;
     const united = [...new Set([...inherited, ...own])];
     const methods = united.length ? united : ["*"];
