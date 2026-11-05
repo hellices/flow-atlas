@@ -24,12 +24,16 @@ const SCRIPT = /\.(c|m)?[jt]sx?$/;
 
 const NEXT_METHOD = /^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/;
 
-/** The names an `export { a, b as c }` list exports: `a` and `c`, never the local name before an `as`. */
+/**
+ * The values an `export { a, b as c }` list exports: `a` and `c`, never the local name before an `as`; a type-only one
+ * (`type H as GET`) exports no value, and is left out.
+ */
 const exportedNames = (list: string): string[] =>
   list
     .split(",")
-    .map((spec) => spec.trim().split(/\s+as\s+/).pop()!.trim())
-    .filter(Boolean);
+    .map((spec) => spec.trim())
+    .filter((spec) => spec && !/^type\s/.test(spec))
+    .map((spec) => spec.split(/\s+as\s+/).pop()!.trim());
 
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
 const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
@@ -148,7 +152,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     let count = 0;
     let firstAt: number | undefined;
     // The names the file binds to a `Router()`, besides the usual `app` and `router`.
-    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*Router\s*\(/g)].map((m) => m[1]!)]);
+    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?Router\s*\(/g)].map((m) => m[1]!)]);
     for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
         if (re === VERB_CALL && m[1] !== undefined && routers.has(m[1])) continue;

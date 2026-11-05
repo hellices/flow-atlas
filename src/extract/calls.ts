@@ -191,13 +191,13 @@ const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
  * (`{'}'}`) and brackets hold their braces; after a top-level `:` comes the format spec, literal text in which only a
  * nested field (`{width}`) opens.
  */
-function fieldEnd(body: string, from: number): number {
+function fieldEnd(body: string, from: number, expression?: (start: number, end: number) => void): number {
   let depth = 0;
   let spec = false;
   for (let i = from; i < body.length; i++) {
     const c = body[i]!;
     if (spec) {
-      if (c === "{") i = fieldEnd(body, i + 1) - 1;
+      if (c === "{") i = fieldEnd(body, i + 1, expression) - 1;
       else if (c === "}") return i + 1;
     } else if (c === "'" || c === '"') {
       const quote = body.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
@@ -206,9 +206,15 @@ function fieldEnd(body: string, from: number): number {
     } else if (c === "(" || c === "[" || c === "{") depth++;
     else if (c === ")" || c === "]") depth--;
     else if (c === "}") {
-      if (depth === 0) return i + 1;
+      if (depth === 0) {
+        expression?.(from, i);
+        return i + 1;
+      }
       depth--;
-    } else if (c === ":" && depth === 0) spec = true;
+    } else if (c === ":" && depth === 0) {
+      expression?.(from, i);
+      spec = true;
+    }
   }
   return body.length;
 }
@@ -217,7 +223,7 @@ function fieldEnd(body: string, from: number): number {
  * A Python f-string's text with each replacement field a hole, nested fields (`{value:{width}}`) included, and `{{`
  * and `}}` the literal braces they write.
  */
-function fStringText(body: string): string {
+function fStringText(body: string, expression?: (start: number, end: number) => void): string {
   let out = "";
   for (let i = 0; i < body.length; ) {
     const c = body[i]!;
@@ -225,7 +231,7 @@ function fStringText(body: string): string {
       out += c;
       i += 2;
     } else if (c === "{") {
-      i = fieldEnd(body, i + 1);
+      i = fieldEnd(body, i + 1, expression);
       out += HOLE;
     } else {
       out += c;
@@ -310,15 +316,20 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const out: Draft<Call>[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
-  for (const m of text.matchAll(STRING)) {
-    const index = m.index ?? 0;
-    if (spans?.holds(file, index)) continue;
+  const read = (segment: string, offset: number): void => {
+    for (const m of segment.matchAll(STRING)) read1(m, offset + (m.index ?? 0));
+  };
+  const read1 = (m: RegExpMatchArray, index: number): void => {
+    if (spans?.holds(file, index)) return;
     const body = m[1] ?? m[2]!;
-    // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces.
+    // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
+    // code in a field runs, so the requests written in it are read too.
     const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
-    const inner = fString ? fStringText(body) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
+    const fields: Array<[number, number]> = [];
+    const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
+    for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start);
     const parsed = callPath(inner);
-    if (!parsed) continue;
+    if (!parsed) return;
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
     const before = text.slice(Math.max(0, index - 200), index);
@@ -334,7 +345,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       evidence: "text",
       scope: scopeAt(index),
     });
-  }
+  };
+  read(text, 0);
   return out;
 }
 

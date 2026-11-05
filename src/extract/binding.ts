@@ -134,6 +134,8 @@ export function resolveModule(from: string, spec: string, exists: (file: string)
   const typescriptFor: Record<string, string[]> = { ".js": ["ts", "tsx"], ".jsx": ["tsx"], ".mjs": ["mts"], ".cjs": ["cts"] };
   const substituted = js ? (typescriptFor[js[0]] ?? []).map((e) => `${base}.${e}`) : [];
   const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
-  const candidates = [...substituted, written, ...extensions.map((e) => `${written}.${e}`), ...extensions.map((e) => `${written}/index.${e}`)];
+  // A specifier that names its file's extension (`./foo.ts`) is that file; no other extension is tried after it.
+  const explicit = /\.(m|c)?[jt]sx?$/.test(written);
+  const candidates = [...substituted, written, ...(explicit ? [] : [...extensions.map((e) => `${written}.${e}`), ...extensions.map((e) => `${written}/index.${e}`)])];
   return candidates.find((c) => /\.(m|c)?[jt]sx?$/.test(c) && exists(c));
 }

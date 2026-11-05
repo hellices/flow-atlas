@@ -398,7 +398,11 @@ function pythonString(text: string): { value: string; length: number } | undefin
     const next = text[i + 1]!;
     // A backslash keeps a quote from ending the literal, in a raw one too, where both characters stay.
     if (raw) value += c + next;
+    // A backslash before a line break joins the lines: `\` with LF, CRLF or CR adds nothing.
     else if (next === "\n") value += "";
+    else if (next === "\r") {
+      if (text[i + 2] === "\n") i++;
+    }
     // `\N{name}` names a character by its Unicode name, which this reading has no table of: the value is unknown.
     else if (next === "N" && text[i + 2] === "{") return undefined;
     else if (next === "x" && /^[0-9a-fA-F]{2}$/.test(text.slice(i + 2, i + 4))) {
@@ -430,7 +434,8 @@ function pythonStrings(text: string): { value: string; length: number } | undefi
   if (!first) return undefined;
   let { value, length } = first;
   for (;;) {
-    const gap = /^\s*/.exec(text.slice(length))![0];
+    // Spaces, line breaks and comments may stand between them inside the call's brackets.
+    const gap = /^(?:\s|#[^\n]*)*/.exec(text.slice(length))![0];
     const rest = text.slice(length + gap.length);
     if (!/^[rRuUfFbB]{0,2}["']/.test(rest)) return { value, length };
     const next = pythonString(rest);

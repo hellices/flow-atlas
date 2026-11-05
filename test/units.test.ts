@@ -211,11 +211,22 @@ describe("Reach", () => {
   });
 
   it("leaves out what the framework's handler parameters answer, and keeps what is kept on them", () => {
-    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); (res).end(); (res).status(204).sendStatus(); req.getClient().publish(); const reply = res; reply.redirect(); });';
+    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); (res).end(); (res).status(204).sendStatus(); req.getClient().publish(); const reply = res; reply.redirect(); req.services.mail.redirect(); });';
     const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
     const call = (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression;
     const names = reach.from("src/h.ts", call);
-    expect(names).toEqual(["publish", "send"]);
+    // `redirect` stays where the component calls it, and only there.
+    expect(names).toEqual(["publish", "redirect", "send"]);
+  });
+
+  it("treats a parameter the handler hands its response to as the framework's", () => {
+    const handled: Record<string, string> = {
+      "src/h.ts": 'import * as helpers from "./helpers";\napp.get("/x", (req, res) => { helpers.respond(res); });',
+      "src/helpers.ts": 'export function respond(reply) { reply.send("ok"); audit.record(); }',
+    };
+    const reach = new Reach({ ...source, read: (p) => handled[p], list: () => Object.keys(handled) });
+    const call = (reach.parse("src/h.ts")!.sf.statements[1] as ts.ExpressionStatement).expression;
+    expect(reach.from("src/h.ts", call)).toEqual(["record"]);
   });
 });
 

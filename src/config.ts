@@ -139,7 +139,8 @@ function checkRoute(route: RouteSource): RouteSource {
     const fixed = c.method !== undefined;
     const indexed = c.methodArg !== undefined;
     const position = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
-    if (typeof c.name !== "string" || !position(c.pathArg) || fixed === indexed || (fixed && typeof c.method !== "string") || (indexed && !position(c.methodArg))) {
+    const named = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+    if (!named(c.name) || !position(c.pathArg) || fixed === indexed || (fixed && !named(c.method)) || (indexed && !position(c.methodArg))) {
       throw new Error(`routes of ${route.component}: a registration helper needs name, a pathArg position and either a methodArg position or method (${JSON.stringify(c)})`);
     }
   }

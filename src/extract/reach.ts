@@ -206,6 +206,16 @@ export class Reach {
       }
       return false;
     };
+    // A function the handler hands its response to (`helpers.respond(res)`) gets the framework's object in that
+    // parameter: `reply.send()` there is the framework's too.
+    const handOn = (call: ts.CallExpression, target: { node: ts.Node }): void => {
+      const fn = ts.isFunctionLike(target.node) ? target.node : ts.isBlock(target.node) && ts.isFunctionLike(target.node.parent) ? target.node.parent : undefined;
+      if (!fn) return;
+      call.arguments.forEach((arg, i) => {
+        const param = fn.parameters[i];
+        if (param && !param.dotDotDotToken && fromFramework(arg)) framework.add(param);
+      });
+    };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
@@ -226,6 +236,7 @@ export class Reach {
           const namespace = ts.isIdentifier(receiver) && localBinding(receiver) === undefined ? parsed.namespaces.get(receiver.text) : undefined;
           const implementation = namespace ? this.exported(namespace, member) : undefined;
           if (implementation) {
+            handOn(n, implementation);
             const key = `${implementation.file}#${implementation.node.pos}`;
             if (!seen.has(key)) {
               seen.add(key);
@@ -252,6 +263,7 @@ export class Reach {
                   ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
                   : undefined;
           if (target) {
+            if (ts.isCallExpression(n.parent) && n.parent.expression === n) handOn(n.parent, target);
             const key = `${target.file}#${target.node.pos}`;
             if (!seen.has(key)) {
               seen.add(key);

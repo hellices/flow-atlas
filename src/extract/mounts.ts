@@ -27,7 +27,10 @@ const literal = (e: ts.Expression | undefined): string | undefined => {
 /** The module a `require("<spec>")` call names, or undefined for anything else. */
 const required = (e: ts.Expression | undefined): string | undefined => {
   const u = e && unwrap(e);
-  return u && ts.isCallExpression(u) && ts.isIdentifier(u.expression) && u.expression.text === "require" ? literal(u.arguments[0]) : undefined;
+  // CommonJS's require, not a function of that name the file declares.
+  return u && ts.isCallExpression(u) && ts.isIdentifier(u.expression) && u.expression.text === "require" && !declarationOf(u.expression)
+    ? literal(u.arguments[0])
+    : undefined;
 };
 
 /** The module a binding imports or requires from, with the exported name it takes ("default", "*" for the whole module). */
@@ -93,7 +96,8 @@ interface FileFacts {
   exports: Map<string, ts.Identifier | { spec: string; name: string }>;
   /** Modules re-exported whole (`export * from "./routes"`). */
   stars: string[];
-  uses: Array<{ receiver: ts.Identifier; path: string | undefined; target: ts.Identifier }>;
+  /** The router mounted: a name, or a module's export taken from it (`routes.router`). */
+  uses: Array<{ receiver: ts.Identifier; path: string | undefined; target: ts.Identifier | ts.PropertyAccessExpression }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
@@ -146,7 +150,7 @@ function factsOf(text: string, file: string): FileFacts {
       const pathless = first && (ts.isArrowFunction(first) || ts.isFunctionExpression(first));
       for (const arg of args) {
         const target = unwrap(arg);
-        if (!ts.isIdentifier(target)) continue;
+        if (!ts.isIdentifier(target) && !(ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression))) continue;
         facts.uses.push({ receiver: use, path: path ?? (pathless || target === first ? "/" : undefined), target });
       }
     }
@@ -198,6 +202,18 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const key = `${file}@${id.getStart()}`;
     return init && ts.isIdentifier(init) && !seen.has(key) ? at(file, init, new Set([...seen, key])) : undefined;
   };
+  /** A router a module exports, taken from the whole module: `import * as routes` or `const routes = require(...)`. */
+  const memberRouter = (file: string, access: ts.PropertyAccessExpression): string | undefined => {
+    const decl = declarationOf(access.expression as ts.Identifier);
+    const spec =
+      decl && ts.isNamespaceImport(decl)
+        ? (decl.parent.parent.moduleSpecifier as ts.StringLiteral).text
+        : decl && ts.isVariableDeclaration(decl)
+          ? required(decl.initializer)
+          : undefined;
+    const target = spec === undefined ? undefined : resolve(file, spec);
+    return target ? exported(target, access.name.text, new Set(), routerAt) : undefined;
+  };
   const routerAt = (file: string, id: ts.Identifier, seen = new Set<string>()): string | undefined => {
     const decl = declarationOf(id);
     if (!decl) return undefined;
@@ -215,7 +231,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   const mounts = new Map<string, Array<{ parent: string | undefined; path: string | undefined }>>();
   for (const [file, f] of facts) {
     for (const use of f.uses) {
-      const child = routerAt(file, use.target);
+      const child = ts.isIdentifier(use.target) ? routerAt(file, use.target) : memberRouter(file, use.target);
       if (!child) continue;
       // Mounted on a router, or on an Express application; `use` on anything else is no mount atlas can place.
       const parent = routerAt(file, use.receiver);
