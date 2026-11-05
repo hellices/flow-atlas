@@ -34,6 +34,7 @@ function hoistedVar(scope: ts.Node, text: string): ts.Node | undefined {
 function inStatements(statements: readonly ts.Statement[], text: string, file: boolean): ts.Node | undefined {
   for (const st of statements) {
     if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name?.text === text) return st;
+    if (ts.isModuleDeclaration(st) && ts.isIdentifier(st.name) && st.name.text === text) return st;
     if (ts.isVariableStatement(st) && (file || st.declarationList.flags & ts.NodeFlags.BlockScoped)) {
       for (const d of st.declarationList.declarations) {
         const found = bindingIn(d.name, text);

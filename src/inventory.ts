@@ -56,7 +56,7 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
 const CALL_SHAPES = [
   /["'`](?:\$\{[^}]+\}|\$[A-Za-z_]\w*)\/[A-Za-z][^"'`]*["'`]/g,
   // fetch and the wrappers named after it: authFetch, fetchJson, useFetch.
-  /\b\w*[Ff]etch\w*\(\s*["'`]\/[A-Za-z][^"'`]*/g,
+  /\b(?:fetch\w*|\w*Fetch\w*)\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
@@ -69,8 +69,8 @@ const CALL_SHAPES = [
  * A verb call whose first argument is a path, type arguments allowed: Dio's `dio.get<T>("/x")`, `http.post("/x")`.
  * Not in JavaScript or TypeScript, where `app.get("/x")` registers a route, nor in a decorator such as FastAPI's.
  */
-// `router.get("/x", handler)` and `app.get(...)` register a route in Dart's shelf_router too: not a request.
-const VERB_CALL = /(?<!@[\w.]*)(?<!\b(?:app|router|_router)\s*)\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
+// A receiver that is a router registers a route (`router.get("/x", handler)` in Dart's shelf_router): not a request.
+const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 
@@ -147,8 +147,11 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     }
     let count = 0;
     let firstAt: number | undefined;
+    // The names the file binds to a `Router()`, besides the usual `app` and `router`.
+    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*Router\s*\(/g)].map((m) => m[1]!)]);
     for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
+        if (re === VERB_CALL && m[1] !== undefined && routers.has(m[1])) continue;
         count++;
         firstAt = Math.min(firstAt ?? Infinity, m.index ?? 0);
       }

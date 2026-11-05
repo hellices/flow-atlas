@@ -111,7 +111,8 @@ read and a limit says so. The `next` style reads Next.js route handlers, `app/**
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
 under its `src/`: route groups and slots add no segment, private folders and intercepting routes are not served, `[id]`
 is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and `[[...rest]]` is `{*rest}` (none or more). Next.js
-answers HEAD with the GET handler and OPTIONS by itself when the file exports neither; those surfaces are `implicit`,
+answers HEAD with the GET handler when the file exports GET and no HEAD, and OPTIONS by itself when it exports no
+OPTIONS; those surfaces are `implicit`,
 reached only by a request that names the method, and no rule expects a caller for them. As Next.js does, a request is
 matched to the most specific route path first (a static name, then `[x]`, then catch-alls), and a method that route lacks
 matches nothing else. API routes under `pages/api` answer every method from their default export, written or

@@ -193,10 +193,18 @@ export class Reach {
     // `res.send()`, and `res.status(500).send()` on what a chainable response method returns (Express's and Fastify's
     // return the response). Something kept on a parameter (`req.services.mail.send()`), or returned by another of its
     // methods (`req.getClient().send()`), is the component's own, and is followed.
+    // A const that holds one (`const reply = res`) is the same object.
     const fromFramework = (receiver: ts.Expression): boolean => {
       let at = unwrap(receiver);
       while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression) && CHAINABLE.has(at.expression.name.text)) at = unwrap(at.expression.expression);
-      return ts.isIdentifier(at) && framework.has(declarationOf(at)!);
+      for (let hops = 0; ts.isIdentifier(at) && hops < 8; hops++) {
+        const decl = declarationOf(at);
+        if (decl && framework.has(decl)) return true;
+        const alias = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
+        if (!alias || !ts.isIdentifier(alias)) return false;
+        at = alias;
+      }
+      return false;
     };
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;

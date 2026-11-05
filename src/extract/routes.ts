@@ -231,7 +231,8 @@ export function routesFromTypeScript(
       }
     }
     for (const [method, h] of handlers) add(method, next.path, h.node, h.handler, undefined, { handlerFile: h.file });
-    // Next.js answers HEAD with the GET handler and OPTIONS with an Allow header when the file exports neither.
+    // Next.js answers HEAD with the GET handler when the file exports GET and no HEAD, and OPTIONS with an Allow header
+    // when it exports no OPTIONS.
     const get = handlers.get("GET");
     if (get && !handlers.has("HEAD")) add("HEAD", next.path, get.node, get.handler, undefined, { implicit: true, handlerFile: get.file });
     if (handlers.size && !handlers.has("OPTIONS")) add("OPTIONS", next.path, sf.statements[0] ?? sf, undefined, undefined, { implicit: true });
@@ -420,8 +421,27 @@ function pythonString(text: string): { value: string; length: number } | undefin
   return undefined;
 }
 
-const pythonLiteral = (text: string): string | undefined => pythonString(text)?.value || undefined;
-const pythonLiteralLength = (text: string): number | undefined => pythonString(text)?.length;
+/**
+ * A string literal and those written next to it, which Python joins into one (`"/api" "/users"`), across lines inside the
+ * brackets of a call; undefined when one of them is not a plain literal (an f-string, a name).
+ */
+function pythonStrings(text: string): { value: string; length: number } | undefined {
+  const first = pythonString(text);
+  if (!first) return undefined;
+  let { value, length } = first;
+  for (;;) {
+    const gap = /^\s*/.exec(text.slice(length))![0];
+    const rest = text.slice(length + gap.length);
+    if (!/^[rRuUfFbB]{0,2}["']/.test(rest)) return { value, length };
+    const next = pythonString(rest);
+    if (!next) return undefined;
+    value += next.value;
+    length += gap.length + next.length;
+  }
+}
+
+const pythonLiteral = (text: string): string | undefined => pythonStrings(text)?.value || undefined;
+const pythonLiteralLength = (text: string): number | undefined => pythonStrings(text)?.length;
 
 /**
  * A Starlette path in atlas's form: `{name:path}` takes the rest of the path, as Spring's `{*name}` does; any other

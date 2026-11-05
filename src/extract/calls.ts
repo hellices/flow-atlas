@@ -32,8 +32,10 @@ const isPlus = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpres
 function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | undefined {
   const parts: string[] = [];
   let strings = 0;
-  const walk = (n: ts.Expression): void => {
-    const first = !parts.length && !isPlus(n) && !ts.isParenthesizedExpression(n) ? lead?.(n) : undefined;
+  const walk = (written: ts.Expression): void => {
+    // `(BASE)`, `BASE as string` and `BASE!` are BASE; a parenthesized sum is still one sum.
+    const n = unwrap(written);
+    const first = !parts.length && !isPlus(n) ? lead?.(n) : undefined;
     if (first !== undefined) {
       parts.push(first);
       strings++;
@@ -42,8 +44,7 @@ function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | und
     if (isPlus(n)) {
       walk(n.left);
       walk(n.right);
-    } else if (ts.isParenthesizedExpression(n) && isPlus(n.expression)) walk(n.expression);
-    else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+    } else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
       parts.push(n.text);
       strings++;
     } else if (ts.isTemplateExpression(n)) {

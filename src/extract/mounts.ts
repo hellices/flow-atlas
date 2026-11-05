@@ -130,7 +130,15 @@ function factsOf(text: string, file: string): FileFacts {
         }
       }
     }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "use" && ts.isIdentifier(node.expression.expression)) {
+    // `app.use(...)`, and `app["use"](...)`, which is the same call.
+    const callee = ts.isCallExpression(node) ? node.expression : undefined;
+    const use =
+      callee && ts.isPropertyAccessExpression(callee) && callee.name.text === "use"
+        ? callee.expression
+        : callee && ts.isElementAccessExpression(callee) && literal(callee.argumentExpression) === "use"
+          ? callee.expression
+          : undefined;
+    if (ts.isCallExpression(node) && use && ts.isIdentifier(use)) {
       const args = node.arguments;
       const first = args[0] && unwrap(args[0]);
       const path = literal(first);
@@ -139,7 +147,7 @@ function factsOf(text: string, file: string): FileFacts {
       for (const arg of args) {
         const target = unwrap(arg);
         if (!ts.isIdentifier(target)) continue;
-        facts.uses.push({ receiver: node.expression.expression, path: path ?? (pathless || target === first ? "/" : undefined), target });
+        facts.uses.push({ receiver: use, path: path ?? (pathless || target === first ? "/" : undefined), target });
       }
     }
     ts.forEachChild(node, visit);

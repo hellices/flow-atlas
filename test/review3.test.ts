@@ -261,6 +261,11 @@ describe("framework rules", () => {
         },
         ["api|GET /shop/list"],
       ],
+      [
+        "a router mounted twice, once through a bracketed use",
+        { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use("/a", r);\napp["use"]("/b", r);' },
+        ["api|GET /a/x", "api|GET /b/x"],
+      ],
       ["an inline middleware before the router", { "app.js": 'const express = require("express");\nconst app = express();\nconst r = express.Router();\nr.get("/x", h);\napp.use((req, res, next) => next(), r);' }, ["api|GET /x"]],
       ["use on something that is not an Express application", { "app.js": 'const express = require("express");\nconst r = express.Router();\nr.get("/x", h);\nregistry.use("/admin", r);' }, []],
       ["a Router from another library", { "app.js": 'const sdk = require("sdk");\nconst r = sdk.Router();\nr.get("/x", h);\napp.use("/v", r);' }, []],
@@ -279,7 +284,7 @@ describe("registration helpers in the configuration", () => {
     const helper = (call: Record<string, unknown>) => () => normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["*.ts"], calls: [{ name: "reg", ...call }] }] });
     expect(helper({ pathArg: 1, methodArg: 0 })).not.toThrow();
     expect(helper({ pathArg: 0, method: "GET" })).not.toThrow();
-    for (const bad of [{ pathArg: 1.5, method: "GET" }, { pathArg: -1, method: "GET" }, { pathArg: 0, methodArg: -1 }, { pathArg: 0, methodArg: 1.5 }, { pathArg: 0 }, { pathArg: 0, methodArg: 1, method: "GET" }]) {
+    for (const bad of [{ pathArg: 1.5, method: "GET" }, { pathArg: -1, method: "GET" }, { pathArg: 0, methodArg: -1 }, { pathArg: 0, methodArg: 1.5 }, { pathArg: 0, methodArg: 1, method: 123 }, { pathArg: 0, method: 123 }, { pathArg: 0 }, { pathArg: 0, methodArg: 1, method: "GET" }]) {
       expect(helper(bad), JSON.stringify(bad)).toThrow(/registration helper/);
     }
   });
@@ -304,8 +309,11 @@ describe("inventory", () => {
       "agent/a.py": 'r = client.get(rf"{base}/orders")',
       "lib/api.dart": "final r = await dio.get('/orders');",
       "lib/server.dart": "router.get('/orders', handler);\napp.post('/items', create);",
+      "lib/shelf.dart": "final api = Router();\napi.get('/orders', handler);",
+      // Next.js's prefetch loads a route ahead; it is no request wrapper.
+      "web/nav.ts": 'router.prefetch("/dashboard");\nconst me = authFetch("/api/me");',
     };
-    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`).sort()).toEqual(["agent/a.py 1", "lib/api.dart 1"]);
+    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`).sort()).toEqual(["agent/a.py 1", "lib/api.dart 1", "web/nav.ts 1"]);
   });
 });
 
@@ -329,6 +337,8 @@ describe("names resolve by their bindings", () => {
       ['const base = "/api";\nfunction f(u = fetch(`${base}/users`)) { var base = y; }', ["GET /api/users"]],
       // A const that names another has its value.
       ['const API = "/api";\nconst BASE = API;\nfetch(`${BASE}/users`);', ["GET /api/users"]],
+      // Parentheses and assertions around the base leave it the base.
+      ['const BASE = "/api";\nfetch((BASE) + "/users");\nfetch((BASE as string) + "/items");', ["GET /api/users", "GET /api/items"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });
@@ -359,6 +369,7 @@ describe("names resolve by their bindings", () => {
       ["namespace N {\n  var hidden = 1;\n}\nconsume(hidden);", "hidden", undefined],
       ["namespace N {\n  if (x) { var inner = 1; }\n  consume(inner);\n}", "inner", 2],
       ["import X = Outer.A;\nnamespace N {\n  import X = Inner.B;\n  consume(X);\n}", "X", 3],
+      ['import api from "./api";\nnamespace Scope {\n  namespace api { export function get() {} }\n  export const x = api.get();\n}', "api", 3],
     ];
     expect(rows.map(([code, name]) => bound(code, name))).toEqual(rows.map(([, , line]) => line));
   });
@@ -381,5 +392,9 @@ describe("names resolve by their bindings", () => {
     // `\N{name}` needs Unicode's name table: that route is not read rather than read with the escape left in.
     const routes = '@app.get("/say/\\"hi\\"")\ndef a(): ...\n@app.get("/a\\x2fb")\ndef b(): ...\n@app.get("/foo\\057bar")\ndef c(): ...\n@app.get("/e/\\U0001F600")\ndef d(): ...\n@app.get("/caf\\N{LATIN SMALL LETTER E WITH ACUTE}")\ndef e(): ...';
     expect(routesFromPython("r.py", routes, { component: "c", files: [] }).map((s) => s.path)).toEqual(['/say/"hi"', "/a/b", "/foo/bar", "/e/\u{1F600}"]);
+    // Literals written next to each other are one, as Python joins them; one that is an f-string makes the path unknown.
+    const joined = '@app.get("/api" "/users")\ndef a(): ...\n@app.get("/api"\n         f"/{v}")\ndef b(): ...\nadd_endpoint(app, "/v1" \'/items\', h)';
+    const helper = { component: "c", files: [], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
+    expect(routesFromPython("r.py", joined, helper).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/users", "POST /v1/items"]);
   });
 });
