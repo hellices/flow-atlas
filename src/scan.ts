@@ -6,7 +6,7 @@ import { Reach } from "./extract/reach.js";
 import { extractRegistries } from "./extract/registries.js";
 import { extractRoutes } from "./extract/routes.js";
 import { Spans } from "./extract/spans.js";
-import { matchCalls, rankedComponents, type Ranking } from "./match.js";
+import { matchCalls, rankedComponents, unsettledLimits, type Ranking } from "./match.js";
 import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph } from "./model.js";
 import { select, type Source } from "./source.js";
 import { codeDependency, configDependency, provenance } from "./provenance.js";
@@ -27,16 +27,19 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * lead to: a call the handler's code runs (evidence `static`), or one held in a method the handler calls by name
  * (evidence `name`). `spans[i]` are the offsets of the expression holding `calls[i]`'s URL; the handler runs the call
  * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
- * built from a request's result, starts elsewhere.
+ * built from a request's result, starts elsewhere. A call whose method is not read and whose routes take different
+ * methods has no edge; `limits` names it.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
   executed?: Map<string, Set<string>>,
   ranked?: Map<string, Ranking>,
   spans: Array<[number, number] | undefined> = [],
+  limits: string[] = [],
 ): Edge[] {
   const edges: Edge[] = [];
-  const { targetsOf } = matchCalls(graph, ranked);
+  const { targetsOf, unsettled } = matchCalls(graph, ranked);
+  limits.push(...unsettledLimits(graph, unsettled));
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });
@@ -83,7 +86,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
   const read = extractCalls(source, config, coverage, spans, limits);
   const calls = assignCallIds(read.map(withoutSpan));
-  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span));
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits);
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",
@@ -96,7 +99,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
     calls,
     edges,
     declared,
-    registries: extractRegistries(source, config),
+    registries: extractRegistries(source, config, coverage),
     apiDocuments,
     apiDescriptions: resolveApiDescriptions(apiDocuments, surfaces, config),
     coverage,

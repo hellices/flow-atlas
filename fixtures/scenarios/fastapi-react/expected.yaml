@@ -7,6 +7,11 @@ case: |
   the Python decorators as Express routes and count none of the wrapper's calls. A mounted sub-application is not
   read; a limit says so rather than serving its whole subtree. The chat URL, chosen between a base and none
   (`base ? `${base}/api/chat` : "/api/chat"`), was two calls; it is one request, read once.
+  atlas does not read into the wrapper, so `authFetch(url)` has no method it can read. Such a call to
+  `/api/reports/${name}` used to reach `POST /api/reports/run` as well as the catch-all it reads, and one to
+  `/api/templates/${name}` the PUT that saves a template, so both showed as callers of writes they never make. A call
+  whose method is not read is now matched to the routes it fits only when they take one method; otherwise atlas leaves
+  it unmatched, a limit names it, and the routes it fits are not reported as having no caller.
 surfaces:
   - backend|DELETE /api/exports/{workspace_id}/{timestamp}
   - backend|GET /api/reports
@@ -15,6 +20,7 @@ surfaces:
   - backend|GET /api/auth/session
   - backend|GET /api/templates/{name}
   - backend|GET /api/templates/{name}/raw
+  - backend|PUT /api/templates/{name}
   - backend|GET /api/dashboard/summary
   - backend|GET /api/downloads/**
   - backend|GET /api/health
@@ -28,13 +34,15 @@ findings:
   - FA001|backend|GET /api/dashboard/summary
 limits:
   - mounts an application at /admin whose routes are not read
+  - "* /api/templates/{} at frontend/src/components/AuthGate.tsx:6 fits routes of GET and PUT"
+  - "* /api/reports/{} at frontend/src/components/ReportList.tsx:5 fits routes of GET and POST"
 chains:
   - outside->backend|GET /api/auth/callback
   - outside->backend|GET /api/health
   - web->backend|GET /api/reports
   - web->backend|GET /api/reports/{*filename}
   - web->backend|GET /api/auth/session
-  - web->backend|GET /api/templates/{name}
+  - web->backend|PUT /api/templates/{name}
   - web->backend|GET /api/downloads/**
   - web->backend|POST /api/reports/run
   - web->backend|POST /api/auth/logout
@@ -51,8 +59,8 @@ calls:
   - web->backend|* /api/chat @ frontend/src/lib/ag-ui-client.ts:2
 inventory:
   routes:
-    - backend/server.py fastapi 11
+    - backend/server.py fastapi 12
   calls:
     - frontend/src/components/ReportList.tsx 3
-    - frontend/src/components/AuthGate.tsx 3
+    - frontend/src/components/AuthGate.tsx 4
     - frontend/src/lib/ag-ui-client.ts 1

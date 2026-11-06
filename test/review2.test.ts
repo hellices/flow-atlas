@@ -14,9 +14,10 @@ import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js
 import { traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
 import { inventory } from "../src/inventory.js";
-import type { Subgraph, Surface } from "../src/model.js";
+import { API_VERSION, type Subgraph, type Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
-import { configDependency } from "../src/provenance.js";
+import { codeDependency, configDependency, provenance } from "../src/provenance.js";
+import { coverageDrops } from "../src/commands.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import { GitRefSource, WorktreeSource, type Source } from "../src/source.js";
@@ -102,6 +103,49 @@ describe("registry locations", () => {
     const entries = extractRegistries(memory({ "active.json": active }), config);
     expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["mentions invoice:2", "invoice:4", "a/b:5"]);
   });
+  it("places a key read by a pattern from a text file on the line of the key, not where the match starts", () => {
+    const enumFile = "public enum Kind {\n    ALPHA,\n    BETA\n}\n";
+    const config = normalizeConfig({ registries: [{ name: "kind", active: { file: "Kind.java", pattern: "\\n    ([A-Z_]+)[,\\n]" }, producers: [], consumers: [] }] });
+    const entries = extractRegistries(memory({ "Kind.java": enumFile }), config);
+    expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["ALPHA:2", "BETA:3"]);
+  });
+});
+
+describe("registry coverage", () => {
+  const registry = (name: string, active: Record<string, string>) => ({ name, active, producers: ["src/**"], consumers: ["web/**"] });
+  const config = normalizeConfig({
+    registries: [
+      registry("kind", { file: "Kind.java", pattern: "\\n    ([A-Z_]+)[,\\n]" }),
+      registry("renamed", { file: "Kind.java", pattern: "\\n  ([a-z]+)," }),
+      registry("moved", { file: "gone/active.json" }),
+      registry("tool", { files: "tools/*.json", field: "name" }),
+    ],
+  });
+  const files = {
+    "Kind.java": "public enum Kind {\n    ALPHA,\n    BETA\n}\n",
+    "tools/a.json": '{ "name": "search" }',
+    "tools/b.json": '{ "name": "search" }',
+  };
+  const graph = scan(memory(files), config);
+
+  it("says per registry how many files its active list read and how many entries it found", () => {
+    expect(graph.coverage).toEqual([
+      { source: "registries kind", files: 1, items: 2 },
+      { source: "registries renamed", files: 1, items: 0 },
+      { source: "registries moved", files: 0, items: 0 },
+      { source: "registries tool", files: 2, items: 1 },
+    ]);
+    expect(validate("graph", graph)).toEqual([]);
+  });
+  it("gives a limit for an active list that yields no entries", () => {
+    expect(graph.limits).toEqual([
+      "registries renamed: 1 files read, nothing extracted",
+      "registries moved: the configured files match nothing",
+    ]);
+  });
+  it("does not warn against a baseline recorded before registries had coverage", () => {
+    expect(coverageDrops(graph, {})).toEqual([]);
+  });
 });
 
 describe("routes", () => {
@@ -182,6 +226,73 @@ describe("inventory", () => {
     expect(inventory(memory(service), []).components.map((c) => `${c.name}:${c.path}`)).toEqual([":", "web:web"].map((x) => (x === ":" ? "root:" : x)));
     const workspace = { "package.json": '{"name":"mono","workspaces":["web"]}', "web/package.json": '{"name":"web"}' };
     expect(inventory(memory(workspace), []).components.map((c) => c.name)).toEqual(["web"]);
+  });
+  it("takes no component from the platform folders a cross-platform app builds", () => {
+    const files = {
+      "app/pubspec.yaml": "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+      "app/android/settings.gradle.kts": 'include(":app")\n',
+      "app/android/build.gradle.kts": "",
+      "app/android/app/build.gradle.kts": "",
+      "app/ios/Podfile": "",
+      "tool/pubspec.yaml": "name: tool\n",
+      "tool/android/build.gradle": "",
+      "mobile/package.json": '{"name":"mobile","dependencies":{"react-native":"0.80.0"}}',
+      "mobile/android/build.gradle": "",
+      "mobile/android/app/build.gradle": "",
+      "mobile/modules/blur/expo-module.config.json": "{}",
+      "mobile/modules/blur/android/build.gradle": "",
+      "backend/build.gradle": "",
+    };
+    expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`)).toEqual(["app:app", "backend:backend", "mobile:mobile", "tool:tool", "android:tool/android"]);
+  });
+  it("takes react-native from any dependency list of a package", () => {
+    for (const list of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      const files = { "mobile/package.json": JSON.stringify({ name: "mobile", [list]: { "react-native": "0.80.0" } }), "mobile/android/build.gradle": "" };
+      expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`), list).toEqual(["mobile:mobile"]);
+    }
+  });
+  it("reads the Flutter SDK dependency in any YAML spelling, and only under dependencies", () => {
+    const app = (pubspec: string) => ({ "app/pubspec.yaml": pubspec, "app/android/app/build.gradle.kts": "" });
+    const names = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`);
+    expect(names(app('name: app\ndependencies:\n  flutter:\n    sdk: "flutter"\n'))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndependencies:\n  flutter: { sdk: 'flutter' }   # the SDK\n"))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndependencies:\n  flutter:\n    sdk: flutter # Flutter SDK\n"))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndev_dependencies:\n  flutter:\n    sdk: flutter\n"))).toEqual(["app:app", "android-app:app/android/app"]);
+  });
+  it("names components that share a directory name by their paths, and says so", () => {
+    const files = {
+      "deploy/mobile/app/build.gradle.kts": "",
+      "deploy/catalog/app/build.gradle.kts": "",
+      "packages/a/python/pyproject.toml": "",
+      "packages/b/python/pyproject.toml": "",
+      "packages/b/package.json": '{"name":"b"}',
+      "web/package.json": '{"name":"site"}',
+    };
+    const inv = inventory(memory(files), []);
+    expect(inv.components.map((c) => `${c.name}:${c.path}${c.note ? ` (${c.note})` : ""}`)).toEqual([
+      "catalog-app:deploy/catalog/app (named by its path: 2 components would be named app)",
+      "mobile-app:deploy/mobile/app (named by its path: 2 components would be named app)",
+      "a-python:packages/a/python (named by its path: 2 components would be named python)",
+      "b:packages/b",
+      "b-python:packages/b/python (named by its path: 2 components would be named python)",
+      "site:web",
+    ]);
+    const doc = { apiVersion: API_VERSION, kind: "Inventory", provenance: provenance("Inventory", { ref: "WORKTREE" }, [codeDependency("code", "WORKTREE")]), ...inv };
+    expect(validate("inventory", doc)).toEqual([]);
+  });
+  it("keeps every name unique when the paths do not tell components apart", () => {
+    const names = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`);
+    // A root package that is no workspace, and a directory named as it.
+    expect(names({ "package.json": '{"name":"app"}', "app/build.gradle": "" })).toEqual(["app:", "app-2:app"]);
+    // A generated name that another component already has, with no more path to add.
+    const taken = names({ "mobile/app/build.gradle": "", "other/app/build.gradle": "", "x/package.json": '{"name":"mobile-app"}' });
+    expect(taken).toEqual(["mobile-app-2:mobile/app", "other-app:other/app", "mobile-app:x"]);
+    expect(new Set(taken.map((n) => n.split(":")[0])).size).toBe(taken.length);
+    const notes = inventory(memory({ "package.json": '{"name":"app"}', "app/build.gradle": "" }), []).components.map((c) => c.note);
+    expect(notes).toEqual([
+      "named by its path: 2 components would be named app, and their paths do not tell them apart, so they are numbered",
+      "named by its path: 2 components would be named app, and their paths do not tell them apart, so they are numbered",
+    ]);
   });
 });
 

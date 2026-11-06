@@ -70,6 +70,7 @@ describe("Arazzo export", () => {
     const workflows = document.workflows as Array<{ workflowId: string; steps: Array<{ stepId: string }> }>;
     expect(workflows.map((w) => `${w.workflowId}:${w.steps.map((s) => s.stepId).join(",")}`)).toEqual(["parent:screen"]);
     expect(limits).toContain("parent.run: flow child is not in this export");
+    expect((workflows[0] as unknown as { "x-flow-atlas": { omitted: unknown } })["x-flow-atlas"].omitted).toEqual([{ stepId: "run", reason: "flow child is not in this export" }]);
   });
 });
 
