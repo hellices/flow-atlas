@@ -22,5 +22,6 @@ class DevProfileTest {
     mvc.perform(get("/dev-docs")).andExpect(status().isOk());
     mvc.perform(get("/dev-docs/public")).andExpect(status().isOk());
     mvc.perform(get("/api-docs")).andExpect(status().isNotFound());
+    mvc.perform(get("/api-docs/public")).andExpect(status().isNotFound());
   }
 }

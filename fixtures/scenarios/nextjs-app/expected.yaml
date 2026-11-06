@@ -22,6 +22,8 @@ chains:
   - outside->web|GET /
   - web->web|GET /api/public-config
   - web->web|POST /api/chat/stream
+descriptions:
+  - web none - NoneFound
 inventory:
   routes:
     - apps/web/app/api/chat/stream/route.ts next 1

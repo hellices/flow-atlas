@@ -38,6 +38,8 @@ chains:
   - web->backend|POST /api/reports/run
   - web->backend|POST /api/auth/logout
   - web->backend|POST /api/chat
+descriptions:
+  - backend none - NoneFound
 inventory:
   routes:
     - backend/server.py fastapi 11

@@ -76,7 +76,7 @@ describe("scenarios from real repositories", () => {
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));
       expect(actual.flows).toEqual(expected.flows ?? {});
       expect(actual.documents).toEqual(expected.documents ?? []);
-      if (expected.descriptions) expect(actual.descriptions).toEqual(expected.descriptions);
+      expect(actual.descriptions).toEqual(expected.descriptions ?? []);
       expect(actual.inventory).toEqual({
         routes: [...expected.inventory.routes].sort(),
         calls: [...expected.inventory.calls].sort(),

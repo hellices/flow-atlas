@@ -750,17 +750,70 @@ describe("documents springdoc serves", () => {
   it("does not take a constant for a parameter or local of the same name that hides it", () => {
     const docs = (method: string) =>
       ["package lab;", "@Configuration", "class Docs {", '  static final String GROUP = "public";', method, "}"].join("\n");
-    const unread = (line: number) => [`openapi svc: svc/src/main/java/lab/Docs.java:${line} builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read`];
-    const parameter = '  @Bean GroupedOpenApi api(@Value("${docs.group}") String GROUP) {\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }';
-    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(parameter) })).toMatchObject({ documents: ["/v3/api-docs springdoc default svc/pom.xml:5"], limits: unread(6) });
-    const local = '  @Bean GroupedOpenApi api(Environment env) {\n    String GROUP = env.getProperty("docs.group");\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }';
-    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(local) }).limits).toEqual(unread(7));
-    const kotlin = ["package lab", "@Configuration", "class Docs {", "  @Bean", "  fun api(GROUP: String): GroupedOpenApi = GroupedOpenApi.builder().group(GROUP).build()", "}", 'const val GROUP = "public"'].join("\n");
-    expect(run({ "svc/pom.xml": POM, "svc/src/main/kotlin/lab/Docs.kt": kotlin }).limits).toEqual([
-      "openapi svc: svc/src/main/kotlin/lab/Docs.kt:5 builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read",
-    ]);
+    // Only the default document: the group is reported, never listed.
+    const hidden = (file: string, text: string, line: number) =>
+      expect(run({ "svc/pom.xml": POM, [file]: text })).toEqual({
+        documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+        description: "chosen /v3/api-docs ServedByCode",
+        limits: [`openapi svc: ${file}:${line} builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read`],
+      });
+    const java = "svc/src/main/java/lab/Docs.java";
+    hidden(java, docs('  @Bean GroupedOpenApi api(@Value("${docs.group}") String GROUP) {\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }'), 6);
+    hidden(java, docs('  @Bean GroupedOpenApi api(Environment env) {\n    String GROUP = env.getProperty("docs.group");\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }'), 7);
+    const lambda = (parameters: string) =>
+      docs(`  @Bean GroupedOpenApi api() {\n    BinaryOperator<String> pick = ${parameters} -> GroupedOpenApi.builder().group(GROUP).build().getGroup();\n    return null;\n  }`);
+    hidden(java, lambda("(left, GROUP)"), 6);
+    hidden(java, lambda("(String left, String GROUP)"), 6);
+    hidden(java, lambda("(var left, var GROUP)"), 6);
+    const kotlin = (body: string) => ["package lab", "@Configuration", "class Docs {", "  @Bean", body, "}", 'const val GROUP = "public"'].join("\n");
+    const kt = "svc/src/main/kotlin/lab/Docs.kt";
+    hidden(kt, kotlin("  fun api(GROUP: String): GroupedOpenApi = GroupedOpenApi.builder().group(GROUP).build()"), 5);
+    hidden(kt, kotlin('  fun api(): GroupedOpenApi = listOf("a").map { left, GROUP -> GroupedOpenApi.builder().group(GROUP).build() }.first()'), 5);
     const constant = '  @Bean GroupedOpenApi api(@Value("${docs.title}") String title) {\n    return GroupedOpenApi.builder().group(GROUP).displayName(title).build();\n  }';
-    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(constant) }).documents).toContain("/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:6");
+    expect(run({ "svc/pom.xml": POM, [java]: docs(constant) }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+      "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:6",
+    ]);
+    const unrelated = docs("  @Bean GroupedOpenApi api() {\n    BinaryOperator<String> pick = (left, right) -> left;\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }");
+    expect(run({ "svc/pom.xml": POM, [java]: unrelated }).documents).toContain("/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:7");
+  });
+
+  it("resolves YAML aliases and merge keys as Spring Boot's loader does, at the alias", () => {
+    const yml = (body: string) => run({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: body }).documents;
+    expect(yml("docs: &docs /internal\nspringdoc:\n  api-docs:\n    path: *docs\n")).toEqual([`/internal springdoc api-docs.path ${RESOURCES}/application.yml:4`]);
+    expect(yml("base: &base\n  path: /merged\nspringdoc:\n  api-docs:\n    <<: *base\n")).toEqual([`/merged springdoc api-docs.path ${RESOURCES}/application.yml:5`]);
+    expect(yml("base: &base\n  path: /merged\nspringdoc:\n  api-docs:\n    <<: *base\n    path: /own\n")).toEqual([`/own springdoc api-docs.path ${RESOURCES}/application.yml:6`]);
+    expect(yml("admin: &admin\n  group: admin\nspringdoc:\n  group-configs:\n    - *admin\n")).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+      `/v3/api-docs/admin springdoc group-configs ${RESOURCES}/application.yml:5`,
+    ]);
+  });
+
+  it("decodes .properties escapes as java.util.Properties does", () => {
+    const properties = (body: string) => run({ "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: body }).documents;
+    expect(properties("springdoc.api-docs.path=\\u002finternal\n")).toEqual([`/internal springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+    expect(properties("springdoc.api-docs.path=/v3/\\u0061pi-docs\n")).toEqual([`/v3/api-docs springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+    expect(properties("spring\\u0064oc.api-docs.path=/keyed\n")).toEqual([`/keyed springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+    expect(properties("springdoc.api-docs.path=/a\\:b\\=c\n")).toEqual([`/a:b=c springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+    expect(properties("springdoc.api-docs.path\\\n    =/continued\n")).toEqual([`/continued springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+  });
+
+  it("reads springdoc's switches only as springdoc's conditions do", () => {
+    const properties = (body: string) => run({ "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: body });
+    // @ConditionalOnProperty without havingValue: only "false", in any case, turns the endpoints off.
+    expect(properties("springdoc.api-docs.enabled=off\n").documents).toEqual(["/v3/api-docs springdoc default svc/pom.xml:5"]);
+    expect(properties("springdoc.api-docs.enabled=FALSE\n").documents).toEqual([]);
+    expect(properties("springdoc.use-management-port=FALSE\n").documents).toEqual(["/v3/api-docs springdoc default svc/pom.xml:5"]);
+    expect(properties("springdoc.enable-default-api-docs=False\nspringdoc.group-configs[0].group=admin\n").documents).toEqual([
+      `/v3/api-docs/admin springdoc group-configs ${RESOURCES}/application.properties:2`,
+    ]);
+    // Read in a SpEL expression: anything but true or false stops the application or moves the documents.
+    for (const [key, value] of [["springdoc.enable-default-api-docs", "off"], ["springdoc.enable-default-api-docs", "1"], ["springdoc.use-management-port", "1"], ["springdoc.use-management-port", "no"]])
+      expect(properties(`${key}=${value}\n`)).toEqual({
+        documents: [],
+        description: "none - NoneFound",
+        limits: [`openapi svc: ${RESOURCES}/application.properties:1 sets ${key} to ${value}, which springdoc reads only as true or false; the documents springdoc serves are not read`],
+      });
   });
 
   it("serves a group only from a bean the application registers, and says when that is not settled", () => {

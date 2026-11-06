@@ -57,7 +57,10 @@ a generated file for that.
 | FAQ 13.61: `springdoc.group-configs[0].group=users` | the same, per literal group; a list set with more precedence, even `[]`, replaces it, and a repeated key keeps its last value |
 
 Settings come from `src/main/resources/application.properties` and `application.yml` (`.yaml`) and their `config/`
-copies, with Spring Boot's precedence (properties over YAML, `config/` over both). Not read, each reported as a
+copies, with Spring Boot's precedence (properties over YAML, `config/` over both), YAML aliases and merge keys
+resolved and `.properties` escapes (`\u002f`) decoded as Spring Boot loads them. `springdoc.api-docs.enabled` is off
+only for `false`, in any case (`off` keeps the endpoints on); `springdoc.enable-default-api-docs` and
+`springdoc.use-management-port` mean something only as `true` or `false`, and any other value is reported. Not read, each reported as a
 `limit:` in `atlas scan`: a profile's file (`application-dev.yml`) or a YAML document under
 `spring.config.activate.on-profile`, since which profile runs is decided at launch; a value with a placeholder
 (`${DOCS_PATH:/docs}`), resolved at run time; a group name built in code; a builder outside a `@Bean` method, in a
@@ -79,7 +82,8 @@ recipe below was run against the framework versions listed in the flow-atlas `fi
 | Django REST framework + drf-spectacular | OpenAPI 3.0 | `python manage.py spectacular --format openapi-json --file openapi.json` |
 | NestJS + @nestjs/swagger | OpenAPI 3.0 | in a script: `NestFactory.create`, the same global prefix as `main.ts`, `SwaggerModule.createDocument(app, config)`, write it, `app.close()` |
 | Fastify + @fastify/swagger | Swagger 2.0 or OpenAPI 3.0 (by `openapi` option) | build the app, `await app.ready()`, write `app.swagger()` |
-| Spring Boot + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | a `@SpringBootTest` with `MockMvc` that GETs `/v3/api-docs` (or the path and group `atlas inventory` lists) and writes the body; set `springdoc.writer-with-default-pretty-printer=true` so `described` lines mean something |
+| Spring Boot (MVC) + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | a `@SpringBootTest` with `@AutoConfigureMockMvc` whose `MockMvc` GETs each path and group `atlas inventory` lists (`/v3/api-docs` by default) and writes the body; set `springdoc.writer-with-default-pretty-printer=true` so `described` lines mean something |
+| Spring Boot (WebFlux) + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | the same with `@AutoConfigureWebTestClient` and `WebTestClient` (`get().uri(path).exchange().expectBody(String.class)`), since MockMvc does not run a WebFlux application |
 
 Notes:
 

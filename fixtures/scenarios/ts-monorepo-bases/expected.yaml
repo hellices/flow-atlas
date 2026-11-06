@@ -33,6 +33,10 @@ chains:
 flows:
   ask: Ready=True
   image-question: Ready=Unknown
+descriptions:
+  - bff none - NoneFound
+  - core none - NoneFound
+  - store none - NoneFound
 inventory:
   routes:
     - bff/src/routes.ts express 3

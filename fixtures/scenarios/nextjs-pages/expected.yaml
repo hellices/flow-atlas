@@ -32,6 +32,8 @@ chains:
   - web->web|GET /notes/{slug}
   - web->web|GET /r
   - web->web|POST /api/assistant
+descriptions:
+  - web none - NoneFound
 inventory:
   routes:
     - apps/web/src/app/api/assistant/route.ts next 2

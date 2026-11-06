@@ -75,9 +75,13 @@ fit equally. Then choose, and write the choice as `openapi.<component>` with a c
 
 - Follow the repository's rules first. A design-first repository (the committed description is the contract, code is
   generated or checked against it) means the committed file; a code-first one means the served document.
-- springdoc groups (`SeveralServedDocuments` with `/v3/api-docs/<group>` candidates): each `GroupedOpenApi` names
-  the paths it takes (`pathsToMatch`); take the group whose paths cover the component's routes, else the ungrouped
-  `/v3/api-docs`, which documents every route. Modules of one application may each take a different group.
+- springdoc groups (`SeveralServedDocuments` with `/v3/api-docs/<group>` candidates): a group whose builder (or
+  `springdoc.group-configs` entry) sets `pathsToMatch` and nothing else that filters can be judged from its patterns:
+  take it when they cover the component's routes. A group that also or instead uses `packagesToScan`,
+  `pathsToExclude`, `packagesToExclude`, `producesToMatch`, `consumesToMatch`, `headersToMatch` or a customizer cannot:
+  generate its document (`references/openapi.md`) and compare its paths, or ask. Otherwise take the ungrouped
+  `/v3/api-docs`, which documents every route unless `springdoc.paths-to-match` or `springdoc.packages-to-scan`
+  narrow it. Modules of one application may each take a different group.
 - Several served documents (`SeveralServedDocuments`), such as `/v1` and `/v2`: take the one whose paths the flow's
   clients call; `atlas query --path` shows which version the calls use.
 - Several complete files (`SeveralCompleteFiles`): usually one is a copy (in `docs/`, a build output, another

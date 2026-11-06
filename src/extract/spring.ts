@@ -765,14 +765,19 @@ const COMPONENT = /@(?:[\w.]*\.)?(?:Configuration|SpringBootApplication|Componen
 
 /**
  * Whether `name` is declared as a parameter or local of the member text `region` (Java `Type name`, Kotlin `name: Type`
- * or `val name`, a lambda's `name ->`): such a name hides a constant of the same name, as Java and Kotlin scoping say.
- * A declaration in a block already closed counts too, so a name that may be hidden is never read as the constant.
+ * or `val name`, or a lambda parameter: `name ->`, `(a, name) ->`, Kotlin's `{ a, name ->`): such a name hides a
+ * constant of the same name, as Java and Kotlin scoping say. A declaration in a block already closed counts too, so a
+ * name that may be hidden is never read as the constant.
  */
 function declaredLocally(region: string, name: string, kotlin: boolean): boolean {
   const n = name.replace(/\$/g, "\\$");
   const java = new RegExp(`(?<![\\w.$])(?!(?:return|throw|new|else|case|yield|assert)\\b)[A-Za-z_$][\\w$.]*(?:<[^<>()]*>)?(?:\\[\\])?\\s+${n}\\s*(?=[,)=;:])`);
-  const lambda = new RegExp(`(?<![\\w.$])${n}\\s*->`);
-  if (lambda.test(region)) return true;
+  const token = new RegExp(`(?<![\\w$])${n}(?![\\w$])`);
+  for (const arrow of region.matchAll(/->/g)) {
+    const before = region.slice(0, arrow.index);
+    const parameters = (kotlin ? /\{([^{}]*)$/ : /\(([^()]*)\)\s*$/).exec(before)?.[1] ?? /([A-Za-z_$][\w$]*)\s*$/.exec(before)?.[1] ?? "";
+    if (token.test(parameters)) return true;
+  }
   return kotlin ? new RegExp(`(?<![\\w.$])${n}\\s*:(?!:)|\\b(?:val|var)\\s+${n}\\b`).test(region) : java.test(region);
 }
 

@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { isMap, isScalar, isSeq, parseAllDocuments } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseAllDocuments } from "yaml";
 import type { ApiDocument } from "../model.js";
 import { joinRoute } from "../paths.js";
 import { GitRefSource, lineOf, matcher, type Source } from "../source.js";
@@ -24,6 +24,12 @@ const CONTEXT_PATH = "server.servlet.context-path";
 const BASE_PATH = "spring.webflux.base-path";
 const GROUP = /^springdoc\.groupconfigs\[(\d+)\]\.group$/;
 const READ = [PATH, ENABLED, DEFAULT_DOCS, MANAGEMENT, CONTEXT_PATH, BASE_PATH];
+/**
+ * A switch springdoc reads in a SpEL condition or compares with `"true"`/`"false"` (`enable-default-api-docs`,
+ * `use-management-port`): only true or false, in any case, mean that there; with any other value the application
+ * fails to start or moves the documents off the main port. Undefined when unset, null for any other value.
+ */
+const flag = (s: { value: string } | undefined): boolean | null | undefined => (s === undefined ? undefined : /^true$/i.test(s.value) ? true : /^false$/i.test(s.value) ? false : null);
 const relaxed = (key: string): string => key.toLowerCase().replace(/[-_]/g, "");
 const canonical = new Map(READ.map((k) => [relaxed(k), k]));
 
@@ -45,21 +51,41 @@ function yamlParts(file: string, text: string): Part[] {
   return parseAllDocuments(text).flatMap((doc) => {
     if (!("contents" in doc) || doc.errors.length) return [];
     const settings: Setting[] = [];
-    const walk = (node: unknown, key: string): void => {
-      if (isMap(node)) for (const p of node.items) walk(p.value, `${key ? `${key}.` : ""}${isScalar(p.key) ? String(p.key.value) : ""}`);
+    const stack = new Set<unknown>();
+    // `at` is the alias a value was reached through: the place that sets it here.
+    const walk = (node: unknown, key: string, at?: number): void => {
+      if (stack.has(node)) return;
+      stack.add(node);
+      const line = (n: { range?: [number, number, number] | null }) => lineOf(text, at ?? n.range?.[0] ?? 0);
+      if (isAlias(node)) walk(node.resolve(doc), key, at ?? node.range?.[0]);
+      else if (isMap(node)) {
+        // Merge keys (`<<: *base`) first, the earlier of several winning, so the map's own keys override them.
+        const merges = node.items.filter((p) => isScalar(p.key) && p.key.value === "<<");
+        for (const p of merges) {
+          const from = (p.value as { range?: [number, number, number] | null } | null)?.range?.[0];
+          for (const source of (isSeq(p.value) ? [...p.value.items] : [p.value]).reverse()) walk(source, key, at ?? from);
+        }
+        for (const p of node.items) if (!merges.includes(p)) walk(p.value, `${key ? `${key}.` : ""}${isScalar(p.key) ? String(p.key.value) : ""}`, at);
+      }
       // An empty list is a value of its own, "" (Spring's YamlProcessor), so it replaces a list set with less precedence.
-      else if (isSeq(node) && node.items.length === 0) settings.push({ key, value: "", file, line: lineOf(text, node.range?.[0] ?? 0) });
-      else if (isSeq(node)) node.items.forEach((item, i) => walk(item, `${key}[${i}]`));
+      else if (isSeq(node) && node.items.length === 0) settings.push({ key, value: "", file, line: line(node) });
+      else if (isSeq(node)) node.items.forEach((item, i) => walk(item, `${key}[${i}]`, at));
       else if (isScalar(node)) {
         const v = node.value;
         const value = typeof v === "string" || typeof v === "number" || typeof v === "boolean" || typeof v === "bigint" ? String(v) : "";
-        settings.push({ key, value, file, line: lineOf(text, node.range?.[0] ?? 0) });
+        settings.push({ key, value, file, line: line(node) });
       }
+      stack.delete(node);
     };
     walk(doc.contents, "");
     return [part(settings)];
   });
 }
+
+/** `.properties` escapes decoded as `java.util.Properties.load` does: `\uXXXX`, `\t`, `\n`, `\r`, `\f`, any other character as itself. */
+const ESCAPES: Record<string, string> = { t: "\t", n: "\n", r: "\r", f: "\f" };
+const unescape = (s: string): string =>
+  s.replace(/\\(u[0-9a-fA-F]{4}|[\s\S])/g, (_, e: string) => (e.length === 5 ? String.fromCharCode(parseInt(e.slice(1), 16)) : (ESCAPES[e] ?? e)));
 
 /** The settings of a `.properties` file, a part per `#---` document: `key=value`, `key: value` or `key value`, lines continued with `\`. */
 function propertiesParts(file: string, text: string): Part[] {
@@ -76,7 +102,6 @@ function propertiesParts(file: string, text: string): Part[] {
     while (/(?<!\\)(?:\\\\)*\\$/.test(line) && i + 1 < lines.length) line = line.slice(0, -1) + lines[++i]!.replace(/\r$/, "").trimStart();
     const m = /^((?:\\.|[^\s:=\\])+)\s*[:=]?\s*(.*)$/.exec(line);
     if (!m) continue;
-    const unescape = (s: string) => s.replace(/\\(.)/g, "$1");
     parts.at(-1)!.push({ key: unescape(m[1]!), value: unescape(m[2]!).trimEnd(), file, line: start + 1 });
   }
   return parts.map(part);
@@ -216,7 +241,8 @@ const packageOf = (code: string): string => /^\s*package\s+([\w.]+)/m.exec(code)
  *
  * Settings are read from `application.properties` and `application.yml` (`.yaml`) under `src/main/resources` and its
  * `config/`, with Spring Boot's precedence: `.properties` over YAML, `config/` over both, a later YAML document over an
- * earlier one, a list replaced whole (an empty one too), a name set twice keeping its last value. A profile's file (`application-dev.yml`) or document applies only when the profile
+ * earlier one, a list replaced whole (an empty one too), a name set twice keeping its last value; YAML aliases and
+ * merge keys resolved, `.properties` escapes decoded. A profile's file (`application-dev.yml`) or document applies only when the profile
  * is active, which is decided at launch; one that sets these settings is reported, not read. A value with a placeholder
  * (`${...}`) is resolved at run time and is not read either. The `.yaml` twin of each document (`/v3/api-docs.yaml`) and
  * swagger-ui pages are the same documents and are not listed.
@@ -293,12 +319,19 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
       limits.push(`${s.file}:${s.line} sets ${readName(s.key)} to ${s.value}, resolved at run time; the documents springdoc serves are not read`);
     return { documents: [], limits };
   }
-  const management = settings.get(MANAGEMENT);
-  if (management?.value.toLowerCase() === "true") {
-    limits.push(`${management.file}:${management.line} serves springdoc's documents on the management port (${MANAGEMENT}); they are not read`);
+  const switches = [MANAGEMENT, DEFAULT_DOCS].map((k) => settings.get(k)).filter((s): s is Setting => flag(s) === null);
+  if (switches.length) {
+    for (const s of switches)
+      limits.push(`${s.file}:${s.line} sets ${readName(s.key)} to ${s.value}, which springdoc reads only as true or false; the documents springdoc serves are not read`);
     return { documents: [], limits };
   }
-  if (settings.get(ENABLED)?.value.toLowerCase() === "false") return { documents: [], limits };
+  const management = settings.get(MANAGEMENT);
+  if (flag(management)) {
+    limits.push(`${management!.file}:${management!.line} serves springdoc's documents on the management port (${MANAGEMENT}); they are not read`);
+    return { documents: [], limits };
+  }
+  // @ConditionalOnProperty without havingValue: on unless the value is "false", in any case (so `off` keeps them on).
+  if (flag(settings.get(ENABLED)) === false) return { documents: [], limits };
 
   const path = settings.get(PATH);
   const base = joinRoute(settings.get(CONTEXT_PATH)?.value ?? settings.get(BASE_PATH)?.value ?? "", path?.value ?? "/v3/api-docs");
@@ -306,7 +339,7 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   const add = (location: string, convention: string, at: { file: string; line: number }, evidence: ApiDocument["evidence"]) => {
     if (!documents.some((d) => d.location === location)) documents.push({ kind: "served", location, convention, at, evidence });
   };
-  if (settings.get(DEFAULT_DOCS)?.value.toLowerCase() !== "false") {
+  if (flag(settings.get(DEFAULT_DOCS)) !== false) {
     if (path) add(base, "springdoc api-docs.path", { file: path.file, line: path.line }, "static");
     else if (dependency) add(base, "springdoc default", dependency, "text");
     else add(base, "springdoc default", { file: built[0]!.file, line: built[0]!.line }, "static");

@@ -25,6 +25,9 @@ chains:
   - k6->node|POST /events/consent
 limits:
   - router admin in nodejs/routes/admin.js is mounted where the code gives no literal path
+descriptions:
+  - java none - NoneFound
+  - node none - NoneFound
 inventory:
   routes:
     - java/src/main/java/com/example/events/EventController.java spring 6
