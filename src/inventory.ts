@@ -144,7 +144,8 @@ function platformFolders(source: Source, all: string[]): string[] {
 
 /**
  * Components that would share a name, taken from the directory or the manifest, are named by as much of their path
- * above it as tells them apart (`mobile-app`, `catalog-app`), and say so.
+ * above it as tells them apart from each other and from every other component (`mobile-app`, `catalog-app`), and say
+ * so.
  */
 function uniqueNames(components: Inventory["components"]): void {
   const groups = new Map<string, Inventory["components"]>();
@@ -157,14 +158,26 @@ function uniqueNames(components: Inventory["components"]): void {
       return segments[segments.length - 1] === name ? segments.slice(0, -1) : segments;
     });
     const longest = Math.max(...above.map((a) => a.length));
+    const distinct = (names: string[]) => new Set(names).size === names.length && !names.some((n) => others.has(n));
     let names: string[] = [];
     for (let k = 1; k <= Math.max(longest, 1); k++) {
       names = above.map((a) => [...a.slice(Math.max(0, a.length - k)), name].join("-"));
-      if (new Set(names).size === names.length && !names.some((n) => others.has(n))) break;
+      if (distinct(names)) break;
+    }
+    // Where the paths run out first (a root package named as a directory below it), a number tells them apart.
+    const numbered = !distinct(names);
+    if (numbered) {
+      const used = new Set(others);
+      names = names.map((n) => {
+        let candidate = n;
+        for (let i = 2; used.has(candidate); i++) candidate = `${n}-${i}`;
+        used.add(candidate);
+        return candidate;
+      });
     }
     group.forEach((c, i) => {
       c.name = names[i]!;
-      c.note = `named by its path: ${group.length} components would be named ${name}`;
+      c.note = `named by its path: ${group.length} components would be named ${name}${numbered ? ", and their paths do not tell them apart, so they are numbered" : ""}`;
     });
   }
 }

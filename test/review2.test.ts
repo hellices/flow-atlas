@@ -274,6 +274,20 @@ describe("inventory", () => {
     const doc = { apiVersion: API_VERSION, kind: "Inventory", provenance: provenance("Inventory", { ref: "WORKTREE" }, [codeDependency("code", "WORKTREE")]), ...inv };
     expect(validate("inventory", doc)).toEqual([]);
   });
+  it("keeps every name unique when the paths do not tell components apart", () => {
+    const names = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`);
+    // A root package that is no workspace, and a directory named as it.
+    expect(names({ "package.json": '{"name":"app"}', "app/build.gradle": "" })).toEqual(["app:", "app-2:app"]);
+    // A generated name that another component already has, with no more path to add.
+    const taken = names({ "mobile/app/build.gradle": "", "other/app/build.gradle": "", "x/package.json": '{"name":"mobile-app"}' });
+    expect(taken).toEqual(["mobile-app-2:mobile/app", "other-app:other/app", "mobile-app:x"]);
+    expect(new Set(taken.map((n) => n.split(":")[0])).size).toBe(taken.length);
+    const notes = inventory(memory({ "package.json": '{"name":"app"}', "app/build.gradle": "" }), []).components.map((c) => c.note);
+    expect(notes).toEqual([
+      "named by its path: 2 components would be named app, and their paths do not tell them apart, so they are numbered",
+      "named by its path: 2 components would be named app, and their paths do not tell them apart, so they are numbered",
+    ]);
+  });
 });
 
 describe("hole matching", () => {
