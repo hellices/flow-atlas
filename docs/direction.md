@@ -104,7 +104,7 @@ is ts-rest. Keeping such tools alive is costly, which argues for a narrow scope.
 |---|---|---|
 | routes | OpenAPI 2.0 and 3.x documents; NestJS, Express, Fastify and FastAPI registrations with literal paths, Express routers under literal or declared mount paths, Next.js route handlers and API routes by their file paths, with the HEAD and OPTIONS Next.js answers itself; Starlette path converters and StaticFiles mounts; configured registration helpers, with the method as an argument or fixed; Spring MVC mapping annotations with literal paths in Java and Kotlin, a type's mapping joined to its methods' and the methods united as Spring does; the login and logout POST endpoints of Spring Security's `formLogin` and `logout`, from their defaults and literal setters on the configurer | paths in constants or expressions, Kotlin string templates, functional or programmatic routes, composed annotations, a Security customizer defined elsewhere |
 | client calls in code | TypeScript and JavaScript parsed: string literals, template strings and concatenations, a part that is not a literal standing for unknown text; a leading `const` of the same file joined to the URL; methods stated at the call. Python f-strings with any replacement field as unknown text | paths assembled across functions or files, a client's base URL held outside a `const` or interceptors, other Kotlin and Python constructs, and other languages, beyond strings that look like paths |
-| client calls in HTML | start-tag attributes `href`, `src`, `action`, `formaction` with root-relative literal values, methods as the HTML standard defines them; Thymeleaf link expressions with literal paths in `th:*` URL attributes, `th:attr` items and `[[...]]` in JavaScript-inlined scripts; inline scripts as JavaScript; `data-*` URLs as a request of unknown method | URLs from model variables or built inside expressions, fragment parameters, other template engines, htmx, Alpine or Vue attributes, a `th:method` other than GET or POST (its method depends on whether Spring's hidden-method filter is on, so it is `*`) |
+| client calls in HTML | start-tag attributes `href`, `src`, `action`, `formaction` with root-relative literal values, methods as the HTML standard defines them; Thymeleaf link expressions with literal paths in `th:*` URL attributes, `th:attr` items and `[[...]]` in JavaScript-inlined scripts; inline scripts as JavaScript; the `data-*` attributes the configuration names as URLs a script requests, of unknown method | URLs from model variables or built inside expressions, fragment parameters, other template engines, htmx, Alpine or Vue attributes, a `th:method` other than GET or POST (its method depends on whether Spring's hidden-method filter is on, so it is `*`) |
 | handler reach | TypeScript and JavaScript; a Spring page handler's literal view name, at Spring Boot's default template location | other view resolvers, view names built at run time |
 
 The configuration reference (`skills/flow-atlas/references/config.md`) gives the exact reading of each style.
@@ -142,6 +142,19 @@ None of these is committed. Each fits the decision above and would be taken up w
 - **Running the flows.** Hand the exported Arazzo to Redocly Respect or the Jentic runner, so a flow is checked by
   executing it as well as against the code.
 - **Bridges.** Publish routes and flows to a Backstage catalog, or read Pact contracts as declared calls.
+
+## Boundaries other than HTTP
+
+Reviewed against the repositories atlas was run on (the 42 of one workspace). None is taken up now; each says what
+would change that.
+
+| Boundary | What the code holds | Decision |
+|---|---|---|
+| Messaging (Kafka, Event Hubs, queues) | One service both publishes and listens; the topic is a configuration property (`${EVENTS_TOPIC:events}`), not a literal, and the environment may override it | Not read from code, which cannot settle the topic. When a repository declares its channels in an AsyncAPI document, read its channels as the HTTP side reads OpenAPI: as declared surfaces, a publish and a subscribe meeting on one channel |
+| Python handlers into their outbound calls | FastAPI handlers in three repositories call only services outside the repository; the Python agent of the TypeScript monorepo is served by a vendored library whose routes no code in the repository registers | Not built: no handler with an in-repository next hop to check it against. Taken up with the first one, by linking a route's `def` body to the calls in it, as TypeScript handlers are |
+| MCP tools | `@McpTool` registrations are literal; which tool an agent calls is chosen by the model at run time | A call to a tool is never a code fact, so no chain runs through one. At most the tools are listed as surfaces, with the agents configured to reach their servers, when a repository needs that |
+| Tauri commands | `invoke("name")` against `#[tauri::command]`, both literal | Out of scope: a desktop application's boundary, without a method or a path to match |
+| Jinja and Django templates | Links by route name (`{% url 'name' %}`, `url_for`) | Out of scope by the rule above: Django's routes come from its generated OpenAPI document (drf-spectacular); its templates' links are not read |
 
 ## Before widening the scope
 

@@ -35,6 +35,7 @@ routes:
 calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
   - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path (Dio baseUrl, axios baseURL)
+  - { from: web, to: api, files: ["src/main/resources/templates/**/*.html"], dataUrls: [data-api-url] }   # data-* a script requests
   - { from: android, to: bff, files: ["apps/android/**/api/**/*.kt"] }
 
 # Registries whose entries one side produces and another consumes.
@@ -95,7 +96,8 @@ TypeScript and JavaScript are parsed with the TypeScript compiler: string and te
 call files, the method from `.get(`/`.post(` callees, a method string in the same argument list
 (`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
-by the scopes around the use; a constant used only that way is a base, not a request of its own. Routes come
+by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
+(`path: "/m" | "/r"`) names a value and is no request. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
@@ -116,7 +118,16 @@ OPTIONS; those surfaces are `implicit`,
 reached only by a request that names the method, and no rule expects a caller for them. As Next.js does, a request is
 matched to the most specific route path first (a static name, then `[x]`, then catch-alls), and a method that route lacks
 matches nothing else. API routes under `pages/api` answer every method from their default export, written or
-re-exported, and their folders are plain segments. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
+`pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
+the default export (a function component, also one named by `export { Page as default }` or re-exported from another
+module, or a class component's `render`, its own or one it inherits from a class of the file or a relative import) belongs to the page's request, prop values and what computes a handler or an
+address included; client modules (`"use client"`), addresses (`href`, `src`, `srcSet`, `poster`, `action`), event handlers (`onClick`) and functions
+passed as props do not: a `<Link href>`, an `<a href>` or an address Next.js's router navigates to (`push` or `replace`, also
+`useRouter().push`; also parenthesized or with `as const`) is a GET, and a `redirect` from `next/navigation` keeps the
+method of the request it answers (`*`); each reaches
+the page it names as a request of its own. Include `.tsx` in the route
+files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
@@ -126,8 +137,13 @@ and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under 
 is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
-`formLogin` and `logout` serve, in the lambda or the chained form. A path, method or URL held in a constant registers
-nothing, and so does a Kotlin string template (`"$BASE/users"`). A Security setter counts only on the configurer: in a
+`formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
+declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
+constants), since an annotation argument is a compile-time constant. A name is found as the language finds it: in the
+types around the mapping, innermost first, then a Kotlin file's top level, or `Type.PATH` for a type the file declares
+once. A name that could be inherited (past a type with a supertype), one imported by name, a constant of another
+file, any other expression and a Kotlin string template (`"$BASE/users"`) register nothing, and a limit names the
+mapping where it is written. A Security URL held in a constant registers nothing. A Security setter counts only on the configurer: in a
 lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
 `logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
@@ -135,15 +151,20 @@ looks; a `@RestController` or `@ResponseBody` handler's string is its response, 
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
-(`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, `th:data-*` and `th:attr` items,
-and root-relative URLs in `href`, `action`, `src`, `formaction` and `data-*`; also the requests inline scripts make,
+(`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and
+`th:attr` items, and root-relative URLs in `href`, `action`, `src`, `formaction` and the configured `data-*`; also the
+requests inline scripts without a `src` (written, or rendered by `th:src` or `th:attr`) make,
 and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET. A form action takes the
-form's method, and a submit button's `formaction` its `formmethod`, else its form's. A plain `method` or `formmethod`
+form's method, and a submit button's `formaction` its `formmethod`, else its form's; a submit control with no form
+owner (none around it, or a `form` attribute naming no form) submits nothing. A plain `method` or `formmethod`
 is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
-browser does. Thymeleaf's `th:method` (or `data-th-method`) replaces it: GET and POST as written, and any other value
+browser does; `th:formmethod` just writes `formmethod`, so a literal (`post`, `'post'`) is read the same way and a
+computed value (`${m}`) is `*`. Thymeleaf's `th:method` (or `data-th-method`) replaces a
+form's method: GET and POST as written, and any other value
 `*`, since Spring turns the hidden `_method` field into that method only when its HiddenHttpMethodFilter is on, which
-Spring Boot leaves off. A `data-*` URL, read by a script, is any method, and one ending in `/` is a base the script
-appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
+Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attributes a call source names in
+`dataUrls` (those the project's scripts request, as `data-api-url`) are read: any method, and one ending in `/` is a
+base the script appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
 their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.

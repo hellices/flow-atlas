@@ -80,6 +80,33 @@ describe("fetch", () => {
   });
 });
 
+describe("navigation", () => {
+  const calls = (code: string) => callsFromTypeScript("a.tsx", code, { from: "a", to: "a", files: [] }).map((c) => `${c.method} ${c.path}`);
+  const next = 'import { useRouter, redirect } from "next/navigation";\nimport Link from "next/link";\nconst router = useRouter();\n';
+  it("goes to the root through wrappers that leave the value as it is", () => {
+    const rows = ['router.push("/");', 'router.push(("/"));', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;', 'useRouter().push("/");'];
+    expect(rows.map((r) => calls(next + r))).toEqual(rows.map(() => ["GET /"]));
+    expect(calls(next + 'redirect("/" as const);')).toEqual(["* /"]);
+    // Taken apart, or the Router next/router exports.
+    expect(calls('import { useRouter } from "next/navigation";\nconst { push } = useRouter();\npush("/");')).toEqual(["GET /"]);
+    expect(calls('import Router from "next/router";\nRouter.replace("/");')).toEqual(["GET /"]);
+    // A push or a redirect that is not Next.js's navigates nowhere.
+    expect([calls('log("/");'), calls('const parts = [];\nparts.push("/");'), calls('router.push("/");'), calls('import { redirect } from "./mine";\nredirect("/");')]).toEqual([[], [], [], []]);
+  });
+
+  it("goes with GET where HTML and Next.js say so; a redirect or another component's href leave the method open", () => {
+    const rows: Array<[string, string]> = [
+      ['router.push("/notes");', "GET /notes"],
+      // A redirect keeps the method of the request it answers (307, 308): a POST handler's redirect is a POST.
+      ['redirect("/notes");', "* /notes"],
+      ['const a = <a href="/notes">n</a>;', "GET /notes"],
+      ['const a = <Link href="/notes">n</Link>;', "GET /notes"],
+      ['const a = <Card href="/notes" />;', "* /notes"],
+    ];
+    expect(rows.map(([code]) => calls(next + code))).toEqual(rows.map(([, out]) => [out]));
+  });
+});
+
 describe("manifests", () => {
   it("leave out excluded manifests", () => {
     const source = memory({ "web/component.json": '{"name":"web"}', "test/fakes/component.json": '{"name":"web","consumes":["x"]}' });
@@ -139,9 +166,16 @@ describe("framework rules", () => {
       ["pages/api/_health.ts", "/api/_health"],
       ["app/items/[product-id]/route.ts", "/items/{product-id}"],
       ["pages/api/(v1)/@me.ts", "/api/(v1)/@me"],
-      ["app/page.tsx", undefined],
+      // Only files under pages/api/ are API routes; pages/api.tsx is the page at /api.
+      ["pages/api.tsx", "/api"],
+      ["app/page.tsx", "/"],
+      ["app/stories/[slug]/page.tsx", "/stories/{slug}"],
+      ["app/layout.tsx", undefined],
+      ["pages/blog/index.tsx", "/blog"],
+      ["pages/_app.tsx", undefined],
     ];
     expect(rows.map(([file]) => nextRoute(file)?.path)).toEqual(rows.map(([, path]) => path));
+    expect([nextRoute("pages/api.tsx")?.kind, nextRoute("pages/api/users.ts")?.kind]).toEqual(["page", "api"]);
     // Read from the component's root: a project in a directory named app keeps its own app/ as the router.
     expect(nextRoute("apps/app/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
     expect(nextRoute("apps/app/src/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
@@ -182,6 +216,90 @@ describe("framework rules", () => {
       "api|POST /stock",
       "api|PUT /items",
     ]);
+  });
+
+  it("follows what a server page runs while rendering, and not its links or what the browser runs later", () => {
+    const files = {
+      "app/notes/[id]/page.tsx": [
+        'import Link from "next/link";',
+        'import { Card } from "../../../components/card";',
+        'import { ServerCard } from "../../../components/server-card";',
+        "export async function generateMetadata() { return {}; }",
+        'const stats = () => fetch("/api/stats");',
+        'const renderRow = () => fetch("/api/rows");',
+        'const makeHandler = () => {',
+        '  fetch("/api/setup");',
+        '  return () => fetch("/api/clicked");',
+        "};",
+        'const address = (p) => p;',
+        'const track = () => fetch("/api/track");',
+        'const build = (r) => "/built";',
+        "export default async function Note() {",
+        '  const note = await fetch("/api/notes/1");',
+        '  ((() => fetch("/api/spot")) as () => void)();',
+        '  const built = <a href={build(fetch("/api/built"))} />;',
+        '  const direct = <a href={fetch("/api/direct")} />;',
+        '  const field = <a href={fetch("/api/field").url} />;',
+        '  const helper = <a href={get("/api/later")} />;',
+        '  const image = <img srcSet={asset("/media/hero")} poster={asset("/media/poster")} />;',
+        '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /><button onClick={makeHandler()} /><a href={address("/later")} /><a href={(track(), "/next")} /></Card>;',
+        "}",
+      ].join("\n"),
+      "components/card.tsx": '"use strict";\n"use client";\nexport function Card({ note }) { const extra = fetch("/api/card"); return <button onClick={() => router.push("/create")}>{note}{extra}</button>; }',
+      "components/server-card.tsx": 'export async function ServerCard({ data }) { const tags = await fetch("/api/tags"); return <p>{tags}</p>; }',
+      "app/api/notes/[id]/route.ts": "export function GET() {}",
+      "app/create/page.tsx": "export default function Create() { return null; }",
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["app/**/*.{ts,tsx}"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["app/**/*.tsx", "components/**/*.tsx"] }],
+    });
+    const graph = scan(memory(files), config);
+    const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
+    expect(page.at.line).toBe(14);
+    const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    // makeHandler, track and the function called on the spot run while rendering; the handler makeHandler returns, the
+    // address a link holds and the client module do not.
+    // A get that may only build a string is no request: its address is the browser's.
+    expect(reach.sort()).toEqual(["/api/built", "/api/direct", "/api/field", "/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
+  });
+
+  it("renders a Pages Router page through whatever its default export names", () => {
+    const files = {
+      // `export { Page as default }`, and a default re-exported from another module.
+      "pages/alias.tsx": 'const Page = () => { const n = fetch("/api/alias"); return <p>{n}</p>; };\nexport { Page as default };',
+      "pages/re.tsx": 'export { default } from "../views/re";',
+      "views/re.tsx": 'export default function Re() { const n = fetch("/api/re"); return <p>{n}</p>; }',
+      // A class whose render is a field holding a function.
+      "pages/field.tsx": 'export default class Field extends React.Component {\n  render = () => { const n = this.fields(); return <p>{n}</p>; };\n  fields() { return fetch("/api/field"); }\n}',
+      // A render named by a string or a computed string.
+      "pages/quoted.tsx": 'export default class Q extends React.Component {\n  "render"() { return <p>{this.quoted()}</p>; }\n  quoted() { return fetch("/api/quoted"); }\n}',
+      // An overload's signature and a static render are not what React calls.
+      "pages/overload.tsx": 'export default class O extends React.Component {\n  static render() { return fetch("/api/static"); }\n  render(): unknown;\n  render() { return <p>{this.overload()}</p>; }\n  overload() { return fetch("/api/overload"); }\n}',
+      // A render inherited from a base class, declared here or imported.
+      "pages/inherits.tsx": 'class Base extends React.Component {\n  render() { return <p>{this.inherits()}</p>; }\n  inherits() { return fetch("/api/inherits"); }\n}\nexport default class Inherits extends Base {}',
+      "pages/imported.tsx": 'import { Shared } from "../views/shared";\nexport default class Imported extends Shared {}',
+      "views/shared.tsx": 'export class Shared extends React.Component {\n  render() { return <p>{this.imported()}</p>; }\n  imported() { return fetch("/api/imported"); }\n}',
+      "pages/computed.tsx": 'export default class C extends React.Component {\n  ["render"] = () => <p>{this.computed()}</p>;\n  computed() { return fetch("/api/computed"); }\n}',
+      "pages/notes.tsx": [
+        'import React from "react";',
+        "export default class Notes extends React.Component {",
+        "  render() { const notes = this.load(); return <ul>{notes}</ul>; }",
+        '  load() { return fetch("/api/notes"); }',
+        '  clicked() { return fetch("/api/clicked"); }',
+        "}",
+      ].join("\n"),
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["pages/**/*.tsx"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["pages/**/*.tsx", "views/**/*.tsx"] }],
+    });
+    const graph = scan(memory(files), config);
+    const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    const pages = ["notes", "alias", "re", "field", "quoted", "computed", "overload", "inherits", "imported"];
+    expect(pages.map((p) => reached(`web|GET /${p}`))).toEqual(pages.map((p) => [`/api/${p}`]));
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {
@@ -370,6 +488,7 @@ describe("names resolve by their bindings", () => {
       ['const API = "/api";\nconst BASE = API;\nfetch(`${BASE}/users`);', ["GET /api/users"]],
       // Parentheses and assertions around the base leave it the base.
       ['const BASE = "/api";\nfetch((BASE) + "/users");\nfetch((BASE as string) + "/items");', ["GET /api/users", "GET /api/items"]],
+      ['class Client extends make(fetch("/schema")) {}', ["GET /schema"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });

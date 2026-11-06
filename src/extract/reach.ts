@@ -5,6 +5,17 @@ import type { Source } from "../source.js";
 const MAX_FUNCTIONS = 400;
 /** Response methods that return the response itself, in Express (`res.status(500)`) and Fastify (`reply.code(201)`). */
 const CHAINABLE = new Set(["status", "set", "header", "headers", "type", "cookie", "clearCookie", "location", "links", "vary", "append", "attachment", "code", "removeHeader", "serializer"]);
+/**
+ * Whether a callee surely makes a request: the global `fetch`, also as `window.fetch` or `globalThis.fetch`. A `get`
+ * of some object may as well build a string, so it is not taken for one.
+ */
+function requestCallee(e: ts.Expression): boolean {
+  if (ts.isIdentifier(e)) return e.text === "fetch" && declarationOf(e) === undefined;
+  return ts.isPropertyAccessExpression(e) && e.name.text === "fetch" && ts.isIdentifier(e.expression) && /^(?:window|globalThis|self)$/.test(e.expression.text) && declarationOf(e.expression) === undefined;
+}
+
+/** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
+const LATER_PROPS = /^(?:href|src|srcSet|poster|action|formAction|on[A-Z]\w*)$/;
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -173,9 +184,15 @@ export class Reach {
   /**
    * Member method names called under `start` in `file`, sorted; `executed` collects `file:line` of each string the code
    * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
-   * local name, is followed only where it is used; a function written inline (a callback argument) counts as run.
+   * local name, is followed only where it is used; a function written inline counts as run when it is a callback
+   * argument or called on the spot, and not when it is returned or stored.
    */
-  from(file: string, start: ts.Node, executed?: Set<string>): string[] {
+  /**
+   * `render`: the start is a server-rendered page. What runs while it renders is followed, prop values included; client
+   * modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions passed as
+   * props are left out: the browser makes those requests later.
+   */
+  from(file: string, start: ts.Node, executed?: Set<string>, render = false): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -230,12 +247,59 @@ export class Reach {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
       if (!parsed) continue;
+      if (render && clientModule(parsed.sf)) continue;
       const classOf = enclosingClass(node);
       // `inCall`: inside a call the code runs, other than the registration call a route handler may start from.
-      const visit = (n: ts.Node, inCall = false): void => {
+      // `notes`: whether a string the code passes to a call counts as a request it makes; not inside a prop's address
+      // or handler, whose text is what the browser uses later.
+      const visit = (n: ts.Node, inCall = false, notes = true): void => {
+        // `extends make(fetch(x))` runs its expression; its type arguments, like every other type, do not.
+        if (ts.isExpressionWithTypeArguments(n)) return visit(n.expression, inCall, notes);
         if (ts.isTypeNode(n) || ts.isImportDeclaration(n)) return;
+        if (render && ts.isJsxAttribute(n)) {
+          // A prop's value is computed while the page renders (`data={load()}`). An address (`href`, `src`) the browser
+          // requests later, a handler it runs later (`onClick`), and a function handed down as a prop are not.
+          const name = n.name.getText(parsed.sf);
+          const value = n.initializer && ts.isJsxExpression(n.initializer) ? n.initializer.expression : undefined;
+          // An address or a handler is used later, but what computes it runs now: `onClick={makeHandler()}` calls
+          // makeHandler while rendering. Only the value it ends in is the address: `(track(), "/next")` runs track,
+          // and `ok() ? "/a" : "/b"` runs ok.
+          const later = LATER_PROPS.test(name);
+          const prop = (v: ts.Expression): void => {
+            if (ts.isParenthesizedExpression(v)) return prop(v.expression);
+            if (ts.isBinaryExpression(v) && v.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+              visit(v.left, false, true);
+              return prop(v.right);
+            }
+            if (ts.isConditionalExpression(v)) {
+              visit(v.condition, false, true);
+              prop(v.whenTrue);
+              return prop(v.whenFalse);
+            }
+            if (isFunctionValue(v) || ts.isIdentifier(v)) return;
+            // `fetch("/api").url`, `load().result`: what the receiver computes runs now; a name (`this.onClick`) runs nothing.
+            if (ts.isPropertyAccessExpression(v)) return prop(v.expression);
+            // A call that builds the value runs now; only the text it is given is the address or handler's
+            // (`address("/later")`), while a call among its arguments makes its own requests (`build(fetch("/api"))`).
+            // A request call itself (`href={fetch("/api")}`) makes its request now; any other call only builds the value.
+            if (later && ts.isCallExpression(v)) {
+              const request = requestCallee(unwrap(v.expression));
+              visit(v.expression, false, true);
+              for (const arg of v.arguments) {
+                if (request || !(ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) || ts.isTemplateExpression(arg))) visit(arg, true, true);
+              }
+              return;
+            }
+            visit(v, false, !later);
+          };
+          if (value) prop(value);
+          return;
+        }
         if (n !== node && (ts.isFunctionDeclaration(n) || (ts.isVariableDeclaration(n) && isFunctionValue(n.initializer)))) return;
-        if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
+        // An inline function runs when it is handed to a call (`then(() => ...)`, `new Promise(...)`) or called on the
+        // spot; one returned or stored is run by whoever receives it, which is not known here.
+        if (n !== node && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && !handedToCall(n)) return;
+        if (executed && inCall && notes && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
           executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
         }
         // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
@@ -282,7 +346,7 @@ export class Reach {
           }
         }
         const childInCall = inCall || (ts.isCallExpression(n) && n !== node);
-        ts.forEachChild(n, (child) => visit(child, childInCall));
+        ts.forEachChild(n, (child) => visit(child, childInCall, notes));
       };
       visit(node);
     }
@@ -303,6 +367,32 @@ export class Reach {
     return [...names].sort();
   }
 }
+
+/** A module the `"use client"` directive marks as running in the browser. */
+/** Whether an inline function is an argument of a call or `new`, or the callee of a call made on the spot. */
+function handedToCall(fn: ts.Expression): boolean {
+  let at: ts.Node = fn;
+  // Parentheses and type assertions (`as`, `!`, `satisfies`, `<T>`) leave the function as it is.
+  while (
+    ts.isParenthesizedExpression(at.parent) ||
+    ts.isAsExpression(at.parent) ||
+    ts.isNonNullExpression(at.parent) ||
+    ts.isSatisfiesExpression(at.parent) ||
+    ts.isTypeAssertionExpression(at.parent)
+  )
+    at = at.parent;
+  const p = at.parent;
+  return (ts.isCallExpression(p) || ts.isNewExpression(p)) && (p.expression === at || !!p.arguments?.includes(at as ts.Expression));
+}
+
+/** Whether the module's directive prologue, the string statements it starts with, holds `"use client"`. */
+const clientModule = (sf: ts.SourceFile): boolean => {
+  for (const st of sf.statements) {
+    if (!ts.isExpressionStatement(st) || !ts.isStringLiteral(st.expression)) return false;
+    if (st.expression.text === "use client") return true;
+  }
+  return false;
+};
 
 function enclosingClass(node: ts.Node): ts.ClassLikeDeclaration | undefined {
   for (let n: ts.Node | undefined = node; n; n = n.parent) if (ts.isClassLike(n)) return n;

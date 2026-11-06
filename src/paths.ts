@@ -106,7 +106,8 @@ export function pathsMatch(routePath: string, call: string): boolean {
     const part = c[i]!;
     if (isParam(seg) || seg === part) return true;
     if (isHole(part)) return holeMatches(part, seg);
-    return seg.includes("*") && segmentPattern(seg).test(part);
+    // A wildcard or a variable inside a segment (`*.txt`, `{name}.txt`) matches the text around it.
+    return (seg.includes("*") || /\{[^}]*\}/.test(seg)) && segmentPattern(seg).test(part);
   });
 }
 

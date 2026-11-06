@@ -43,6 +43,11 @@ export interface CallSource {
   to: string;
   files: string[];
   /**
+   * `data-*` attributes in templates whose value is a URL the project's scripts request, as `data-api-url`; HTML gives
+   * a `data-*` value no meaning, so only the ones named here are read.
+   */
+  dataUrls?: string[];
+  /**
    * The path the client puts before each root-relative path, when it is set where atlas does not read it: an HTTP
    * client's base URL such as `axios.create({ baseURL: "/api" })` or Dio's `baseUrl`.
    */
