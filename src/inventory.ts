@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments } from "./extract/apidocs.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -109,6 +110,16 @@ const dependsOn = (text: string | undefined, name: string): boolean => {
   }
 };
 
+/** A pubspec whose dependencies take `flutter` from the SDK: `dependencies: { flutter: { sdk: flutter } }`. */
+const onFlutter = (text: string | undefined): boolean => {
+  try {
+    const pubspec = parse(text ?? "") as { dependencies?: { flutter?: { sdk?: unknown } } } | null;
+    return pubspec?.dependencies?.flutter?.sdk === "flutter";
+  } catch {
+    return false;
+  }
+};
+
 /**
  * The platform folders a cross-platform framework keeps beside an app and builds as part of it, each with a trailing
  * `/`: the host projects of a Flutter app or plugin (a pubspec.yaml on the Flutter SDK), the native projects of a React
@@ -121,7 +132,7 @@ function platformFolders(source: Source, all: string[]): string[] {
     const dir = dirname(file) === "." ? "" : `${dirname(file)}/`;
     const name = file.slice(dir.length);
     const folders =
-      name === "pubspec.yaml" && /^\s+sdk:\s*flutter\s*$/m.test(source.read(file) ?? "")
+      name === "pubspec.yaml" && onFlutter(source.read(file))
         ? ["android", "ios", "macos", "linux", "windows", "web"]
         : (name === "package.json" && dependsOn(source.read(file), "react-native")) || name === "expo-module.config.json"
           ? ["android", "ios"]

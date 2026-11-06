@@ -245,6 +245,14 @@ describe("inventory", () => {
     };
     expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`)).toEqual(["app:app", "backend:backend", "mobile:mobile", "tool:tool", "android:tool/android"]);
   });
+  it("reads the Flutter SDK dependency in any YAML spelling, and only under dependencies", () => {
+    const app = (pubspec: string) => ({ "app/pubspec.yaml": pubspec, "app/android/app/build.gradle.kts": "" });
+    const names = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`);
+    expect(names(app('name: app\ndependencies:\n  flutter:\n    sdk: "flutter"\n'))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndependencies:\n  flutter: { sdk: 'flutter' }   # the SDK\n"))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndependencies:\n  flutter:\n    sdk: flutter # Flutter SDK\n"))).toEqual(["app:app"]);
+    expect(names(app("name: app\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n"))).toEqual(["app:app", "android-app:app/android/app"]);
+  });
   it("names components that share a directory name by their paths, and says so", () => {
     const files = {
       "deploy/mobile/app/build.gradle.kts": "",
