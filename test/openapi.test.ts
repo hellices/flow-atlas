@@ -879,4 +879,51 @@ describe("documents springdoc serves", () => {
       `/v3/api-docs/two springdoc group-configs ${RESOURCES}/application.properties:3`,
     ]);
   });
+
+  it("takes a parameter whatever its type, annotations or modifiers for one that hides a constant", () => {
+    const docs = (parameter: string) =>
+      ["package lab;", "@Configuration", "class Docs {", '  static final String GROUP = "public";', `  @Bean GroupedOpenApi api(${parameter}) {`, "    return GroupedOpenApi.builder().group(GROUP).build();", "  }", "}"].join("\n");
+    for (const parameter of ["Map<String, List<Foo>> GROUP", "String[] GROUP", "String GROUP[]", 'final @Value("${g}") String GROUP', "String... GROUP", "@NonNull Map<String, Map<String, String>>[] GROUP"])
+      expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(parameter) })).toEqual({
+        documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+        description: "chosen /v3/api-docs ServedByCode",
+        limits: ["openapi svc: svc/src/main/java/lab/Docs.java:6 builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read"],
+      });
+  });
+
+  it("reads nothing from a .properties file Spring Boot cannot load", () => {
+    const body = "springdoc.api-docs.path=/ok\nother.value=\\uZZZZ\n";
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: body })).toEqual({
+      documents: [],
+      description: "none - NoneFound",
+      limits: [`openapi svc: ${RESOURCES}/application.properties:2 has a malformed \\uxxxx escape, so Spring Boot cannot load the file and the application does not start; the documents springdoc serves are not read`],
+    });
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application-dev.properties`]: body })).toEqual({
+      documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+      description: "chosen /v3/api-docs ServedByCode",
+      limits: [`openapi svc: ${RESOURCES}/application-dev.properties:2 has a malformed \\uxxxx escape, so Spring Boot cannot load the file under the profile dev; it is not read`],
+    });
+  });
+
+  it("puts in front only the base path of the web stack springdoc's starter is for", () => {
+    const prefixes = `${RESOURCES}/application.properties`;
+    const both = "server.servlet.context-path=/legacy\nspring.webflux.base-path=/reactive\n";
+    expect(run({ "svc/pom.xml": POM, [prefixes]: both }).documents).toEqual([`/legacy/v3/api-docs springdoc default svc/pom.xml:5`]);
+    const flux = { "svc/build.gradle.kts": 'dependencies {\n  implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.13")\n}\n' };
+    expect(run({ ...flux, [prefixes]: both }).documents).toEqual([`/reactive/v3/api-docs springdoc default svc/build.gradle.kts:2`]);
+    expect(run({ ...flux, [prefixes]: "server.servlet.context-path=/legacy\n" }).documents).toEqual([`/v3/api-docs springdoc default svc/build.gradle.kts:2`]);
+    // springdoc 1.x: springdoc-openapi-ui is the MVC one.
+    expect(run({ "svc/build.gradle": "dependencies {\n  implementation 'org.springdoc:springdoc-openapi-ui:1.8.0'\n}\n", [prefixes]: both }).documents).toEqual([
+      "/legacy/v3/api-docs springdoc default svc/build.gradle:2",
+    ]);
+    const unknown = { "svc/pom.xml": "<project/>\n", "svc/src/main/java/lab/Docs.java": 'package lab;\n@Configuration\nclass Docs {\n  @Bean GroupedOpenApi api() { return GroupedOpenApi.builder().group("public").build(); }\n}\n' };
+    expect(run({ ...unknown, [prefixes]: "server.servlet.context-path=/legacy\n" })).toEqual({
+      documents: [],
+      description: "none - NoneFound",
+      limits: [
+        `openapi svc: ${RESOURCES}/application.properties:1 sets server.servlet.context-path, which applies only to a Servlet application, and the build does not settle the web stack; the documents springdoc serves are not read`,
+      ],
+    });
+    expect(run(unknown).documents).toEqual(["/v3/api-docs springdoc default svc/src/main/java/lab/Docs.java:4", "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:4"]);
+  });
 });

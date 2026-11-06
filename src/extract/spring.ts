@@ -771,14 +771,41 @@ const COMPONENT = /@(?:[\w.]*\.)?(?:Configuration|SpringBootApplication|Componen
  */
 function declaredLocally(region: string, name: string, kotlin: boolean): boolean {
   const n = name.replace(/\$/g, "\\$");
-  const java = new RegExp(`(?<![\\w.$])(?!(?:return|throw|new|else|case|yield|assert)\\b)[A-Za-z_$][\\w$.]*(?:<[^<>()]*>)?(?:\\[\\])?\\s+${n}\\s*(?=[,)=;:])`);
   const token = new RegExp(`(?<![\\w$])${n}(?![\\w$])`);
   for (const arrow of region.matchAll(/->/g)) {
     const before = region.slice(0, arrow.index);
     const parameters = (kotlin ? /\{([^{}]*)$/ : /\(([^()]*)\)\s*$/).exec(before)?.[1] ?? /([A-Za-z_$][\w$]*)\s*$/.exec(before)?.[1] ?? "";
     if (token.test(parameters)) return true;
   }
-  return kotlin ? new RegExp(`(?<![\\w.$])${n}\\s*:(?!:)|\\b(?:val|var)\\s+${n}\\b`).test(region) : java.test(region);
+  if (kotlin) return new RegExp(`(?<![\\w.$])${n}\\s*:(?!:)|\\b(?:val|var)\\s+${n}\\b`).test(region);
+  // Java: the name after a type, read back token by token over `...`, `[]` and balanced (nested) generics.
+  for (const m of region.matchAll(new RegExp(`(?<![\\w.$])${n}\\s*(?=[,)=;:[])`, "g"))) {
+    let i = (m.index ?? 0) - 1;
+    const skipSpace = () => {
+      while (i >= 0 && /\s/.test(region[i]!)) i--;
+    };
+    skipSpace();
+    if (region.slice(i - 2, i + 1) === "...") i -= 3;
+    for (;;) {
+      skipSpace();
+      if (region[i] === "]") {
+        i--;
+        skipSpace();
+        if (region[i] !== "[") break;
+        i--;
+      } else if (region[i] === ">") {
+        let depth = 0;
+        for (; i >= 0; i--) {
+          if (region[i] === ">") depth++;
+          else if (region[i] === "<" && --depth === 0) break;
+        }
+        i--;
+      } else break;
+    }
+    const type = /([A-Za-z_$][\w$.]*)$/.exec(region.slice(0, i + 1))?.[1];
+    if (type && !/^(?:return|throw|new|else|case|yield|assert|instanceof)$/.test(type)) return true;
+  }
+  return false;
 }
 
 /**

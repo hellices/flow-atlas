@@ -87,8 +87,12 @@ const ESCAPES: Record<string, string> = { t: "\t", n: "\n", r: "\r", f: "\f" };
 const unescape = (s: string): string =>
   s.replace(/\\(u[0-9a-fA-F]{4}|[\s\S])/g, (_, e: string) => (e.length === 5 ? String.fromCharCode(parseInt(e.slice(1), 16)) : (ESCAPES[e] ?? e)));
 
-/** The settings of a `.properties` file, a part per `#---` document: `key=value`, `key: value` or `key value`, lines continued with `\`. */
-function propertiesParts(file: string, text: string): Part[] {
+/**
+ * The settings of a `.properties` file, a part per `#---` document: `key=value`, `key: value` or `key value`, lines
+ * continued with `\`. A `\u` without four hex digits makes the file one Spring Boot cannot load ("Malformed \uxxxx
+ * encoding"): `malformed` is then its line, and nothing of the file is read.
+ */
+function propertiesParts(file: string, text: string): Part[] | { malformed: number } {
   const parts: Setting[][] = [[]];
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -100,6 +104,7 @@ function propertiesParts(file: string, text: string): Part[] {
     }
     if (!line || line.startsWith("#") || line.startsWith("!")) continue;
     while (/(?<!\\)(?:\\\\)*\\$/.test(line) && i + 1 < lines.length) line = line.slice(0, -1) + lines[++i]!.replace(/\r$/, "").trimStart();
+    if (/(?<!\\)(?:\\\\)*\\u(?![0-9a-fA-F]{4})/.test(line)) return { malformed: start + 1 };
     const m = /^((?:\\.|[^\s:=\\])+)\s*[:=]?\s*(.*)$/.exec(line);
     if (!m) continue;
     parts.at(-1)!.push({ key: unescape(m[1]!), value: unescape(m[2]!).trimEnd(), file, line: start + 1 });
@@ -142,9 +147,9 @@ const MAVEN_RUNTIME = new Set(["", "compile", "runtime"]);
  * in a scope the application runs with: not in `dependencyManagement` (versions only), a plugin's dependencies, or the
  * `test` and `provided` scopes. `profile` is one declared in a `<profile>`, which is activated at build time.
  */
-function mavenSpringdoc(text: string): { at?: number; profile?: number } {
+function mavenSpringdoc(text: string): { at?: number; artifact?: string; profile?: number } {
   const xml = withoutXmlComments(text);
-  const out: { at?: number; profile?: number } = {};
+  const out: { at?: number; artifact?: string; profile?: number } = {};
   const stack: string[] = [];
   let content = 0;
   let dependency: { artifact?: string; at?: number; scope?: string } | undefined;
@@ -165,7 +170,7 @@ function mavenSpringdoc(text: string): { at?: number; profile?: number } {
       const path = stack.join("/");
       const springdoc = /^springdoc-openapi-/.test(dependency.artifact ?? "") && !/-(bom|maven-plugin)$/.test(dependency.artifact!);
       if (springdoc && MAVEN_RUNTIME.has(dependency.scope ?? "")) {
-        if (path === "project/dependencies/dependency") out.at ??= dependency.at;
+        if (path === "project/dependencies/dependency" && out.at === undefined) Object.assign(out, { at: dependency.at, artifact: dependency.artifact });
         else if (path === "project/profiles/profile/dependencies/dependency") out.profile ??= dependency.at;
       }
       dependency = undefined;
@@ -199,7 +204,7 @@ function openersAround(code: string, at: number): number[] {
  * `compileOnly` or Spring Boot's `developmentOnly`, a `platform(...)` BOM, a plugin id, or a `buildscript` or
  * `subprojects` block, which do not put it on this project's runtime classpath.
  */
-function gradleSpringdoc(file: string, text: string): number | undefined {
+function gradleSpringdoc(file: string, text: string): { at?: number; artifact?: string } {
   const code = withoutComments(file, text);
   for (const m of code.matchAll(SPRINGDOC)) {
     const at = m.index ?? 0;
@@ -211,9 +216,22 @@ function gradleSpringdoc(file: string, text: string): number | undefined {
         ? /([A-Za-z_]\w*)\s*$/.exec(code.slice(0, call))?.[1]
         : /^\s*([A-Za-z_]\w*)\s/.exec(code.slice(code.lastIndexOf("\n", at) + 1, at))?.[1];
     const blocks = openers.filter((o) => code[o] === "{").map((o) => /([A-Za-z_]\w*)\s*(?:\([^()]*\))?\s*$/.exec(code.slice(0, o))?.[1]);
-    if (GRADLE_RUNTIME.has(configuration ?? "") && blocks[0] === "dependencies" && !blocks.some((b) => b === "buildscript" || b === "subprojects")) return at;
+    if (GRADLE_RUNTIME.has(configuration ?? "") && blocks[0] === "dependencies" && !blocks.some((b) => b === "buildscript" || b === "subprojects"))
+      return { at, artifact: /^[\w.:-]+/.exec(code.slice(at))![0] };
   }
-  return undefined;
+  return {};
+}
+
+/**
+ * The web stack a springdoc artifact is for: its WebMvc starters (and 1.x `springdoc-openapi-ui`, `-webmvc-core`) run in
+ * a Servlet application, its WebFlux ones in a reactive one. The base path in front of every route is that stack's own
+ * setting: `server.servlet.context-path` for Servlet, `spring.webflux.base-path` for WebFlux (Spring Boot, "Common
+ * Application Properties"); the other one does nothing there.
+ */
+function webStack(artifact: string | undefined): "servlet" | "reactive" | undefined {
+  if (!artifact) return undefined;
+  if (/webflux/.test(artifact)) return "reactive";
+  return /webmvc|^springdoc[-.]openapi[-.]ui(?![\w-])/.test(artifact) ? "servlet" : undefined;
 }
 
 /** The package a Java or Kotlin file declares; "" for the default package. */
@@ -231,7 +249,8 @@ const packageOf = (code: string): string => /^\s*package\s+([\w.]+)/m.exec(code)
  * - "Getting Started" and "springdoc-openapi core properties": the document at `/v3/api-docs`, or at
  *   `springdoc.api-docs.path`; none when `springdoc.api-docs.enabled` is false; not the default one when
  *   `springdoc.enable-default-api-docs` is false. All of them behind `server.servlet.context-path` (FAQ "What is the URL
- *   of the swagger-ui, when I set a different context-path?"), or WebFlux's `spring.webflux.base-path`.
+ *   of the swagger-ui, when I set a different context-path?") in a Servlet application, `spring.webflux.base-path` in
+ *   a WebFlux one, the stack read from the springdoc starter (`webStack`).
  * - FAQ "How can I define multiple OpenAPI definitions in one Spring Boot project?": a document per `GroupedOpenApi`
  *   bean's group at `<api-docs path>/<group>`. A builder counts as a bean when a `@Bean` method of a component class
  *   (`@Configuration`, `@SpringBootApplication` or another stereotype) builds it, in the package of a
@@ -262,11 +281,15 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   if (source instanceof GitRefSource) source.preload([...builds, ...code, ...configs]);
 
   let dependency: { file: string; line: number } | undefined;
+  let stack: ReturnType<typeof webStack>;
   const profiled: Array<{ file: string; line: number }> = [];
   for (const file of builds) {
     const text = source.read(file) ?? "";
-    const found = file.endsWith(".xml") ? mavenSpringdoc(text) : { at: gradleSpringdoc(file, text) };
-    if (found.at !== undefined) dependency ??= { file, line: lineOf(text, found.at) };
+    const found: { at?: number; artifact?: string; profile?: number } = file.endsWith(".xml") ? mavenSpringdoc(text) : gradleSpringdoc(file, text);
+    if (found.at !== undefined && !dependency) {
+      dependency = { file, line: lineOf(text, found.at) };
+      stack = webStack(found.artifact);
+    }
     if (found.profile !== undefined) profiled.push({ file, line: lineOf(text, found.profile) });
   }
   // Applications and where Spring Boot scans for components from them; any other scan setting leaves registration open.
@@ -290,12 +313,19 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   const settings = new Map<string, Setting>();
   let groups: Setting[] = [];
   const conditional: Array<Setting & { when: string }> = [];
+  let broken: string | undefined;
   // Lowest precedence first: YAML, then properties, at the classpath root and then in config/.
   const rank = (f: string) => (f.slice(resources.length).startsWith("config/") ? 2 : 0) + (f.endsWith(".properties") ? 1 : 0);
   for (const file of [...configs].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1))) {
     const text = source.read(file) ?? "";
     const profile = /application-([^/]+)\.\w+$/.exec(file)?.[1];
-    for (const p of file.endsWith(".properties") ? propertiesParts(file, text) : yamlParts(file, text)) {
+    const parts = file.endsWith(".properties") ? propertiesParts(file, text) : yamlParts(file, text);
+    if (!Array.isArray(parts)) {
+      if (profile !== undefined) limits.push(`${file}:${parts.malformed} has a malformed \\uxxxx escape, so Spring Boot cannot load the file under the profile ${profile}; it is not read`);
+      else broken ??= `${file}:${parts.malformed} has a malformed \\uxxxx escape, so Spring Boot cannot load the file and the application does not start; the documents springdoc serves are not read`;
+      continue;
+    }
+    for (const p of parts) {
       const when = profile !== undefined ? `the profile ${profile}` : p.when;
       const read = p.settings.filter((s) => readName(s.key));
       if (when !== undefined) {
@@ -311,9 +341,23 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   // In file order, whatever the precedence the files were read in.
   conditional.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
   for (const s of conditional) limits.push(`${s.file}:${s.line} sets ${readName(s.key)} for ${s.when}, which is chosen at launch; it is not read`);
+  if (broken) {
+    limits.push(broken);
+    return { documents: [], limits };
+  }
+  // Only the base path of the stack springdoc runs on applies; without the stack, either one leaves the paths unknown.
+  const ownPrefix = stack === "servlet" ? CONTEXT_PATH : stack === "reactive" ? BASE_PATH : undefined;
+  const stackless = stack ? [] : [CONTEXT_PATH, BASE_PATH].map((k) => settings.get(k)).filter((x): x is Setting => !!x);
+  if (stackless.length) {
+    for (const x of stackless)
+      limits.push(
+        `${x.file}:${x.line} sets ${readName(x.key)}, which applies only to ${readName(x.key) === CONTEXT_PATH ? "a Servlet" : "a WebFlux"} application, and the build does not settle the web stack; the documents springdoc serves are not read`,
+      );
+    return { documents: [], limits };
+  }
 
   const unresolved = (s: Setting) => s.value.includes("${");
-  const stopping = [MANAGEMENT, ENABLED, DEFAULT_DOCS, CONTEXT_PATH, BASE_PATH, PATH].map((k) => settings.get(k)).filter((s): s is Setting => !!s && unresolved(s));
+  const stopping = [MANAGEMENT, ENABLED, DEFAULT_DOCS, ...(ownPrefix ? [ownPrefix] : []), PATH].map((k) => settings.get(k)).filter((s): s is Setting => !!s && unresolved(s));
   if (stopping.length) {
     for (const s of stopping)
       limits.push(`${s.file}:${s.line} sets ${readName(s.key)} to ${s.value}, resolved at run time; the documents springdoc serves are not read`);
@@ -334,7 +378,7 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   if (flag(settings.get(ENABLED)) === false) return { documents: [], limits };
 
   const path = settings.get(PATH);
-  const base = joinRoute(settings.get(CONTEXT_PATH)?.value ?? settings.get(BASE_PATH)?.value ?? "", path?.value ?? "/v3/api-docs");
+  const base = joinRoute((ownPrefix && settings.get(ownPrefix)?.value) || "", path?.value ?? "/v3/api-docs");
   const documents: Array<Omit<ApiDocument, "component">> = [];
   const add = (location: string, convention: string, at: { file: string; line: number }, evidence: ApiDocument["evidence"]) => {
     if (!documents.some((d) => d.location === location)) documents.push({ kind: "served", location, convention, at, evidence });

@@ -52,13 +52,14 @@ a generated file for that.
 |---|---|
 | "Getting Started": the dependency alone serves the document at `/v3/api-docs` | when the project's own build file puts a `springdoc-openapi` artifact (or a `libs.springdoc.openapi...` catalog entry) on the runtime classpath, or its main code builds a `GroupedOpenApi`, `/v3/api-docs`. Counted: Maven `project/dependencies` in the default, `compile` or `runtime` scope; Gradle `implementation`, `api` or `runtimeOnly` in the project's own `dependencies` block. Not counted: `dependencyManagement`, `test` and `provided` scopes, plugins, `testImplementation`, `compileOnly`, `developmentOnly`, `platform(...)`, `buildscript` and `subprojects`; a Maven profile's dependency is reported |
 | core properties: `springdoc.api-docs.path`, `springdoc.api-docs.enabled`, `springdoc.enable-default-api-docs` | the literal path instead; nothing when disabled; only the groups without the default document |
-| FAQ 13.48: everything behind `server.servlet.context-path` | a literal context path (or WebFlux `spring.webflux.base-path`) in front |
+| FAQ 13.48: everything behind `server.servlet.context-path` | a literal base path in front, of the web stack the springdoc starter is for: `server.servlet.context-path` with a WebMvc starter (or 1.x `springdoc-openapi-ui`), `spring.webflux.base-path` with a WebFlux one; the other is ignored. When only code shows springdoc, so the stack is not settled, either one set is reported |
 | FAQ 13.1: a `GroupedOpenApi` bean built with `.group("public")` serves `<api-docs path>/public` | one document per bean: a builder in a `@Bean` method of a `@Configuration` (or other component) class in the package of a `@SpringBootApplication` or below. The group is the chain's last `group(...)`, a literal or a string constant of the file that no parameter or local hides |
 | FAQ 13.61: `springdoc.group-configs[0].group=users` | the same, per literal group; a list set with more precedence, even `[]`, replaces it, and a repeated key keeps its last value |
 
 Settings come from `src/main/resources/application.properties` and `application.yml` (`.yaml`) and their `config/`
 copies, with Spring Boot's precedence (properties over YAML, `config/` over both), YAML aliases and merge keys
-resolved and `.properties` escapes (`\u002f`) decoded as Spring Boot loads them. `springdoc.api-docs.enabled` is off
+resolved and `.properties` escapes (`\u002f`) decoded as Spring Boot loads them; a malformed `\u` escape makes a file
+Spring Boot cannot load, so nothing is read from it (and, outside a profile's file, no document is listed). `springdoc.api-docs.enabled` is off
 only for `false`, in any case (`off` keeps the endpoints on); `springdoc.enable-default-api-docs` and
 `springdoc.use-management-port` mean something only as `true` or `false`, and any other value is reported. Not read, each reported as a
 `limit:` in `atlas scan`: a profile's file (`application-dev.yml`) or a YAML document under
