@@ -17,25 +17,65 @@ export interface Inventory {
   apiDocuments: ApiDocument[];
 }
 
-const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,html,htm}";
-const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle\.kts|go\.mod)$/;
+const CODE = "**/*.{ts,tsx,js,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
+const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
 
-const ROUTE_STYLES: Array<{ style: string; re: RegExp }> = [
-  { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g },
-  { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g },
-  { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g },
-  { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g },
-  { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g },
+const SCRIPT = /\.(c|m)?[jt]sx?$/;
+
+const NEXT_METHOD = /^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/;
+
+/**
+ * The values an `export { a, b as c }` list exports: `a` and `c`, never the local name before an `as`; a type-only one
+ * (`type H as GET`) exports no value, and is left out.
+ */
+const exportedNames = (list: string): string[] =>
+  list
+    .split(",")
+    .map((spec) => spec.trim())
+    .filter((spec) => spec && !/^type\s/.test(spec))
+    .map((spec) => spec.split(/\s+as\s+/).pop()!.trim());
+
+/** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
+const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
+  { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
+  { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
+  { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
+  // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
+  {
+    style: "next",
+    re: /^[\t ]*export\s+(?:async\s+)?(?:function|const|let|var)\s+(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\b|^[\t ]*export\s*\{([^}]*)\}|^[\t ]*export\s*\*\s*from\b/gm,
+    files: /(?:^|\/)app\/(?:.*\/)?route\.(c|m)?[jt]sx?$/,
+    accept: (m) => m[2] === undefined || exportedNames(m[2]).some((n) => NEXT_METHOD.test(n)),
+  },
+  {
+    style: "next",
+    re: /^[\t ]*export\s+default\b|^[\t ]*export\s*\{([^}]*)\}/gm,
+    files: /(?:^|\/)pages\/api\/.*\.(c|m)?[jt]sx?$/,
+    accept: (m) => m[1] === undefined || exportedNames(m[1]).includes("default"),
+  },
+  { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
 
 const CALL_SHAPES = [
   /["'`](?:\$\{[^}]+\}|\$[A-Za-z_]\w*)\/[A-Za-z][^"'`]*["'`]/g,
-  /\bfetch\(\s*["'`]\/[A-Za-z][^"'`]*/g,
+  // fetch and the wrappers named after it: authFetch, fetchJson, useFetch.
+  /\b(?:fetch\w*|\w*Fetch\w*)\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
+  // A Python f-string that joins a value to a path: f"{base}/orders".
+  /\b(?:[fF][rR]?|[rR][fF])(?:"\{[^}"]+\}\/[A-Za-z][^"]*"|'\{[^}']+\}\/[A-Za-z][^']*')/g,
   /\b(?:action|formaction|data-[\w-]+-url)\s*=\s*["']?\/[A-Za-z]/gi,
 ];
+
+/**
+ * A verb call whose first argument is a path, type arguments allowed: Dio's `dio.get<T>("/x")`, `http.post("/x")`.
+ * Not in JavaScript or TypeScript, where `app.get("/x")` registers a route, nor in a decorator such as FastAPI's.
+ */
+// A receiver that is a router registers a route (`router.get("/x", handler)` in Dart's shelf_router): not a request.
+// A Dart cascade (`router..get(...)`, `Router()..get(...)`) registers on the receiver before the `..`.
+const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\.?)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 
@@ -102,8 +142,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (!text) continue;
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
-    for (const { style, re } of ROUTE_STYLES) {
-      const hits = [...text.matchAll(re)];
+    for (const { style, re, files, accept } of ROUTE_STYLES) {
+      if (!files.test(file)) continue;
+      const hits = [...text.matchAll(re)].filter((m) => !accept || accept(m));
       if (!hits.length) continue;
       const first = hits[0]!;
       const label = style === "registration" ? `registration ${first[1]}` : style;
@@ -111,8 +152,11 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     }
     let count = 0;
     let firstAt: number | undefined;
-    for (const re of CALL_SHAPES) {
+    // The names the file binds to a `Router()`, besides the usual `app` and `router`.
+    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?(?:[A-Za-z_]\w*\.)*Router\s*\(/g)].map((m) => m[1]!)]);
+    for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
+        if (re === VERB_CALL && m[1] !== undefined && (routers.has(m[1]) || m[1] === "Router")) continue;
         count++;
         firstAt = Math.min(firstAt ?? Infinity, m.index ?? 0);
       }

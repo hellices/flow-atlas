@@ -1,0 +1,46 @@
+case: |
+  A TypeScript monorepo: a Kotlin app calls a BFF, the BFF calls a core service, and the core service's outbound
+  adapters and a Python agent call a storage service.
+  Seen in a real run: an adapter that builds its URLs from `const base = ${baseUrl}/store/internal/v2` read the base
+  itself as a request (two false FA002s) and lost the call made with it; the Python agent's f-string URL, whose value
+  sits on the line after `client.post(`, was not read at all. Building this scenario showed two more: a BFF whose route
+  file is also its call file read its own registrations as calls to the core service, and `res.send()` (or `res.status(201).send()`) in a
+  handler was followed by name into the adapter's `send` function. Now the base joins the URLs built on it, the f-string call is
+  read, a registration is no request and the handler's own parameters name no port. The adapters' calls start chains
+  of their own, since nothing in the code shows which request runs them; the only finding is the route a retired
+  client used to call, and its handler's request to the core service belongs to that route, which no chain starts at,
+  so it starts none of its own; a journey whose order only the flow states stays Unknown.
+surfaces:
+  - bff|GET /legacy/profiles
+  - bff|POST /uploads
+  - bff|POST /messages
+  - core|GET /profiles
+  - core|POST /uploads
+  - core|POST /replies
+  - store|GET /store/internal/object-info/*
+  - store|POST /store/internal/v2/agent/images
+  - store|POST /store/internal/v2/shares
+  - store|POST /store/internal/v2/upload-tickets
+findings:
+  - FA001|bff|GET /legacy/profiles
+chains:
+  - agent->store|POST /store/internal/v2/agent/images
+  - app->bff|POST /uploads + core|POST /uploads
+  - app->bff|POST /messages + core|POST /replies
+  - core->store|GET /store/internal/object-info/*
+  - core->store|POST /store/internal/v2/shares
+  - core->store|POST /store/internal/v2/upload-tickets
+flows:
+  ask: Ready=True
+  image-question: Ready=Unknown
+inventory:
+  routes:
+    - bff/src/routes.ts express 3
+    - core/src/routes.ts express 3
+    - store/src/routes.ts express 4
+  calls:
+    - agent/src/agent/images.py 1
+    - app/src/main/kotlin/com/example/app/BffApi.kt 2
+    - bff/src/routes.ts 3
+    - core/src/adapters/store-objects.ts 1
+    - core/src/adapters/store-shares.ts 1

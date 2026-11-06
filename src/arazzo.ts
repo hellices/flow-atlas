@@ -57,7 +57,7 @@ function parseSurfaceId(id: string): { component: string; method: string; path: 
  */
 export function documentUrl(component: string, graph: Graph, config: Config): { url: string; note?: string; file?: string } {
   if (config.openapi[component]) {
-    const url = config.openapi[component]!;
+    const url = config.openapi[component];
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return { url };
     // A root-relative choice is a served path, unless it names a file on this machine: the environment's origin goes
     // in front of a served path, as for a found one.

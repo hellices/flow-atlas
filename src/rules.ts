@@ -21,7 +21,12 @@ function finding(rule: Finding["rule"], key: string, message: string, at: Findin
 /** `component|METHOD /path` entries; `*` matches within one segment, `**` across segments. */
 export function surfacePattern(entries: string[]): (id: string) => boolean {
   const patterns = entries.map((e) => {
-    const body = e.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+    // `**` first, then `*` in each piece, everything else literal: no character of the entry is taken for a marker.
+    const literal = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    const body = e
+      .split("**")
+      .map((piece) => piece.split("*").map(literal).join("[^/]*"))
+      .join(".*");
     return new RegExp(`^${body}$`);
   });
   return (id) => patterns.some((p) => p.test(id));
@@ -38,7 +43,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     // A component's own API document is read by tools and people, not by the components the configuration lists.
     const documents = new Set(graph.apiDocuments.filter((d) => d.kind === "served").map((d) => `${d.component}|${d.location}`));
     graph.surfaces.forEach((s, i) => {
-      if (!called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
+      if (s.implicit || !called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
       const id = surfaceId(s);
       if (isPublic(id) || callersOf.has(i)) return;
       out.push(finding("FA001", id, `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites.`, [s.at]));
@@ -73,7 +78,11 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
       }
     }
     if (config.rules.FA003?.cycles !== false) {
-      const edges = new Set([...declared, ...actual.keys()]);
+      // A component calling its own routes, as a browser bundle calls the server of the same app, is no cycle.
+      const edges = new Set([...declared, ...actual.keys()].filter((e) => {
+        const [from, to] = e.split("->");
+        return from !== to;
+      }));
       const search = cycleSearch(edges);
       if (!search.complete) limits.push(`FA003: stopped listing cycles after ${CYCLE_BUDGET} steps; every strongly connected group has one cycle reported, others may be missing`);
       for (const cycle of search.cycles) {

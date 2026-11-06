@@ -1,0 +1,47 @@
+case: |
+  A FastAPI backend and a React client that calls it through an authFetch wrapper.
+  Seen in a real run: an agent endpoint registered by a library helper and a StaticFiles mount went unread, so the
+  client's calls to them came back as FA002, and FA001 named routes that only a probe or the identity provider call.
+  With the helper's fixed method configured, the mount read as StaticFiles serves it (GET, and HEAD by itself) and the
+  two outside callers declared public, what remains is the three routes no client code calls. Inventory used to offer
+  the Python decorators as Express routes and count none of the wrapper's calls. A mounted sub-application is not
+  read; a limit says so rather than serving its whole subtree.
+surfaces:
+  - backend|DELETE /api/exports/{workspace_id}/{timestamp}
+  - backend|GET /api/reports
+  - backend|GET /api/reports/{*filename}
+  - backend|GET /api/auth/callback
+  - backend|GET /api/auth/session
+  - backend|GET /api/templates/{name}
+  - backend|GET /api/templates/{name}/raw
+  - backend|GET /api/dashboard/summary
+  - backend|GET /api/downloads/**
+  - backend|GET /api/health
+  - backend|HEAD /api/downloads/** (implicit)
+  - backend|POST /api/reports/run
+  - backend|POST /api/auth/logout
+  - backend|POST /api/chat
+findings:
+  - FA001|backend|DELETE /api/exports/{workspace_id}/{timestamp}
+  - FA001|backend|GET /api/templates/{name}/raw
+  - FA001|backend|GET /api/dashboard/summary
+limits:
+  - mounts an application at /admin whose routes are not read
+chains:
+  - outside->backend|GET /api/auth/callback
+  - outside->backend|GET /api/health
+  - web->backend|GET /api/reports
+  - web->backend|GET /api/reports/{*filename}
+  - web->backend|GET /api/auth/session
+  - web->backend|GET /api/templates/{name}
+  - web->backend|GET /api/downloads/**
+  - web->backend|POST /api/reports/run
+  - web->backend|POST /api/auth/logout
+  - web->backend|POST /api/chat
+inventory:
+  routes:
+    - backend/server.py fastapi 11
+  calls:
+    - frontend/src/components/ReportList.tsx 3
+    - frontend/src/components/AuthGate.tsx 3
+    - frontend/src/lib/ag-ui-client.ts 1

@@ -1,7 +1,10 @@
 import ts from "typescript";
+import { declarationOf, resolveModule, unwrap } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
+/** Response methods that return the response itself, in Express (`res.status(500)`) and Fastify (`reply.code(201)`). */
+const CHAINABLE = new Set(["status", "set", "header", "headers", "type", "cookie", "clearCookie", "location", "links", "vary", "append", "attachment", "code", "removeHeader", "serializer"]);
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -143,33 +146,11 @@ export class Reach {
    * first, then the specifier as written, then the extensions and index files TypeScript and Node try.
    */
   resolve(from: string, spec: string): string | undefined {
-    if (!spec.startsWith(".")) return undefined;
-    const parts = from.split("/").slice(0, -1);
-    for (const seg of spec.split("/")) {
-      if (seg === "." || seg === "") continue;
-      if (seg === "..") parts.pop();
-      else parts.push(seg);
-    }
-    const written = parts.join("/");
-    const js = /\.(m|c)?jsx?$/.exec(written);
-    const base = js ? written.slice(0, -js[0].length) : written;
-    const typescriptFor: Record<string, string[]> = { ".js": ["ts", "tsx"], ".jsx": ["tsx"], ".mjs": ["mts"], ".cjs": ["cts"] };
-    const substituted = js ? (typescriptFor[js[0]] ?? []).map((e) => `${base}.${e}`) : [];
-    const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
-    const candidates = [
-      ...substituted,
-      written,
-      ...extensions.map((e) => `${written}.${e}`),
-      ...extensions.map((e) => `${written}/index.${e}`),
-    ];
-    for (const candidate of candidates) {
-      if (/\.(m|c)?[jt]sx?$/.test(candidate) && this.source.read(candidate) !== undefined) return candidate;
-    }
-    return undefined;
+    return resolveModule(from, spec, (f) => this.source.read(f) !== undefined);
   }
 
   /** The function a module exports under a name, following re-exports to any depth; a re-export cycle ends the search. */
-  private exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
+  exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
     const key = `${file}#${name}`;
     const p = this.parse(file);
     if (!p || visiting.has(key)) return undefined;
@@ -198,6 +179,53 @@ export class Reach {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
+    // The handler's own parameters are what the framework hands it (`req`, `res`, `reply`): `res.send()` is the
+    // framework's method, not a port of the component, so it names nothing to follow.
+    // The start is the handler, the registration call that holds it, or its body (a re-exported function's).
+    const handlers = ts.isFunctionLike(start)
+      ? [start]
+      : ts.isCallExpression(start)
+        ? start.arguments.map((a) => unwrap(a)).filter((a) => ts.isFunctionLike(a))
+        : ts.isBlock(start) && ts.isFunctionLike(start.parent)
+          ? [start.parent]
+          : [];
+    const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
+    // What each call hands a function's parameter, decided once every call is known: a parameter is the framework's
+    // only when every call that reaches it hands it the framework's object.
+    const handed: Array<{ arg: ts.Expression; param: ts.ParameterDeclaration }> = [];
+    const handedTo = new Map<ts.Node, { framework: boolean; other: boolean }>();
+    // `res.send()`, and `res.status(500).send()` on what a chainable response method returns (Express's and Fastify's
+    // return the response). Something kept on a parameter (`req.services.mail.send()`), or returned by another of its
+    // methods (`req.getClient().send()`), is the component's own, and is followed.
+    // A const that holds one (`const reply = res`) is the same object.
+    const fromFramework = (receiver: ts.Expression): boolean => {
+      let at = unwrap(receiver);
+      while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression) && CHAINABLE.has(at.expression.name.text)) at = unwrap(at.expression.expression);
+      // Through any number of aliases; one seen twice is a cycle.
+      const visited = new Set<ts.Node>();
+      while (ts.isIdentifier(at)) {
+        const decl = declarationOf(at);
+        const passed = decl && handedTo.get(decl);
+        if (decl && (framework.has(decl) || (passed?.framework && !passed.other))) return true;
+        if (!decl || visited.has(decl)) return false;
+        visited.add(decl);
+        const alias = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
+        if (!alias || !ts.isIdentifier(alias)) return false;
+        at = alias;
+      }
+      return false;
+    };
+    // A function the handler hands its response to (`helpers.respond(res)`) gets the framework's object in that
+    // parameter: `reply.send()` there is the framework's too.
+    const handOn = (call: ts.CallExpression, target: { node: ts.Node }): void => {
+      const fn = ts.isFunctionLike(target.node) ? target.node : ts.isBlock(target.node) && ts.isFunctionLike(target.node.parent) ? target.node.parent : undefined;
+      if (!fn) return;
+      call.arguments.forEach((arg, i) => {
+        const param = fn.parameters[i];
+        if (param && !param.dotDotDotToken) handed.push({ arg, param });
+      });
+    };
+    const calls: Array<{ member: string; receiver: ts.Expression }> = [];
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
@@ -210,19 +238,21 @@ export class Reach {
         if (executed && inCall && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
           executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
         }
-        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
+        if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
           const member = n.expression.name.text;
           const receiver = n.expression.expression;
           // `ns.run()` on an imported namespace runs that module's function: follow it rather than count a member call.
           const namespace = ts.isIdentifier(receiver) && localBinding(receiver) === undefined ? parsed.namespaces.get(receiver.text) : undefined;
           const implementation = namespace ? this.exported(namespace, member) : undefined;
           if (implementation) {
+            handOn(n, implementation);
             const key = `${implementation.file}#${implementation.node.pos}`;
             if (!seen.has(key)) {
               seen.add(key);
               queue.push(implementation);
             }
-          } else names.add(member);
+          } else calls.push({ member, receiver });
           if (n.expression.expression.kind === ts.SyntaxKind.ThisKeyword && classOf) {
             const method = classOf.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(parsed.sf) === member);
             const key = `${f}#this.${member}`;
@@ -243,6 +273,7 @@ export class Reach {
                   ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
                   : undefined;
           if (target) {
+            if (ts.isCallExpression(n.parent) && n.parent.expression === n) handOn(n.parent, target);
             const key = `${target.file}#${target.node.pos}`;
             if (!seen.has(key)) {
               seen.add(key);
@@ -255,6 +286,20 @@ export class Reach {
       };
       visit(node);
     }
+    // What each parameter is handed settles in as many rounds as hand-offs can chain.
+    for (let round = 0; round <= handed.length; round++) {
+      let changed = false;
+      for (const { arg, param } of handed) {
+        const state = handedTo.get(param) ?? handedTo.set(param, { framework: false, other: false }).get(param)!;
+        const key = fromFramework(arg) ? "framework" : "other";
+        if (!state[key]) {
+          state[key] = true;
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    for (const { member, receiver } of calls) if (!fromFramework(receiver)) names.add(member);
     return [...names].sort();
   }
 }

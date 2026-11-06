@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
 import { diffGraphs } from "../src/diff.js";
-import { draftChainFlows, uniqueIds } from "../src/draft.js";
+import { draftChainFlows } from "../src/draft.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
@@ -142,7 +142,7 @@ describe("chains", () => {
 
   it("drafts flows whose structure is the chain's, leaving only the title, labels and role to the author", () => {
     const text = draftChainFlows(graph, report.chains);
-    const docs = parseAllDocuments(text).map((d) => d.toJS());
+    const docs = parseAllDocuments(text).map((d) => d.toJS() as FlowObject);
     expect(docs.map((d) => d.spec.steps)).toEqual([
       [{ stepId: "get-admin-report", chain: "outside->backend|GET /admin/report" }],
       [{ stepId: "get-screen", chain: "web->bff|GET /screen" }],
@@ -154,7 +154,7 @@ describe("chains", () => {
   });
 
   it("names drafts by the whole chain, so separate drafts and saved flows never share a name", () => {
-    const one = (id: string, taken: string[] = []) => parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS().metadata.name;
+    const one = (id: string, taken: string[] = []) => (parseAllDocuments(draftChainFlows(graph, [report.chains.find((c) => c.id === id)!], taken))[0]!.toJS() as FlowObject).metadata.name;
     expect(one("web->bff|GET /screen")).toBe("web-bff-get-screen");
     expect(one("web->bff|GET /screen", ["web-bff-get-screen"])).toMatch(/^web-bff-get-screen-[0-9a-f]{6}$/);
   });
@@ -214,70 +214,32 @@ describe("chains of a synthetic graph", () => {
     return { ...base, surfaces, calls, edges };
   };
 
-  it("follows a request however deep it goes", () => {
-    const report = deriveChains(graphOf(20), normalizeConfig({}));
-    expect(report.chains).toHaveLength(1);
-    expect(report.chains[0]!.surfaces).toHaveLength(21);
-    expect(report.unchained).toEqual([]);
-  });
-
   it("changes the digest when an edge changes, not when code moves", () => {
     const digest = (g: Graph) => deriveChains(g, normalizeConfig({})).chains[0]!.digest;
     const moved = graphOf(2);
     moved.calls = moved.calls.map((c) => ({ ...c, at: { ...c.at, line: c.at.line + 10 } }));
     expect(digest(moved)).toBe(digest(graphOf(2)));
     expect(digest(graphOf(2, "otherHandler"))).not.toBe(digest(graphOf(2)));
+    // Two edges between the same ends found in different ways are both kept, whatever order they come in.
+    const twice = graphOf(1);
+    twice.edges.push({ ...twice.edges[1]!, evidence: "name" });
+    const forward = deriveChains(twice, normalizeConfig({})).chains[0]!;
+    const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
+    expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
+    expect([backward.weak, backward.digest]).toEqual([forward.weak, forward.digest]);
   });
 
-  it("names long chains apart however they are drafted, and keeps edges that differ only in how they were found", () => {
+  it("names long chains apart however they are drafted", () => {
     const long = "/" + "segment/".repeat(10);
     const g = graphOf(0);
     g.surfaces = [`${long}a`, `${long}b`].map((path, i) => ({ ...surface(i), id: `svc|GET ${path}`, path }));
     g.calls = g.surfaces.map((x, i) => ({ ...call("app", i), id: `app->svc|GET ${x.path}@a.ts#f${i}`, path: x.path }));
     g.edges = g.calls.map((c, i) => ({ kind: "match" as const, from: c.id, to: g.surfaces[i]!.id, evidence: "static" as const }));
     const chains = deriveChains(g, normalizeConfig({})).chains;
-    const names = (cs: typeof chains) => parseAllDocuments(draftChainFlows(g, cs)).map((d) => d.toJS().metadata.name as string);
+    const names = (cs: typeof chains) => parseAllDocuments(draftChainFlows(g, cs)).map((d) => (d.toJS() as FlowObject).metadata.name);
     const together = names(chains);
     expect(new Set(together).size).toBe(2);
     expect(together.every((n) => n.length <= 63)).toBe(true);
     expect([...names([chains[1]!]), ...names([chains[0]!])].sort()).toEqual([...together].sort());
-
-    const twice = graphOf(1);
-    twice.edges.push({ ...twice.edges[1]!, evidence: "name" });
-    const forward = deriveChains(twice, normalizeConfig({})).chains[0]!;
-    const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
-    expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
-    expect([forward.weak, forward.digest]).toEqual([backward.weak, backward.digest]);
-  });
-
-  it("keeps every offer of the same next request", () => {
-    const g = graphOf(1);
-    const page = call("web", 9);
-    g.surfaces.push(surface(9));
-    g.calls.push(page);
-    g.edges.push(
-      { kind: "match", from: page.id, to: "svc|GET /s9", evidence: "static" },
-      { kind: "reach", from: "svc|GET /s0", to: page.id, evidence: "static", via: "view a" },
-      { kind: "reach", from: "svc|GET /s1", to: page.id, evidence: "static", via: "view b" },
-    );
-    const chain = deriveChains(g, normalizeConfig({})).chains.find((c) => c.id === "app->svc|GET /s0")!;
-    expect(chain.next.map((n) => `${n.from} ${n.via}`)).toEqual(["svc|GET /s0 view a", "svc|GET /s1 view b"]);
-  });
-});
-
-describe("draft names", () => {
-  it("stays within 63 characters when a suffix tells two long names apart", () => {
-    const next = uniqueIds();
-    const long = "a".repeat(70);
-    const [first, second] = [next(long), next(long)];
-    expect(first).toHaveLength(63);
-    expect(second).toHaveLength(63);
-    expect(second.endsWith("-2")).toBe(true);
-  });
-
-  it("refuses a chain id with anything after the path", () => {
-    const report = { ...deriveChains(scan(memory(shop), config), config) };
-    report.chains = [{ ...report.chains[0]!, id: "web->bff|GET /screen@bff/src/routes.ts#h" }];
-    expect(validate("chains", report)).not.toEqual([]);
   });
 });

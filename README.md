@@ -27,7 +27,7 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
 | Reads | From |
 |---|---|
-| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers), FastAPI decorators, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
+| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers), FastAPI decorators and Starlette StaticFiles mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
 | client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and `data-*` URLs, Thymeleaf `@{...}` links, inline scripts); Kotlin, Python and other languages as text |
 | what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
 
@@ -139,14 +139,22 @@ the same inputs give the same document. Route paths are OpenAPI path templates (
 ## Develop
 
 ```bash
-pnpm install
+pnpm install   # also points git at the hooks in .githooks
+pnpm check     # strict types (tsc) and the type-aware lint (typescript-eslint)
 pnpm build
 pnpm test
 ```
 
+The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
+`.git/hooks` still runs after them, with the same refs. CI runs the same checks.
+
 `fixtures/shop` is a small monorepo with nine planted problems; the tests check that exactly those are found, that
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
 through a BFF handler's port call to a service, and that SARIF and Arazzo output pass the official schemas.
+
+[`fixtures/scenarios`](fixtures/scenarios/README.md) holds small repositories in the shapes of real ones atlas was run
+on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
+scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 

@@ -129,7 +129,7 @@ function parse(file: string, text: string): LoadedFile {
       loaded.errors.push(...doc.errors.map((e) => `${where}${e.message}`));
       return;
     }
-    const value = doc.toJS();
+    const value: unknown = doc.toJS();
     if (value === null || value === undefined) return;
     const errors = validate("flow", value);
     if (errors.length) {
@@ -314,7 +314,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     provenance: derived(graph.provenance, "FlowReport", { asOf }, inputs),
     files: files.map((f) => ({ file: f.file, flows: f.flows.map((x) => x.object.metadata.name), errors: f.errors })),
     items,
-    unassigned: graph.surfaces.map((s) => s.id).filter((id) => !covered.has(id)),
+    unassigned: graph.surfaces.filter((s) => !s.implicit && !covered.has(s.id)).map((s) => s.id),
   };
 }
 

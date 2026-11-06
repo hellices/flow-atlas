@@ -158,9 +158,16 @@ or FA001 on routes you know are called. Run `atlas inventory`, compare with the 
 ## Setting up
 
 `atlas inventory` lists candidates without deciding anything. Write the configuration from it
-(`references/config.md`); for a server framework atlas does not parse (Spring, Django, Flask and others), generate its
+(`references/config.md`); for a server framework atlas does not parse (Django, Flask, Ktor and others), generate its
 OpenAPI document and point the routes at it (`references/openapi.md`), run `atlas scan` until every source yields what you expect, run `atlas check`, and go
 through a sample of findings with a person. Only then record the baseline.
+
+- Keep call files to the client adapters: screen routes (`context.push("/career/$id")`, `<Link href>`) look like
+  requests and come back as FA002.
+- What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
+  client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
+  router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`). A `limit:` line
+  tells you when one is missing; never declare one to make a finding go away.
 
 ## Handling a finding
 

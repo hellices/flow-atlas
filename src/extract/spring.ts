@@ -3,6 +3,7 @@ import type { Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf } from "../source.js";
+import type { Spans } from "./spans.js";
 import { literalEnd, withoutComments } from "./calls.js";
 
 const SHORTCUTS: Record<string, string> = { GetMapping: "GET", PostMapping: "POST", PutMapping: "PUT", DeleteMapping: "DELETE", PatchMapping: "PATCH" };
@@ -257,7 +258,7 @@ interface TypeScope {
  * or method the file does not spell out (a constant, an expression) is unknown, and no route is registered for it.
  * `views` collects, per route, the view names its handler renders.
  */
-export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views): Surface[] {
+export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans): Surface[] {
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
@@ -298,6 +299,8 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
   }
 
   const out: Surface[] = [];
+  // A mapping annotation's arguments are its paths, not requests, type-level ones included.
+  for (const m of mappings) spans?.add(file, m.at, m.end);
   for (const m of mappings) {
     if (typeLevel.has(m.at)) continue;
     // The innermost type whose body holds the handler; a nested type closed before it does not count.

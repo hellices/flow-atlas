@@ -1,0 +1,7 @@
+components:
+  - { name: web, path: apps/web }
+routes:
+  - { component: web, files: ["apps/web/app/**/*.ts"], styles: [next] }
+calls:
+  # The browser code of the app calls the route handlers of the same app.
+  - { from: web, to: web, files: ["apps/web/components/**/*.tsx", "apps/web/lib/public-config-client.ts"] }

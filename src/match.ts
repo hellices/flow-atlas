@@ -5,11 +5,33 @@ import type { Config } from "./config.js";
 
 /**
  * Components whose router ranks matching routes by how specific they are, so that of several routes a request fits,
- * one is chosen regardless of order: Spring MVC. Express, Fastify, Nest and FastAPI follow registration order, which
- * the code read here does not settle, so every route a request fits stays a target there.
+ * one is chosen regardless of order: Spring MVC, which ranks the routes that accept the method, and Next.js, which
+ * picks the route file by its path alone and answers 405 when that file lacks the method. Express, Fastify, Nest and
+ * FastAPI follow registration order, which the code read here does not settle, so every route a request fits stays a
+ * target there.
  */
-export function rankedComponents(config: Pick<Config, "routes">): Set<string> {
-  return new Set(config.routes.filter((r) => (r.styles ?? []).includes("spring")).map((r) => r.component));
+export type Ranking = "spring" | "next";
+
+export function rankedComponents(config: Pick<Config, "routes">): Map<string, Ranking> {
+  const out = new Map<string, Ranking>();
+  for (const r of config.routes) {
+    if ((r.styles ?? []).includes("spring")) out.set(r.component, "spring");
+    else if ((r.styles ?? []).includes("next")) out.set(r.component, "next");
+  }
+  return out;
+}
+
+/** Next.js's order at each segment: a static name, then `[x]`, then `[...x]` (`{x}/**`), then `[[...x]]` (`{*x}`). */
+function nextRank(path: string): number[] {
+  const segs = segments(path);
+  const out: number[] = [];
+  segs.forEach((s, i) => {
+    if (s === "**") return;
+    if (s.startsWith("{*")) out.push(3);
+    else if (s.startsWith("{")) out.push(segs[i + 1] === "**" ? 2 : 1);
+    else out.push(0);
+  });
+  return out;
 }
 
 /**
@@ -36,8 +58,8 @@ function compare(a: number[], b: number[]): number {
  * The routes a request reaches. For a component whose router ranks routes, and a request whose path is fully known,
  * only the route its router picks for each method; otherwise every route it fits, since which one serves it is not known.
  */
-function reached(call: Call, candidates: Array<{ surface: Surface; index: number }>, ranked: Set<string>): Array<{ surface: Surface; index: number }> {
-  if (!ranked.has(call.to) || call.path.includes(HOLE)) return candidates;
+function reached(call: Call, candidates: Array<{ surface: Surface; index: number }>, ranked: Map<string, Ranking>): Array<{ surface: Surface; index: number }> {
+  if (ranked.get(call.to) !== "spring" || call.path.includes(HOLE)) return candidates;
   const byMethod = new Map<string, Array<{ surface: Surface; index: number; rank: number[] }>>();
   for (const c of candidates) {
     const list = byMethod.get(c.surface.method) ?? byMethod.set(c.surface.method, []).get(c.surface.method)!;
@@ -58,13 +80,22 @@ export interface Matches {
   targetsOf: Map<number, Surface[]>;
 }
 
-export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Set<string> = new Set()): Matches {
+export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map<string, Ranking> = new Map()): Matches {
   const callersOf = new Map<number, Call[]>();
   const targetsOf = new Map<number, Surface[]>();
   graph.calls.forEach((call, ci) => {
     const candidates: Array<{ surface: Surface; index: number }> = [];
+    // Next.js settles the route by the path first; the method is checked on that route only.
+    let path: string | undefined;
+    if (ranked.get(call.to) === "next" && !call.path.includes(HOLE)) {
+      const fits = [...new Set(graph.surfaces.filter((s) => s.component === call.to && pathsMatch(s.path, call.path)).map((s) => s.path))];
+      path = fits.sort((a, b) => compare(nextRank(a), nextRank(b)))[0];
+    }
     graph.surfaces.forEach((surface, si) => {
       if (surface.component !== call.to) return;
+      if (path !== undefined && surface.path !== path) return;
+      // What the framework answers by itself is reached only by a request that names that method.
+      if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
       if (pathsMatch(surface.path, call.path) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
     });
     for (const { surface, index: si } of reached(call, candidates, ranked)) {

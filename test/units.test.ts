@@ -155,6 +155,9 @@ describe("surfacePattern", () => {
     expect(isPublic("api|PUT /admin/home/cards")).toBe(true);
     expect(isPublic("api|POST /health")).toBe(false);
     expect(isPublic("web|GET /admin/x")).toBe(false);
+    // Only `*` and `**` are wildcards; every other character of an entry is itself.
+    expect(surfacePattern(["api|GET /a\uE000b"])("api|GET /axxb")).toBe(false);
+    expect(surfacePattern(["api|GET /a\uE000b"])("api|GET /a\uE000b")).toBe(true);
   });
 });
 
@@ -205,6 +208,49 @@ describe("Reach", () => {
     const sf = reach.parse("src/http.ts")!.sf;
     const call = (sf.statements[1] as ts.ExpressionStatement).expression;
     expect(reach.from("src/http.ts", call)).toEqual(["map", "other", "readThing"]);
+  });
+
+  it("leaves out what the framework's handler parameters answer, and keeps what is kept on them", () => {
+    const names = (body: string) => {
+      const handler = `app.get("/x", (req, res) => { ${body} });`;
+      const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
+      return reach.from("src/h.ts", (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression);
+    };
+    const aliases = Array.from({ length: 9 }, (_, i) => `const a${i + 1} = ${i ? `a${i}` : "res"};`).join(" ");
+    const rows: Array<[string, string[]]> = [
+      // On the response, through parentheses, a fluent chain or any number of aliases: the framework's.
+      ["res.status(500).json({}); (res).end(); (res).status(204).sendStatus();", []],
+      ["const reply = res; reply.redirect();", []],
+      [`${aliases} a9.send();`, []],
+      // Kept on a parameter, or returned by one of its methods: the component's, whatever its name.
+      ["req.services.mail.send();", ["send"]],
+      ["req.services.mail.redirect();", ["redirect"]],
+      ["req.getClient().publish();", ["publish"]],
+    ];
+    expect(rows.map(([body]) => names(body))).toEqual(rows.map(([, out]) => out));
+    // A wrapped handler is still the handler.
+    const wrapped = 'app.get("/x", ((req, res) => res.send("ok")) as Handler);';
+    const reach = new Reach({ ...source, read: (p) => (p === "src/w.ts" ? wrapped : undefined), list: () => ["src/w.ts"] });
+    expect(reach.from("src/w.ts", (reach.parse("src/w.ts")!.sf.statements[0] as ts.ExpressionStatement).expression)).toEqual([]);
+  });
+
+  it("treats a parameter as the framework's only when every call hands it the response", () => {
+    const mixed: Record<string, string> = {
+      "src/h.ts": 'function forward(x) { x.send(); }\napp.get("/x", (req, res) => { forward(res); forward(req.mailPort); });',
+    };
+    const reach = new Reach({ ...source, read: (p) => mixed[p], list: () => Object.keys(mixed) });
+    const call = (reach.parse("src/h.ts")!.sf.statements[1] as ts.ExpressionStatement).expression;
+    expect(reach.from("src/h.ts", call)).toEqual(["send"]);
+  });
+
+  it("treats a parameter the handler hands its response to as the framework's", () => {
+    const handled: Record<string, string> = {
+      "src/h.ts": 'import * as helpers from "./helpers";\napp.get("/x", (req, res) => { helpers.respond(res); });',
+      "src/helpers.ts": 'export function respond(reply) { reply.send("ok"); audit.record(); }',
+    };
+    const reach = new Reach({ ...source, read: (p) => handled[p], list: () => Object.keys(handled) });
+    const call = (reach.parse("src/h.ts")!.sf.statements[1] as ts.ExpressionStatement).expression;
+    expect(reach.from("src/h.ts", call)).toEqual(["record"]);
   });
 });
 

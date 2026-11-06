@@ -1,0 +1,12 @@
+components:
+  - { name: app, path: app }
+  - { name: backend, path: backend }
+routes:
+  - { component: backend, files: ["backend/src/main/java/**/*.java"], styles: [spring] }
+calls:
+  # Dio's baseUrl is ApiConstants.baseUrl + apiPrefix ('/api/v1'), set in app/lib/core/utils/api_client.dart.
+  # Only the repositories and the widget that call Dio; screens push routes that look like requests.
+  - from: app
+    to: backend
+    files: ["app/lib/features/**/data/**/*.dart", "app/lib/features/**/widgets/forum_section.dart"]
+    prefix: /api/v1

@@ -162,7 +162,7 @@ export function extractApiDocuments(source: Source, config: Config, components: 
       kind: "file",
       location: file,
       convention: "committed",
-      ...(operations ? { agreement: agreement(operations, surfaces.filter((s) => s.component === component)) } : {}),
+      ...(operations ? { agreement: agreement(operations, surfaces.filter((s) => s.component === component && !s.implicit)) } : {}),
       at: { file, line: lineOf(text, start) },
       evidence: "text",
     });
@@ -222,7 +222,7 @@ export function resolveApiDescriptions(documents: ApiDocument[], surfaces: Surfa
     // A page that shows its own path is that document, not an alias of another.
     const served = docs.filter((d) => d.kind === "served" && !(d.aliasOf && d.aliasOf !== d.location && servedPaths.has(d.aliasOf)));
     const files = docs.filter((d) => d.kind === "file");
-    const routes = surfaces.filter((s) => s.component === component).length;
+    const routes = surfaces.filter((s) => s.component === component && !s.implicit).length;
     const complete = files.filter((d) => routes > 0 && d.agreement && d.agreement.missing.length === 0);
     const partial = files.filter((d) => !complete.includes(d));
     const drift = partial

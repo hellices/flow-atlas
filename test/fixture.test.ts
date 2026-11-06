@@ -113,7 +113,7 @@ describe("shop fixture", () => {
 describe("check, baseline and exceptions", () => {
   const out = mkdtempSync(join(tmpdir(), "atlas-"));
   const run = (...args: string[]) => main([...args, "--root", root, "--out", out]);
-  const lastItems = () => JSON.parse(readFileSync(join(out, "last-check.json"), "utf8")).items as Array<{ status: string; finding: { key: string } }>;
+  const lastItems = () => (JSON.parse(readFileSync(join(out, "last-check.json"), "utf8")) as { items: Array<{ status: string; finding: { key: string } }> }).items;
 
   it("shows every finding as new before a baseline exists and fails on request", () => {
     expect(run("check")).toBe(0);
@@ -352,7 +352,7 @@ describe("schemas", () => {
     expect(graph.apiVersion).toBe("flow-atlas.dev/v1alpha1");
     expect(graph.provenance.buildType).toBe("flow-atlas/Graph@v1alpha1");
     expect(graph.provenance.externalParameters).toEqual({ ref: "WORKTREE" });
-    expect(graph.provenance.resolvedDependencies[1]).toMatchObject({ name: "config", uri: "atlas.config.yaml", digest: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/) } });
+    expect(graph.provenance.resolvedDependencies[1]).toMatchObject({ name: "config", uri: "atlas.config.yaml", digest: { sha256: expect.stringMatching(/^[0-9a-f]{64}$/) as string } });
     expect(JSON.stringify(scan(source, config, { root, requested: "WORKTREE" }))).toBe(JSON.stringify(graph));
   });
 
@@ -402,15 +402,16 @@ describe("schemas", () => {
     } finally {
       spy.mockRestore();
     }
-    const sarif = JSON.parse(text);
+    type Result = { ruleId: string; partialFingerprints: Record<string, string>; suppressions?: unknown };
+    const sarif = JSON.parse(text) as { runs: Array<{ results: Result[]; tool: { driver: { rules: Array<{ id: string }> } } }> };
     expect(sarifErrors(sarif)).toEqual([]);
-    const results = sarif.runs[0].results as Array<Record<string, any>>;
+    const results = sarif.runs[0]!.results;
     expect(results).toHaveLength(9);
     const invoice = results.find((r) => r.partialFingerprints["flowAtlasKey/v1"] === "FA006|invoice-v1")!;
     expect(invoice.suppressions).toEqual([{ kind: "external", status: "accepted", justification: "kept for audit" }]);
     const refund = results.find((r) => r.ruleId === "FA002")!;
     expect(refund).toMatchObject({ level: "error", baselineState: "new", locations: [{ physicalLocation: { artifactLocation: { uri: "services/bff/src/clients/orders.ts" } } }] });
-    expect(sarif.runs[0].tool.driver.rules.map((r: { id: string }) => r.id)).toEqual(["FA001", "FA002", "FA003", "FA004", "FA006", "FA007"]);
+    expect(sarif.runs[0]!.tool.driver.rules.map((r) => r.id)).toEqual(["FA001", "FA002", "FA003", "FA004", "FA006", "FA007"]);
   });
 
   it("exports flows as Arazzo 1.0 that the official schema accepts", () => {

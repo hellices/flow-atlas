@@ -53,17 +53,17 @@ describe("reading commits without a checkout", () => {
 
   it("check --since shows only what the change introduced", () => {
     expect(main(["check", "--root", repo, "--out", out, "--since", base, "--fail-on-new"])).toBe(1);
-    const items = JSON.parse(readFileSync(join(out, "last-check.json"), "utf8")).items as Array<{ status: string; finding: { key: string } }>;
+    const { items } = JSON.parse(readFileSync(join(out, "last-check.json"), "utf8")) as { items: Array<{ status: string; finding: { key: string } }> };
     expect(items.filter((i) => i.status === "new").map((i) => i.finding.key)).toEqual(["FA002|bff->orders|DELETE /orders/audit"]);
   });
 
   it("diff reports the change in markdown", () => {
     const write = process.stdout.write.bind(process.stdout);
     let text = "";
-    process.stdout.write = ((chunk: string) => {
-      text += chunk;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      text += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
       return true;
-    }) as typeof process.stdout.write;
+    });
     try {
       expect(main(["diff", `${base}..${head}`, "--root", repo, "--out", out])).toBe(0);
     } finally {

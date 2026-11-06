@@ -40,7 +40,12 @@ function keysFrom(source: Source, file: string, pattern: string | undefined, fie
     JSON.parse(text);
     const root = parseDocument(text).contents;
     if (isSeq(root)) root.items.forEach(take);
-    else if (isMap(root)) for (const pair of root.items) (isSeq(pair.value) ? pair.value.items.forEach(take) : take(pair.value));
+    else if (isMap(root)) {
+      for (const pair of root.items) {
+        if (isSeq(pair.value)) pair.value.items.forEach(take);
+        else take(pair.value);
+      }
+    }
   } catch {
     if (!re) return out;
     const global = new RegExp(re.source, "g");
