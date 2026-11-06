@@ -28,7 +28,7 @@ and usable by agents.
 |---|---|---|---|
 | the shape of the flow files people write | Kubernetes Resource Model, the Backstage descriptor format | followed | the `apiVersion`, `kind`, `metadata`, `spec` frame with labels and annotations, the most widespread frame for describing software configuration in YAML inside a repository |
 | steps within a flow | Arazzo 1.0 | followed, with an export | step structure and names match, and `atlas export arazzo` produces Arazzo documents that pass the official schema |
-| where authored knowledge comes from | Google Open Knowledge Format (OKF) 0.2 | source shape only | `sources` in a flow's `metadata` keeps the shape of an OKF source (§5.1). OKF's `generated`, `verified`, `stale_after` and trust tier were tried and removed: on eight repositories no check read them, and a self-declared review was trusted unchecked. A flow file is reviewed in its pull request instead |
+| where authored knowledge comes from | Google Open Knowledge Format (OKF) 0.2 | source shape only | `sources` in a flow's `metadata` keeps the shape of an OKF source (§5.1). OKF's `generated`, `verified`, `stale_after` and trust tier were tried and removed: on eight repositories no check read them, and a self-declared review was trusted unchecked. Who wrote and reviewed a flow is in the pull request that changes it; a review date is not kept |
 | observed state | Kubernetes status conditions | followed | `type`, `status` (True, False, Unknown), `reason`, `message`; only the timestamp fields are left out |
 | where a generated document came from | SLSA provenance v1 (in-toto ResourceDescriptor) | shape followed | the commits and files read are recorded with digests. SLSA is a specification for build outputs, so no SLSA conformance is claimed |
 | static analysis results | SARIF 2.1.0 (OASIS) | export | GitHub code scanning, the VS Code SARIF Viewer and review bots read it as is; the output passes the official schema |
@@ -47,7 +47,7 @@ and usable by agents.
 | `metadata.labels` | grouping flows in a renderer | kept |
 | `metadata.annotations` | location information the tool attaches | kept |
 | `metadata.links` | the decision documents behind a flow | replaced by `sources`, in OKF's source shape |
-| `metadata.generated`, `verified`, `stale_after` | who wrote the roles, who reviewed them, when to review again | removed; nothing checked them, and the pull request that changes a flow file records the same |
+| `metadata.generated`, `verified`, `stale_after` | who wrote the roles, who reviewed them, when to review again | removed; nothing checked them. Who wrote and who reviewed a flow is recorded by the pull request that changes its file. Nothing replaces `stale_after`: when to review a flow's intent again is not tracked, on purpose, since a passed date says nothing about the code and was reported as a code finding |
 | `spec.lifecycle` | building the backend first (planned), retiring (deprecated) | kept; a distinction repositories that build the backend first actually needed |
 | `spec.owner` | who answers for the flow | kept |
 | `spec.entry` | the client that starts a surface-step flow, shown in the report and the Arazzo export | kept as information; a chain step takes its entry from the code, and FA001 catches a route no client calls |

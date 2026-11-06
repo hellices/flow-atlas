@@ -110,9 +110,14 @@ describe("chains", () => {
     // An order only the flow states cannot make the flow ready.
     expect(flows.items[0]!.status.conditions[0]).toMatchObject({ type: "Ready", status: "Unknown", reason: "OrderNotInCode" });
     expect(flowFindings(flows)).toEqual([]);
-    const text = flowsText(flows, graph.surfaces.length);
-    expect(text).toContain("-> next in the order the flow states; the code shows no link");
-    expect(text).not.toContain("NOT CONNECTED");
+    // Each flow's own block shows its pair as an order the flow states, between its two steps.
+    const blocks = flowsText(flows, graph.surfaces.length).split("\n\n");
+    for (const [name, second] of [["journey", "stop"], ["handoff", "admin"]] as const) {
+      const lines = blocks.filter((b) => b.startsWith(`${name}  `)).flatMap((b) => b.split("\n").map((l) => l.trim()));
+      const pair = lines.filter((l) => /^\d+\. |^->/.test(l)).map((l) => l.split("  ")[0]);
+      expect(pair, name).toEqual(["1. read", "-> next in the order the flow states; the code shows no link", `2. ${second}`]);
+    }
+    expect(blocks.join("\n")).not.toContain("NOT CONNECTED");
   });
 
   it("reads the chains at a sub-flow's ends when it orders steps", () => {
