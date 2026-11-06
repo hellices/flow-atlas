@@ -225,3 +225,43 @@ describe("what a call source leaves unread", () => {
     expect(extractCalls(memory({ "A.kt": text }), kotlin).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual(["GET /orders 2"]);
   });
 });
+
+describe("client wrappers in the configuration", () => {
+  const wrapped = (code: string, wrappers: Array<{ name: string; defaultMethod: string }> = [{ name: "authFetch", defaultMethod: "GET" }]) =>
+    callsFromTypeScript("a.ts", code, { from: "a", to: "b", files: [], wrappers }).map((c) => `${c.method} ${c.path}`);
+
+  it("reads a call that states no method as the wrapper's default, and keeps a method the call states", () => {
+    const rows: Array<[string, string[]]> = [
+      // fetch's semantics: no init, or an init without a method, sends the default.
+      ['authFetch("/items");', ["GET /items"]],
+      ["authFetch(`/items/${id}`, { headers });", ["GET /items/{}"]],
+      ["authFetch(`/items/${id}`, { method: \"PUT\", body });", ["PUT /items/{}"]],
+      ['authFetch("/items", { ...init, method: "DELETE" });', ["DELETE /items"]],
+      ['authFetch("/items", "POST");', ["POST /items"]],
+      // An init that may carry a method: a value, a spread, a method held in a value.
+      ['authFetch("/items", init);', ["* /items"]],
+      ['authFetch("/items", { ...init, headers });', ["* /items"]],
+      ['authFetch("/items", { method });', ["* /items"]],
+      // A URL held in a const takes the method of the wrapper call that uses it.
+      ["const url = `/items/${id}`;\nauthFetch(url);", ["GET /items/{}"]],
+      // Only the name configured, as it is written.
+      ['otherFetch("/items");', ["* /items"]],
+      ['api.authFetch("/items");', ["* /items"]],
+    ];
+    expect(rows.map(([code]) => wrapped(code))).toEqual(rows.map(([, calls]) => calls));
+    expect(wrapped('api.authFetch("/items");', [{ name: "api.authFetch", defaultMethod: "GET" }])).toEqual(["GET /items"]);
+    expect(wrapped('send("/items");\nsend("/items", { method: "GET" });', [{ name: "send", defaultMethod: "POST" }])).toEqual(["POST /items", "GET /items"]);
+    // Without the configuration nothing is guessed.
+    expect(wrapped('authFetch("/items");', [])).toEqual(["* /items"]);
+  });
+
+  it("takes a name and one of the HTTP methods as the default", () => {
+    const wrappers = (list: unknown) => () => normalizeConfig({ components: [{ name: "a", path: "" }, { name: "b", path: "" }], calls: [{ from: "a", to: "b", files: ["*.ts"], wrappers: list }] });
+    expect(wrappers([{ name: "authFetch", defaultMethod: "GET" }])).not.toThrow();
+    expect(normalizeConfig({ calls: [{ from: "a", to: "b", files: [], wrappers: [{ name: "authFetch", defaultMethod: "post" }] }] }).calls[0]!.wrappers).toEqual([{ name: "authFetch", defaultMethod: "POST" }]);
+    for (const bad of [{ name: "authFetch" }, { name: "authFetch", defaultMethod: "*" }, { name: "authFetch", defaultMethod: "FETCH" }, { name: "", defaultMethod: "GET" }, { defaultMethod: "GET" }, { name: "authFetch", defaultMethod: 1 }]) {
+      expect(wrappers([bad]), JSON.stringify(bad)).toThrow(/client wrapper/);
+    }
+    expect(wrappers({ name: "authFetch", defaultMethod: "GET" })).toThrow(/client wrapper/);
+  });
+});

@@ -61,19 +61,20 @@ function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | und
 
 /**
  * The method a `fetch(url, init)` call uses: GET when there is no init, or an init without a `method`; the stated
- * method when it is a known one; `*` when the method or the init is built at run time.
+ * method when it is a known one; `*` when the method or the init is built at run time. A configured wrapper around
+ * fetch sends its own default where fetch sends GET.
  */
-function fetchMethod(init: ts.Expression | undefined): string {
-  if (!init) return "GET";
+function fetchMethod(init: ts.Expression | undefined, absent = "GET"): string {
+  if (!init) return absent;
   if (!ts.isObjectLiteralExpression(init)) return "*";
   if (init.properties.some((p) => ts.isSpreadAssignment(p))) return "*";
   const method = init.properties.find((p) => p.name && p.name.getText().replace(/["']/g, "") === "method");
-  if (!method) return "GET";
+  if (!method) return absent;
   return methodProperty(init) ?? "*";
 }
 
 /** The HTTP method a call site states near the string: `http.post(url)`, `request(url, "POST")`, `{ method: "POST" }`, otherwise `*`. */
-function methodNear(node: ts.Node): string {
+function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): string {
   let current: ts.Node | undefined = node;
   for (let depth = 0; current && depth < 6; depth++, current = current.parent) {
     const parent: ts.Node | undefined = current.parent;
@@ -85,6 +86,10 @@ function methodNear(node: ts.Node): string {
       // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
       const global = ts.isIdentifier(callee) || (ts.isPropertyAccessExpression(callee) && /^(window|globalThis|self)$/.test(callee.expression.getText()));
       if (name === "fetch" && global && parent.arguments[0] === current) return fetchMethod(parent.arguments[1]);
+      // A configured wrapper, by the name it is called with, takes the URL first and a fetch init second.
+      const wrapper = parent.arguments[0] === current ? wrappers.find((w) => w.name === callee.getText().replace(/\s+/g, "")) : undefined;
+      const sent = wrapper && fetchMethod(parent.arguments[1], wrapper.defaultMethod);
+      if (sent && sent !== "*") return sent;
       for (const arg of parent.arguments) {
         if (arg === current) continue;
         if ((ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && METHODS.has(arg.text)) return arg.text;
@@ -395,7 +400,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
-      method: navigatesWithGet(node) ? "GET" : methodNear(node),
+      method: navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers),
       path: parsed.path,
       based: parsed.based,
       at: { file, line: lineAt(node) },
@@ -489,7 +494,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
         const place = valuePlace(n).parent;
         const building = ts.isTemplateSpan(place) || isPlus(place);
         if (decl && ts.isVariableDeclaration(decl) && held.has(decl) && n !== decl.name && !building && !leads.get(decl)?.has(n)) {
-          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n));
+          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n, spec.wrappers));
         }
       }
       ts.forEachChild(n, find);
