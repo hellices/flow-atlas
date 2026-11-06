@@ -51,6 +51,7 @@ calls:
   - web->backend|* /api/auth/session @ frontend/src/components/AuthGate.tsx:4
   - web->backend|POST /api/auth/logout @ frontend/src/components/AuthGate.tsx:5
   - web->backend|* /api/templates/{} @ frontend/src/components/AuthGate.tsx:6
+  - web->backend|PUT /api/templates/{} @ frontend/src/components/AuthGate.tsx:7
   - web->backend|* /api/reports @ frontend/src/components/ReportList.tsx:4
   - web->backend|* /api/reports/{} @ frontend/src/components/ReportList.tsx:5
   - web->backend|POST /api/reports/run @ frontend/src/components/ReportList.tsx:6
