@@ -166,7 +166,8 @@ through a sample of findings with a person. Only then record the baseline.
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
   router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`), the `data-*`
   attributes a template's scripts request (`calls[].dataUrls`). A `limit:` line
-  tells you when one is missing; never declare one to make a finding go away.
+  tells you when one is missing; never declare one to make a finding go away. A limit on a call whose method is not
+  read has nothing to declare: the call fits routes of several methods, and trace and chains leave it out.
 
 ## Handling a finding
 

@@ -177,6 +177,13 @@ a `spring` component a request whose path is fully known reaches that route only
 `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
 which atlas does not read, so there a request reaches every route it fits.
 
+A request whose method is not read (`*`: a project's wrapper called without a method, an init built at run time, a
+`data-*` URL) is matched to those routes only when they all take one method, or all take any. Where they take several,
+which one it calls depends on the method, which atlas does not settle: it leaves the call unmatched, a limit names the
+call and the methods, FA002 is not reported for it and FA001 for none of the routes it fits. A wrapper's own code is not read, so `authFetch(url)` is
+such a request even when the wrapper hands its arguments to `fetch`; `authFetch(url, { method: "POST" })` states its
+method.
+
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several
 functions, read from a response) is not seen. Such routes show up as FA001; list them in `publicSurfaces` or add the file that holds the path. A route in `publicSurfaces` that no component calls starts a chain of its own, entered from `outside`, so a flow can name it.

@@ -42,6 +42,10 @@ def create_app(agent, admin_app) -> FastAPI:
     def template(name: str):
         ...
 
+    @app.put("/api/templates/{name}")
+    def save_template(name: str):
+        ...
+
     @app.get("/api/templates/{name}/raw")
     def template_raw(name: str):
         ...
