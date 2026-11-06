@@ -392,7 +392,15 @@ export function flowsText(doc: FlowReport, total: number): string {
       lines.push(`  ${i + 1}. ${s.stepId}  ${s.target}  ${where}`);
       if (s.toNext) {
         const via = s.toNext.edges.filter((e) => e.via).map((e) => e.via);
-        lines.push(`       ${s.toNext.connected ? `-> connected in ${s.toNext.edges.length} edges${via.length ? ` via ${via.join(", ")}` : ""}` : "-> NOT CONNECTED to the next step"}`);
+        lines.push(
+          `       ${
+            s.toNext.connected
+              ? `-> connected in ${s.toNext.edges.length} edges${via.length ? ` via ${via.join(", ")}` : ""}`
+              : s.toNext.order === "declared"
+                ? "-> next in the order the flow states; the code shows no link"
+                : "-> NOT CONNECTED to the next step"
+          }`,
+        );
       }
     });
   }

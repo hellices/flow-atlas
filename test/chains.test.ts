@@ -2,6 +2,7 @@ import { parseAllDocuments } from "yaml";
 import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
+import { flowsText } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { draftChainFlows } from "../src/draft.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
@@ -109,6 +110,9 @@ describe("chains", () => {
     // An order only the flow states cannot make the flow ready.
     expect(flows.items[0]!.status.conditions[0]).toMatchObject({ type: "Ready", status: "Unknown", reason: "OrderNotInCode" });
     expect(flowFindings(flows)).toEqual([]);
+    const text = flowsText(flows, graph.surfaces.length);
+    expect(text).toContain("-> next in the order the flow states; the code shows no link");
+    expect(text).not.toContain("NOT CONNECTED");
   });
 
   it("reads the chains at a sub-flow's ends when it orders steps", () => {
