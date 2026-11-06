@@ -50,17 +50,18 @@ a generated file for that.
 
 | springdoc.org | What atlas reads |
 |---|---|
-| "Getting Started": the dependency alone serves the document at `/v3/api-docs` | when the project's own build file names a `springdoc-openapi` artifact (or a `libs.springdoc.openapi...` catalog entry), or its main code builds a `GroupedOpenApi`, `/v3/api-docs` |
+| "Getting Started": the dependency alone serves the document at `/v3/api-docs` | when the project's own build file puts a `springdoc-openapi` artifact (or a `libs.springdoc.openapi...` catalog entry) on the runtime classpath, or its main code builds a `GroupedOpenApi`, `/v3/api-docs`. Counted: Maven `project/dependencies` in the default, `compile` or `runtime` scope; Gradle `implementation`, `api` or `runtimeOnly` in the project's own `dependencies` block. Not counted: `dependencyManagement`, `test` and `provided` scopes, plugins, `testImplementation`, `compileOnly`, `developmentOnly`, `platform(...)`, `buildscript` and `subprojects`; a Maven profile's dependency is reported |
 | core properties: `springdoc.api-docs.path`, `springdoc.api-docs.enabled`, `springdoc.enable-default-api-docs` | the literal path instead; nothing when disabled; only the groups without the default document |
 | FAQ 13.48: everything behind `server.servlet.context-path` | a literal context path (or WebFlux `spring.webflux.base-path`) in front |
-| FAQ 13.1: `GroupedOpenApi.builder().group("public")` serves `<api-docs path>/public` | one document per group named by a literal or a string constant of the file, in the builder's chain |
-| FAQ 13.61: `springdoc.group-configs[0].group=users` | the same, per literal group |
+| FAQ 13.1: a `GroupedOpenApi` bean built with `.group("public")` serves `<api-docs path>/public` | one document per bean: a builder in a `@Bean` method of a `@Configuration` (or other component) class in the package of a `@SpringBootApplication` or below. The group is the chain's last `group(...)`, a literal or a string constant of the file that no parameter or local hides |
+| FAQ 13.61: `springdoc.group-configs[0].group=users` | the same, per literal group; a list set with more precedence, even `[]`, replaces it, and a repeated key keeps its last value |
 
 Settings come from `src/main/resources/application.properties` and `application.yml` (`.yaml`) and their `config/`
 copies, with Spring Boot's precedence (properties over YAML, `config/` over both). Not read, each reported as a
 `limit:` in `atlas scan`: a profile's file (`application-dev.yml`) or a YAML document under
 `spring.config.activate.on-profile`, since which profile runs is decided at launch; a value with a placeholder
-(`${DOCS_PATH:/docs}`), resolved at run time; a group name built in code; `springdoc.use-management-port`, which moves
+(`${DOCS_PATH:/docs}`), resolved at run time; a group name built in code; a builder outside a `@Bean` method, in a
+class that is no component, or outside the packages Spring Boot scans by default (or in a project that sets them); `springdoc.use-management-port`, which moves
 the documents to the actuator port. An environment variable such as `SPRINGDOC_API_DOCS_PATH` can still override what
 atlas read; that is not visible in the repository. The `.yaml` twin of each document (`/v3/api-docs.yaml`) and the
 swagger-ui page are the same documents and are not listed.

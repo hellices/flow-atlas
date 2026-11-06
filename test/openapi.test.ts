@@ -468,7 +468,8 @@ describe("documents springdoc serves", () => {
     asOf: () => "2026-01-01T00:00:00Z",
   });
   const controller = {
-    "svc/src/main/java/lab/ItemsController.java": '@RestController\nclass ItemsController {\n  @GetMapping("/items")\n  List<String> list() { return List.of(); }\n}\n',
+    "svc/src/main/java/lab/App.java": "package lab;\n\n@SpringBootApplication\nclass App {}\n",
+    "svc/src/main/java/lab/ItemsController.java": 'package lab;\n@RestController\nclass ItemsController {\n  @GetMapping("/items")\n  List<String> list() { return List.of(); }\n}\n',
   };
   const POM = [
     "<project>",
@@ -608,6 +609,8 @@ describe("documents springdoc serves", () => {
 
   it("reads GroupedOpenApi beans whose group is a literal or a constant of the file, in Java and Kotlin", () => {
     const java = [
+      "package lab;",
+      "",
       "@Configuration",
       "class Docs {",
       '  static final String ADMIN = "admin";',
@@ -620,13 +623,24 @@ describe("documents springdoc serves", () => {
       "  // @Bean GroupedOpenApi oldApi() { return GroupedOpenApi.builder().group(\"old\").build(); }",
       "}",
     ].join("\n");
-    const kotlin = ["@Bean", "fun internalApi(): GroupedOpenApi = GroupedOpenApi.builder()", '    .group("internal")', '    .pathsToMatch("/internal/**")', "    .build()"].join("\n");
+    const kotlin = [
+      "package lab",
+      "",
+      "@Configuration",
+      "class KotlinDocs {",
+      "  @Bean",
+      "  fun internalApi(): GroupedOpenApi = GroupedOpenApi.builder()",
+      '      .group("internal")',
+      '      .pathsToMatch("/internal/**")',
+      "      .build()",
+      "}",
+    ].join("\n");
     expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": java, "svc/src/main/kotlin/lab/Docs.kt": kotlin })).toEqual({
       documents: [
         "/v3/api-docs springdoc default svc/pom.xml:5",
-        "/v3/api-docs/admin springdoc group svc/src/main/java/lab/Docs.java:8",
-        "/v3/api-docs/internal springdoc group svc/src/main/kotlin/lab/Docs.kt:3",
-        "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:5",
+        "/v3/api-docs/admin springdoc group svc/src/main/java/lab/Docs.java:10",
+        "/v3/api-docs/internal springdoc group svc/src/main/kotlin/lab/Docs.kt:7",
+        "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:7",
       ],
       description: "ambiguous - SeveralServedDocuments",
       limits: [],
@@ -634,10 +648,10 @@ describe("documents springdoc serves", () => {
   });
 
   it("takes springdoc as present when the code builds a group, though the build does not name it", () => {
-    const java = 'class Docs {\n  @Bean GroupedOpenApi api() { return GroupedOpenApi.builder().group("public").build(); }\n}\n';
+    const java = 'package lab;\n@Configuration\nclass Docs {\n  @Bean GroupedOpenApi api() { return GroupedOpenApi.builder().group("public").build(); }\n}\n';
     expect(run({ "svc/pom.xml": "<project/>\n", "svc/src/main/java/lab/Docs.java": java }).documents).toEqual([
-      "/v3/api-docs springdoc default svc/src/main/java/lab/Docs.java:2",
-      "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:2",
+      "/v3/api-docs springdoc default svc/src/main/java/lab/Docs.java:4",
+      "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:4",
     ]);
   });
 
@@ -671,9 +685,9 @@ describe("documents springdoc serves", () => {
       description: "chosen /v3/api-docs ServedByCode",
       limits: [`openapi svc: ${RESOURCES}/application.yml:3 sets springdoc.group-configs[0].group to \${GROUP}, resolved at run time; that group's document is not read`],
     });
-    const built = 'class Docs {\n  @Bean GroupedOpenApi api(@Value("${group}") String name) {\n    return GroupedOpenApi.builder().group(name).build();\n  }\n}\n';
+    const built = 'package lab;\n@Configuration\nclass Docs {\n  @Bean GroupedOpenApi api(@Value("${group}") String name) {\n    return GroupedOpenApi.builder().group(name).build();\n  }\n}\n';
     expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": built }).limits).toEqual([
-      "openapi svc: svc/src/main/java/lab/Docs.java:3 builds a GroupedOpenApi whose group the file does not spell out (name); that group's document is not read",
+      "openapi svc: svc/src/main/java/lab/Docs.java:5 builds a GroupedOpenApi whose group the file does not spell out (name); that group's document is not read",
     ]);
   });
 
@@ -703,7 +717,8 @@ describe("documents springdoc serves", () => {
     const source = files({
       "build.gradle.kts": 'dependencies {\n  implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13")\n}\n',
       "src/main/resources/application-local.yml": "springdoc:\n  api-docs:\n    path: /local-docs\n",
-      "src/main/java/lab/support/Docs.java": 'class Docs {\n  @Bean GroupedOpenApi publicApi() { return GroupedOpenApi.builder().group("public").build(); }\n}\n',
+      "src/main/java/lab/App.java": "package lab;\n@SpringBootApplication\npublic class App {}\n",
+      "src/main/java/lab/support/Docs.java": 'package lab.support;\n@Configuration\nclass Docs {\n  @Bean GroupedOpenApi publicApi() { return GroupedOpenApi.builder().group("public").build(); }\n}\n',
       "src/main/java/lab/orders/OrdersController.java": '@RestController\nclass OrdersController {\n  @GetMapping("/api/orders")\n  List<String> list() { return List.of(); }\n}\n',
       "src/main/java/lab/billing/BillingController.java": '@RestController\nclass BillingController {\n  @GetMapping("/api/bills")\n  List<String> list() { return List.of(); }\n}\n',
     });
@@ -716,6 +731,99 @@ describe("documents springdoc serves", () => {
     ]);
     expect(graph.limits).toEqual([
       "openapi orders, billing: src/main/resources/application-local.yml:3 sets springdoc.api-docs.path for the profile local, which is chosen at launch; it is not read",
+    ]);
+  });
+
+  it("takes the group the builder's last group(...) sets", () => {
+    const java = (chain: string) => `package lab;\n@Configuration\nclass Docs {\n  @Bean GroupedOpenApi api(@Value("\${g}") String name) {\n    return GroupedOpenApi.builder()${chain}.build();\n  }\n}\n`;
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": java('.group("public").group("internal")') }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+      "/v3/api-docs/internal springdoc group svc/src/main/java/lab/Docs.java:5",
+    ]);
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": java('.group("public").group(name)') })).toEqual({
+      documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+      description: "chosen /v3/api-docs ServedByCode",
+      limits: ["openapi svc: svc/src/main/java/lab/Docs.java:5 builds a GroupedOpenApi whose group the file does not spell out (name); that group's document is not read"],
+    });
+  });
+
+  it("does not take a constant for a parameter or local of the same name that hides it", () => {
+    const docs = (method: string) =>
+      ["package lab;", "@Configuration", "class Docs {", '  static final String GROUP = "public";', method, "}"].join("\n");
+    const unread = (line: number) => [`openapi svc: svc/src/main/java/lab/Docs.java:${line} builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read`];
+    const parameter = '  @Bean GroupedOpenApi api(@Value("${docs.group}") String GROUP) {\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }';
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(parameter) })).toMatchObject({ documents: ["/v3/api-docs springdoc default svc/pom.xml:5"], limits: unread(6) });
+    const local = '  @Bean GroupedOpenApi api(Environment env) {\n    String GROUP = env.getProperty("docs.group");\n    return GroupedOpenApi.builder().group(GROUP).build();\n  }';
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(local) }).limits).toEqual(unread(7));
+    const kotlin = ["package lab", "@Configuration", "class Docs {", "  @Bean", "  fun api(GROUP: String): GroupedOpenApi = GroupedOpenApi.builder().group(GROUP).build()", "}", 'const val GROUP = "public"'].join("\n");
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/kotlin/lab/Docs.kt": kotlin }).limits).toEqual([
+      "openapi svc: svc/src/main/kotlin/lab/Docs.kt:5 builds a GroupedOpenApi whose group the file does not spell out (GROUP); that group's document is not read",
+    ]);
+    const constant = '  @Bean GroupedOpenApi api(@Value("${docs.title}") String title) {\n    return GroupedOpenApi.builder().group(GROUP).displayName(title).build();\n  }';
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": docs(constant) }).documents).toContain("/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:6");
+  });
+
+  it("serves a group only from a bean the application registers, and says when that is not settled", () => {
+    const pom = { "svc/pom.xml": POM };
+    const helper = 'package lab;\n@Configuration\nclass Docs {\n  static GroupedOpenApi group() {\n    return GroupedOpenApi.builder().group("helper").build();\n  }\n}\n';
+    expect(run({ ...pom, "svc/src/main/java/lab/Docs.java": helper })).toEqual({
+      documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+      description: "chosen /v3/api-docs ServedByCode",
+      limits: ["openapi svc: svc/src/main/java/lab/Docs.java:5 builds a GroupedOpenApi outside a @Bean method; whether a bean registers it is not settled, so its group's document is not read"],
+    });
+    const bean = (pkg: string, annotation: string) => `package ${pkg};\n${annotation}\nclass Docs {\n  @Bean GroupedOpenApi api() { return GroupedOpenApi.builder().group("public").build(); }\n}\n`;
+    expect(run({ ...pom, "svc/src/main/java/lab/Docs.java": bean("lab", "@Component") }).documents).toContain("/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:4");
+    expect(run({ ...pom, "svc/src/main/java/lab/Docs.java": bean("lab", "") }).limits).toEqual([
+      "openapi svc: svc/src/main/java/lab/Docs.java:4 builds a GroupedOpenApi in a @Bean method of Docs, which is not a @Configuration or other component; whether it is registered is not settled, so its group's document is not read",
+    ]);
+    expect(run({ ...pom, "svc/src/main/java/other/Docs.java": bean("other", "@Configuration") }).limits).toEqual([
+      "openapi svc: svc/src/main/java/other/Docs.java:4 builds a GroupedOpenApi in a @Bean method of Docs, in package other, which no @SpringBootApplication of the project scans by default; whether it is registered is not settled, so its group's document is not read",
+    ]);
+    const scanned = { "svc/src/main/java/lab/App.java": 'package lab;\n@SpringBootApplication(scanBasePackages = "other")\nclass App {}\n' };
+    expect(run({ ...pom, ...scanned, "svc/src/main/java/other/Docs.java": bean("other", "@Configuration") }).limits).toEqual([
+      "openapi svc: svc/src/main/java/other/Docs.java:4 builds a GroupedOpenApi in a @Bean method of Docs, in package other, while the project sets which packages are scanned (svc/src/main/java/lab/App.java:2); whether it is registered is not settled, so its group's document is not read",
+    ]);
+  });
+
+  it("counts springdoc only where the build puts it on the application's runtime classpath", () => {
+    const pom = (body: string) => run({ "svc/pom.xml": `<project>\n${body}\n</project>\n` });
+    const dependency = (scope = "") => `<dependency>\n<groupId>org.springdoc</groupId>\n<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>${scope}\n</dependency>`;
+    expect(pom(`<dependencyManagement>\n<dependencies>\n${dependency()}\n</dependencies>\n</dependencyManagement>`).documents).toEqual([]);
+    expect(pom(`<dependencies>\n${dependency("<scope>test</scope>")}\n</dependencies>`).documents).toEqual([]);
+    expect(pom(`<dependencies>\n${dependency("<scope>provided</scope>")}\n</dependencies>`).documents).toEqual([]);
+    expect(pom(`<build>\n<plugins>\n<plugin>\n<groupId>org.springdoc</groupId>\n<artifactId>springdoc-openapi-maven-plugin</artifactId>\n</plugin>\n</plugins>\n</build>`).documents).toEqual([]);
+    expect(pom(`<dependencies>\n${dependency("<scope>runtime</scope>")}\n</dependencies>`).documents).toEqual(["/v3/api-docs springdoc default svc/pom.xml:5"]);
+    expect(pom(`<profiles>\n<profile>\n<id>docs</id>\n<dependencies>\n${dependency()}\n</dependencies>\n</profile>\n</profiles>`)).toEqual({
+      documents: [],
+      description: "none - NoneFound",
+      limits: ["openapi svc: svc/pom.xml:8 names springdoc in a Maven profile, which is activated at build time; it is not read"],
+    });
+    const gradle = (body: string) => run({ "svc/build.gradle.kts": body }).documents;
+    const coordinates = '"org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13"';
+    for (const configuration of ["testImplementation", "compileOnly", "developmentOnly", "annotationProcessor"])
+      expect(gradle(`dependencies {\n  ${configuration}(${coordinates})\n}\n`)).toEqual([]);
+    expect(gradle(`dependencies {\n  implementation(platform("org.springdoc:springdoc-openapi-bom:2.8.13"))\n}\n`)).toEqual([]);
+    expect(gradle(`plugins {\n  id("org.springdoc.openapi-gradle-plugin") version "1.9.0"\n}\n`)).toEqual([]);
+    expect(gradle(`buildscript {\n  dependencies {\n    classpath(${coordinates})\n  }\n}\n`)).toEqual([]);
+    expect(gradle(`subprojects {\n  dependencies {\n    implementation(${coordinates})\n  }\n}\n`)).toEqual([]);
+    expect(gradle(`dependencies {\n  runtimeOnly(${coordinates})\n}\n`)).toEqual(["/v3/api-docs springdoc default svc/build.gradle.kts:2"]);
+    expect(run({ "svc/build.gradle": "dependencies {\n  api group: 'org.springdoc', name: 'springdoc-openapi-starter-webmvc-ui', version: '2.8.13'\n}\n" }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/build.gradle:2",
+    ]);
+  });
+
+  it("lets a later or higher-precedence group list, even an empty one, replace an earlier one", () => {
+    const admin = "springdoc:\n  group-configs:\n    - group: admin\n      paths-to-match: /admin/**\n";
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: admin, [`${RESOURCES}/config/application.yml`]: "springdoc:\n  group-configs: []\n" }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+    ]);
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: admin, [`${RESOURCES}/application.properties`]: "springdoc.group-configs=\n" }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+    ]);
+    const repeated = "springdoc.group-configs[0].group=one\nspringdoc.group-configs[0].paths-to-match=/x/**\nspringdoc.group-configs[0].group=two\n";
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: repeated }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/pom.xml:5",
+      `/v3/api-docs/two springdoc group-configs ${RESOURCES}/application.properties:3`,
     ]);
   });
 });

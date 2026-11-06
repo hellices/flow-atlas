@@ -4,13 +4,13 @@ import type { ApiDocument } from "../model.js";
 import { joinRoute } from "../paths.js";
 import { GitRefSource, lineOf, matcher, type Source } from "../source.js";
 import { withoutComments } from "./calls.js";
-import { groupedOpenApis } from "./spring.js";
+import { groupedOpenApis, type GroupedOpenApiBuild } from "./spring.js";
 
 /** The build files that make a directory a Maven or Gradle project: one application or library, with its own classpath. */
 export const BUILD_FILE = /(^|\/)(pom\.xml|build\.gradle(\.kts)?)$/;
 
 /** A springdoc-openapi artifact: Maven coordinates (`springdoc-openapi-starter-webmvc-ui`) or a Gradle catalog accessor (`libs.springdoc.openapi...`). */
-const SPRINGDOC = /springdoc[-.]openapi/;
+const SPRINGDOC = /springdoc[-.]openapi/g;
 
 /**
  * The settings read, by their canonical name. Spring Boot binds `apiDocs`, `api_docs` and `api-docs` alike (relaxed
@@ -47,6 +47,8 @@ function yamlParts(file: string, text: string): Part[] {
     const settings: Setting[] = [];
     const walk = (node: unknown, key: string): void => {
       if (isMap(node)) for (const p of node.items) walk(p.value, `${key ? `${key}.` : ""}${isScalar(p.key) ? String(p.key.value) : ""}`);
+      // An empty list is a value of its own, "" (Spring's YamlProcessor), so it replaces a list set with less precedence.
+      else if (isSeq(node) && node.items.length === 0) settings.push({ key, value: "", file, line: lineOf(text, node.range?.[0] ?? 0) });
       else if (isSeq(node)) node.items.forEach((item, i) => walk(item, `${key}[${i}]`));
       else if (isScalar(node)) {
         const v = node.value;
@@ -80,8 +82,17 @@ function propertiesParts(file: string, text: string): Part[] {
   return parts.map(part);
 }
 
-/** A document that activates only under a profile or a cloud platform (`spring.config.activate.*`, or `spring.profiles` before Spring Boot 2.4). */
-function part(settings: Setting[]): Part {
+/**
+ * A document of settings, a name set twice keeping its last value as Spring Boot's loaders do; and the profile or cloud
+ * platform it activates under (`spring.config.activate.*`, or `spring.profiles` before Spring Boot 2.4).
+ */
+function part(written: Setting[]): Part {
+  const last = new Map<string, Setting>();
+  for (const s of written) {
+    last.delete(relaxed(s.key));
+    last.set(relaxed(s.key), s);
+  }
+  const settings = [...last.values()];
   const on = (name: string) => settings.find((s) => relaxed(s.key) === relaxed(name))?.value;
   const profile = on("spring.config.activate.on-profile") ?? on("spring.profiles");
   const platform = on("spring.config.activate.on-cloud-platform");
@@ -98,25 +109,114 @@ function readName(key: string): string | undefined {
 /** XML comments blanked, as `withoutComments` blanks Java's, so offsets and lines stay. */
 const withoutXmlComments = (text: string): string => text.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
 
+/** Maven scopes that put a dependency on the application's runtime classpath (Maven, "Dependency Scope"). */
+const MAVEN_RUNTIME = new Set(["", "compile", "runtime"]);
+
+/**
+ * Where a `pom.xml` declares a springdoc-openapi artifact as one of the project's own dependencies (`project/dependencies`),
+ * in a scope the application runs with: not in `dependencyManagement` (versions only), a plugin's dependencies, or the
+ * `test` and `provided` scopes. `profile` is one declared in a `<profile>`, which is activated at build time.
+ */
+function mavenSpringdoc(text: string): { at?: number; profile?: number } {
+  const xml = withoutXmlComments(text);
+  const out: { at?: number; profile?: number } = {};
+  const stack: string[] = [];
+  let content = 0;
+  let dependency: { artifact?: string; at?: number; scope?: string } | undefined;
+  for (const m of xml.matchAll(/<(\/?)([A-Za-z_][\w.:-]*)[^>]*?(\/?)>/g)) {
+    const [whole, close, name, empty] = m;
+    const at = m.index ?? 0;
+    if (empty) continue;
+    if (!close) {
+      stack.push(name!);
+      content = at + whole.length;
+      if (name === "dependency") dependency = {};
+      continue;
+    }
+    const inDependency = dependency && stack.at(-2) === "dependency";
+    if (inDependency && name === "artifactId") Object.assign(dependency!, { artifact: xml.slice(content, at).trim(), at: content });
+    if (inDependency && name === "scope") dependency!.scope = xml.slice(content, at).trim();
+    if (name === "dependency" && dependency) {
+      const path = stack.join("/");
+      const springdoc = /^springdoc-openapi-/.test(dependency.artifact ?? "") && !/-(bom|maven-plugin)$/.test(dependency.artifact!);
+      if (springdoc && MAVEN_RUNTIME.has(dependency.scope ?? "")) {
+        if (path === "project/dependencies/dependency") out.at ??= dependency.at;
+        else if (path === "project/profiles/profile/dependencies/dependency") out.profile ??= dependency.at;
+      }
+      dependency = undefined;
+    }
+    stack.pop();
+  }
+  return out;
+}
+
+/** Gradle configurations on the main runtime classpath (Gradle, "The Java Plugin" and "The Java Library Plugin"). */
+const GRADLE_RUNTIME = new Set(["implementation", "api", "runtimeOnly", "compile", "runtime"]);
+
+/** The unclosed `(`, `[` and `{` around `at`, innermost first. */
+function openersAround(code: string, at: number): number[] {
+  const out: number[] = [];
+  let depth = 0;
+  for (let i = at - 1; i >= 0; i--) {
+    const c = code[i]!;
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "(" || c === "[" || c === "{") {
+      if (depth === 0) out.push(i);
+      else depth--;
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a Gradle build file declares a springdoc-openapi artifact in a configuration the application runs with
+ * (`implementation`, `api`, `runtimeOnly`), directly in its own `dependencies` block: not `testImplementation`,
+ * `compileOnly` or Spring Boot's `developmentOnly`, a `platform(...)` BOM, a plugin id, or a `buildscript` or
+ * `subprojects` block, which do not put it on this project's runtime classpath.
+ */
+function gradleSpringdoc(file: string, text: string): number | undefined {
+  const code = withoutComments(file, text);
+  for (const m of code.matchAll(SPRINGDOC)) {
+    const at = m.index ?? 0;
+    const openers = openersAround(code, at);
+    const call = openers[0] !== undefined && code[openers[0]] === "(" ? openers[0] : undefined;
+    // `implementation("...")`, or Groovy's `implementation '...'` and `api group: ..., name: '...'`.
+    const configuration =
+      call !== undefined
+        ? /([A-Za-z_]\w*)\s*$/.exec(code.slice(0, call))?.[1]
+        : /^\s*([A-Za-z_]\w*)\s/.exec(code.slice(code.lastIndexOf("\n", at) + 1, at))?.[1];
+    const blocks = openers.filter((o) => code[o] === "{").map((o) => /([A-Za-z_]\w*)\s*(?:\([^()]*\))?\s*$/.exec(code.slice(0, o))?.[1]);
+    if (GRADLE_RUNTIME.has(configuration ?? "") && blocks[0] === "dependencies" && !blocks.some((b) => b === "buildscript" || b === "subprojects")) return at;
+  }
+  return undefined;
+}
+
+/** The package a Java or Kotlin file declares; "" for the default package. */
+const packageOf = (code: string): string => /^\s*package\s+([\w.]+)/m.exec(code)?.[1] ?? "";
+
 /**
  * The OpenAPI documents springdoc-openapi serves for the Maven or Gradle project at `module` ("" for the repository
  * root), as paths on the server, and what could not be read (`limits`, to be prefixed with the components served).
  *
- * springdoc counts as present when the project's own build file names a springdoc-openapi artifact (adding it serves
- * the document "with no additional configuration": springdoc.org, "Getting Started") or its main code builds a
- * `GroupedOpenApi`, which compiles only with springdoc on the classpath. Then, after springdoc.org:
+ * springdoc counts as present when the project's own build file puts a springdoc-openapi artifact on the application's
+ * runtime classpath (adding it serves the document "with no additional configuration": springdoc.org, "Getting
+ * Started"), or its main code builds a `GroupedOpenApi`, which compiles only with springdoc on the classpath. Then,
+ * after springdoc.org:
  *
  * - "Getting Started" and "springdoc-openapi core properties": the document at `/v3/api-docs`, or at
  *   `springdoc.api-docs.path`; none when `springdoc.api-docs.enabled` is false; not the default one when
  *   `springdoc.enable-default-api-docs` is false. All of them behind `server.servlet.context-path` (FAQ "What is the URL
  *   of the swagger-ui, when I set a different context-path?"), or WebFlux's `spring.webflux.base-path`.
  * - FAQ "How can I define multiple OpenAPI definitions in one Spring Boot project?": a document per `GroupedOpenApi`
- *   group at `<api-docs path>/<group>`; FAQ "How can I define groups using application.yml?": the same for each
+ *   bean's group at `<api-docs path>/<group>`. A builder counts as a bean when a `@Bean` method of a component class
+ *   (`@Configuration`, `@SpringBootApplication` or another stereotype) builds it, in the package of a
+ *   `@SpringBootApplication` or below, which Spring Boot scans by default; any other builder, or a project that sets its
+ *   own scan packages, is reported; FAQ "How can I define groups using application.yml?": the same for each
  *   `springdoc.group-configs[n].group`.
  *
  * Settings are read from `application.properties` and `application.yml` (`.yaml`) under `src/main/resources` and its
  * `config/`, with Spring Boot's precedence: `.properties` over YAML, `config/` over both, a later YAML document over an
- * earlier one, a list replaced whole. A profile's file (`application-dev.yml`) or document applies only when the profile
+ * earlier one, a list replaced whole (an empty one too), a name set twice keeping its last value. A profile's file (`application-dev.yml`) or document applies only when the profile
  * is active, which is decided at launch; one that sets these settings is reported, not read. A value with a placeholder
  * (`${...}`) is resolved at run time and is not read either. The `.yaml` twin of each document (`/v3/api-docs.yaml`) and
  * swagger-ui pages are the same documents and are not listed.
@@ -136,16 +236,29 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
   if (source instanceof GitRefSource) source.preload([...builds, ...code, ...configs]);
 
   let dependency: { file: string; line: number } | undefined;
+  const profiled: Array<{ file: string; line: number }> = [];
   for (const file of builds) {
     const text = source.read(file) ?? "";
-    const at = (file.endsWith(".xml") ? withoutXmlComments(text) : withoutComments(file, text)).search(SPRINGDOC);
-    if (at >= 0 && !dependency) dependency = { file, line: lineOf(text, at) };
+    const found = file.endsWith(".xml") ? mavenSpringdoc(text) : { at: gradleSpringdoc(file, text) };
+    if (found.at !== undefined) dependency ??= { file, line: lineOf(text, found.at) };
+    if (found.profile !== undefined) profiled.push({ file, line: lineOf(text, found.profile) });
   }
-  const built: Array<{ group?: string; expression: string; file: string; line: number }> = [];
+  // Applications and where Spring Boot scans for components from them; any other scan setting leaves registration open.
+  const built: Array<GroupedOpenApiBuild & { file: string; package: string }> = [];
+  const applications: string[] = [];
+  let scanSet: { file: string; line: number } | undefined;
   for (const file of code) {
-    const text = source.read(file);
-    if (text?.includes("GroupedOpenApi")) built.push(...groupedOpenApis(file, text).map((g) => ({ ...g, file })));
+    const text = source.read(file) ?? "";
+    if (!/GroupedOpenApi|SpringBootApplication|ComponentScan/.test(text)) continue;
+    const plain = withoutComments(file, text);
+    const pkg = packageOf(plain);
+    for (const m of plain.matchAll(/@(?:[\w.]*\.)?(SpringBootApplication|ComponentScan)\b(\s*\([^)]*\))?/g)) {
+      if (m[1] === "SpringBootApplication") applications.push(pkg);
+      if (m[1] === "ComponentScan" || /scanBasePackage/.test(m[2] ?? "")) scanSet ??= { file, line: lineOf(text, m.index ?? 0) };
+    }
+    if (text.includes("GroupedOpenApi")) built.push(...groupedOpenApis(file, text).map((g) => ({ ...g, file, package: pkg })));
   }
+  if (!dependency) for (const p of profiled) limits.push(`${p.file}:${p.line} names springdoc in a Maven profile, which is activated at build time; it is not read`);
   if (!dependency && built.length === 0) return { documents: [], limits };
 
   const settings = new Map<string, Setting>();
@@ -164,8 +277,9 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
         continue;
       }
       for (const s of read) if (!GROUP.test(relaxed(s.key))) settings.set(readName(s.key)!, s);
-      const listed = read.filter((s) => GROUP.test(relaxed(s.key)));
-      if (listed.length) groups = listed;
+      // A list set here replaces the whole list set with less precedence, even when it is empty.
+      const list = p.settings.filter((s) => /^springdoc\.groupconfigs(\[|$)/.test(relaxed(s.key)));
+      if (list.length) groups = list.filter((s) => GROUP.test(relaxed(s.key))).sort((a, b) => Number(GROUP.exec(relaxed(a.key))![1]) - Number(GROUP.exec(relaxed(b.key))![1]));
     }
   }
   // In file order, whatever the precedence the files were read in.
@@ -201,12 +315,18 @@ export function springdocDocuments(source: Source, module: string, exclude: stri
     if (unresolved(g)) limits.push(`${g.file}:${g.line} sets ${readName(g.key)} to ${g.value}, resolved at run time; that group's document is not read`);
     else if (g.value) add(`${base}/${g.value}`, "springdoc group-configs", { file: g.file, line: g.line }, "static");
   }
+  // springdoc serves a group per GroupedOpenApi bean (FAQ 13.1); a builder no registered bean returns serves nothing.
+  const scanned = (pkg: string) => applications.some((app) => app === "" || pkg === app || pkg.startsWith(`${app}.`));
   for (const g of built) {
-    if (g.group) add(`${base}/${g.group}`, "springdoc group", { file: g.file, line: g.line }, "static");
-    else
-      limits.push(
-        `${g.file}:${g.line} builds a GroupedOpenApi whose group the file does not spell out (${g.expression || "not set in the builder's chain"}); that group's document is not read`,
-      );
+    const at = `${g.file}:${g.line} builds a GroupedOpenApi`;
+    const unsettled = "whether it is registered is not settled, so its group's document is not read";
+    if (!g.bean) limits.push(`${at} outside a @Bean method; whether a bean registers it is not settled, so its group's document is not read`);
+    else if (!g.bean.component) limits.push(`${at} in a @Bean method of ${g.bean.type}, which is not a @Configuration or other component; ${unsettled}`);
+    else if (scanSet) limits.push(`${at} in a @Bean method of ${g.bean.type}, in package ${g.package}, while the project sets which packages are scanned (${scanSet.file}:${scanSet.line}); ${unsettled}`);
+    else if (!scanned(g.package))
+      limits.push(`${at} in a @Bean method of ${g.bean.type}, in package ${g.package || "(default)"}, which no @SpringBootApplication of the project scans by default; ${unsettled}`);
+    else if (g.group) add(`${base}/${g.group}`, "springdoc group", { file: g.file, line: g.line }, "static");
+    else limits.push(`${at} whose group the file does not spell out (${g.expression || "not set in the builder's chain"}); that group's document is not read`);
   }
   return { documents: documents.sort((a, b) => a.location.localeCompare(b.location)), limits };
 }
