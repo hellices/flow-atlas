@@ -179,6 +179,14 @@ const COMPARISONS = new Set([
 /** Methods of strings, arrays and regular expressions that test, search or cut text with their arguments. */
 const TEXT_TESTS = new Set(["startsWith", "endsWith", "includes", "indexOf", "lastIndexOf", "match", "matchAll", "search", "test", "split", "replace", "replaceAll"]);
 
+/** A member access by a name the code fixes: `a.b`, `a["b"]` or `` a[`b`] ``. */
+function member(e: ts.Expression): { receiver: ts.Expression; name: string } | undefined {
+  if (ts.isPropertyAccessExpression(e)) return { receiver: e.expression, name: e.name.text };
+  if (!ts.isElementAccessExpression(e)) return undefined;
+  const key = unwrap(e.argumentExpression);
+  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? { receiver: e.expression, name: key.text } : undefined;
+}
+
 /** The call or `new` a value is an argument of, with its position and the name the callee is written with. */
 function argumentPlace(value: ts.Node): { call: ts.CallExpression | ts.NewExpression; args: ts.Expression[]; at: number; callee: ts.Expression; name: string } | undefined {
   const call = value.parent;
@@ -187,7 +195,7 @@ function argumentPlace(value: ts.Node): { call: ts.CallExpression | ts.NewExpres
   const at = args.indexOf(value as ts.Expression);
   if (at < 0) return undefined;
   const callee = unwrap(call.expression);
-  const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
+  const name = member(callee)?.name ?? (ts.isIdentifier(callee) ? callee.text : "");
   return { call, args, at, callee, name };
 }
 
@@ -202,7 +210,7 @@ function comparedOrTested(node: ts.Node): boolean {
   if (ts.isBinaryExpression(parent)) return COMPARISONS.has(parent.operatorToken.kind);
   if (ts.isCaseClause(parent)) return parent.expression === value;
   const place = argumentPlace(value);
-  if (!place || !ts.isCallExpression(place.call) || !ts.isPropertyAccessExpression(place.callee) || !TEXT_TESTS.has(place.name)) return false;
+  if (!place || !ts.isCallExpression(place.call) || !member(place.callee) || !TEXT_TESTS.has(place.name)) return false;
   return !place.name.startsWith("replace") || (place.args.length > 1 && !navigates(place.callee));
 }
 
@@ -210,15 +218,29 @@ function comparedOrTested(node: ts.Node): boolean {
  * The function a string is handed to after its first argument, as in `requireAsset(assets, id, "/devices")`: fetch,
  * axios, ky, got, Node's http and project wrappers take their URL first, so a later argument is no request. It still
  * is where a literal method comes before it (`request("POST", "/x")`) and in the APIs documented to take it there:
- * XMLHttpRequest's `open(method, url)`, Angular's `request(method, url)`, and `redirect(status, url)` as Express and
- * SvelteKit write it. Undefined where the string may be a request.
+ * XMLHttpRequest's `open(method, url)` and Angular's `request(method, url)`, with a method held in a value first, and
+ * `redirect(status, url)` as Express and SvelteKit write it. The window's `open(url, target)` takes the URL first.
+ * Undefined where the string may be a request.
  */
 function laterArgument(node: ts.Node): string | undefined {
   const place = argumentPlace(valuePlace(node));
   if (!place || place.at === 0) return undefined;
-  if (((place.name === "open" || place.name === "request") && place.at === 1) || place.name === "redirect") return undefined;
+  if (place.name === "redirect") return undefined;
+  const first = place.args[0]!;
+  const methodFirst = !(ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first) || ts.isTemplateExpression(first));
+  if ((place.name === "open" || place.name === "request") && place.at === 1 && methodFirst && !windowOpen(place.callee)) return undefined;
   if (place.args.slice(0, place.at).some((a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && METHODS.has(a.text))) return undefined;
   return place.name || place.callee.getText().replace(/\s+/g, " ");
+}
+
+const WINDOWS = new Set(["window", "self", "globalThis", "top", "parent", "opener", "frames", "document"]);
+
+/** Whether a callee is the window's `open(url, target)`: the global `open`, or `open` on a window or the document. */
+function windowOpen(callee: ts.Expression): boolean {
+  if (ts.isIdentifier(callee)) return callee.text === "open";
+  const m = member(callee);
+  const receiver = m && unwrap(m.receiver);
+  return m?.name === "open" && !!receiver && ts.isIdentifier(receiver) && WINDOWS.has(receiver.text);
 }
 
 /** The key a property is written with, quoted or not. */
@@ -262,7 +284,8 @@ function isNextRouter(e: ts.Expression): boolean {
  * `replace` on its router, also taken apart (`const { push } = useRouter()`). An array's `push` is no navigation.
  */
 function navigates(callee: ts.Expression): "router" | "redirect" | undefined {
-  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression)) ? "router" : undefined;
+  const m = member(callee);
+  if (m) return /^(push|replace)$/.test(m.name) && isNextRouter(unwrap(m.receiver)) ? "router" : undefined;
   if (!ts.isIdentifier(callee)) return undefined;
   const imported = importedFrom(callee, ["next/navigation"]);
   if (imported === "redirect" || imported === "permanentRedirect") return "redirect";
@@ -301,8 +324,24 @@ export function withoutSpan(c: ReadCall): Draft<Call> {
   return out;
 }
 
-/** `passed` collects the paths left unread because they are handed to a function after its first argument. */
-export function callsFromTypeScript(file: string, text: string, spec: CallSource, spans?: Spans, passed?: Passed[]): ReadCall[] {
+/** What a reader is told about where it reads, and where it notes what it leaves unread. */
+export interface ReadContext {
+  /** Where route registrations write their paths (see `extractRoutes`); strings there are not requests. */
+  spans?: Spans;
+  /** Collects the paths left unread because they are handed to a function after its first argument. */
+  passed?: Passed[];
+  /** The host of the target's `origins` entry. */
+  origin?: string;
+}
+
+/**
+ * Whether an absolute URL's host (undefined for a relative URL, or a host held in a value) is the call source's
+ * target: a loopback address, where the repository's components run side by side, or the host its origin names.
+ */
+export const reachesTarget = (host: string | undefined, origin: string | undefined): boolean => host === undefined || isLoopback(host) || host === origin;
+
+export function callsFromTypeScript(file: string, text: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
+  const { spans, passed, origin } = context;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
@@ -312,9 +351,11 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       if (depth > 4 || !ts.isIdentifier(expr)) return undefined;
       const decl = constFor(expr);
       const value = decl?.initializer ? urlText(decl.initializer, depth + 1) : undefined;
-      if (value === undefined || !callPath(value)) return undefined;
+      // An origin with no path (`https://api.example.com`) is a base too; its host decides the target.
+      const origin = value !== undefined && !callPath(value) && hostOf(value) !== undefined;
+      if (value === undefined || (!callPath(value) && !origin)) return undefined;
       (leads.get(decl!) ?? leads.set(decl!, new Set()).get(decl!)!).add(expr);
-      return value;
+      return origin ? value.replace(/\/+$/, "") : value;
     };
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
     // A const that names another (`const BASE = API`) has its value.
@@ -334,7 +375,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (report) passed?.push({ callee, at: { file, line: lineAt(node) } });
     return undefined;
   };
-  const add = (node: ts.Node, parsed: CallPath, raw: string): void => {
+  const add = (node: ts.Node, parsed: CallPath, host: string | undefined): void => {
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
@@ -345,7 +386,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       evidence: "static",
       scope: scopeOf(node),
       span: [node.getStart(sf), node.getEnd()],
-      host: hostOf(raw),
+      host,
     } });
   };
   // Branches of a conditional read as one call, at the conditional.
@@ -355,7 +396,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
     // `base ? `${base}/chat` : "/chat"` is one request, whichever branch runs: one call, joining a base only when both
-    // branches do (the configured prefix is put before the other's root-relative path).
+    // branches do (the configured prefix is put before the other's root-relative path). A branch to another host is
+    // another server's request, read on its own.
     if (ts.isConditionalExpression(node)) {
       const branches = [unwrap(node.whenTrue), unwrap(node.whenFalse)];
       const read = branches.map((b) => {
@@ -364,8 +406,10 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
         return parsed && { raw: raw!, parsed };
       });
       const [a, b] = read;
-      if (a && b && a.parsed.path === b.parsed.path && hostOf(a.raw) === hostOf(b.raw)) {
-        add(node, { path: a.parsed.path, based: a.parsed.based && b.parsed.based }, a.raw);
+      const hosts = [a && hostOf(a.raw), b && hostOf(b.raw)];
+      const one = hosts[0] === hosts[1] || hosts.every((h) => reachesTarget(h, origin));
+      if (a && b && a.parsed.path === b.parsed.path && one) {
+        add(node, { path: a.parsed.path, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
         branches.forEach((branch) => merged.add(branch));
       }
     }
@@ -376,7 +420,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
       const parsed = merged.has(node) ? undefined : requested(node, raw, true);
-      if (parsed) add(node, parsed, raw);
+      if (parsed) add(node, parsed, hostOf(raw));
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
       if (whole) {
         for (const o of operands(node)) {
@@ -894,7 +938,7 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
  * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
  * Text that is not an attribute, commented-out markup and absolute URLs, which name other sites, are not read.
  */
-export function callsFromTemplate(file: string, original: string, spec: CallSource, passed?: Passed[]): ReadCall[] {
+export function callsFromTemplate(file: string, original: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
   const { text, raw } = scanHtml(original);
   const page = pageOf(text, raw);
   const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
@@ -971,8 +1015,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const shift = lineOf(text, script.bodyStart) - 1;
     // Offsets in the script body are not offsets in the template; no handler runs a template's script anyway.
     const inScript: Passed[] = [];
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec, undefined, inScript)) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
-    passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
       for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
@@ -1003,13 +1047,13 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const text = source.read(file);
       if (text === undefined) continue;
       const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, spans, passed)
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, passed)
+          ? callsFromTemplate(file, text, spec, { passed, origin })
           : callsFromText(file, text, spec, spans);
       for (const c of read) {
         const { host, ...call } = c;
-        if (host !== undefined && !isLoopback(host) && host !== origin) {
+        if (host !== undefined && !reachesTarget(host, origin)) {
           if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
           continue;
         }

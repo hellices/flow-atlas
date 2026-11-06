@@ -79,6 +79,31 @@ describe("strings that are no requests", () => {
   });
 });
 
+describe("the review of #21", () => {
+  it("names a method written in brackets as it names one after a dot", () => {
+    const next = 'import { useRouter } from "next/navigation";\nconst router = useRouter();\n';
+    const rows: Array<[string, string[]]> = [
+      ['xhr["open"](method, "/orders");', ["* /orders"]],
+      ['const yes = path["startsWith"]("/api/v1") || path[`endsWith`]("/raw");', []],
+      ['const bare = path["replace"]("/api/v1", "");', []],
+      // Next.js's router navigates, written either way.
+      [next + 'router["replace"]("/login", { scroll: false });', ["GET /login"]],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("takes a later argument as the URL only in XMLHttpRequest's open, not window.open's target", () => {
+    const rows: Array<[string, string[]]> = [
+      ['window.open("/help", "/preview");', ["* /help"]],
+      ['open("/help", "/preview");', ["* /help"]],
+      ['window.open(url, "/preview");', []],
+      ['xhr.open(method, "/orders");', ["* /orders"]],
+      ['this.http.request(method, "/orders");', ["* /orders"]],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+});
+
 describe("what a call source leaves unread", () => {
   const limits: string[] = [];
   const calls = (code: string, origins: Record<string, string> = {}) => {
@@ -99,6 +124,23 @@ describe("what a call source leaves unread", () => {
   it("names the functions paths were handed to after their first argument", () => {
     expect(calls('requireAsset(assets, a, "/devices");\nrequireAsset(assets, b, "/devices");\nnew MissingAsset(id, `/feed/${id}`);')).toEqual([]);
     expect(limits).toEqual(["calls app->api: paths handed to a function after its first argument are not read as requests: requireAsset (2, first at a.ts:1), MissingAsset (1, first at a.ts:3)"]);
+  });
+
+  it("keeps the host of an origin-only const a URL starts with", () => {
+    expect(calls('const BASE = "https://example.org";\nfetch(`${BASE}/orders`);')).toEqual([]);
+    expect(limits).toEqual(["calls app->api: URLs to example.org (a.ts:2) are not read as requests to api; set origins.api if that is its host"]);
+    expect(calls('const BASE = "https://example.org";\nfetch(BASE + "/orders");')).toEqual([]);
+    expect(limits).toEqual(["calls app->api: URLs to example.org (a.ts:2) are not read as requests to api; set origins.api if that is its host"]);
+    // An origin the target is served at, or a loopback one, with or without a trailing slash.
+    expect(calls('const BASE = "https://api.example.com";\nfetch(`${BASE}/orders`);', { api: "https://api.example.com" })).toEqual(["GET /orders based"]);
+    expect(calls('const BASE = "http://localhost:3000/";\nfetch(BASE + "/orders");')).toEqual(["GET /orders based"]);
+  });
+
+  it("reads one call from a conditional whose branches both reach the target, and keeps a relative branch beside a foreign one", () => {
+    expect(calls('fetch(local ? "http://localhost:3000/api/chat" : "/api/chat");')).toEqual(["GET /api/chat"]);
+    expect(calls('fetch(live ? "https://api.example.com/api/chat" : "/api/chat");', { api: "https://api.example.com" })).toEqual(["GET /api/chat"]);
+    expect(calls('fetch(remote ? "https://other.example.org/api/chat" : "/api/chat");')).toEqual(["GET /api/chat"]);
+    expect(limits).toEqual(["calls app->api: URLs to other.example.org (a.ts:1) are not read as requests to api; set origins.api if that is its host"]);
   });
 
   it("leaves out a URL to another host: it is not a request to the configured target", () => {
