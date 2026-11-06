@@ -34,6 +34,26 @@ export function callPath(text: string): CallPath | undefined {
   return { path: s.replace(/\/+$/, ""), based };
 }
 
+/**
+ * The host (with its port, lower-cased, default ports dropped) an absolute `http` or `https` URL names literally;
+ * undefined for any other text, and for a host that is a value written into the URL (`https://${host}/x`).
+ */
+export function hostOf(text: string): string | undefined {
+  const m = text.trim().match(/^(https?):\/\/(?:[^/?#@]*@)?([^/?#]+)/i);
+  if (!m || m[2]!.includes(HOLE)) return undefined;
+  try {
+    return new URL(`${m[1]}://${m[2]}`).host;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a host is a loopback address, the machine the client runs on: `localhost`, 127.0.0.0/8 or `[::1]`. */
+export function isLoopback(host: string): boolean {
+  const name = host.replace(/:\d+$/, "");
+  return name === "localhost" || name === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(name);
+}
+
 export function joinRoute(...parts: string[]): string {
   const joined = parts
     .map((p) => p.replace(/^\/+|\/+$/g, ""))

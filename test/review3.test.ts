@@ -371,7 +371,7 @@ describe("framework rules", () => {
       // Either branch of a URL handed to a request is the request's.
       "app/four/page.tsx": 'export default async function Four({ ok }) {\n  const d = await fetch(ok ? "/api/a" : "/api/b");\n  return <p>{d}</p>;\n}',
       // A URL handed to a constructor whose result the request gets is the request's.
-      "app/wrapped/route.ts": 'export async function GET() {\n  await fetch(new Request("https://api.example.com/data"));\n}',
+      "app/wrapped/route.ts": 'export async function GET() {\n  await fetch(new Request("http://localhost:3000/data"));\n}',
       // A link inside an element a call is handed while rendering is still the browser's.
       "app/five/page.tsx": 'export default function Five() {\n  return Promise.resolve(<a href="/next">x</a>);\n}',
       // A URL with no literal of its own at the call: the request still runs in the handler.

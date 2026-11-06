@@ -5,7 +5,8 @@ case: |
   With the helper's fixed method configured, the mount read as StaticFiles serves it (GET, and HEAD by itself) and the
   two outside callers declared public, what remains is the three routes no client code calls. Inventory used to offer
   the Python decorators as Express routes and count none of the wrapper's calls. A mounted sub-application is not
-  read; a limit says so rather than serving its whole subtree.
+  read; a limit says so rather than serving its whole subtree. The chat URL, chosen between a base and none
+  (`base ? `${base}/api/chat` : "/api/chat"`), was two calls; it is one request, read once.
 surfaces:
   - backend|DELETE /api/exports/{workspace_id}/{timestamp}
   - backend|GET /api/reports
@@ -38,6 +39,16 @@ chains:
   - web->backend|POST /api/reports/run
   - web->backend|POST /api/auth/logout
   - web->backend|POST /api/chat
+calls:
+  - web->backend|* /api/auth/session @ frontend/src/components/AuthGate.tsx:4
+  - web->backend|POST /api/auth/logout @ frontend/src/components/AuthGate.tsx:5
+  - web->backend|* /api/templates/{} @ frontend/src/components/AuthGate.tsx:6
+  - web->backend|* /api/reports @ frontend/src/components/ReportList.tsx:4
+  - web->backend|* /api/reports/{} @ frontend/src/components/ReportList.tsx:5
+  - web->backend|POST /api/reports/run @ frontend/src/components/ReportList.tsx:6
+  - web->backend|GET /api/downloads/{}/report.pdf @ frontend/src/components/ReportList.tsx:7
+  # One request whichever base the caller passes: both branches of the conditional name /api/chat.
+  - web->backend|* /api/chat @ frontend/src/lib/ag-ui-client.ts:2
 inventory:
   routes:
     - backend/server.py fastapi 11

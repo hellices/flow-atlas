@@ -72,7 +72,7 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | a misread file: an exception whose reason says which file and how | expiry brings the finding back |
 | the configuration | `scan` coverage |
 | the OpenAPI document the framework generates, for a component atlas cannot parse (`routes[].openapi`, `references/openapi.md`) | `scan` coverage and `limit:` lines |
-| `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one |
+| `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one; a `limit:` line names a host calls go to that no origin states |
 | `openapi.<component>` when atlas reports its description `ambiguous` | `export arazzo` refuses until it is set |
 
 Do not hand your part to the tool: no `publicSurfaces`, exception or baseline update without a reason a person would

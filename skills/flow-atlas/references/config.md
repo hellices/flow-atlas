@@ -54,7 +54,7 @@ exclude: ["**/legacy/**"]     # added to the defaults: tests, generated, node_mo
 
 flows: ["flows/**/*.flow.yaml"]   # flow descriptions, read at the same revision as the code (this is the default)
 
-origins:                      # environment binding for `atlas export arazzo`: base URL each component is served at
+origins:                      # base URL each component is served at: `atlas export arazzo`, and absolute URLs read as calls
   orders: http://localhost:3001
 openapi:                      # only to override the OpenAPI description atlas finds for a component
   orders: services/orders/openapi.json
@@ -91,7 +91,17 @@ call files, the method from `.get(`/`.post(` callees, a method string in the sam
 (`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
 by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
-(`path: "/m" | "/r"`) names a value and is no request. Routes come
+(`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
+handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
+`split`, `replace` with two arguments). fetch, axios, ky, got and project wrappers take their URL first, so a path
+handed to a function after its first argument (`requireMedia(media, id, "/devices")`) is not read unless a literal
+method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)`, Angular's
+`request(method, url)` or a `redirect(status, url)`; a limit names the functions such paths went to. A `path` option is
+read as Node's `http.request` defines it, from the root: one joined to another value (`` path: `${dir}/raw` ``) is no
+request. When both branches of a conditional name the same path (`` base ? `${base}/chat` : "/chat" ``) they are one
+call, which joins a base only when both branches do. An absolute URL, in code of any language, is a request to the call source's target when its
+host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
+other host, a link to another site for one, is not read, and a limit names the host. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except

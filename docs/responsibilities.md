@@ -54,7 +54,7 @@ The tool does not decide how to fix anything. `explain` shows only the locations
 | a misread file: which file and how, as an exception's reason | whether extraction went wrong takes reading the code | the exception's review date |
 | the configuration | which files are clients differs per repository | `scan` coverage |
 | OpenAPI documents frameworks generate (`routes[].openapi`) | generating one runs the application's code; the tool only reads files | `scan` coverage and `limit:` lines |
-| server addresses per environment (`origins`) | the code knows document paths; where a server runs is the deployment's business | `export arazzo` notes a missing one |
+| server addresses per environment (`origins`) | the code knows document paths; where a server runs is the deployment's business | `export arazzo` notes a missing one; a `limit:` line names a host calls go to that no origin states |
 | the choice when a description is `ambiguous` (`openapi.<component>`) | contract-first or code-first, and which version is this flow's, are the repository's decisions | `export arazzo` stops until it is set |
 | Arazzo parameters, request bodies, success criteria | the values a run needs do not come from the code | the tool that runs the Arazzo document |
 
