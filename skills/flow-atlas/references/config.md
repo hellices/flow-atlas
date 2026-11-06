@@ -56,8 +56,8 @@ flows: ["flows/**/*.flow.yaml"]   # flow descriptions, read at the same revision
 
 origins:                      # environment binding for `atlas export arazzo`: base URL each component is served at
   orders: http://localhost:3001
-openapi:                      # only to override the OpenAPI description atlas finds for a component
-  orders: services/orders/openapi.json
+openapi:                      # to override the OpenAPI description atlas finds for a component, or give one it finds none of
+  orders: services/orders/openapi.json   # a file (in the repository, or absolute), a served path, or a URL
 
 rules:
   FA003: { cycles: false }    # when the repository already checks cycles
@@ -182,9 +182,18 @@ atlas finds each component's OpenAPI description itself: a committed `openapi.(j
 like). `atlas inventory` lists them. Only the server's base URL is yours to give, per environment, in `origins`;
 read it from the repository's deployment files.
 
+`atlas export arazzo` writes a step only when its component's description is decided. A component with none (a plain
+HTTP server atlas reads from code) has its steps left out with a `limit:`, and the workflows that lose steps say so in
+`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. The export prints to stdout,
+not to `--out`; save it at the repository root (`atlas export arazzo > flows.arazzo.yaml`), because a description
+file in the repository is written relative to the root. A file outside it (a
+committed link to one included) is written by its file name, with a `limit:` to commit it or publish it and set
+`openapi.<component>` to its URL; if it is the document the component serves, set `openapi.<component>` to the served
+path and `origins` to the server's base URL.
+
 Flow descriptions are also read from `<out>/flows/`, so a repository atlas must not write to can still be described.
 
-All writes go to `--out` (default `<root>/.atlas`): `graph.json`, `last-check.json` and `baseline.json` (keys and
+All writes go to `--out` (default `<root>/.atlas`; `export arazzo` prints to stdout instead): `graph.json`, `last-check.json` and `baseline.json` (keys and
 coverage). Exceptions are read from `<root>/flows/atlas-exceptions.yaml`, then `<out>/exceptions.yaml`.
 To analyse a repository you must not change, keep the configuration and all state in `--out` and use
 `--ref <commit>` to read commits without checking them out.

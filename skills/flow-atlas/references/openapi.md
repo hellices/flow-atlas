@@ -63,6 +63,8 @@ Notes:
 - Routes a framework hides (`include_in_schema=False`, `@ApiExcludeEndpoint`, `schema.hide`, `@Hidden`) are not in the
   document. If they are called, FA002 will say so; decide with `references/boundaries.md` whether that is a defect.
 - An absolute path is read as the file is now, for every revision. For `check --since` and `diff`, commit the document
-  or generate it at each revision into the repository; atlas reports a `limit:` otherwise.
+  or generate it at each revision into the repository; atlas reports a `limit:` otherwise. `export arazzo` does not
+  write a path on your machine into the Arazzo document: it writes the document's file name and a `limit:` to commit
+  or publish it.
 - Regenerate it whenever routes change, in the same change. A document older than the code is a stale input, and atlas
   cannot tell.
