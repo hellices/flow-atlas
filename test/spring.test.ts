@@ -91,6 +91,8 @@ describe("Spring routes", () => {
     expect(routes("SecurityFilterChain chain(HttpSecurity http) {\n  HttpSecurity security = http;\n  security.formLogin(withDefaults());\n}")).toEqual(["POST /login 3"]);
     // A field is seen throughout its type, before its declaration too.
     expect(routes("class C {\n  void configure() { http.formLogin(withDefaults()); }\n  private HttpSecurity http;\n}")).toEqual(["POST /login 2"]);
+    // A function without a body takes nothing of the next one's.
+    expect(routes("interface Config {\n  fun configure(http: HttpSecurity)\n  fun other(http: HttpServletRequest) { http.logout() }\n}", "I.kt")).toEqual([]);
     // A nested function's own `http` hides the outer HttpSecurity.
     const inner = ["fun config(http: HttpSecurity) {", "  http.formLogin(withDefaults())", "  fun handle(http: HttpServletRequest) { http.logout() }", "}"].join("\n");
     expect(routes(inner, "N.kt")).toEqual(["POST /login 2"]);
@@ -555,6 +557,10 @@ describe("review fixes, continued", () => {
       // `src=null` removes the attribute, and a computed src may: the body is read.
       ["<script th:attr=\"src=null\">fetch('/api')</script>", ["GET /api 1"]],
       ["<script th:attr=\"src=${cdn}\">fetch('/api')</script>", ["GET /api 1"]],
+      ["<script th:src=\"${maybe}\">fetch('/api')</script>", ["GET /api 1"]],
+      // A link expression with path variables surely writes a src: the script is that file, and its body does not run.
+      ["<script th:attr=\"src=@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
+      ["<script th:src=\"@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
       ['<div data-url="/preview"></div>', []],
     ];
     expect(rows.map(([html]) => calls(html))).toEqual(rows.map(([, out]) => out));

@@ -692,6 +692,23 @@ function attrItems(value: string): Array<{ name: string | undefined; start: numb
   return items;
 }
 
+/**
+ * Whether a Thymeleaf attribute value surely writes the attribute: a link expression `@{...}` (nested braces and
+ * parentheses included, as in `@{/a/{id}(id=${v})}`), or a literal (`'x'`, `|x|`). A value computed at render may be
+ * null, which removes it.
+ */
+function surelyWritten(value: string | undefined): boolean {
+  const v = value?.trim() ?? "";
+  if (/^'[^']*'$|^\|[^|]*\|$/.test(v)) return true;
+  if (!v.startsWith("@{")) return false;
+  let depth = 0;
+  for (let i = 1; i < v.length; i++) {
+    if (v[i] === "{") depth++;
+    else if (v[i] === "}" && --depth === 0) return i === v.length - 1;
+  }
+  return false;
+}
+
 /** The `th:attr` family item a value belongs to: the attribute its item names. */
 function itemName(value: string, offset: number): string | undefined {
   return attrItems(value).find((item) => offset >= item.start && offset <= item.end)?.name;
@@ -791,13 +808,15 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
     const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
     // A src, written or rendered by Thymeleaf, makes the script external: the browser does not run its body.
-    // Only a src Thymeleaf surely writes (a link expression or a literal) makes the script external: `src=null` removes
-    // the attribute, and a computed value may, so the body is read then.
-    const rendered = ["th:attr", "data-th-attr"].some((n) => {
-      const value = attribute(n) ?? "";
-      return attrItems(value).some((item) => item.name === "src" && /^\s*src\s*=\s*(?:@\{[^}]*\}|'[^']*'|\|[^|]*\|)\s*$/i.test(value.slice(item.start, item.end)));
-    });
-    const external = ["src", "th:src", "data-th-src"].some((n) => attribute(n) !== undefined) || rendered;
+    // A plain src makes the script external. Thymeleaf's makes it so only where it surely writes one (a link expression
+    // or a literal): `src=null` removes the attribute, and a computed value may, so the body is read then.
+    const rendered =
+      ["th:src", "data-th-src"].some((n) => surelyWritten(attribute(n))) ||
+      ["th:attr", "data-th-attr"].some((n) => {
+        const value = attribute(n) ?? "";
+        return attrItems(value).some((item) => item.name === "src" && surelyWritten(value.slice(item.start, item.end).replace(/^\s*src\s*=/i, "")));
+      });
+    const external = attribute("src") !== undefined || rendered;
     if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;

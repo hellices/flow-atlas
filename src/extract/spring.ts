@@ -460,14 +460,16 @@ function bindings(masked: string, kotlin: boolean): Array<{ name: string; type: 
     }
     const params = closing(masked, owner);
     if (params === undefined) continue;
-    // After the parameters: a return type or `throws`, then the body.
+    // After the parameters: a return type or `throws`, then the body. A function without one (abstract, in an
+    // interface) ends where the next declaration starts, so the next function's body is not taken for its own.
     let i = params + 1;
     let depth = 0;
     for (; i < masked.length; i++) {
       const c = masked[i]!;
       if (c === "<") depth++;
       else if (c === ">" && masked[i - 1] !== "-") depth--;
-      else if (depth === 0 && (c === "{" || c === "=" || c === ";" || (c === "-" && masked[i + 1] === ">"))) break;
+      else if (depth === 0 && (c === "{" || c === "=" || c === ";" || c === "}" || (c === "-" && masked[i + 1] === ">"))) break;
+      else if (depth === 0 && /[\s;]/.test(masked[i - 1] ?? " ") && /^(?:(?:fun|val|var|class|interface|object)\b|@[A-Za-z])/.test(masked.slice(i, i + 10))) break;
     }
     if (masked[i] === "{") {
       const end = closing(masked, i);

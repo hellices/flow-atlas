@@ -147,8 +147,9 @@ function memberName(name: ts.PropertyName): string | undefined {
 /** A class component's `render`: a method, or a field holding a function (`render = () => ...`). */
 function classRender(cls: ts.ClassDeclaration): ts.Node | undefined {
   for (const m of cls.members) {
-    if (!m.name || memberName(m.name) !== "render") continue;
-    if (ts.isMethodDeclaration(m)) return m;
+    // React calls the instance's render: not a static one, nor an overload's signature without a body.
+    if (!m.name || memberName(m.name) !== "render" || (ts.canHaveModifiers(m) && ts.getModifiers(m)?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword))) continue;
+    if (ts.isMethodDeclaration(m) && m.body) return m;
     if (ts.isPropertyDeclaration(m) && m.initializer && (ts.isArrowFunction(m.initializer) || ts.isFunctionExpression(m.initializer))) return m.initializer;
   }
   return undefined;
