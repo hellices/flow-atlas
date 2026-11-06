@@ -27,7 +27,7 @@ and usable by agents.
 | Concern | Standard | Choice | Why |
 |---|---|---|---|
 | the shape of the flow files people write | Kubernetes Resource Model, the Backstage descriptor format | followed | the `apiVersion`, `kind`, `metadata`, `spec` frame with labels and annotations, the most widespread frame for describing software configuration in YAML inside a repository |
-| steps within a flow | Arazzo 1.0 | followed, with an export | step structure and names match, and `atlas export arazzo` produces Arazzo documents that pass the official schema |
+| steps within a flow | Arazzo 1.0 | followed, with an export | step structure and names match, and `atlas export arazzo` produces Arazzo documents that pass the official schema; a step it cannot write is listed in the workflow's `x-flow-atlas.omitted` |
 | where authored knowledge comes from | Google Open Knowledge Format (OKF) 0.2 | source shape only | `sources` in a flow's `metadata` keeps the shape of an OKF source (§5.1). OKF's `generated`, `verified`, `stale_after` and trust tier were tried and removed: on eight repositories no check read them, and a self-declared review was trusted unchecked. Who wrote and reviewed a flow is in the pull request that changes it; a review date is not kept |
 | observed state | Kubernetes status conditions | followed | `type`, `status` (True, False, Unknown), `reason`, `message`; only the timestamp fields are left out |
 | where a generated document came from | SLSA provenance v1 (in-toto ResourceDescriptor) | shape followed | the commits and files read are recorded with digests. SLSA is a specification for build outputs, so no SLSA conformance is claimed |
@@ -66,7 +66,8 @@ and usable by agents.
 ## Verification
 
 Exported documents are checked against the official schemas: `test/standards/` holds the official SARIF 2.1.0 and
-Arazzo 1.0 schemas, and the tests validate the fixture's SARIF and Arazzo output against them. Nest's default
+Arazzo 1.0 schemas, and the tests validate the fixture's SARIF and Arazzo output against them, including an Arazzo
+export that leaves steps out. Nest's default
 operationId rule was confirmed in @nestjs/swagger's `swagger-explorer.js` as `${controllerKey}_${methodKey}`.
 
 ## Open questions

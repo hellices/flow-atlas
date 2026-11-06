@@ -87,12 +87,12 @@ atlas check --root <repo>                     # findings new since the baseline
 atlas check --since main                      # findings the current change introduced
 atlas check --format sarif > atlas.sarif      # findings as SARIF 2.1.0 (code scanning, IDE viewers)
 atlas diff main..WORKTREE --format markdown   # flow changes and new findings for a PR description
-atlas export arazzo                           # flows as Arazzo 1.0 for API workflow and e2e tools
+atlas export arazzo > flows.arazzo.yaml       # flows as Arazzo 1.0 (stdout; keep it at the repository root)
 atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
 ```
 
-`--ref <commit>` reads a commit without checking it out, and every write goes to `--out`, so a repository you must not
+`--ref <commit>` reads a commit without checking it out, and every write goes to `--out` (`export` prints to stdout), so a repository you must not
 change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md);
 expect two or three rounds of `scan` and correction before the findings are worth trusting.
 

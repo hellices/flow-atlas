@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import { schemaForKind, validate } from "../src/schema.js";
 import { arazzoErrors, sarifErrors } from "./standards.js";
 import { query } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
-import { toArazzo } from "../src/arazzo.js";
+import { documentUrl, repositoryPath, toArazzo } from "../src/arazzo.js";
 import { parse as parseYaml } from "yaml";
 import type { Subgraph } from "../src/model.js";
 import { inventory } from "../src/inventory.js";
@@ -393,6 +393,174 @@ describe("schemas", () => {
     expect(() => toArazzo(twoServed, loadFlows(source, config), config, { title: "Shop flows" })).toThrow(
       "no OpenAPI description is decided for orders: SeveralServedDocuments (candidates: /v1/docs-json, /v2/docs-json); choose one and set openapi.orders",
     );
+  });
+
+  it("writes the flows it can when a component has no description, and states the steps it left out", () => {
+    const undescribed = (...names: string[]) => ({
+      ...graph,
+      apiDescriptions: graph.apiDescriptions.map((d) => (names.includes(d.component) ? { component: d.component, status: "none" as const, reason: "NoneFound", candidates: [] } : d)),
+    });
+    const files = loadFlows(source, config);
+    const readOrder = { ...files[0]!.flows[0]!.object, metadata: { name: "read-order" }, spec: { steps: [{ stepId: "read", surface: "orders|GET /orders/{id}" }] } };
+    files.push({ file: "flows/read.flow.yaml", text: "", errors: [], flows: [{ object: readOrder, line: 1, stepLine: () => 1 }] });
+    const { document, limits } = toArazzo(undescribed("orders"), files, config, { title: "t" });
+    expect(arazzoErrors(document)).toEqual([]);
+    const workflows = document.workflows as Array<{ workflowId: string; description?: string; steps: Array<{ stepId: string }>; "x-flow-atlas": { omitted?: unknown } }>;
+    expect(workflows.map((w) => `${w.workflowId}:${w.steps.map((s) => s.stepId).join(",")}`)).toEqual(["view-order:screen", "place-order:submit", "refund-order:request"]);
+    expect(workflows[0]!["x-flow-atlas"].omitted).toEqual([{ stepId: "read", reason: "no OpenAPI description is decided for orders: NoneFound" }]);
+    expect(workflows[0]!.description).toBe("Left out of this export, so these steps are not the whole flow: read (no OpenAPI description is decided for orders: NoneFound).");
+    expect(document.sourceDescriptions).toEqual([{ name: "bff", url: "/openapi.json", type: "openapi" }]);
+    const what = "set openapi.orders to its OpenAPI document, or routes[].openapi to the one its framework generates";
+    expect(limits.filter((l) => !l.startsWith("bff serves"))).toEqual([
+      `view-order.read: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `place-order.create: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `refund-order.refund: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `read-order.read: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      "read-order: no step could be written as an operation",
+    ]);
+    expect(() => toArazzo(undescribed("orders", "bff"), files, config, { title: "t", flow: "view-order" })).toThrow(
+      `nothing to export: no step of the selected flows could be written as an operation\nview-order.screen: no OpenAPI description is decided for bff: NoneFound`,
+    );
+  });
+
+  it("writes a description in the repository relative to its root, and one outside it without this machine's path", () => {
+    const files = loadFlows(source, config);
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
+    const read = (p: string) => source.read(p);
+    const sources = (doc: Record<string, unknown>) => doc.sourceDescriptions as Array<{ name: string; url: string }>;
+    const readStep = (doc: Record<string, unknown>) => (doc.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!;
+
+    const inside = toArazzo(unnamed, files, { ...config, openapi: { bff: "openapi/bff.json", orders: join(root, "services/orders/openapi.json") } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(inside.document)).toEqual([]);
+    expect(sources(inside.document).map((s) => s.url)).toEqual(["openapi/bff.json", "services/orders/openapi.json"]);
+    // Read at the repository's revision, through its path in the repository.
+    expect(readStep(inside.document).operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+    expect((inside.document.info as { description: string }).description).toContain("Relative source description URLs are resolved against this document, which is assumed to sit at the repository root.");
+
+    const outside = "/elsewhere/generated/orders.json";
+    const fromRoutes = (g: typeof unnamed, location: string, component = "orders") => ({
+      ...g,
+      apiDescriptions: g.apiDescriptions.map((d) => (d.component === component ? { component, status: "chosen" as const, location, kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d)),
+    });
+    const readOutside = (p: string) => (p === outside ? source.read("services/orders/openapi.json") : source.read(p));
+    const chosen = { ...config, openapi: { bff: "openapi/bff.json" } };
+    const away = toArazzo(fromRoutes(unnamed, outside), files, chosen, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(arazzoErrors(away.document)).toEqual([]);
+    expect(JSON.stringify(away.document)).not.toContain("/elsewhere");
+    expect(sources(away.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(readStep(away.document).operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+    const awayNote =
+      "orders's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL; if it is the document orders serves at /docs-json, set openapi.orders to /docs-json and origins.orders to the server's base URL instead";
+    expect(away.limits).toEqual([awayNote]);
+
+    // Nothing in the code says the file is the document the server serves, so an origin does not stand in for it.
+    const served = toArazzo(fromRoutes(unnamed, outside), files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(served.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(served.limits).toEqual([awayNote]);
+
+    const unserved = { ...fromRoutes(unnamed, "../specs/orders.json"), apiDocuments: graph.apiDocuments.filter((d) => d.component !== "orders") };
+    const relative = toArazzo(unserved, files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(relative.document)).toEqual([]);
+    expect(sources(relative.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(relative.limits).toEqual([
+      "orders's OpenAPI document ../specs/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL",
+    ]);
+
+    // Two documents cannot both sit next to the document under one name; one document for two components can.
+    const clash = "bff and orders are written as orders.json from different documents; rename the documents outside the repository, commit them or publish them";
+    const twice = toArazzo(fromRoutes(fromRoutes(unnamed, outside), "/other/orders.json", "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(twice.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(twice.limits).toContain(clash);
+    const shared = toArazzo(fromRoutes(fromRoutes(unnamed, outside), outside, "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(shared.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(shared.limits).toEqual([
+      "view-order.screen: /elsewhere/generated/orders.json declares no GET /screens/order/{orderId}",
+      "bff's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.bff to its URL; if it is the document bff serves at /openapi.json, set openapi.bff to /openapi.json and origins.bff to the server's base URL instead",
+      awayNote,
+    ]);
+    const committed = toArazzo(fromRoutes(unnamed, outside), files, { ...config, openapi: { bff: "orders.json" } }, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(committed.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(committed.limits).toContain(clash);
+  });
+
+  it("takes an absolute path in the repository as a repository file, there or not on this disk", () => {
+    const generated = "services/orders/generated.json";
+    const read = (p: string) => (p === generated ? source.read("services/orders/openapi.json") : source.read(p));
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
+    const { document } = toArazzo(unnamed, loadFlows(source, config), { ...config, openapi: { bff: "openapi/bff.json", orders: join(root, generated) } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(document)).toEqual([]);
+    expect((document.sourceDescriptions as Array<{ url: string }>).map((s) => s.url)).toEqual(["openapi/bff.json", generated]);
+    expect((document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+  });
+
+  it("names a document read for routes by its normalized path, so the path key it writes is used", () => {
+    const flows = loadFlows(source, config);
+    const keyed = (named: string, location: string) => ({
+      ...graph,
+      surfaces: graph.surfaces.map((s) =>
+        s.id === "orders|GET /orders/{id}" ? { ...s, operationId: undefined, described: { file: named, line: 5 }, describedPath: "/orders/{orderId}" } : s,
+      ),
+      apiDescriptions: graph.apiDescriptions.map((d) =>
+        d.component === "orders" ? { component: "orders", status: "chosen" as const, location, kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d,
+      ),
+    });
+    const operationPath = (named: string, location: string, root?: string) => {
+      const { document } = toArazzo(keyed(named, location), flows, { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t", flow: "view-order", root });
+      expect(arazzoErrors(document)).toEqual([]);
+      return (document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationPath;
+    };
+    const written = "{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get";
+    expect(operationPath("./services/orders/openapi.json", "services/orders/openapi.json")).toBe(written);
+    // A document outside the repository, named relative to the root by the route entry: the same file the export reads.
+    expect(operationPath("../shared/orders.json", "../shared/orders.json", root)).toBe(written);
+    expect(operationPath("../shared/orders.json", join(root, "..", "shared", "orders.json"), root)).toBe(written);
+  });
+
+  it("follows links: a link in the repository to a file outside it is outside", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-links-"));
+    try {
+      const repo = join(dir, "repo");
+      mkdirSync(repo);
+      mkdirSync(join(dir, "specs"));
+      writeFileSync(join(dir, "specs", "orders.json"), "{}");
+      writeFileSync(join(repo, "real.json"), "{}");
+      symlinkSync(join(dir, "specs", "orders.json"), join(repo, "spec.json"));
+      symlinkSync("real.json", join(repo, "alias.json"));
+      expect([repositoryPath(join(repo, "spec.json"), repo), repositoryPath("spec.json", repo)]).toEqual([undefined, undefined]);
+      expect([repositoryPath("alias.json", repo), repositoryPath(join(repo, "alias.json"), repo), repositoryPath("./sub/../real.json", undefined)]).toEqual(["real.json", "real.json", "real.json"]);
+      const target = realpathSync(join(dir, "specs", "orders.json"));
+      const linked = documentUrl("orders", { ...graph, apiDocuments: [] }, { ...config, openapi: { orders: "spec.json" } }, repo);
+      expect(linked).toEqual({
+        url: "orders.json",
+        file: target,
+        note: `orders's OpenAPI document spec.json (${target}) is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("places a file not on this disk where the links on its path lead", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-links-"));
+    try {
+      const repo = join(dir, "repo");
+      mkdirSync(repo);
+      mkdirSync(join(dir, "specs"));
+      mkdirSync(join(repo, "sub"));
+      symlinkSync(join(dir, "specs"), join(repo, "docs"));
+      symlinkSync(join(dir, "specs", "missing.json"), join(repo, "gone.json"));
+      symlinkSync("generated/next.json", join(repo, "next.json"));
+      symlinkSync("loop.json", join(repo, "loop.json"));
+      const at = (path: string) => repositoryPath(path, repo);
+      // Through a directory link that leads outside, and through a dangling link to a file outside.
+      expect([at("docs/openapi.yaml"), at(join(repo, "docs", "openapi.yaml")), at("gone.json")]).toEqual([undefined, undefined, undefined]);
+      // A dangling link to a file the repository does not hold yet, a link that leads nowhere, and a plain missing file.
+      expect([at("next.json"), at("loop.json"), at("sub/new.json")]).toEqual(["generated/next.json", undefined, "sub/new.json"]);
+      const target = join(realpathSync(join(dir, "specs")), "openapi.yaml");
+      expect(documentUrl("orders", { ...graph, apiDocuments: [] }, { ...config, openapi: { orders: "docs/openapi.yaml" } }, repo)).toMatchObject({ url: "openapi.yaml", file: target });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("brings the flows a selected flow runs into the export", () => {

@@ -56,6 +56,7 @@ The tool does not decide how to fix anything. `explain` shows only the locations
 | OpenAPI documents frameworks generate (`routes[].openapi`) | generating one runs the application's code; the tool only reads files | `scan` coverage and `limit:` lines |
 | server addresses per environment (`origins`) | the code knows document paths; where a server runs is the deployment's business | `export arazzo` notes a missing one |
 | the choice when a description is `ambiguous` (`openapi.<component>`) | contract-first or code-first, and which version is this flow's, are the repository's decisions | `export arazzo` stops until it is set |
+| a component's description when atlas finds none, or where a document generated outside the repository is published | the document comes from running the code, and where it lives is the repository's decision | `export arazzo` leaves the component's steps out, or writes the document by file name, with a `limit:` |
 | Arazzo parameters, request bodies, success criteria | the values a run needs do not come from the code | the tool that runs the Arazzo document |
 
 ## The boundary reading the skill guides
