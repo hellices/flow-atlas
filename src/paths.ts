@@ -107,6 +107,23 @@ export function holeMatches(pattern: string, text: string): boolean {
 /** A last route segment that takes the rest of the path, none or many segments: Spring's `{*rest}` and `**`. */
 const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
 
+/**
+ * A last route segment Starlette's `path` converter takes: `.*` after the `/` written before it, so one segment or
+ * more, or an empty one after a trailing `/`. A mount is compiled as its path with `/{path:path}` joined.
+ */
+const isStarletteRest = (seg: string | undefined): boolean => !!seg && /^\{\w+:path\}$/.test(seg);
+
+/**
+ * The path a route ending in Starlette's `{name:path}` serves with that segment left out, with a `/` after it, or
+ * undefined for any other route. Starlette's router redirects a path no route matches to the same path with a `/`
+ * added, when a route matches that (FastAPI's `redirect_slashes`, on by default), so a request without the `/`
+ * reaches it only then.
+ */
+export function slashRedirectPath(routePath: string): string | undefined {
+  const r = segments(routePath);
+  return isStarletteRest(r[r.length - 1]) ? joinRoute(...r.slice(0, -1)) : undefined;
+}
+
 /** A segment with a wildcard inside it (`*.txt`, `v*`): `*` stands for any text within the segment, `{x}` for some. */
 function segmentPattern(seg: string): RegExp {
   const body = seg
@@ -122,6 +139,10 @@ export function pathsMatch(routePath: string, call: string): boolean {
   if (isCatchAll(r[r.length - 1])) {
     r = r.slice(0, -1);
     if (c.length < r.length) return false;
+    c = c.slice(0, r.length);
+  } else if (isStarletteRest(r[r.length - 1])) {
+    r = r.slice(0, -1);
+    if (c.length <= r.length) return false;
     c = c.slice(0, r.length);
   }
   if (r.length !== c.length) return false;

@@ -8,7 +8,8 @@ import { Reach } from "../src/extract/reach.js";
 import { similarity } from "../src/nearby.js";
 import ts from "typescript";
 import { resolveApiDescriptions, servedDocuments } from "../src/extract/apidocs.js";
-import type { ApiDocument, Surface } from "../src/model.js";
+import type { ApiDocument, Call, Surface } from "../src/model.js";
+import { matchCalls } from "../src/match.js";
 import { validate } from "../src/schema.js";
 import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
@@ -48,6 +49,42 @@ describe("pathsMatch", () => {
   it("joins controller and method paths", () => {
     expect(joinRoute("orders", ":id")).toBe("/orders/:id");
     expect(joinRoute("/", "")).toBe("/");
+  });
+});
+
+describe("Starlette's path converter", () => {
+  it("takes the rest of the path after the slash written before it, which Spring's {*rest} does not need", () => {
+    const text = '@app.get("/files/{name:path}")\ndef f(): ...\napp.mount("/static", StaticFiles(directory="s"))';
+    expect(routesFromPython("a.py", text, { component: "c", files: [] }).map((s) => s.id)).toEqual([
+      "c|GET /files/{name:path}",
+      "c|GET /static/{path:path}",
+      "c|HEAD /static/{path:path}",
+    ]);
+    const rows: Array<[string, string, boolean]> = [
+      ["/files/{name:path}", "/files", false],
+      ["/files/{name:path}", "/files/a", true],
+      ["/files/{name:path}", "/files/a/b", true],
+      ["/files/{name:path}", "/files/{}", true],
+      ["/files/{name:path}", "/other/a", false],
+      ["/{id}/files/{name:path}", "/7/files/a", true],
+      ["/files/{*name}", "/files", true],
+    ];
+    expect(rows.map(([route, call]) => pathsMatch(route, call))).toEqual(rows.map(([, , m]) => m));
+  });
+
+  it("reaches the path without that segment only through the redirect the router answers when no route serves it", () => {
+    const surface = (method: string, path: string): Surface => ({ id: `s|${method} ${path}`, component: "s", method, path, at: { file: "a.py", line: 1 }, evidence: "text" });
+    const call = (method: string, path: string): Call => ({ id: "c", from: "w", to: "s", method, path, at: { file: "b.ts", line: 1 }, evidence: "text", based: false });
+    const reached = (surfaces: Surface[], c: Call) => (matchCalls({ surfaces, calls: [c] }).targetsOf.get(0) ?? []).map((s) => s.id);
+    const tail = surface("GET", "/files/{name:path}");
+    expect(reached([tail], call("GET", "/files"))).toEqual(["s|GET /files/{name:path}"]);
+    expect(reached([surface("GET", "/files"), tail], call("*", "/files"))).toEqual(["s|GET /files"]);
+    // A route at the path that takes another method answers 405 itself; nothing is redirected.
+    expect(reached([surface("POST", "/files"), tail], call("GET", "/files"))).toEqual([]);
+    expect(reached([surface("GET", "/{kind}"), tail], call("GET", "/files"))).toEqual(["s|GET /{kind}"]);
+    // An interpolated segment may name the path the redirect serves, unless a route serves that path itself.
+    expect(reached([surface("GET", "/users"), tail], call("GET", "/{}"))).toEqual(["s|GET /users", "s|GET /files/{name:path}"]);
+    expect(reached([surface("GET", "/users"), surface("GET", "/files"), tail], call("GET", "/{}"))).toEqual(["s|GET /users", "s|GET /files"]);
   });
 });
 
