@@ -100,10 +100,11 @@ handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`
 handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
 method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)` or Angular's
 `request(method, url)` with the method held in a value, or a `redirect(status, url)`; the window's `open(url, target)`
-takes its URL first. A limit names the functions such paths went to. A `path` option is
+(the global `open`, or `open` on a global `window` or `document`, not a binding of that name the code declares) takes its URL first. A limit names the functions such paths went to. A `path` option is
 read as Node's `http.request` defines it, from the root: one joined to another value (`` path: `${dir}/raw` ``) is no
-request. When both branches of a conditional name the same path (`` base ? `${base}/chat` : "/chat" ``) they are one
-call, which joins a base only when both branches do; a branch to a host other than the target's is read on its own. An
+request. When both branches of a conditional name the same request (`` base ? `${base}/chat` : "/chat" ``) they are
+one call, which joins a base only when both branches do. Branches whose paths differ once the configured `prefix` is
+put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
 absolute URL, in code of any language, is a request to the call source's target when its
 host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
 other host, a link to another site for one, is not read, and a limit names the host. Routes come

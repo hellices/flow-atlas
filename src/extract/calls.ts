@@ -204,11 +204,10 @@ function argumentPlace(value: ts.Node): { call: ts.CallExpression | ts.NewExpres
  * on a window or the document. A binding the code declares under that name is its own value.
  */
 function isLocation(e: ts.Expression): boolean {
-  const global = (x: ts.Expression, names: Set<string>) => ts.isIdentifier(x) && names.has(x.text) && declarationOf(x) === undefined;
   const value = unwrap(e);
-  if (global(value, new Set(["location"]))) return true;
+  if (isGlobal(value, new Set(["location"]))) return true;
   const m = member(value);
-  return m?.name === "location" && global(unwrap(m.receiver), WINDOWS);
+  return m?.name === "location" && isGlobal(unwrap(m.receiver), WINDOWS);
 }
 
 /**
@@ -247,12 +246,17 @@ function laterArgument(node: ts.Node): string | undefined {
 
 const WINDOWS = new Set(["window", "self", "globalThis", "top", "parent", "opener", "frames", "document"]);
 
-/** Whether a callee is the window's `open(url, target)`: the global `open`, or `open` on a window or the document. */
+/** Whether an expression is a global of one of these names: one the code does not declare. */
+const isGlobal = (e: ts.Expression, names: Set<string>): boolean => ts.isIdentifier(e) && names.has(e.text) && declarationOf(e) === undefined;
+
+/**
+ * Whether a callee is the window's `open(url, target)`: the global `open`, or `open` on a global window or document. A
+ * binding the code declares under one of those names is its own value.
+ */
 function windowOpen(callee: ts.Expression): boolean {
-  if (ts.isIdentifier(callee)) return callee.text === "open";
+  if (isGlobal(callee, new Set(["open"]))) return true;
   const m = member(callee);
-  const receiver = m && unwrap(m.receiver);
-  return m?.name === "open" && !!receiver && ts.isIdentifier(receiver) && WINDOWS.has(receiver.text);
+  return m?.name === "open" && isGlobal(unwrap(m.receiver), WINDOWS);
 }
 
 /** The key a property is written with, quoted or not. */
@@ -408,8 +412,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
     // `base ? `${base}/chat` : "/chat"` is one request, whichever branch runs: one call, joining a base only when both
-    // branches do (the configured prefix is put before the other's root-relative path). A branch to another host is
-    // another server's request, read on its own.
+    // branches do. Branches the configured prefix leaves on different paths (it goes before a root-relative path, not
+    // one joined to a base) are two requests, as is a branch to another host: each is read on its own.
     if (ts.isConditionalExpression(node)) {
       const branches = [unwrap(node.whenTrue), unwrap(node.whenFalse)];
       const read = branches.map((b) => {
@@ -420,8 +424,11 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       const [a, b] = read;
       const hosts = [a && hostOf(a.raw), b && hostOf(b.raw)];
       const one = hosts[0] === hosts[1] || hosts.every((h) => reachesTarget(h, origin));
-      if (a && b && a.parsed.path === b.parsed.path && one) {
-        add(node, { path: a.parsed.path, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
+      const effective = (p: CallPath) => (p.based || !spec.prefix ? p.path : joinRoute(spec.prefix, p.path));
+      if (a && b && effective(a.parsed) === effective(b.parsed) && one) {
+        // The path the prefix completes, where a branch has one, so the prefix is put before it once.
+        const path = (a.parsed.based ? b.parsed : a.parsed).path;
+        add(node, { path, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
         branches.forEach((branch) => merged.add(branch));
       }
     }

@@ -140,6 +140,36 @@ describe("the second review of #21", () => {
   });
 });
 
+describe("the third review of #21", () => {
+  it("takes open as the window's only where open, or the window it is called on, is the global", () => {
+    const rows: Array<[string, string[]]> = [
+      ['function open(method, url) { return send(method, url); }\nopen(methodValue, "/devices");', ["* /devices"]],
+      ['const window = client;\nwindow.open(methodValue, "/devices");', ["* /devices"]],
+      // The browser's own still take the URL first.
+      ['open(url, "/preview");', []],
+      ['window.open(url, "/preview");', []],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("reads a conditional's branches as one call only when the configured prefix leaves their paths the same", () => {
+    const calls = (code: string) => {
+      const config = normalizeConfig({
+        components: [{ name: "app", path: "" }, { name: "api", path: "" }],
+        calls: [{ from: "app", to: "api", files: ["a.ts"], prefix: "/api" }],
+        origins: { api: "https://target.example" },
+      });
+      return extractCalls(memory({ "a.ts": code }), config).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+    };
+    expect(calls('fetch(flag ? "https://target.example/chat" : "/chat");')).toEqual(["GET /chat based", "GET /api/chat"]);
+    expect(calls('fetch(base ? `${base}/chat` : "/chat");')).toEqual(["GET /chat based", "GET /api/chat"]);
+    expect(calls('fetch(flag ? "/chat" : "/chat");')).toEqual(["GET /api/chat"]);
+    // The same request written with the target's origin and as a root-relative path the prefix completes.
+    expect(calls('fetch(flag ? "https://target.example/api/chat" : "/chat");')).toEqual(["GET /api/chat"]);
+    expect(calls('fetch(flag ? "https://target.example/chat" : `${base}/chat`);')).toEqual(["GET /chat based"]);
+  });
+});
+
 describe("what a call source leaves unread", () => {
   const limits: string[] = [];
   const calls = (code: string, origins: Record<string, string> = {}) => {
