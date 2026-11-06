@@ -132,7 +132,8 @@ steps are left out.
 When the chosen document is served, the server address in front of its path differs per environment and goes into the
 configuration's `origins`. A file in the repository, named by a relative or an absolute path (there at the revision
 read, whether or not on this disk), is written relative to the repository root, and the document says it assumes it is
-kept there (Arazzo resolves a relative URL against the document). A file is placed where its links lead: a committed
+kept there (Arazzo resolves a relative URL against the document). The export prints to stdout and writes nothing to
+`--out`; save it at the repository root. A file is placed where its links lead: a committed
 link to a file outside the repository is outside it, since git keeps only the link. A file outside the repository is
 not written as a path on the machine that ran atlas but by its file name, as a file next to the exported document,
 with a `limit:` to commit the document or publish it and set `openapi.<component>` to its URL. Nothing in the code says

@@ -212,7 +212,9 @@ export function toArazzo(
     }
     return described.get(component)!;
   };
-  const sameFile = (a: string, b: string) => (repositoryPath(a, options.root) ?? a) === (repositoryPath(b, options.root) ?? b);
+  // A file outside the repository is where documentUrl reads it: resolved against the root, links followed.
+  const located = (path: string) => repositoryPath(path, options.root) ?? (options.root ? real(resolve(options.root, path)) : path);
+  const sameFile = (a: string, b: string) => located(a) === located(b);
   const sourceNameOf = sourceNames([
     ...graph.components.map((c) => c.name),
     ...graph.surfaces.map((x) => x.component),

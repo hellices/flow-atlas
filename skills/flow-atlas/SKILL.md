@@ -198,8 +198,10 @@ Never run `atlas baseline update` unless a person asks for it. Never edit genera
 `--format json` or `--format yaml` prints documents that follow the flow-atlas package's `schema/*.schema.json`, each
 with `apiVersion`, `kind` and `provenance` (the commit and files read, with digests). Read these instead of parsing the
 text output; branch on a condition's `reason`, not its `message`. `atlas check --format sarif` gives the findings as
-SARIF 2.1.0 for code-scanning and IDE viewers; `atlas export arazzo` gives the flows as Arazzo 1.0 for API workflow and
-e2e tools, which still need parameters, request bodies and success criteria filled in.
+SARIF 2.1.0 for code-scanning and IDE viewers; `atlas export arazzo` prints the flows as Arazzo 1.0 for API workflow and
+e2e tools, which still need parameters, request bodies and success criteria filled in. It writes nothing to `--out`:
+save its output at the repository root (`atlas export arazzo > flows.arazzo.yaml`), since the description files it
+names in the repository are relative to the root.
 
 ## Reading the output
 

@@ -471,7 +471,11 @@ describe("schemas", () => {
     expect(twice.limits).toContain(clash);
     const shared = toArazzo(fromRoutes(fromRoutes(unnamed, outside), outside, "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
     expect(sources(shared.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
-    expect(shared.limits.filter((l) => l.includes("different documents"))).toEqual([]);
+    expect(shared.limits).toEqual([
+      "view-order.screen: /elsewhere/generated/orders.json declares no GET /screens/order/{orderId}",
+      "bff's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.bff to its URL; if it is the document bff serves at /openapi.json, set openapi.bff to /openapi.json and origins.bff to the server's base URL instead",
+      awayNote,
+    ]);
     const committed = toArazzo(fromRoutes(unnamed, outside), files, { ...config, openapi: { bff: "orders.json" } }, { title: "t", flow: "view-order", root, read: readOutside });
     expect(sources(committed.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
     expect(committed.limits).toContain(clash);
@@ -489,17 +493,25 @@ describe("schemas", () => {
 
   it("names a document read for routes by its normalized path, so the path key it writes is used", () => {
     const flows = loadFlows(source, config);
-    const keyed = {
+    const keyed = (named: string, location: string) => ({
       ...graph,
       surfaces: graph.surfaces.map((s) =>
-        s.id === "orders|GET /orders/{id}" ? { ...s, operationId: undefined, described: { file: "./services/orders/openapi.json", line: 5 }, describedPath: "/orders/{orderId}" } : s,
+        s.id === "orders|GET /orders/{id}" ? { ...s, operationId: undefined, described: { file: named, line: 5 }, describedPath: "/orders/{orderId}" } : s,
       ),
       apiDescriptions: graph.apiDescriptions.map((d) =>
-        d.component === "orders" ? { component: "orders", status: "chosen" as const, location: "services/orders/openapi.json", kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d,
+        d.component === "orders" ? { component: "orders", status: "chosen" as const, location, kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d,
       ),
+    });
+    const operationPath = (named: string, location: string, root?: string) => {
+      const { document } = toArazzo(keyed(named, location), flows, { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t", flow: "view-order", root });
+      expect(arazzoErrors(document)).toEqual([]);
+      return (document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationPath;
     };
-    const { document } = toArazzo(keyed, flows, { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t", flow: "view-order" });
-    expect((document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationPath).toBe("{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get");
+    const written = "{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get";
+    expect(operationPath("./services/orders/openapi.json", "services/orders/openapi.json")).toBe(written);
+    // A document outside the repository, named relative to the root by the route entry: the same file the export reads.
+    expect(operationPath("../shared/orders.json", "../shared/orders.json", root)).toBe(written);
+    expect(operationPath("../shared/orders.json", join(root, "..", "shared", "orders.json"), root)).toBe(written);
   });
 
   it("follows links: a link in the repository to a file outside it is outside", () => {

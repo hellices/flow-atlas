@@ -44,7 +44,8 @@ Commands
   flows                     hold the flow descriptions against the code: resolution, connections, uncovered surfaces
   check                     run the rules and show findings new since the baseline or --since
   diff <base>..<head>       compare the flow graph and findings of two revisions (head may be WORKTREE)
-  export arazzo             write the flows as an Arazzo 1.0 description (YAML; --format json), --flow for one
+  export arazzo             print the flows as an Arazzo 1.0 description (YAML; --format json), --flow for one;
+                            file URLs in it are relative to the repository root, so save it there
   explain <key>             show one finding from the last check with nearby calls or surfaces
   baseline update           record the current findings as the accepted baseline
 
