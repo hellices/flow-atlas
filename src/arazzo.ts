@@ -1,6 +1,6 @@
 import { chainRoot } from "./chains.js";
-import { existsSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 /** Whether a path names a regular file on this machine; a directory or anything unreadable does not. */
 function isFile(path: string): boolean {
@@ -51,13 +51,34 @@ function parseSurfaceId(id: string): { component: string; method: string; path: 
   return m ? { component: m[1]!, method: m[2]!, path: m[3]! } : undefined;
 }
 
-const real = (path: string): string => {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
+/**
+ * Where a path leads on this disk, links followed as far as anything exists: the nearest existing ancestor's real
+ * path with the rest appended, and a dangling link's target in its place. Undefined for links that lead nowhere.
+ */
+function settle(path: string, hops = 0): string | undefined {
+  const rest: string[] = [];
+  for (let head = resolve(path); ; head = dirname(head)) {
+    let link: boolean;
+    try {
+      link = lstatSync(head).isSymbolicLink();
+    } catch {
+      if (dirname(head) === head) return resolve(path);
+      rest.unshift(basename(head));
+      continue;
+    }
+    if (!link || existsSync(head)) {
+      try {
+        return join(realpathSync(head), ...rest);
+      } catch {
+        return undefined;
+      }
+    }
+    if (hops >= 32) return undefined;
+    return settle(join(resolve(realpathSync(dirname(head)), readlinkSync(head)), ...rest), hops + 1);
   }
-};
+}
+
+const real = (path: string): string => settle(path) ?? resolve(path);
 
 const within = (base: string, file: string): string | undefined => {
   const rel = relative(base, file);
@@ -70,7 +91,8 @@ const within = (base: string, file: string): string | undefined => {
  *
  * A file on this disk is where its links lead. A committed link to a file outside the repository is outside: git keeps
  * only the link's text, so on any other machine, and at any revision read from git, it names nothing. A file not on
- * this disk (one that exists only at another revision) is placed by its path.
+ * this disk (one that exists only at another revision) is placed where the links on its path lead; one behind a link
+ * that leads nowhere is not taken as in the repository.
  */
 export function repositoryPath(path: string, root: string | undefined): string | undefined {
   if (!root) {
@@ -78,10 +100,9 @@ export function repositoryPath(path: string, root: string | undefined): string |
     const normal = posix.normalize(path.split(sep).join("/"));
     return normal === ".." || normal.startsWith("../") ? undefined : normal;
   }
-  const given = resolve(root, path);
-  if (existsSync(given)) return within(real(root), real(given));
+  const at = settle(resolve(root, path));
   // The root itself may be reached through a link (a temporary directory, a checkout under a linked home).
-  return within(resolve(root), given) ?? within(real(root), given);
+  return at === undefined ? undefined : within(real(root), at);
 }
 
 /** The one path a component's code serves its OpenAPI document at; a page that shows another served path is that path. */

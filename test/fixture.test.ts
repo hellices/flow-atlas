@@ -538,6 +538,29 @@ describe("schemas", () => {
     }
   });
 
+  it("places a file not on this disk where the links on its path lead", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-links-"));
+    try {
+      const repo = join(dir, "repo");
+      mkdirSync(repo);
+      mkdirSync(join(dir, "specs"));
+      mkdirSync(join(repo, "sub"));
+      symlinkSync(join(dir, "specs"), join(repo, "docs"));
+      symlinkSync(join(dir, "specs", "missing.json"), join(repo, "gone.json"));
+      symlinkSync("generated/next.json", join(repo, "next.json"));
+      symlinkSync("loop.json", join(repo, "loop.json"));
+      const at = (path: string) => repositoryPath(path, repo);
+      // Through a directory link that leads outside, and through a dangling link to a file outside.
+      expect([at("docs/openapi.yaml"), at(join(repo, "docs", "openapi.yaml")), at("gone.json")]).toEqual([undefined, undefined, undefined]);
+      // A dangling link to a file the repository does not hold yet, a link that leads nowhere, and a plain missing file.
+      expect([at("next.json"), at("loop.json"), at("sub/new.json")]).toEqual(["generated/next.json", undefined, "sub/new.json"]);
+      const target = join(realpathSync(join(dir, "specs")), "openapi.yaml");
+      expect(documentUrl("orders", { ...graph, apiDocuments: [] }, { ...config, openapi: { orders: "docs/openapi.yaml" } }, repo)).toMatchObject({ url: "openapi.yaml", file: target });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("brings the flows a selected flow runs into the export", () => {
     const files = loadFlows(source, config);
     const parent = { ...files[0]!.flows[1]!.object, metadata: { name: "checkout" }, spec: { steps: [{ stepId: "place", flow: "place-order" }] } };
