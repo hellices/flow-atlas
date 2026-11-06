@@ -37,7 +37,14 @@ export function validate(name: SchemaName, value: unknown): string[] {
     compiled.set(name, fn);
   }
   if (fn(value)) return [];
-  return (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? "is invalid"}${e.params && "allowedValues" in e.params ? ` (${(e.params.allowedValues as unknown[]).join(", ")})` : ""}`);
+  // Ajv names an allowed value set or an unknown field in `params`; both say what to change.
+  const detail = (params: Record<string, unknown>): string =>
+    "allowedValues" in params
+      ? ` (${(params.allowedValues as unknown[]).join(", ")})`
+      : "additionalProperty" in params
+        ? ` (${String(params.additionalProperty)})`
+        : "";
+  return (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? "is invalid"}${e.params ? detail(e.params) : ""}`);
 }
 
 const BY_KIND: Record<string, SchemaName> = {

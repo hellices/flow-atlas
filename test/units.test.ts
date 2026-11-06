@@ -323,7 +323,8 @@ describe("flow metadata", () => {
       spec: { steps: [{ stepId: "s", surface: "api|GET /x" }] },
     });
     for (const removed of [{ generated: { by: "claude-code/opus-4" } }, { verified: { by: "human:lead" } }, { stale_after: "2027-01-01T00:00:00Z" }]) {
-      expect(validate("flow", flow(removed)).length).toBeGreaterThan(0);
+      // The message names the field, so a flow written for an older atlas says what to delete.
+      expect(validate("flow", flow(removed))).toEqual([`/metadata must NOT have additional properties (${Object.keys(removed)[0]})`]);
     }
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "team:docs" }] }))).toEqual([]);
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "the docs team" }] })).length).toBeGreaterThan(0);
