@@ -209,10 +209,13 @@ export function routesFromTypeScript(
   const constPattern = spec.constants ? new RegExp(spec.constants) : undefined;
   const out: Surface[] = [];
   const at = (node: ts.Node) => ({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 });
-  /** The declarations `constants` turned into routes, and the registrations whose path is not a literal. */
-  const readConstants = new Set<ts.Node>();
-  const unreadPaths: ts.Expression[] = [];
-  const unread = (arg: ts.Expression) => unreadPaths.push(arg);
+  /**
+   * The declarations `constants` turned into GET routes, with their paths, and the registrations whose path is not a
+   * literal: the method each registers and the prefixes its path is served under, where they are known.
+   */
+  const readConstants = new Map<ts.Node, string>();
+  const unreadPaths: Array<{ arg: ts.Expression; method?: string; prefixes?: string[] }> = [];
+  const unread = (arg: ts.Expression, method?: string, prefixes?: string[]) => unreadPaths.push({ arg, method, prefixes });
   const add = (
     method: string,
     path: string,
@@ -347,7 +350,7 @@ export function routesFromTypeScript(
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
             const paths = call && method ? decoratorPaths(call.args) : undefined;
-            if (call && method && !paths) unread(call.args[0]!);
+            if (call && method && !paths) unread(call.args[0]!, method, bases);
             if (!paths) continue;
             for (const a of call!.args) span(a);
             for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
@@ -363,7 +366,9 @@ export function routesFromTypeScript(
         const path = stringValue(arg);
         const router = ts.isIdentifier(receiver) ? mounts?.routerOf(file, receiver) : undefined;
         // With one argument, `app.get(name)` reads a setting; a route takes a path and a handler.
-        if (ts.isIdentifier(receiver) && (router || receivers.has(receiver.text)) && arg && node.arguments.length > 1 && path === undefined) unread(arg);
+        if (ts.isIdentifier(receiver) && (router || receivers.has(receiver.text)) && arg && node.arguments.length > 1 && path === undefined) {
+          unread(arg, name, router ? mounts!.prefixes(router) : [""]);
+        }
         if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
           span(node.arguments[0]);
           const method = name === "all" ? "*" : name;
@@ -379,7 +384,7 @@ export function routesFromTypeScript(
         const method = c.method ?? stringValue(node.arguments[c.methodArg]);
         const arg = node.arguments[c.pathArg];
         const path = stringValue(arg);
-        if (arg && path === undefined) unread(arg);
+        if (arg && path === undefined) unread(arg, method, [""]);
         if (method && path?.startsWith("/")) {
           span(node.arguments[c.pathArg]);
           add(method, path, node, node, operationIdIn(node.arguments));
@@ -391,17 +396,20 @@ export function routesFromTypeScript(
       if (path?.startsWith("/")) {
         span(node.initializer);
         add("GET", path, node);
-        readConstants.add(node);
+        readConstants.set(node, path);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  // A path that is a constant read as a route above is read; any other is said in `limits`.
-  for (const arg of unreadPaths) {
+  // A GET registration at the very path of a constant read as a route above is that route; any other, another method
+  // or a prefix included, is said in `limits`.
+  for (const { arg, method, prefixes } of unreadPaths) {
     const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
     const declaration = ts.isIdentifier(inner) ? declarationOf(inner) : undefined;
-    if (declaration && readConstants.has(declaration)) continue;
+    const value = declaration && readConstants.get(declaration);
+    const route = (p: string) => routeTemplate(joinRoute(p));
+    if (value && method?.toUpperCase() === "GET" && prefixes?.length && prefixes.every((p) => route(joinRoute(p, value)) === route(value))) continue;
     limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
   }
   for (const name of unmounted) {

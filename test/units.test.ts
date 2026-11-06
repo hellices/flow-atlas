@@ -131,6 +131,23 @@ describe("routesFromTypeScript", () => {
       routes: ["GET /stream"],
       limits: [not(2, "outputPath"), not(4, "snapshotPath"), not(6, "streamPath")],
     });
+    // `constants` reads a GET route at the constant's own path; another method, or a router's prefix, is a route it
+    // does not give, so that registration is still unread.
+    const methods = ['const usersPath = "/users";', "app.get(usersPath, h);", "app.post(usersPath, h);", "app.all(usersPath, h);"].join("\n");
+    expect(unread(methods, { ...fastify, receivers: ["app"], constants: "Path$" })).toEqual({
+      routes: ["GET /users"],
+      limits: [not(3, "usersPath"), not(4, "usersPath")],
+    });
+    const helperGet = { component: "svc", files: [], constants: "Path$", calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
+    expect(unread('const usersPath = "/users";\nregisterRoute(app, "GET", usersPath, h);\nregisterRoute(app, "PUT", usersPath, h);', helperGet)).toEqual({
+      routes: ["GET /users"],
+      limits: [not(3, "usersPath")],
+    });
+    const nestConst = { ...nest, constants: "Path$" };
+    expect(unread('const listPath = "/list";\n@Controller("x")\nclass C {\n  @Get(listPath) a() {}\n}', nestConst)).toEqual({
+      routes: ["GET /list"],
+      limits: [not(4, "listPath")],
+    });
     // A setting read with one argument, a receiver atlas does not know, or a literal that is no path register nothing.
     expect(unread('app.get(SETTING);\ncache.get(key, h);\napp.get("*", h);', { ...fastify, receivers: ["app"] })).toEqual({ routes: [], limits: [] });
     const helper = { component: "svc", files: [], calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
