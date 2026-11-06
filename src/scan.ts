@@ -24,9 +24,10 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
 
 /**
  * `match` edges from calls to the surfaces they reach; `reach` edges from surfaces to the outbound calls their handlers
- * lead to: a call the handler's code runs (a string it runs, in `executed`, lies in the call's `spans` entry, evidence
- * `static`), or one held in a method the handler calls by name (evidence `name`). `spans[i]` are the offsets of the
- * expression holding `calls[i]`'s URL, so a link written on the same line as a request is not taken for it.
+ * lead to: a call the handler's code runs (evidence `static`), or one held in a method the handler calls by name
+ * (evidence `name`). `spans[i]` are the offsets of the expression holding `calls[i]`'s URL; the handler runs the call
+ * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
+ * built from a request's result, starts elsewhere.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
@@ -44,14 +45,9 @@ export function edgesOf(
     const runs = executed?.get(s.id);
     if (!reached.size && !runs?.size) continue;
     const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
-    const offsets = new Map<string, number[]>();
-    for (const r of runs ?? []) {
-      const at = r.lastIndexOf("@");
-      if (at > 0 && !r.includes(":*")) (offsets.get(r.slice(0, at)) ?? offsets.set(r.slice(0, at), []).get(r.slice(0, at))!).push(Number(r.slice(at + 1)));
-    }
     const runsIn = (i: number, file: string): boolean => {
       const span = spans[i];
-      return !!span && (offsets.get(file) ?? []).some((o) => o >= span[0] && o < span[1]);
+      return !!span && !!runs?.has(`${file}@${span[0]}`);
     };
     for (const [i, c] of graph.calls.entries()) {
       if (rendered.has(c.at.file)) {

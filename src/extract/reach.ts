@@ -133,11 +133,12 @@ export class Reach {
         if (target && nb && ts.isNamedImports(nb)) {
           for (const el of nb.elements) parsed.imports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
         }
-      } else if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
-        // `export { run as handler }` names a binding of this file under another name.
+      } else if (ts.isExportDeclaration(st) && !st.isTypeOnly && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+        // `export { run as handler }` names a binding of this file under another name; `export { type run as GET }`
+        // and `export type { run as GET }` name only its type.
         for (const el of st.exportClause.elements) {
           const local = (el.propertyName ?? el.name).text;
-          if (local !== el.name.text) parsed.reexports.set(el.name.text, { file, name: local });
+          if (local !== el.name.text && !el.isTypeOnly) parsed.reexports.set(el.name.text, { file, name: local });
         }
       } else if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
         // A type-only re-export carries no value, so nothing is followed through it.
@@ -185,8 +186,8 @@ export class Reach {
   }
 
   /**
-   * Member method names called under `start` in `file`, sorted; `executed` collects `file@offset` of each string the code
-   * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
+   * Member method names called under `start` in `file`, sorted; `executed` collects `file@offset` of each expression the code
+   * hands to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
    * local name, is followed only where it is used; a function written inline counts as run when it is a callback
    * argument or called on the spot, and not when it is returned or stored.
    */
@@ -302,8 +303,15 @@ export class Reach {
         // An inline function runs when it is handed to a call (`then(() => ...)`, `new Promise(...)`) or called on the
         // spot; one returned or stored is run by whoever receives it, which is not known here.
         if (n !== node && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && !handedToCall(n)) return;
-        if (executed && inCall && notes && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
-          executed.add(`${f}@${n.getStart(parsed.sf)}`);
+        // What a call it runs is handed: each argument and the expressions it is made of (`fetch(BASE + id)`,
+        // `fetch(ok ? "/a" : "/b")`), down to a call or function inside it, whose own arguments are its own. A URL is
+        // run when one of these starts where it does; a URL built around a call's result is not that call's argument.
+        if (executed && inCall && notes && n.parent && ts.isCallExpression(n.parent) && n.parent.arguments.some((a) => a === n)) {
+          const mark = (m: ts.Node): void => {
+            executed.add(`${f}@${m.getStart(parsed.sf)}`);
+            if (!ts.isCallExpression(m) && !ts.isNewExpression(m) && !ts.isFunctionLike(m)) ts.forEachChild(m, mark);
+          };
+          mark(n);
         }
         // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
         if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {

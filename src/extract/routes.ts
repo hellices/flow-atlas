@@ -181,7 +181,7 @@ function ownRender(cls: ts.ClassDeclaration): ts.Node | undefined {
 
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
-/** `executed` collects, per surface id, the `file@offset` of each string its handler passes to a call it runs (see `Reach.from`). */
+/** `executed` collects, per surface id, the `file@offset` of each expression its handler hands to a call it runs (see `Reach.from`). */
 export function routesFromTypeScript(
   file: string,
   text: string,

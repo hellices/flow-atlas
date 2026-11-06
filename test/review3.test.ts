@@ -226,13 +226,22 @@ describe("framework rules", () => {
       // Nor does a value re-export that reaches the handler only through a type-only one.
       "app/through/route.ts": 'export function POST() {}\nexport * from "./types";',
       "app/through/types.ts": 'export type * from "../stars/handlers";',
+      // A local binding exported only as a type, under a method's name, in the route or in a module it re-exports.
+      "app/local/route.ts": 'import { run } from "./handlers";\nexport function POST() {}\nexport type { run as GET };\nexport { type run as PUT };',
+      "app/aliased/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/aliased/types.ts": 'import { run } from "../local/handlers";\nexport type { run as GET };\nexport { type run as PUT };',
+      "app/local/handlers.ts": "export function run() {}",
       "app/stars/handlers.ts": "export function GET() {}\nexport function PUT() {}",
       "app/named/handlers.ts": "export function GET() {}\nexport function PUT() {}",
     };
     expect(scanned(files)).toEqual([
+      "api|OPTIONS /aliased (implicit)",
+      "api|OPTIONS /local (implicit)",
       "api|OPTIONS /named (implicit)",
       "api|OPTIONS /stars (implicit)",
       "api|OPTIONS /through (implicit)",
+      "api|POST /aliased",
+      "api|POST /local",
       "api|POST /named",
       "api|POST /stars",
       "api|POST /through",
@@ -338,6 +347,37 @@ describe("framework rules", () => {
     const reached = graph.edges.filter((e) => e.kind === "reach" && e.from === "web|GET /one").map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     expect(graph.calls.map((c) => c.path).sort()).toEqual(["/api/data", "/next"]);
     expect(reached).toEqual(["/api/data"]);
+  });
+
+  it("joins a request to the URL that holds it, not to a URL built around it", () => {
+    const files = {
+      // The fetch runs while rendering; the address it helps build is the link's, requested later by the browser.
+      "app/two/page.tsx": [
+        "export default async function Two() {",
+        '  const href = "/next/" +',
+        '    (await fetch("/api/data")).id;',
+        "  return <Link href={href}>Next</Link>;",
+        "}",
+      ].join("\n"),
+      // A call that only builds the link's address runs while rendering, but the address is still the browser's.
+      "app/three/page.tsx": 'export default function Three({ slug }) {\n  const href = "/next/" + encodeURIComponent(slug);\n  return <Link href={href}>Next</Link>;\n}',
+      // Either branch of a URL handed to a request is the request's.
+      "app/four/page.tsx": 'export default async function Four({ ok }) {\n  const d = await fetch(ok ? "/api/a" : "/api/b");\n  return <p>{d}</p>;\n}',
+      // A URL with no literal of its own at the call: the request still runs in the handler.
+      "app/items/route.ts": 'const BASE = "/api/";\nexport async function GET() {\n  const id = 1;\n  await fetch(BASE + id, { method: "POST" });\n}',
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["app/**/*.{ts,tsx}"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["app/**/*.{ts,tsx}"] }],
+    });
+    const graph = scan(memory(files), config);
+    const reached = (id: string) =>
+      graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!).map((c) => `${c.method} ${c.path}`);
+    expect(reached("web|GET /two")).toEqual(["GET /api/data"]);
+    expect(reached("web|GET /items")).toEqual(["POST /api/{}"]);
+    expect(reached("web|GET /three")).toEqual([]);
+    expect(reached("web|GET /four").sort()).toEqual(["GET /api/a", "GET /api/b"]);
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {
