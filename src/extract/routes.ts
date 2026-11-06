@@ -144,8 +144,32 @@ function memberName(name: ts.PropertyName): string | undefined {
   return undefined;
 }
 
-/** A class component's `render`: a method, or a field holding a function (`render = () => ...`). */
-function classRender(cls: ts.ClassDeclaration): ts.Node | undefined {
+/**
+ * A class component's `render`, its own or the one it inherits: React calls it on the instance, so a class without its
+ * own takes its base class's, declared in the file or imported from a relative module. A base outside (React's
+ * Component) renders nothing read here.
+ */
+function classRender(cls: ts.ClassDeclaration, file: string, sf: ts.SourceFile, reach: Reach | undefined, depth = 0): { node: ts.Node; file: string } | undefined {
+  const own = ownRender(cls);
+  if (own) return { node: own, file };
+  const base = cls.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+  if (!base || !ts.isIdentifier(base) || depth > 8) return undefined;
+  const local = sf.statements.find((st): st is ts.ClassDeclaration => ts.isClassDeclaration(st) && st.name?.text === base.text);
+  if (local) return classRender(local, file, sf, reach, depth + 1);
+  const imported = reach?.parse(file)?.imports.get(base.text);
+  const target = imported && reach?.parse(imported.file);
+  if (!imported || !target) return undefined;
+  const declared = target.sf.statements.find(
+    (st): st is ts.ClassDeclaration =>
+      ts.isClassDeclaration(st) &&
+      exported(st) &&
+      (imported.name === "default" ? !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) : st.name?.text === imported.name),
+  );
+  return declared ? classRender(declared, imported.file, target.sf, reach, depth + 1) : undefined;
+}
+
+/** A class component's own `render`: a method, or a field holding a function (`render = () => ...`). */
+function ownRender(cls: ts.ClassDeclaration): ts.Node | undefined {
   for (const m of cls.members) {
     // React calls the instance's render: not a static one, nor an overload's signature without a body.
     if (!m.name || memberName(m.name) !== "render" || (ts.canHaveModifiers(m) && ts.getModifiers(m)?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword))) continue;
@@ -228,9 +252,14 @@ export function routesFromTypeScript(
       page && ts.isExportAssignment(page)
         ? page.expression
         : page && ts.isClassDeclaration(page)
-          ? classRender(page)
+          ? undefined
           : page;
     let handlerFile: string | undefined;
+    if (page && ts.isClassDeclaration(page)) {
+      const found = classRender(page, file, sf, reach);
+      component = found?.node;
+      handlerFile = found?.file;
+    }
     if (!page) {
       // `export { Page as default }`, or `export { default } from "./Page"`: the function it names renders.
       page = sf.statements.find((st) => ts.isExportDeclaration(st) && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === "default"));

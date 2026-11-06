@@ -443,7 +443,9 @@ function chainRoot(masked: string, dot: number): string | undefined {
 function bindings(masked: string, kotlin: boolean): Array<{ name: string; type: string; start: number; end: number }> {
   const out: Array<{ name: string; type: string; start: number; end: number }> = [];
   // `Type name` in Java, `name: Type` in Kotlin, and an untyped `val`/`var` in either.
-  const typed = kotlin ? /\b([a-z_]\w*)\s*:\s*([A-Z][\w.]*)/g : /\b([A-Z][\w.]*)(?:<[^<>()]*>)?(?:\[\])?\s+([a-z_$][\w$]*)\s*(?=[,)=;:])/g;
+  // A type may be written with its package (`org.springframework...HttpSecurity`).
+  const type = "(?:[a-z_]\\w*\\.)*[A-Z][\\w.]*";
+  const typed = kotlin ? new RegExp(`\\b([a-z_]\\w*)\\s*:\\s*(${type})`, "g") : new RegExp(`(?<![\\w.])(${type})(?:<[^<>()]*>)?(?:\\[\\])?\\s+([a-z_$][\\w$]*)\\s*(?=[,)=;:])`, "g");
   const found = [
     ...[...masked.matchAll(typed)].map((m) => ({ at: m.index ?? 0, name: kotlin ? m[1]! : m[2]!, type: kotlin ? m[2]! : m[1]! })),
     ...[...masked.matchAll(/\b(?:val|var)\s+([a-z_]\w*)\s*=/g)].map((m) => ({ at: m.index ?? 0, name: m[1]!, type: "" })),

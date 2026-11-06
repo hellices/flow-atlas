@@ -84,8 +84,9 @@ describe("navigation", () => {
   const calls = (code: string) => callsFromTypeScript("a.tsx", code, { from: "a", to: "a", files: [] }).map((c) => `${c.method} ${c.path}`);
   const next = 'import { useRouter, redirect } from "next/navigation";\nimport Link from "next/link";\nconst router = useRouter();\n';
   it("goes to the root through wrappers that leave the value as it is", () => {
-    const rows = ['router.push("/");', 'router.push(("/"));', 'redirect("/" as const);', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;', 'useRouter().push("/");'];
+    const rows = ['router.push("/");', 'router.push(("/"));', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;', 'useRouter().push("/");'];
     expect(rows.map((r) => calls(next + r))).toEqual(rows.map(() => ["GET /"]));
+    expect(calls(next + 'redirect("/" as const);')).toEqual(["* /"]);
     // Taken apart, or the Router next/router exports.
     expect(calls('import { useRouter } from "next/navigation";\nconst { push } = useRouter();\npush("/");')).toEqual(["GET /"]);
     expect(calls('import Router from "next/router";\nRouter.replace("/");')).toEqual(["GET /"]);
@@ -93,10 +94,11 @@ describe("navigation", () => {
     expect([calls('log("/");'), calls('const parts = [];\nparts.push("/");'), calls('router.push("/");'), calls('import { redirect } from "./mine";\nredirect("/");')]).toEqual([[], [], [], []]);
   });
 
-  it("goes with GET, as HTML and Next.js do; another component's href says nothing of its method", () => {
+  it("goes with GET where HTML and Next.js say so; a redirect or another component's href leave the method open", () => {
     const rows: Array<[string, string]> = [
       ['router.push("/notes");', "GET /notes"],
-      ['redirect("/notes");', "GET /notes"],
+      // A redirect keeps the method of the request it answers (307, 308): a POST handler's redirect is a POST.
+      ['redirect("/notes");', "* /notes"],
       ['const a = <a href="/notes">n</a>;', "GET /notes"],
       ['const a = <Link href="/notes">n</Link>;', "GET /notes"],
       ['const a = <Card href="/notes" />;', "* /notes"],
@@ -239,6 +241,7 @@ describe("framework rules", () => {
         '  const direct = <a href={fetch("/api/direct")} />;',
         '  const field = <a href={fetch("/api/field").url} />;',
         '  const helper = <a href={get("/api/later")} />;',
+        '  const image = <img srcSet={asset("/media/hero")} poster={asset("/media/poster")} />;',
         '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /><button onClick={makeHandler()} /><a href={address("/later")} /><a href={(track(), "/next")} /></Card>;',
         "}",
       ].join("\n"),
@@ -274,6 +277,10 @@ describe("framework rules", () => {
       "pages/quoted.tsx": 'export default class Q extends React.Component {\n  "render"() { return <p>{this.quoted()}</p>; }\n  quoted() { return fetch("/api/quoted"); }\n}',
       // An overload's signature and a static render are not what React calls.
       "pages/overload.tsx": 'export default class O extends React.Component {\n  static render() { return fetch("/api/static"); }\n  render(): unknown;\n  render() { return <p>{this.overload()}</p>; }\n  overload() { return fetch("/api/overload"); }\n}',
+      // A render inherited from a base class, declared here or imported.
+      "pages/inherits.tsx": 'class Base extends React.Component {\n  render() { return <p>{this.inherits()}</p>; }\n  inherits() { return fetch("/api/inherits"); }\n}\nexport default class Inherits extends Base {}',
+      "pages/imported.tsx": 'import { Shared } from "../views/shared";\nexport default class Imported extends Shared {}',
+      "views/shared.tsx": 'export class Shared extends React.Component {\n  render() { return <p>{this.imported()}</p>; }\n  imported() { return fetch("/api/imported"); }\n}',
       "pages/computed.tsx": 'export default class C extends React.Component {\n  ["render"] = () => <p>{this.computed()}</p>;\n  computed() { return fetch("/api/computed"); }\n}',
       "pages/notes.tsx": [
         'import React from "react";',
@@ -291,7 +298,7 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
-    const pages = ["notes", "alias", "re", "field", "quoted", "computed", "overload"];
+    const pages = ["notes", "alias", "re", "field", "quoted", "computed", "overload", "inherits", "imported"];
     expect(pages.map((p) => reached(`web|GET /${p}`))).toEqual(pages.map((p) => [`/api/${p}`]));
   });
 

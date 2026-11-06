@@ -87,6 +87,9 @@ describe("Spring routes", () => {
     // One name, two methods: the servlet request's logout is not the configurer's.
     const shadowed = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(withDefaults()); }\nvoid out(HttpServletRequest http) { http.logout(); }';
     expect(routes(shadowed)).toEqual(["POST /login 1"]);
+    // A type written with its package.
+    expect(routes("SecurityFilterChain chain(org.springframework.security.config.annotation.web.builders.HttpSecurity http) {\n  http.formLogin(withDefaults());\n}")).toEqual(["POST /login 2"]);
+    expect(routes("fun chain(http: org.springframework.security.config.annotation.web.builders.HttpSecurity) {\n  http.formLogin(withDefaults())\n}", "Q.kt")).toEqual(["POST /login 2"]);
     // A local that holds the HttpSecurity configures it too.
     expect(routes("SecurityFilterChain chain(HttpSecurity http) {\n  HttpSecurity security = http;\n  security.formLogin(withDefaults());\n}")).toEqual(["POST /login 3"]);
     // A field is seen throughout its type, before its declaration too.

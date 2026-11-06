@@ -121,10 +121,11 @@ matches nothing else. API routes under `pages/api` answer every method from thei
 re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
 `pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
 the default export (a function component, also one named by `export { Page as default }` or re-exported from another
-module, or a class component's `render`) belongs to the page's request, prop values and what computes a handler or an
-address included; client modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions
-passed as props do not: a `<Link href>` or an address Next.js navigates to (`push` or `replace` on its router, also `useRouter().push`,
-`redirect` from `next/navigation`; also parenthesized or with `as const`) is a GET, as is the `href` of an `<a>`, and reaches
+module, or a class component's `render`, its own or one it inherits from a class of the file or a relative import) belongs to the page's request, prop values and what computes a handler or an
+address included; client modules (`"use client"`), addresses (`href`, `src`, `srcSet`, `poster`, `action`), event handlers (`onClick`) and functions
+passed as props do not: a `<Link href>`, an `<a href>` or an address Next.js's router navigates to (`push` or `replace`, also
+`useRouter().push`; also parenthesized or with `as const`) is a GET, and a `redirect` from `next/navigation` keeps the
+method of the request it answers (`*`); each reaches
 the page it names as a request of its own. Include `.tsx` in the route
 files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb

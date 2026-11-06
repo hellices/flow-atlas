@@ -15,7 +15,7 @@ function requestCallee(e: ts.Expression): boolean {
 }
 
 /** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
-const LATER_PROPS = /^(?:href|src|action|formAction|on[A-Z]\w*)$/;
+const LATER_PROPS = /^(?:href|src|srcSet|poster|action|formAction|on[A-Z]\w*)$/;
 
 interface Parsed {
   sf: ts.SourceFile;

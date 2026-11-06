@@ -134,7 +134,9 @@ function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
 
 /**
  * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
- * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address `push`, `replace` or `redirect` navigates to.
+ * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to. A
+ * `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its method is
+ * left open.
  */
 function navigatesWithGet(node: ts.Node): boolean {
   const value = outermost(node);
@@ -143,7 +145,7 @@ function navigatesWithGet(node: ts.Node): boolean {
     const tag = holder.parent.parent.tagName;
     return /^(?:a|area)$/.test(tag.getText()) || (ts.isIdentifier(tag) && importedFrom(tag, ["next/link"]) === "default");
   }
-  return ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression));
+  return ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression)) === "router";
 }
 
 /** The outermost expression a string stands for: parentheses, `as`, `satisfies` and `!` leave the value as it is. */
@@ -187,23 +189,18 @@ function isNextRouter(e: ts.Expression): boolean {
  * Whether a callee is a Next.js navigation: `redirect` or `permanentRedirect` from `next/navigation`, or `push` and
  * `replace` on its router, also taken apart (`const { push } = useRouter()`). An array's `push` is no navigation.
  */
-function navigates(callee: ts.Expression): boolean {
-  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression));
-  if (!ts.isIdentifier(callee)) return false;
+function navigates(callee: ts.Expression): "router" | "redirect" | undefined {
+  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression)) ? "router" : undefined;
+  if (!ts.isIdentifier(callee)) return undefined;
   const imported = importedFrom(callee, ["next/navigation"]);
-  if (imported === "redirect" || imported === "permanentRedirect") return true;
+  if (imported === "redirect" || imported === "permanentRedirect") return "redirect";
   const d = declarationOf(callee);
-  if (!d || !ts.isBindingElement(d) || !ts.isObjectBindingPattern(d.parent)) return false;
+  if (!d || !ts.isBindingElement(d) || !ts.isObjectBindingPattern(d.parent)) return undefined;
   const key = (d.propertyName ?? d.name) as ts.Identifier;
   const holder = d.parent.parent;
   const init = ts.isVariableDeclaration(holder) && holder.initializer ? unwrap(holder.initializer) : undefined;
-  return (
-    /^(push|replace)$/.test(key.text) &&
-    !!init &&
-    ts.isCallExpression(init) &&
-    ts.isIdentifier(init.expression) &&
-    importedFrom(init.expression, NEXT_ROUTERS) === "useRouter"
-  );
+  const router = /^(push|replace)$/.test(key.text) && !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && importedFrom(init.expression, NEXT_ROUTERS) === "useRouter";
+  return router ? "router" : undefined;
 }
 
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
