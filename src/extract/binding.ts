@@ -105,9 +105,9 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
   return undefined;
 }
 
-/** Parentheses and type assertions around an expression, which change nothing at run time. */
+/** Parentheses and type assertions (`as`, `satisfies`, `<T>`, `!`) around an expression, which change nothing at run time. */
 export function unwrap(e: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isTypeAssertionExpression(e)) e = e.expression;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isTypeAssertionExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
   return e;
 }
 
@@ -136,6 +136,6 @@ export function resolveModule(from: string, spec: string, exists: (file: string)
   const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
   // A specifier that names its file's extension (`./foo.ts`) is that file; no other extension is tried after it.
   const explicit = /\.(m|c)?[jt]sx?$/.test(written);
-  const candidates = [...substituted, written, ...(explicit ? [] : [...extensions.map((e) => `${written}.${e}`), ...extensions.map((e) => `${written}/index.${e}`)])];
+  const candidates = [...substituted, written, ...(explicit ? [] : [...extensions.map((e) => `${written}.${e}`), ...extensions.map((e) => (written ? `${written}/index.${e}` : `index.${e}`))])];
   return candidates.find((c) => /\.(m|c)?[jt]sx?$/.test(c) && exists(c));
 }

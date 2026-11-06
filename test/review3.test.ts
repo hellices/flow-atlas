@@ -146,7 +146,14 @@ describe("framework rules", () => {
     expect(nextRoute("apps/app/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
     expect(nextRoute("apps/app/src/app/api/items/route.ts", "apps/app")?.path).toBe("/api/items");
     // A required catch-all takes one segment or more, an optional one none or more.
-    expect([pathsMatch("/files/{path}/**", "/files"), pathsMatch("/files/{path}/**", "/files/a/b"), pathsMatch("/files/{*path}", "/files")]).toEqual([false, true, true]);
+    const catchAll: Array<[string, string, boolean]> = [
+      ["/files/{path}/**", "/files", false],
+      ["/files/{path}/**", "/files/a", true],
+      ["/files/{path}/**", "/files/a/b", true],
+      ["/files/{*path}", "/files", true],
+      ["/files/{*path}", "/files/a", true],
+    ];
+    expect(catchAll.map(([route, call]) => pathsMatch(route, call))).toEqual(catchAll.map(([, , m]) => m));
   });
 
   it("reads every way a Next.js handler is exported, and the methods Next.js answers itself", () => {
@@ -326,6 +333,8 @@ describe("inventory", () => {
       "lib/api.dart": "final r = await dio.get('/orders');",
       "lib/server.dart": "router.get('/orders', handler);\napp.post('/items', create);",
       "lib/shelf.dart": "final api = Router();\napi.get('/orders', handler);\nfinal admin = new Router();\nadmin.get('/users', handler);",
+      // Cascades register on the receiver before `..`.
+      "lib/cascade.dart": "final router = Router()..get('/x', handler);\nrouter..post('/y', handler);",
       // Next.js's prefetch loads a route ahead; it is no request wrapper.
       "web/nav.ts": 'router.prefetch("/dashboard");\nconst me = authFetch("/api/me");',
     };
@@ -365,6 +374,8 @@ describe("names resolve by their bindings", () => {
     expect([resolveModule("src/a.ts", "../x.js", exists), resolveModule("src/a.ts", "./x", exists), resolveModule("src/a.ts", "../../x", exists)]).toEqual(["x.ts", "src/x.ts", undefined]);
     // A specifier with its extension is that file: `./foo.ts` is never foo.ts.ts.
     expect(resolveModule("src/a.ts", "./foo.ts", (f) => f === "src/foo.ts.ts")).toBeUndefined();
+    // `..` to the repository root takes its index file.
+    expect(resolveModule("src/a.ts", "..", (f) => f === "index.ts")).toBe("index.ts");
   });
 
   it("takes the innermost scope's binding, as JavaScript does", () => {
@@ -401,6 +412,8 @@ describe("names resolve by their bindings", () => {
       "p = client.get(f\"/pad/{n:'>10}/x\")",
       // A request made inside a field runs too.
       "s = f\"{requests.get('/users')}\"",
+      // A route's own f-string path is no request; a request in its field still is.
+      "@app.get(f\"/{requests.get('/config').text}\")",
     ].join("\n");
     expect(callsFromText("a.py", text, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`)).toEqual([
       "GET /tenants/{tenant}/{}/items",
@@ -408,6 +421,7 @@ describe("names resolve by their bindings", () => {
       "GET /keys/{}/users",
       "GET /pad/{}/x",
       "GET /users",
+      "GET /config",
     ]);
     // A route literal is read as Python reads it: escapes decoded.
     // `\N{name}` needs Unicode's name table: that route is not read rather than read with the escape left in.
@@ -418,5 +432,8 @@ describe("names resolve by their bindings", () => {
     const joined = '@app.get("/api" "/users")\ndef a(): ...\n@app.get("/api"\n         f"/{v}")\ndef b(): ...\nadd_endpoint(app, "/v1" \'/items\', h)\n@app.get(\n  "/v2"  # base\n  "/orders"\n)\ndef c(): ...\n@app.get("/v3\\\r\n/carts")\ndef d(): ...';
     const helper = { component: "c", files: [], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     expect(routesFromPython("r.py", joined, helper).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/users", "GET /v2/orders", "GET /v3/carts", "POST /v1/items"]);
+    // The path may be passed by name.
+    const named = '@app.get(path="/items")\ndef a(): ...\n@app.api_route(methods=["PUT"], path="/carts")\ndef b(): ...\n@app.get(response_model=X)\ndef c(): ...';
+    expect(routesFromPython("r.py", named, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /items", "PUT /carts"]);
   });
 });

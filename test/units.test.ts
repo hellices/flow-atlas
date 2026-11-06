@@ -211,12 +211,27 @@ describe("Reach", () => {
   });
 
   it("leaves out what the framework's handler parameters answer, and keeps what is kept on them", () => {
-    const handler = 'app.get("/x", (req, res) => { req.services.mail.send(); res.status(500).json({}); (res).end(); (res).status(204).sendStatus(); req.getClient().publish(); const reply = res; reply.redirect(); req.services.mail.redirect(); });';
-    const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
-    const call = (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression;
-    const names = reach.from("src/h.ts", call);
-    // `redirect` stays where the component calls it, and only there.
-    expect(names).toEqual(["publish", "redirect", "send"]);
+    const names = (body: string) => {
+      const handler = `app.get("/x", (req, res) => { ${body} });`;
+      const reach = new Reach({ ...source, read: (p) => (p === "src/h.ts" ? handler : undefined), list: () => ["src/h.ts"] });
+      return reach.from("src/h.ts", (reach.parse("src/h.ts")!.sf.statements[0] as ts.ExpressionStatement).expression);
+    };
+    const aliases = Array.from({ length: 9 }, (_, i) => `const a${i + 1} = ${i ? `a${i}` : "res"};`).join(" ");
+    const rows: Array<[string, string[]]> = [
+      // On the response, through parentheses, a fluent chain or any number of aliases: the framework's.
+      ["res.status(500).json({}); (res).end(); (res).status(204).sendStatus();", []],
+      ["const reply = res; reply.redirect();", []],
+      [`${aliases} a9.send();`, []],
+      // Kept on a parameter, or returned by one of its methods: the component's, whatever its name.
+      ["req.services.mail.send();", ["send"]],
+      ["req.services.mail.redirect();", ["redirect"]],
+      ["req.getClient().publish();", ["publish"]],
+    ];
+    expect(rows.map(([body]) => names(body))).toEqual(rows.map(([, out]) => out));
+    // A wrapped handler is still the handler.
+    const wrapped = 'app.get("/x", ((req, res) => res.send("ok")) as Handler);';
+    const reach = new Reach({ ...source, read: (p) => (p === "src/w.ts" ? wrapped : undefined), list: () => ["src/w.ts"] });
+    expect(reach.from("src/w.ts", (reach.parse("src/w.ts")!.sf.statements[0] as ts.ExpressionStatement).expression)).toEqual([]);
   });
 
   it("treats a parameter the handler hands its response to as the framework's", () => {

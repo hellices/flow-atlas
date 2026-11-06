@@ -185,7 +185,7 @@ export class Reach {
     const handlers = ts.isFunctionLike(start)
       ? [start]
       : ts.isCallExpression(start)
-        ? start.arguments.filter((a) => ts.isFunctionLike(a))
+        ? start.arguments.map((a) => unwrap(a)).filter((a) => ts.isFunctionLike(a))
         : ts.isBlock(start) && ts.isFunctionLike(start.parent)
           ? [start.parent]
           : [];
@@ -197,9 +197,13 @@ export class Reach {
     const fromFramework = (receiver: ts.Expression): boolean => {
       let at = unwrap(receiver);
       while (ts.isCallExpression(at) && ts.isPropertyAccessExpression(at.expression) && CHAINABLE.has(at.expression.name.text)) at = unwrap(at.expression.expression);
-      for (let hops = 0; ts.isIdentifier(at) && hops < 8; hops++) {
+      // Through any number of aliases; one seen twice is a cycle.
+      const visited = new Set<ts.Node>();
+      while (ts.isIdentifier(at)) {
         const decl = declarationOf(at);
         if (decl && framework.has(decl)) return true;
+        if (!decl || visited.has(decl)) return false;
+        visited.add(decl);
         const alias = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
         if (!alias || !ts.isIdentifier(alias)) return false;
         at = alias;

@@ -74,7 +74,8 @@ const CALL_SHAPES = [
  * Not in JavaScript or TypeScript, where `app.get("/x")` registers a route, nor in a decorator such as FastAPI's.
  */
 // A receiver that is a router registers a route (`router.get("/x", handler)` in Dart's shelf_router): not a request.
-const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
+// A Dart cascade (`router..get(...)`, `Router()..get(...)`) registers on the receiver before the `..`.
+const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\.?)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
 
 const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 
@@ -155,7 +156,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?Router\s*\(/g)].map((m) => m[1]!)]);
     for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
-        if (re === VERB_CALL && m[1] !== undefined && routers.has(m[1])) continue;
+        if (re === VERB_CALL && m[1] !== undefined && (routers.has(m[1]) || m[1] === "Router")) continue;
         count++;
         firstAt = Math.min(firstAt ?? Infinity, m.index ?? 0);
       }

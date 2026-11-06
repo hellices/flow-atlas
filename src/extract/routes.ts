@@ -495,7 +495,13 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   for (const m of fastapi ? code.matchAll(FASTAPI) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
-    const path = pythonLiteral(text.slice(argsStart));
+    // The path is the first argument, or the one named `path` (`@app.get(path="/items")`).
+    const first = /^[A-Za-z_]\w*\s*=(?!=)/.test(code.slice(argsStart)) ? undefined : argsStart;
+    const named = pythonArgStarts(code, argsStart)
+      .map((at) => ({ at, m: /^path\s*=\s*/.exec(code.slice(at)) }))
+      .find((a) => a.m);
+    const pathAt = named ? named.at + named.m![0].length : first;
+    const path = pathAt === undefined ? undefined : pythonLiteral(text.slice(pathAt));
     if (!path) continue;
     spans?.add(file, argsStart, closingParen(code, argsStart));
     const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];

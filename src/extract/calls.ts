@@ -320,7 +320,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     for (const m of segment.matchAll(STRING)) read1(m, offset + (m.index ?? 0));
   };
   const read1 = (m: RegExpMatchArray, index: number): void => {
-    if (spans?.holds(file, index)) return;
+    // A route's own path is no request; the code in its f-string fields still runs, and is read below.
+    const registered = spans?.holds(file, index);
     const body = m[1] ?? m[2]!;
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
     // code in a field runs, so the requests written in it are read too.
@@ -328,6 +329,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const fields: Array<[number, number]> = [];
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start);
+    if (registered) return;
     const parsed = callPath(inner);
     if (!parsed) return;
     const lineStart = text.lastIndexOf("\n", index) + 1;
