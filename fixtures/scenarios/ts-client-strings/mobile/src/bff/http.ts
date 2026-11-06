@@ -1,8 +1,5 @@
-export interface BffRequest {
-  path: string;
-  method?: "GET" | "POST";
-  body?: unknown;
-}
+// Fetch sends no body with a GET: only a POST carries one.
+export type BffRequest = { path: string; method?: "GET"; body?: never } | { path: string; method: "POST"; body?: unknown };
 
 export interface BffClient {
   request<T>(request: BffRequest): Promise<T>;
@@ -20,7 +17,7 @@ export function createBffClient(baseUrl: string, fetcher: typeof fetch): BffClie
           // Only a new interaction says which cards the app can show.
           ...(request.path === "/interactions" && method === "POST" ? { "x-card-capabilities": "v2" } : {}),
         },
-        body: request.body === undefined ? undefined : JSON.stringify(request.body),
+        body: request.method === "POST" && request.body !== undefined ? JSON.stringify(request.body) : undefined,
       });
       return (await response.json()) as T;
     },

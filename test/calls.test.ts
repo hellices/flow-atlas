@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { callsFromTypeScript, extractCalls } from "../src/extract/calls.js";
+import { isLoopback } from "../src/paths.js";
 import type { Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -69,7 +70,7 @@ describe("strings that are no requests", () => {
 
   it("reads a URL chosen by a condition once when both branches name the same path", () => {
     const rows: Array<[string, string[]]> = [
-      ['const url = base ? `${base}/api/chat` : "/api/chat";\nfetch(url, { method: "POST" });', ["* /api/chat"]],
+      ['const url = base ? `${base}/api/chat` : "/api/chat";\nfetch(url, { method: "POST" });', ["POST /api/chat"]],
       ['fetch(local ? "/api/chat" : "/api/chat");', ["GET /api/chat"]],
       ["fetch(base ? `${base}/api/chat` : `${other}/api/chat`);", ["GET /api/chat based"]],
       // Two paths are two requests.
@@ -99,6 +100,41 @@ describe("the review of #21", () => {
       ['window.open(url, "/preview");', []],
       ['xhr.open(method, "/orders");', ["* /orders"]],
       ['this.http.request(method, "/orders");', ["* /orders"]],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+});
+
+describe("the second review of #21", () => {
+  it("takes any replace as a text operation, except where Location or Next.js's router navigates", () => {
+    const next = 'import { useRouter } from "next/navigation";\nconst router = useRouter();\n';
+    const rows: Array<[string, string[]]> = [
+      ['const t = text.replace("/api");', []],
+      ['const t = text["replace"]("/api");', []],
+      ['location.replace("/login");', ["* /login"]],
+      ['window.location.replace("/login");', ["* /login"]],
+      ['document.location.replace("/login");', ["* /login"]],
+      [next + 'router.replace("/login");', ["GET /login"]],
+      // A value of the code's own named location is not the window's.
+      ['const location = useLocation();\nlocation.replace("/login");', []],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("knows a loopback address by its octets", () => {
+    expect(["127.0.0.1", "127.255.0.9:3000", "localhost", "[::1]:8080", "127.999.999.999", "128.0.0.1", "127.0.0"].map(isLoopback)).toEqual([true, true, true, true, false, false, false]);
+  });
+
+  it("takes the method of a URL held in a const from the request that uses it", () => {
+    const rows: Array<[string, string[]]> = [
+      ['const url = "/api/chat";\nfetch(url, { method: "POST" });', ["POST /api/chat"]],
+      ['const url = "/api/chat";\nfetch(url);', ["GET /api/chat"]],
+      ['const url = "/api/chat";\napi.put(url, body);', ["PUT /api/chat"]],
+      // Uses that state different methods, or none, leave it open.
+      ['const url = "/api/chat";\nfetch(url);\nfetch(url, { method: "POST" });', ["* /api/chat"]],
+      ['const url = "/api/chat";\nfetch(url);\nlog(url);', ["* /api/chat"]],
+      // A use as the base of another URL is that URL's request.
+      ['const items = "/items";\nfetch(items, { method: "POST" });\nfetch(`${items}/${id}`);', ["POST /items", "GET /items/{}"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });
@@ -141,6 +177,11 @@ describe("what a call source leaves unread", () => {
     expect(calls('fetch(live ? "https://api.example.com/api/chat" : "/api/chat");', { api: "https://api.example.com" })).toEqual(["GET /api/chat"]);
     expect(calls('fetch(remote ? "https://other.example.org/api/chat" : "/api/chat");')).toEqual(["GET /api/chat"]);
     expect(limits).toEqual(["calls app->api: URLs to other.example.org (a.ts:1) are not read as requests to api; set origins.api if that is its host"]);
+  });
+
+  it("leaves out a URL whose literal host is not a valid one", () => {
+    expect(calls('fetch("http://127.999.999.999/orders");')).toEqual([]);
+    expect(limits).toEqual(["calls app->api: URLs to 127.999.999.999 (a.ts:1) are not read as requests to api; set origins.api if that is its host"]);
   });
 
   it("leaves out a URL to another host: it is not a request to the configured target", () => {

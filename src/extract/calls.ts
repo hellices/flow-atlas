@@ -200,9 +200,21 @@ function argumentPlace(value: ts.Node): { call: ts.CallExpression | ts.NewExpres
 }
 
 /**
+ * Whether an expression is the window's Location, as the HTML standard names it: the global `location`, or `location`
+ * on a window or the document. A binding the code declares under that name is its own value.
+ */
+function isLocation(e: ts.Expression): boolean {
+  const global = (x: ts.Expression, names: Set<string>) => ts.isIdentifier(x) && names.has(x.text) && declarationOf(x) === undefined;
+  const value = unwrap(e);
+  if (global(value, new Set(["location"]))) return true;
+  const m = member(value);
+  return m?.name === "location" && global(unwrap(m.receiver), WINDOWS);
+}
+
+/**
  * Whether a string is compared (`===`, `!==`, `==`, `!=`, a `case`) or an argument of a method that tests, searches or
- * cuts text, as `path.startsWith("/api")`: no request either way. A `replace` with one argument, or Next.js's router's,
- * navigates instead.
+ * cuts text, as `path.startsWith("/api")`: no request either way. A `replace` on the window's Location
+ * (`location.replace(url)`) or on Next.js's router navigates instead.
  */
 function comparedOrTested(node: ts.Node): boolean {
   const value = valuePlace(node);
@@ -211,7 +223,7 @@ function comparedOrTested(node: ts.Node): boolean {
   if (ts.isCaseClause(parent)) return parent.expression === value;
   const place = argumentPlace(value);
   if (!place || !ts.isCallExpression(place.call) || !member(place.callee) || !TEXT_TESTS.has(place.name)) return false;
-  return !place.name.startsWith("replace") || (place.args.length > 1 && !navigates(place.callee));
+  return !(place.name === "replace" && (navigates(place.callee) || isLocation(member(place.callee)!.receiver)));
 }
 
 /**
@@ -454,6 +466,30 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const bases = new Set<ts.Node>();
   // The request list holds the literal itself, inside any parentheses or assertion around it.
   for (const decl of leads.keys()) if (!usedElsewhere.has(decl)) bases.add(unwrap(decl.initializer!));
+  // A URL held in a `const` is requested where the const is used: when every use that requests it states one method,
+  // that is its method. A use that starts or builds another URL is that URL's request.
+  const held = new Map<ts.VariableDeclaration, ReadCall>();
+  for (const f of found) {
+    const decl = valuePlace(f.node).parent;
+    if (f.call.method === "*" && ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const) held.set(decl, f.call);
+  }
+  if (held.size) {
+    const methods = new Map<ts.VariableDeclaration, string[]>();
+    const names = new Set([...held.keys()].map((d) => (d.name as ts.Identifier).text));
+    const find = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && names.has(n.text)) {
+        const decl = declarationOf(n);
+        const place = valuePlace(n).parent;
+        const building = ts.isTemplateSpan(place) || isPlus(place);
+        if (decl && ts.isVariableDeclaration(decl) && held.has(decl) && n !== decl.name && !building && !leads.get(decl)?.has(n)) {
+          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n));
+        }
+      }
+      ts.forEachChild(n, find);
+    };
+    find(sf);
+    for (const [decl, used] of methods) if (used[0] !== "*" && used.every((m) => m === used[0])) held.get(decl)!.method = used[0]!;
+  }
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
 

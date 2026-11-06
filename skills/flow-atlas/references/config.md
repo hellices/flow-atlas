@@ -91,11 +91,12 @@ call files, the method from `.get(`/`.post(` callees, a method string in the sam
 (`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
 by the scopes around the use (an origin with no path, `https://api.example.com`, keeps its host for the check below); a
-constant used only that way is a base, not a request of its own. A method named in brackets (`path["startsWith"]`) is
+constant used only that way is a base, not a request of its own. A URL held in a `const` takes the method that every
+use requesting it states (`fetch(url, { method: "POST" })`); uses that differ or state none leave it `*`. A method named in brackets (`path["startsWith"]`) is
 the method named after a dot. A string in a type
 (`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
 handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
-`split`, `replace` with two arguments). fetch, axios, ky, got and project wrappers take their URL first, so a path
+`split`, `replace` other than the window's `location.replace(url)` and Next.js's router's). fetch, axios, ky, got and project wrappers take their URL first, so a path
 handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
 method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)` or Angular's
 `request(method, url)` with the method held in a value, or a `redirect(status, url)`; the window's `open(url, target)`
