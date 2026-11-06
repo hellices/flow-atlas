@@ -59,6 +59,62 @@ function declarationStart(masked: string, at: number): number {
   return 0;
 }
 
+/** The modifiers Java and Kotlin allow before a type declaration (`fun` as in `fun interface`). */
+const MODIFIERS = new Set([
+  "public",
+  "protected",
+  "private",
+  "internal",
+  "open",
+  "abstract",
+  "final",
+  "static",
+  "sealed",
+  "non-sealed",
+  "data",
+  "inner",
+  "enum",
+  "annotation",
+  "value",
+  "strictfp",
+  "expect",
+  "actual",
+  "external",
+  "companion",
+  "fun",
+]);
+
+/**
+ * Whether only annotations and modifiers stand between `from` and `to`, so an annotation ending at `from` belongs to
+ * the declaration at `to`. Kotlin members need no `;`, so a mapping on the member before a nested type is otherwise
+ * hard to tell from one on the type.
+ */
+function onlyAnnotations(masked: string, from: number, to: number): boolean {
+  let i = from;
+  while (i < to) {
+    if (/\s/.test(masked[i]!)) {
+      i++;
+      continue;
+    }
+    const annotation = /^@[\w.]+/.exec(masked.slice(i, to));
+    if (annotation) {
+      i += annotation[0].length;
+      let j = i;
+      while (/\s/.test(masked[j] ?? "")) j++;
+      if (masked[j] === "(") {
+        const close = closing(masked, j);
+        if (close === undefined) return false;
+        i = close + 1;
+      }
+      continue;
+    }
+    const word = /^[A-Za-z]+(?:-[A-Za-z]+)?/.exec(masked.slice(i, to));
+    if (!word || !MODIFIERS.has(word[0])) return false;
+    i += word[0].length;
+  }
+  return true;
+}
+
 /**
  * Where the run of annotations that holds the one at `at` begins: annotations written one after another, with only
  * spaces between, belong to one declaration. Members in Kotlin need no `;`, so the previous member's text is not a
@@ -92,9 +148,10 @@ function literals(value: string, kotlin: boolean): string[] | undefined {
   const out: string[] = [];
   let unknown = false;
   const rest = value.replace(/"""([\s\S]*?"*)"""(?!")|"((?:[^"\\\n]|\\.)*)"/g, (_, raw: string | undefined, s: string | undefined) => {
-    const text = raw ?? s!;
-    if (raw?.includes("\n") || (kotlin && /\$[A-Za-z_{`]/.test(text))) unknown = true;
-    out.push(text);
+    // In a Kotlin raw string every `$name` is a template; in a plain one `\$` is an escaped, literal dollar.
+    const template = raw !== undefined ? /\$[A-Za-z_{`]/ : /(?<!\\)(?:\\\\)*\$[A-Za-z_{`]/;
+    if (raw?.includes("\n") || (kotlin && template.test(raw ?? s!))) unknown = true;
+    out.push(raw ?? s!.replace(/\\([$\\"])/g, "$1"));
     return "";
   });
   if (unknown) return undefined;
@@ -286,7 +343,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     }
     const end = masked[i] === "{" ? closing(masked, i) : undefined;
     if (end === undefined) continue;
-    const own = mappings.find((m) => m.kind === "RequestMapping" && m.at >= header && m.at < at);
+    const own = mappings.find((m) => m.kind === "RequestMapping" && m.at >= header && m.at < at && onlyAnnotations(masked, m.end, at));
     if (own) typeLevel.add(own.at);
     const annotations = code.slice(header, at);
     types.push({
@@ -378,6 +435,66 @@ function chainRoot(masked: string, dot: number): string | undefined {
   }
 }
 
+/**
+ * The names the file declares, each with its type (empty when the declaration states none: `val x = ...`, `var x`) and
+ * the text it is in scope for: a parameter's function body (a block, or a Kotlin expression body), a local's enclosing
+ * block from its declaration on. A parameter of a function without a body, or of a lambda, binds nothing read here.
+ */
+function bindings(masked: string, kotlin: boolean): Array<{ name: string; type: string; start: number; end: number }> {
+  const out: Array<{ name: string; type: string; start: number; end: number }> = [];
+  // `Type name` in Java, `name: Type` in Kotlin, and an untyped `val`/`var` in either.
+  // A type may be written with its package (`org.springframework...HttpSecurity`).
+  const type = "(?:[a-z_]\\w*\\.)*[A-Z][\\w.]*";
+  const typed = kotlin ? new RegExp(`\\b([a-z_]\\w*)\\s*:\\s*(${type})`, "g") : new RegExp(`(?<![\\w.])(${type})(?:<[^<>()]*>)?(?:\\[\\])?\\s+([a-z_$][\\w$]*)\\s*(?=[,)=;:])`, "g");
+  const found = [
+    ...[...masked.matchAll(typed)].map((m) => ({ at: m.index ?? 0, name: kotlin ? m[1]! : m[2]!, type: kotlin ? m[2]! : m[1]! })),
+    ...[...masked.matchAll(/\b(?:val|var)\s+([a-z_]\w*)\s*=/g)].map((m) => ({ at: m.index ?? 0, name: m[1]!, type: "" })),
+  ];
+  for (const { at, name, type } of found) {
+    const owner = enclosingOpen(masked, at);
+    if (owner === undefined) continue;
+    if (masked[owner] === "{") {
+      const end = closing(masked, owner);
+      // A field or property is seen throughout its type's body; a local, from its declaration on.
+      const member = /\b(?:class|interface|object|enum|record)\b/.test(masked.slice(declarationStart(masked, owner), owner));
+      if (end !== undefined) out.push({ name, type, start: member ? owner : at, end });
+      continue;
+    }
+    const params = closing(masked, owner);
+    if (params === undefined) continue;
+    // After the parameters: a return type or `throws`, then the body. A function without one (abstract, in an
+    // interface) ends where the next declaration starts, so the next function's body is not taken for its own.
+    let i = params + 1;
+    let depth = 0;
+    for (; i < masked.length; i++) {
+      const c = masked[i]!;
+      if (c === "<") depth++;
+      else if (c === ">" && masked[i - 1] !== "-") depth--;
+      else if (depth === 0 && (c === "{" || c === "=" || c === ";" || c === "}" || (c === "-" && masked[i + 1] === ">"))) break;
+      else if (depth === 0 && /[\s;]/.test(masked[i - 1] ?? " ") && /^(?:(?:fun|val|var|class|interface|object)\b|@[A-Za-z])/.test(masked.slice(i, i + 10))) break;
+    }
+    if (masked[i] === "{") {
+      const end = closing(masked, i);
+      if (end !== undefined) out.push({ name, type, start: i, end });
+    } else if (masked[i] === "=" && masked[i + 1] !== "=") out.push({ name, type, start: i, end: expressionEnd(masked, i + 1) });
+  }
+  return out;
+}
+
+/** The `(` or `{` that encloses `at`, the nearest one not closed before it; undefined at the top level. */
+function enclosingOpen(masked: string, at: number): number | undefined {
+  let depth = 0;
+  for (let i = at - 1; i >= 0; i--) {
+    const c = masked[i]!;
+    if (c === ")" || c === "}" || c === "]") depth++;
+    else if (c === "(" || c === "{" || c === "[") {
+      if (depth === 0) return c === "[" ? undefined : i;
+      depth--;
+    }
+  }
+  return undefined;
+}
+
 function setting(code: string, masked: string, call: string, receiver: string | undefined): string | null | undefined {
   // A builder keeps the last value a setter was given. Only a setter on the configurer counts: in a lambda, a chain
   // that starts at its parameter; in the chained form, the chain that continues the configurer call itself.
@@ -404,8 +521,15 @@ function securityRoutes(file: string, text: string, code: string, masked: string
     const full = springTemplate(joinRoute(path));
     out.push({ id: surfaceId({ component: spec.component, method: "POST", path: full }), component: spec.component, method: "POST", path: full, at: { file, line: lineOf(text, index) }, evidence: "text" });
   };
+  const declared = bindings(masked, /\.kts?$/.test(file));
   for (const m of masked.matchAll(/\.(formLogin|logout)\s*\(/g)) {
     const at = m.index ?? 0;
+    // Only a call on that configurer, directly or down its chain, where its name is in scope; `request.logout()` on a
+    // servlet request, even one named like an HttpSecurity elsewhere in the file, is a servlet call.
+    const root = chainRoot(masked, at);
+    // The innermost declaration of the name decides: a nested `http: HttpServletRequest` hides an outer HttpSecurity.
+    const binding = declared.filter((b) => b.name === root && at >= b.start && at < b.end).sort((a, b) => b.start - a.start)[0];
+    if (!binding || !/(?:^|\.)HttpSecurity$/.test(binding.type)) continue;
     const open = at + m[0].length - 1;
     const close = closing(masked, open);
     if (close === undefined) continue;

@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
 import type { Call, Coverage, Draft } from "../model.js";
-import { callPath, HOLE, joinRoute } from "../paths.js";
+import { callPath, HOLE, joinRoute, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, unwrap } from "./binding.js";
@@ -119,6 +119,90 @@ function operands(e: ts.Expression): ts.Expression[] {
   return isPlus(u) ? [...operands(u.left), ...operands(u.right)] : [e];
 }
 
+/**
+ * The home page `/` where a string is plainly an address to go to: a JSX `href`, or the first argument of
+ * `push`, `replace` or `redirect`. Elsewhere a lone `/` is a separator far more often than a request.
+ */
+function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
+  if (raw.replace(/[?#].*$/, "") !== "/") return undefined;
+  const value = outermost(node);
+  const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
+  if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
+  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression))) return { path: "/", based: false };
+  return undefined;
+}
+
+/**
+ * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
+ * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to. A
+ * `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its method is
+ * left open.
+ */
+function navigatesWithGet(node: ts.Node): boolean {
+  const value = outermost(node);
+  const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
+  if (ts.isJsxAttribute(holder) && holder.name.getText() === "href") {
+    const tag = holder.parent.parent.tagName;
+    return /^(?:a|area)$/.test(tag.getText()) || (ts.isIdentifier(tag) && importedFrom(tag, ["next/link"]) === "default");
+  }
+  return ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression)) === "router";
+}
+
+/** The outermost expression a string stands for: parentheses, `as`, `satisfies` and `!` leave the value as it is. */
+function outermost(node: ts.Node): ts.Node {
+  let value = node;
+  while (
+    ts.isParenthesizedExpression(value.parent) ||
+    ts.isAsExpression(value.parent) ||
+    ts.isSatisfiesExpression(value.parent) ||
+    ts.isNonNullExpression(value.parent) ||
+    ts.isTypeAssertionExpression(value.parent)
+  )
+    value = value.parent;
+  return value;
+}
+
+const NEXT_ROUTERS = ["next/navigation", "next/router"];
+
+/** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
+function importedFrom(id: ts.Identifier, modules: string[]): string | undefined {
+  const d = declarationOf(id);
+  const spec = (n: ts.Node | undefined) => (n && ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined);
+  if (d && ts.isImportSpecifier(d) && modules.includes(spec(d.parent.parent.parent) ?? "")) return (d.propertyName ?? d.name).text;
+  if (d && ts.isImportClause(d) && modules.includes(spec(d.parent) ?? "")) return "default";
+  return undefined;
+}
+
+/** Whether an expression is Next.js's router: what `useRouter()` returns, or the `Router` `next/router` exports. */
+function isNextRouter(e: ts.Expression): boolean {
+  // `useRouter().push("/")` on the spot.
+  if (ts.isCallExpression(e)) return ts.isIdentifier(e.expression) && importedFrom(e.expression, NEXT_ROUTERS) === "useRouter";
+  if (!ts.isIdentifier(e)) return false;
+  const imported = importedFrom(e, ["next/router"]);
+  if (imported === "default" || imported === "Router") return true;
+  const d = declarationOf(e);
+  const init = d && ts.isVariableDeclaration(d) && d.initializer ? unwrap(d.initializer) : undefined;
+  return !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && importedFrom(init.expression, NEXT_ROUTERS) === "useRouter";
+}
+
+/**
+ * Whether a callee is a Next.js navigation: `redirect` or `permanentRedirect` from `next/navigation`, or `push` and
+ * `replace` on its router, also taken apart (`const { push } = useRouter()`). An array's `push` is no navigation.
+ */
+function navigates(callee: ts.Expression): "router" | "redirect" | undefined {
+  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression)) ? "router" : undefined;
+  if (!ts.isIdentifier(callee)) return undefined;
+  const imported = importedFrom(callee, ["next/navigation"]);
+  if (imported === "redirect" || imported === "permanentRedirect") return "redirect";
+  const d = declarationOf(callee);
+  if (!d || !ts.isBindingElement(d) || !ts.isObjectBindingPattern(d.parent)) return undefined;
+  const key = (d.propertyName ?? d.name) as ts.Identifier;
+  const holder = d.parent.parent;
+  const init = ts.isVariableDeclaration(holder) && holder.initializer ? unwrap(holder.initializer) : undefined;
+  const router = /^(push|replace)$/.test(key.text) && !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && importedFrom(init.expression, NEXT_ROUTERS) === "useRouter";
+  return router ? "router" : undefined;
+}
+
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
 function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   const d = declarationOf(id);
@@ -148,19 +232,21 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     return undefined;
   };
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+    // A literal type (`path: "/m" | "/r"`) names values; it is no request. `extends make(fetch(x))` runs its expression.
+    if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) raw = urlText(node, 0);
     // A whole concatenation is one URL; its pieces alone are not requests.
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
-      const parsed = registered(node) ? undefined : callPath(raw);
+      const parsed = registered(node) ? undefined : (callPath(raw) ?? rootNavigation(node, raw));
       if (parsed) {
         found.push({ node, call: {
           from: spec.from,
           to: spec.to,
-          method: methodNear(node),
+          method: navigatesWithGet(node) ? "GET" : methodNear(node),
           path: parsed.path,
           based: parsed.based,
           at: { file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 },
@@ -485,20 +571,22 @@ const valueOf = (tag: StartTag, name: string): string | undefined => tag.attribu
  * The method a submission named by `method` or `formmethod` (`plain`) uses, or undefined when the tag names none; null
  * when it sends nothing.
  *
- * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. It writes `method="post"` and,
- * for any other method, a hidden `_method` field that Spring turns into that method only when its
+ * Thymeleaf's attribute (`th:` or the HTML-friendly `data-th-`) replaces the plain one. For a form's `method` it writes
+ * `method="post"` and, for any other method, a hidden `_method` field that Spring turns into that method only when its
  * HiddenHttpMethodFilter is on, which Spring Boot leaves off: GET and POST are kept, any other value is `*`.
  *
  * The plain attribute is the HTML standard's enumerated one: `get` and `post`; `dialog`, which closes a dialog and sends
  * nothing; and GET for any other value, as a browser does.
  */
 function submitMethod(tag: StartTag, plain: string): string | null | undefined {
-  for (const name of [`th:${plain}`, `data-th-${plain}`]) {
-    const value = valueOf(tag, name)?.trim().toLowerCase();
-    if (value === undefined) continue;
-    return value === "get" || value === "post" ? value.toUpperCase() : "*";
-  }
-  const value = valueOf(tag, plain)?.trim().toLowerCase();
+  const th = [`th:${plain}`, `data-th-${plain}`].map((name) => valueOf(tag, name)).find((v) => v !== undefined)?.trim().toLowerCase();
+  // A Thymeleaf value is an expression: a literal token (`post`, `'post'`) writes itself; anything else (`${m}`) is
+  // known only when the page renders.
+  const literal = th === undefined ? undefined : /^'?([a-z]+)'?$/.exec(th)?.[1];
+  // Only a form's method gets the hidden `_method` field; `th:formmethod` just writes the `formmethod` attribute.
+  if (th !== undefined && plain === "method") return literal === "get" || literal === "post" ? literal.toUpperCase() : "*";
+  if (th !== undefined && literal === undefined) return "*";
+  const value = literal ?? valueOf(tag, plain)?.trim().toLowerCase();
   if (value === undefined) return undefined;
   if (value === "post") return "POST";
   return value === "dialog" ? null : "GET";
@@ -509,11 +597,9 @@ function submitMethod(tag: StartTag, plain: string): string | null | undefined {
  * found among the template's start tags and in its markup, so text in a script body is neither.
  */
 function formOf(page: Page, control: StartTag): StartTag | undefined {
+  // A `form` attribute decides the owner: the form with that id, or none when no form has it.
   const id = valueOf(control, "form");
-  if (id !== undefined) {
-    const named = page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
-    if (named) return named;
-  }
+  if (id !== undefined) return page.tags.find((t) => t.name === "form" && valueOf(t, "id") === id);
   const open = page.tags.filter((t) => t.name === "form" && t.start < control.start).pop();
   if (!open || page.markup.toLowerCase().lastIndexOf("</form", control.start) > open.start) return undefined;
   return open;
@@ -586,13 +672,71 @@ const JAVASCRIPT_TYPES = new Set([
   "text/livescript",
 ]);
 
-/** Attributes that make a request: links, form targets, sources, and data attributes a script reads a URL from. */
-const requests = (name: string): boolean => /^(href|src|action|formaction)$/.test(name) || name.startsWith("data-");
+/**
+ * Attributes that make a request: links, form targets and sources, as HTML defines them; and the `data-*` attributes
+ * the configuration names (`dataUrls`), whose URL the project's scripts request. A `data-*` value has no meaning of its
+ * own in HTML.
+ */
+const requestAttributes =
+  (dataUrls: Set<string>) =>
+  (name: string): boolean =>
+    /^(href|src|action|formaction)$/.test(name) || dataUrls.has(name);
 
-/** The `th:attr` family item a value belongs to: the attribute named before the `=` that precedes it. */
+/**
+ * The items of a `th:attr` family value (`src=@{/a}, title='x, y'`), each with the attribute it names. Items are split
+ * at the commas outside quoted text and brackets: a comma inside `'x, src=y'` or `${f(a, b)}` belongs to its item.
+ */
+function attrItems(value: string): Array<{ name: string | undefined; start: number; end: number }> {
+  const items: Array<{ name: string | undefined; start: number; end: number }> = [];
+  let depth = 0;
+  let quote: string | undefined;
+  let start = 0;
+  const close = (end: number) => {
+    items.push({ name: /^\s*([\w:.-]+)\s*=/.exec(value.slice(start, end))?.[1]?.toLowerCase(), start, end });
+    start = end + 1;
+  };
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = undefined;
+    // `|x, y|` is Thymeleaf's literal substitution: its text, commas included, is one value.
+    } else if (c === "'" || c === '"' || c === "|") quote = c;
+    else if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) close(i);
+  }
+  close(value.length);
+  return items;
+}
+
+/**
+ * Whether a Thymeleaf attribute value surely writes the attribute: a link expression `@{...}` (nested braces and
+ * parentheses included, as in `@{/a/{id}(id=${v})}`), or a literal (`'x'`, `|x|`). A value computed at render may be
+ * null, which removes it.
+ */
+function surelyWritten(value: string | undefined): boolean {
+  const v = value?.trim() ?? "";
+  if (/^'[^']*'$|^\|[^|]*\|$/.test(v)) return true;
+  if (!v.startsWith("@{")) return false;
+  // Braces inside quoted text (`p='}'`) are text.
+  let depth = 0;
+  let quoted = false;
+  for (let i = 1; i < v.length; i++) {
+    const c = v[i]!;
+    if (quoted) {
+      if (c === "\\") i++;
+      else if (c === "'") quoted = false;
+    } else if (c === "'") quoted = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i === v.length - 1;
+  }
+  return false;
+}
+
+/** The `th:attr` family item a value belongs to: the attribute its item names. */
 function itemName(value: string, offset: number): string | undefined {
-  const item = value.slice(0, offset).split(",").pop() ?? "";
-  return /^\s*([\w:.-]+)\s*=/.exec(item)?.[1]?.toLowerCase();
+  return attrItems(value).find((item) => offset >= item.start && offset <= item.end)?.name;
 }
 
 /**
@@ -606,8 +750,10 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
   const or = (method: string | null | undefined, fallback: string | null) => (method === undefined ? fallback : method);
   if (name === "action") return or(submitMethod(tag, "method"), "GET");
   if (name === "formaction") {
+    // A submit control with no form owner submits nothing.
     const form = formOf(page, tag);
-    return or(submitMethod(tag, "formmethod"), or(form ? submitMethod(form, "method") : undefined, "GET"));
+    if (!form) return null;
+    return or(submitMethod(tag, "formmethod"), or(submitMethod(form, "method"), "GET"));
   }
   return "*";
 }
@@ -615,9 +761,9 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
 /**
  * Requests an HTML template makes, read from start tags only:
  * - Thymeleaf link expressions (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`,
- *   `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
+ *   the configured `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
  *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
- * - root-relative URLs in `href`, `src`, `action`, `formaction` and `data-*`, in any case, unless Thymeleaf replaces the
+ * - root-relative URLs in `href`, `src`, `action`, `formaction` and the configured `data-*`, unless Thymeleaf replaces the
  *   attribute;
  * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
  *   `[[...]]` or `[(...)]`.
@@ -627,6 +773,7 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
 export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
   const { text, raw } = scanHtml(original);
   const page = pageOf(text, raw);
+  const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
   const out: Draft<Call>[] = [];
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
@@ -685,7 +832,17 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const attribute = (name: string) => script.attributes.find((a) => a.name === name)?.value;
     // A MIME type's essence, without parameters such as `; charset=utf-8`; no type or an empty one is JavaScript.
     const type = attribute("type")?.split(";")[0]!.trim().toLowerCase();
-    if (attribute("src") !== undefined || (type && !JAVASCRIPT_TYPES.has(type))) continue;
+    // A src, written or rendered by Thymeleaf, makes the script external: the browser does not run its body.
+    // A plain src makes the script external. Thymeleaf's makes it so only where it surely writes one (a link expression
+    // or a literal): `src=null` removes the attribute, and a computed value may, so the body is read then.
+    const rendered =
+      ["th:src", "data-th-src"].some((n) => surelyWritten(attribute(n))) ||
+      ["th:attr", "data-th-attr"].some((n) => {
+        const value = attribute(n) ?? "";
+        return attrItems(value).some((item) => item.name === "src" && surelyWritten(value.slice(item.start, item.end).replace(/^\s*src\s*=/i, "")));
+      });
+    const external = attribute("src") !== undefined || rendered;
+    if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;
     for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });

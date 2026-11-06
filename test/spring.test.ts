@@ -78,6 +78,31 @@ describe("Spring routes", () => {
     expect(config("http.formLogin(withDefaults()).logout(withDefaults());")).toEqual(["POST /login 1", "POST /logout 1"]);
   });
 
+  it("reads Kotlin's escaped dollar, a nested type's own mapping, and only HttpSecurity's logout", () => {
+    expect(routes('@RestController\nclass P {\n  @GetMapping("/price/\\$fixed") fun p() = 1\n}', "P.kt")).toEqual(["GET /price/$fixed 3"]);
+    const nested = ["@RestController", "class Outer {", '  @RequestMapping("/old") fun old() = "old"', "  @RestController", "  class Inner {", '    @GetMapping("/new") fun n() = "n"', "  }", "}"].join("\n");
+    expect(routes(nested, "Outer.kt")).toEqual(["* /old 3", "GET /new 6"]);
+    const servlet = 'SecurityFilterChain chain(HttpSecurity http) { http.logout(l -> l.disable()); }\nvoid out(HttpServletRequest request) { request.logout(); }';
+    expect(routes(servlet)).toEqual([]);
+    // One name, two methods: the servlet request's logout is not the configurer's.
+    const shadowed = 'SecurityFilterChain chain(HttpSecurity http) { http.formLogin(withDefaults()); }\nvoid out(HttpServletRequest http) { http.logout(); }';
+    expect(routes(shadowed)).toEqual(["POST /login 1"]);
+    // A type written with its package.
+    expect(routes("SecurityFilterChain chain(org.springframework.security.config.annotation.web.builders.HttpSecurity http) {\n  http.formLogin(withDefaults());\n}")).toEqual(["POST /login 2"]);
+    expect(routes("fun chain(http: org.springframework.security.config.annotation.web.builders.HttpSecurity) {\n  http.formLogin(withDefaults())\n}", "Q.kt")).toEqual(["POST /login 2"]);
+    // A local that holds the HttpSecurity configures it too.
+    expect(routes("SecurityFilterChain chain(HttpSecurity http) {\n  HttpSecurity security = http;\n  security.formLogin(withDefaults());\n}")).toEqual(["POST /login 3"]);
+    // A field is seen throughout its type, before its declaration too.
+    expect(routes("class C {\n  void configure() { http.formLogin(withDefaults()); }\n  private HttpSecurity http;\n}")).toEqual(["POST /login 2"]);
+    // A function without a body takes nothing of the next one's.
+    expect(routes("interface Config {\n  fun configure(http: HttpSecurity)\n  fun other(http: HttpServletRequest) { http.logout() }\n}", "I.kt")).toEqual([]);
+    // A nested function's own `http` hides the outer HttpSecurity.
+    const inner = ["fun config(http: HttpSecurity) {", "  http.formLogin(withDefaults())", "  fun handle(http: HttpServletRequest) { http.logout() }", "}"].join("\n");
+    expect(routes(inner, "N.kt")).toEqual(["POST /login 2"]);
+    const kotlin = ["fun chain(http: HttpSecurity): SecurityFilterChain =", "  http.formLogin(withDefaults())", "    .build()", "fun out(http: HttpServletRequest) = http.logout()"].join("\n");
+    expect(routes(kotlin, "S.kt")).toEqual(["POST /login 2"]);
+  });
+
   it("registers nothing for a disabled configurer or a URL held in a constant", () => {
     const config = (chain: string) => routes(`SecurityFilterChain chain(HttpSecurity http) { ${chain} }`);
     expect(config("http.formLogin(AbstractHttpConfigurer::disable).logout(l -> l.disable());")).toEqual([]);
@@ -99,6 +124,9 @@ describe("Spring routes", () => {
       "}",
     ].join("\n");
     expect(routes(text)).toEqual(["GET /api/items 4", "GET /nested/x 6", "GET /api/after 8"]);
+    // Any modifier the languages allow before a type keeps the mapping on it.
+    expect(routes('@RestController @RequestMapping("/api") actual open class C {\n  @GetMapping("/x") fun x() = 1\n}', "C.kt")).toEqual(["GET /api/x 2"]);
+    expect(routes('@RestController @RequestMapping("/api") public non-sealed class C extends B {\n  @GetMapping("/x") String x() { return null; }\n}')).toEqual(["GET /api/x 2"]);
   });
 
   it("unites a type's methods with a handler's, as Spring combines them", () => {
@@ -152,7 +180,7 @@ describe("Spring routes", () => {
 });
 
 describe("template calls", () => {
-  const call = { from: "web", to: "server", files: [] };
+  const call = { from: "web", to: "server", files: [], dataUrls: ["data-api-url", "data-movie-url"] };
   const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
 
   it("reads Thymeleaf links with the method each attribute implies", () => {
@@ -240,6 +268,10 @@ describe("matching", () => {
     // Spring prefers fewer variables: /a/{x}/c/d over /a/b/{x}/{y}.
     const spring = [surface("GET", "/a/b/{x}/{y}"), surface("GET", "/a/{x}/c/d")];
     expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
+    // A mapping that names the method wins a tie with one that accepts any; an unknown method may reach either.
+    const methods = [surface("*", "/m/{x}"), surface("GET", "/m/{x}")];
+    expect(matchCalls({ surfaces: methods, calls: [call("GET", "/m/1")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /m/{x}"]);
+    expect(matchCalls({ surfaces: methods, calls: [call("*", "/m/1")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|* /m/{x}", "s|GET /m/{x}"]);
   });
 
   it("matches a catch-all against the rest of the path", () => {
@@ -278,7 +310,7 @@ describe("a server-rendered Spring app", () => {
       { name: "web", path: "src/main/resources" },
     ],
     routes: [{ component: "server", files: ["src/main/java/**/*.java"], styles: ["spring"], openapi: "openapi.json" }],
-    calls: [{ from: "web", to: "server", files: ["src/main/resources/templates/**/*.html"] }],
+    calls: [{ from: "web", to: "server", files: ["src/main/resources/templates/**/*.html"], dataUrls: ["data-api-url"] }],
   });
 
   it("keeps code locations, takes springdoc's operationIds, and links a page to the requests of its template", () => {
@@ -505,9 +537,38 @@ describe("review fixes, continued", () => {
   const call = { from: "web", to: "server", files: [] };
   const calls = (html: string) => callsFromTemplate("t.html", html, call).map((c) => `${c.method} ${c.path} ${c.at.line}`);
 
-  it("reads the method of Thymeleaf's HTML-friendly data-th- attributes", () => {
-    const html = ['<form data-th-method="post" data-th-action="@{/save}"></form>', '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>'].join("\n");
-    expect(calls(html)).toEqual(["POST /save 1", "* /drop 2"]);
+  it("reads the method of Thymeleaf's HTML-friendly data-th- attributes, a formmethod as HTML does", () => {
+    const html = [
+      '<form data-th-method="post" data-th-action="@{/save}"></form>',
+      '<form method="post"><button data-th-formmethod="delete" formaction="/drop">d</button></form>',
+      // A value Thymeleaf computes is known only when the page renders; a quoted literal writes itself.
+      '<form><button th:formmethod="${m}" formaction="/maybe">d</button><button th:formmethod="\'post\'" formaction="/sure">s</button></form>',
+    ].join("\n");
+    expect(calls(html)).toEqual(["POST /save 1", "GET /drop 2", "* /maybe 3", "POST /sure 3"]);
+  });
+
+  it("reads only what HTML makes a request of", () => {
+    const rows: Array<[string, string[]]> = [
+      ['<button type="submit" formaction="/save">s</button>', []],
+      ['<form id="f"></form><button form="other" formaction="/save">s</button>', []],
+      // A file is no request; the point is the body, which a browser does not run when the script has a src.
+      ['<script th:src="@{/app.js}">fetch("/fallback")</script>', []],
+      ['<script th:attr="src=@{/app.js}">fetch("/fallback")</script>', []],
+      // A `, src=` inside a quoted value is that item's text: the script has no src, and its body runs.
+      ["<script th:attr=\"data-note='x, src=y'\">fetch('/api')</script>", ["GET /api 1"]],
+      ["<script th:attr=\"title=|x, src=y|\">fetch('/api')</script>", ["GET /api 1"]],
+      // `src=null` removes the attribute, and a computed src may: the body is read.
+      ["<script th:attr=\"src=null\">fetch('/api')</script>", ["GET /api 1"]],
+      ["<script th:attr=\"src=${cdn}\">fetch('/api')</script>", ["GET /api 1"]],
+      ["<script th:src=\"${maybe}\">fetch('/api')</script>", ["GET /api 1"]],
+      // A link expression with path variables surely writes a src: the script is that file, and its body does not run.
+      ["<script th:attr=\"src=@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
+      ["<script th:src=\"@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
+      // A brace in quoted text of the expression is text.
+      ["<script th:src=\"@{/app(p='}')}\">fetch('/api')</script>", ["GET /app 1"]],
+      ['<div data-url="/preview"></div>', []],
+    ];
+    expect(rows.map(([html]) => calls(html))).toEqual(rows.map(([, out]) => out));
   });
 
   it("does not take a form written in a script body as a control's form", () => {

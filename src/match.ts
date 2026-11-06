@@ -56,21 +56,26 @@ function compare(a: number[], b: number[]): number {
 
 /**
  * The routes a request reaches. For a component whose router ranks routes, and a request whose path is fully known,
- * only the route its router picks for each method; otherwise every route it fits, since which one serves it is not known.
+ * only the route its router picks; otherwise every route it fits, since which one serves it is not known. Spring
+ * compares every mapping that accepts the request: the more specific path first, then one that names the method over
+ * one that accepts any. For a request whose method is not known, each method it may have picks its own route.
  */
 function reached(call: Call, candidates: Array<{ surface: Surface; index: number }>, ranked: Map<string, Ranking>): Array<{ surface: Surface; index: number }> {
   if (ranked.get(call.to) !== "spring" || call.path.includes(HOLE)) return candidates;
-  const byMethod = new Map<string, Array<{ surface: Surface; index: number; rank: number[] }>>();
-  for (const c of candidates) {
-    const list = byMethod.get(c.surface.method) ?? byMethod.set(c.surface.method, []).get(c.surface.method)!;
-    list.push({ ...c, rank: springRank(c.surface.path) });
+  const best = (group: Array<{ surface: Surface; index: number }>) => {
+    const rank = (c: { surface: Surface }) => [...springRank(c.surface.path), c.surface.method === "*" ? 1 : 0];
+    const top = group.reduce((t, c) => (compare(rank(c), t) < 0 ? rank(c) : t), rank(group[0]!));
+    return group.filter((c) => compare(rank(c), top) === 0);
+  };
+  // An unknown method may be any the mappings name, or another one only the any-method mappings accept.
+  const named = [...new Set(candidates.map((c) => c.surface.method).filter((m) => m !== "*"))];
+  const methods = call.method === "*" ? [...named, "*"] : [call.method.toUpperCase()];
+  const out = new Map<number, { surface: Surface; index: number }>();
+  for (const method of methods) {
+    const group = candidates.filter((c) => c.surface.method === method || c.surface.method === "*");
+    if (group.length) for (const c of best(group)) out.set(c.index, c);
   }
-  const out: Array<{ surface: Surface; index: number }> = [];
-  for (const list of byMethod.values()) {
-    const best = list.reduce((top, c) => (compare(c.rank, top) < 0 ? c.rank : top), list[0]!.rank);
-    for (const c of list) if (compare(c.rank, best) === 0) out.push({ surface: c.surface, index: c.index });
-  }
-  return out.sort((a, b) => a.index - b.index);
+  return [...out.values()].sort((a, b) => a.index - b.index);
 }
 
 export interface Matches {
