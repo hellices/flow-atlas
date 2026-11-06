@@ -42,6 +42,9 @@ descriptions:
   - internal ambiguous - SeveralServedDocuments
   - reports ambiguous - SeveralServedDocuments
 inventory:
+  # The build file at the root is the one manifest: the application itself, named after no directory.
+  components:
+    - root build.gradle.kts
   routes:
     - src/main/java/com/example/platform/enrollment/controller/EnrollmentController.java spring 1
     - src/main/java/com/example/platform/enrollment/controller/EnrollmentStatusController.java spring 2
