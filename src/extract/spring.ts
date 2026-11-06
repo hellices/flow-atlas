@@ -748,3 +748,112 @@ function securityRoutes(file: string, text: string, code: string, masked: string
   }
   return out;
 }
+
+/** A `GroupedOpenApi` a file builds: the group it names, and the `@Bean` method it is built in, if any. */
+export interface GroupedOpenApiBuild {
+  /** The group the builder's last `group(...)` sets, when the file spells it out. */
+  group?: string;
+  /** What that `group(...)` passes; empty when the chain sets none. */
+  expression: string;
+  line: number;
+  /** The type whose `@Bean` method builds it, and whether that type is a component Spring scans for beans. */
+  bean?: { type: string; component: boolean };
+}
+
+/** Stereotypes that make a class a component, whose `@Bean` methods Spring registers (lite mode outside `@Configuration`). */
+const COMPONENT = /@(?:[\w.]*\.)?(?:Configuration|SpringBootApplication|Component|Service|Repository|Controller|RestController|ControllerAdvice|RestControllerAdvice)\b/;
+
+/**
+ * Whether `name` is declared as a parameter or local of the member text `region` (Java `Type name`, Kotlin `name: Type`
+ * or `val name`, or a lambda parameter: `name ->`, `(a, name) ->`, Kotlin's `{ a, name ->`): such a name hides a
+ * constant of the same name, as Java and Kotlin scoping say. A declaration in a block already closed counts too, so a
+ * name that may be hidden is never read as the constant.
+ */
+function declaredLocally(region: string, name: string, kotlin: boolean): boolean {
+  const n = name.replace(/\$/g, "\\$");
+  const token = new RegExp(`(?<![\\w$])${n}(?![\\w$])`);
+  for (const arrow of region.matchAll(/->/g)) {
+    const before = region.slice(0, arrow.index);
+    const parameters = (kotlin ? /\{([^{}]*)$/ : /\(([^()]*)\)\s*$/).exec(before)?.[1] ?? /([A-Za-z_$][\w$]*)\s*$/.exec(before)?.[1] ?? "";
+    if (token.test(parameters)) return true;
+  }
+  if (kotlin) return new RegExp(`(?<![\\w.$])${n}\\s*:(?!:)|\\b(?:val|var)\\s+${n}\\b`).test(region);
+  // Java: the name after a type, read back token by token over `...`, `[]` and balanced (nested) generics.
+  for (const m of region.matchAll(new RegExp(`(?<![\\w.$])${n}\\s*(?=[,)=;:[])`, "g"))) {
+    let i = (m.index ?? 0) - 1;
+    const skipSpace = () => {
+      while (i >= 0 && /\s/.test(region[i]!)) i--;
+    };
+    skipSpace();
+    if (region.slice(i - 2, i + 1) === "...") i -= 3;
+    for (;;) {
+      skipSpace();
+      if (region[i] === "]") {
+        i--;
+        skipSpace();
+        if (region[i] !== "[") break;
+        i--;
+      } else if (region[i] === ">") {
+        let depth = 0;
+        for (; i >= 0; i--) {
+          if (region[i] === ">") depth++;
+          else if (region[i] === "<" && --depth === 0) break;
+        }
+        i--;
+      } else break;
+    }
+    const type = /([A-Za-z_$][\w$.]*)$/.exec(region.slice(0, i + 1))?.[1];
+    if (type && !/^(?:return|throw|new|else|case|yield|assert|instanceof)$/.test(type)) return true;
+  }
+  return false;
+}
+
+/**
+ * Every `GroupedOpenApi.builder()` chain of a Java or Kotlin file. The builder keeps the last value `group(...)` is given,
+ * so the chain's last `group(...)` names the group: a literal, or a string constant of the file that no parameter or local
+ * of the same name hides; otherwise `group` is undefined. A chain that sets no group (it is set elsewhere) has none
+ * either. `bean` says which type's `@Bean` method the chain is in (a Java method body, a Kotlin expression body).
+ */
+export function groupedOpenApis(file: string, text: string): GroupedOpenApiBuild[] {
+  const code = withoutComments(file, text);
+  const masked = maskStrings(file, code);
+  const kotlin = /\.kts?$/.test(file);
+  const constant = stringConstants(code, masked, kotlin);
+  const types = declaredTypes(masked);
+  const out: GroupedOpenApiBuild[] = [];
+  for (const m of masked.matchAll(/\bGroupedOpenApi\s*\.\s*builder\s*\(\s*\)/g)) {
+    const at = m.index ?? 0;
+    // The member the chain is in: the outermost bracket inside its type's body, or the chain itself for an expression body.
+    const owner = types.filter((t) => t.start < at && at < t.end).sort((a, b) => b.start - a.start)[0];
+    let member = at;
+    for (let o = enclosingOpen(masked, at); o !== undefined && (!owner || o > owner.start); o = enclosingOpen(masked, o)) member = o;
+    let header = masked.slice(declarationStart(masked, member), member);
+    // Kotlin members need no `;`: only the annotations right before the last `fun` belong to this one.
+    const fun = kotlin ? [...header.matchAll(/\bfun\b/g)].pop()?.index : undefined;
+    if (fun !== undefined) header = /(?:@[\w.]+(?:\([^)]*\))?\s*|\b(?:private|public|internal|protected|open|override|final)\s+)*$/.exec(header.slice(0, fun))?.[0] ?? "";
+    const bean =
+      owner && /@(?:[\w.]*\.)?Bean\b/.test(header)
+        ? { type: owner.name, component: COMPONENT.test(masked.slice(declarationStart(masked, owner.start), owner.start)) }
+        : undefined;
+    const region = masked.slice(declarationStart(masked, member), at);
+    let found: GroupedOpenApiBuild = { expression: "", line: lineOf(text, at), ...(bean ? { bean } : {}) };
+    let i = at + m[0].length;
+    // Each `.name(...)` of the chain in turn, across lines; the chain ends at anything else.
+    for (;;) {
+      const call = /^\s*\.\s*([A-Za-z_]\w*)\s*\(/.exec(masked.slice(i));
+      if (!call) break;
+      const open = i + call[0].length - 1;
+      const close = closing(masked, open);
+      if (close === undefined) break;
+      if (call[1] === "group") {
+        const expression = code.slice(open + 1, close).trim();
+        const hidden = splitTop(expression, "+").some((term) => /^[A-Za-z_$][\w$]*$/.test(term) && declaredLocally(region, term, kotlin));
+        const group = hidden ? undefined : constant(expression, open);
+        found = { ...(group !== undefined ? { group } : {}), expression, line: lineOf(text, open), ...(bean ? { bean } : {}) };
+      }
+      i = close + 1;
+    }
+    out.push(found);
+  }
+  return out;
+}

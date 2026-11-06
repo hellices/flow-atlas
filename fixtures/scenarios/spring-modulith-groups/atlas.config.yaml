@@ -1,0 +1,17 @@
+# One Spring Boot application; its Spring Modulith modules (packages) as components.
+components:
+  - { name: enrollment, path: src/main/java/com/example/platform/enrollment }
+  - { name: ingest, path: src/main/java/com/example/platform/ingest }
+  - { name: reports, path: src/main/java/com/example/platform/reports }
+  - { name: internal, path: src/main/java/com/example/platform/internal }
+routes:
+  - { component: enrollment, files: ["src/main/java/com/example/platform/enrollment/**/*.java"], styles: [spring] }
+  - { component: ingest, files: ["src/main/java/com/example/platform/ingest/**/*.java"], styles: [spring] }
+  - { component: reports, files: ["src/main/java/com/example/platform/reports/**/*.java"], styles: [spring] }
+  - { component: internal, files: ["src/main/java/com/example/platform/internal/**/*.java"], styles: [spring] }
+# Every route is called by clients outside this repository.
+publicSurfaces:
+  - "enrollment|* /**"
+  - "ingest|* /**"
+  - "reports|* /**"
+  - "internal|* /**"

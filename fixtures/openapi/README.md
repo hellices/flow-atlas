@@ -16,6 +16,12 @@ flow-atlas understands what each framework actually emits.
 | `node-fastify-openapi.json` | Fastify 5.12.5, @fastify/swagger 9.8.1 | OpenAPI 3.0.3 | `node apps/fastify/main.cjs openapi` |
 | `java-springdoc.json` | Spring Boot 3.5.6, springdoc-openapi 2.8.13 | OpenAPI 3.1.0 | `mvn test -Dout=…` in `apps/spring-springdoc` (MockMvc, `/v3/api-docs`) |
 
+`apps/spring-springdoc-groups` generates no file: its test (`mvn test`, same versions) checks where springdoc serves
+its documents, which is what atlas has to find in its build file, `application.yml` and code. With
+`springdoc.api-docs.path: /api-docs`, a `GroupedOpenApi` bean and a `springdoc.group-configs` entry, it serves
+`/api-docs` (every route), `/api-docs/public` and `/api-docs/internal`, not `/v3/api-docs`; `application-dev.yml`
+moves them to `/dev-docs` only when the `dev` profile is active.
+
 What they show:
 
 - Every framework composes router, blueprint, controller and global prefixes itself, so the document is an

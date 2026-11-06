@@ -41,6 +41,10 @@ calls:
   - desktop->companion|GET /inbox/items based @ desktop/src/inbox-watcher.ts:2
   - tools->api|* /api/v1/notebooks @ tools/src/api-client.ts:12
   - tools->api|POST /api/v1/notebooks/{}/search @ tools/src/api-client.ts:16
+descriptions:
+  - api none - NoneFound
+  - bff none - NoneFound
+  - companion none - NoneFound
 inventory:
   routes:
     - bff/src/routes.ts express 4

@@ -17,6 +17,8 @@ chains:
   - app->backend|GET /api/v1/courses/{id}/detail
   - app->backend|GET /api/v1/courses/{id}/related
   - app->backend|POST /api/v1/forum/courses/{courseId}/posts
+descriptions:
+  - backend none - NoneFound
 inventory:
   components:
     - app app/pubspec.yaml

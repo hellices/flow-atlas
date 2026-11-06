@@ -27,6 +27,9 @@ chains:
 limits:
   - "nodejs/app.js:10 registers a path the file does not spell out (`${constants.API_PREFIX}/`)"
   - router admin in nodejs/routes/admin.js is mounted where the code gives no literal path
+descriptions:
+  - java none - NoneFound
+  - node none - NoneFound
 inventory:
   routes:
     - java/src/main/java/com/example/events/EventController.java spring 6

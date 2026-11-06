@@ -47,6 +47,8 @@ chains:
   - web->backend|POST /api/reports/run
   - web->backend|POST /api/auth/logout
   - web->backend|POST /api/chat
+descriptions:
+  - backend none - NoneFound
 calls:
   - web->backend|* /api/auth/session @ frontend/src/components/AuthGate.tsx:4
   - web->backend|POST /api/auth/logout @ frontend/src/components/AuthGate.tsx:5

@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments } from "./extract/apidocs.js";
+import { BUILD_FILE, springdocDocuments } from "./extract/springdoc.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
 
@@ -248,6 +249,12 @@ export function inventory(source: Source, exclude: string[]): Inventory {
       }
     }
     if (count) calls.push({ component, file, count, example: `${file}:${lineOf(text, firstAt ?? 0)}` });
+  }
+  // What springdoc serves for each Maven or Gradle project, under the component its build file gives.
+  const projects = new Set(manifestFiles.filter((f) => BUILD_FILE.test(f)).map((f) => (dirname(f) === "." ? "" : dirname(f))));
+  for (const project of [...projects].sort()) {
+    const component = ownerOf(project ? `${project}/` : "", components);
+    apiDocuments.push(...springdocDocuments(source, project, exclude).documents.map((d) => ({ component, ...d })));
   }
 
   return { components, routes, calls, apiDocuments };

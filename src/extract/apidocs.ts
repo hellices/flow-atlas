@@ -3,8 +3,9 @@ import { isMap, isScalar, parse, parseDocument } from "yaml";
 import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
-import { lineOf, select, type Source } from "../source.js";
+import { lineOf, matcher, select, type Source } from "../source.js";
 import { describedOperations, supportedVersion } from "./openapi.js";
+import { BUILD_FILE, springdocDocuments } from "./springdoc.js";
 
 /** Paths API documents are commonly served at. */
 export const DOCUMENT_PATH = /\/(openapi|swagger)(\.json|\.ya?ml)?$|\/api-docs(\.json)?$|\/v3\/api-docs$/;
@@ -140,10 +141,33 @@ function agreement(operations: string[], surfaces: Surface[]): NonNullable<ApiDo
 }
 
 /**
- * Every OpenAPI description a component has: committed files under it, with how far they agree with the code's routes,
- * and the documents its route files serve.
+ * The Maven or Gradle project each component whose routes are read as Spring's (`styles: [spring]`) is part of: the
+ * nearest directory at or above its path with a build file. Components that are packages of one application (Spring
+ * Modulith) share it, and with it the documents springdoc serves.
  */
-export function extractApiDocuments(source: Source, config: Config, components: Component[], surfaces: Surface[]): ApiDocument[] {
+function springProjects(source: Source, config: Config, components: Component[]): Map<string, string[]> {
+  const parent = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+  const skip = matcher(config.exclude);
+  const projects = new Set(source.list().filter((f) => BUILD_FILE.test(f) && !skip(f)).map(parent));
+  const out = new Map<string, string[]>();
+  for (const spec of config.routes) {
+    const path = components.find((c) => c.name === spec.component)?.path;
+    if (!(spec.styles ?? []).includes("spring") || path === undefined) continue;
+    let dir = path;
+    while (dir && !projects.has(dir)) dir = parent(dir);
+    if (!projects.has(dir)) continue;
+    const names = out.get(dir) ?? out.set(dir, []).get(dir)!;
+    if (!names.includes(spec.component)) names.push(spec.component);
+  }
+  return out;
+}
+
+/**
+ * Every OpenAPI description a component has: committed files under it, with how far they agree with the code's routes,
+ * the documents its route files serve, and those springdoc serves for a Spring component's project. What springdoc's
+ * settings leave unknown goes to `limits`.
+ */
+export function extractApiDocuments(source: Source, config: Config, components: Component[], surfaces: Surface[], limits: string[] = []): ApiDocument[] {
   const out: ApiDocument[] = [];
   const owner = (file: string): string | undefined => {
     let best: Component | undefined;
@@ -173,6 +197,11 @@ export function extractApiDocuments(source: Source, config: Config, components: 
       const text = source.read(file);
       if (text && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) out.push(...servedDocuments(file, text, spec.component));
     }
+  }
+  for (const [project, names] of springProjects(source, config, components)) {
+    const found = springdocDocuments(source, project, config.exclude);
+    for (const component of names) out.push(...found.documents.map((d) => ({ component, ...d })));
+    limits.push(...found.limits.map((l) => `openapi ${names.join(", ")}: ${l}`));
   }
   const seen = new Set<string>();
   return out

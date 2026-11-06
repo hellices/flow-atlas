@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: platform
+
+server:
+  port: 8080
+
+springdoc:
+  swagger-ui:
+    urls-primary-name: public
+  cache:
+    disabled: false

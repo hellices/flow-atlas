@@ -123,7 +123,7 @@ to write; an `ambiguous` description (below) stops it whatever else could be wri
 atlas finds each component's OpenAPI description itself, and chooses among several only when the code decides: the
 author's `openapi` entry first, then the document the configuration reads routes from (`routes[].openapi`,
 `ReadForRoutes`), then the one committed file that declares every route the code serves, then the one document the code
-serves. Paths that show the same document are one: a swagger-ui page whose `uiConfig.url` shows `/openapi.json` is an
+serves (springdoc's groups are as many documents). Paths that show the same document are one: a swagger-ui page whose `uiConfig.url` shows `/openapi.json` is an
 alias of it. A committed file that lacks routes is taken as a stale copy, and the difference is reported. When nothing
 decides, the description is `ambiguous` and `export arazzo` stops: the choice is one line of configuration and the
 repository's to make. A component with no description at all (one atlas reads from code only) does not stop it; its
