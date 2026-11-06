@@ -74,6 +74,8 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | the OpenAPI document the framework generates, for a component atlas cannot parse (`routes[].openapi`, `references/openapi.md`) | `scan` coverage and `limit:` lines |
 | `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one |
 | `openapi.<component>` when atlas reports its description `ambiguous` | `export arazzo` refuses until it is set |
+| `openapi.<component>` or `routes[].openapi` for a component with no description, when a flow step uses it | `export arazzo` leaves its steps out, says so in the workflow (`x-flow-atlas.omitted`) and prints a `limit:` per step |
+| a document outside the repository, committed or published (`openapi.<component>`: its URL, or the path the component serves it at) | `export arazzo` writes it by file name with a `limit:` until then |
 
 Do not hand your part to the tool: no `publicSurfaces`, exception or baseline update without a reason a person would
 accept.
@@ -197,8 +199,10 @@ Never run `atlas baseline update` unless a person asks for it. Never edit genera
 `--format json` or `--format yaml` prints documents that follow the flow-atlas package's `schema/*.schema.json`, each
 with `apiVersion`, `kind` and `provenance` (the commit and files read, with digests). Read these instead of parsing the
 text output; branch on a condition's `reason`, not its `message`. `atlas check --format sarif` gives the findings as
-SARIF 2.1.0 for code-scanning and IDE viewers; `atlas export arazzo` gives the flows as Arazzo 1.0 for API workflow and
-e2e tools, which still need parameters, request bodies and success criteria filled in.
+SARIF 2.1.0 for code-scanning and IDE viewers; `atlas export arazzo` prints the flows as Arazzo 1.0 for API workflow and
+e2e tools, which still need parameters, request bodies and success criteria filled in. It writes nothing to `--out`:
+save its output at the repository root (`atlas export arazzo > flows.arazzo.yaml`), since the description files it
+names in the repository are relative to the root.
 
 ## Reading the output
 

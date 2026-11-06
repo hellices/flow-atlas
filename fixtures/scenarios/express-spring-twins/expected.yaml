@@ -4,7 +4,8 @@ case: |
   required through an alias, and atlas placed its routes at the root (/opt_out), so no client call matched them.
   Now a router's routes are read only under a mount path the code states as a literal or the configuration declares;
   the declared events router is served under /events and every load-script call matches, and the admin router,
-  whose mount nobody declared, is left out with a limit instead of being placed at the root.
+  whose mount nobody declared, is left out with a limit instead of being placed at the root. The root route the app
+  registers on the same prefix, `${constants.API_PREFIX}/`, is not read either, and a limit names its line.
 surfaces:
   - java|GET /events/opt_out
   - java|POST /events/click
@@ -24,6 +25,7 @@ chains:
   - k6->node|POST /events/session
   - k6->node|POST /events/consent
 limits:
+  - "nodejs/app.js:10 registers a path the file does not spell out (`${constants.API_PREFIX}/`)"
   - router admin in nodejs/routes/admin.js is mounted where the code gives no literal path
 inventory:
   routes:
