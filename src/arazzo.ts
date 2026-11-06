@@ -1,5 +1,5 @@
 import { chainRoot } from "./chains.js";
-import { realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 /** Whether a path names a regular file on this machine; a directory or anything unreadable does not. */
@@ -59,25 +59,29 @@ const real = (path: string): string => {
   }
 };
 
+const within = (base: string, file: string): string | undefined => {
+  const rel = relative(base, file);
+  return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? rel.split(sep).join("/") : undefined;
+};
+
 /**
  * A file's path in the repository, relative to its root and `/`-separated, or undefined for a file outside it. Without
  * the root, an absolute path is taken as outside, as route extraction takes it.
+ *
+ * A file on this disk is where its links lead. A committed link to a file outside the repository is outside: git keeps
+ * only the link's text, so on any other machine, and at any revision read from git, it names nothing. A file not on
+ * this disk (one that exists only at another revision) is placed by its path.
  */
 export function repositoryPath(path: string, root: string | undefined): string | undefined {
-  if (!isAbsolute(path)) {
+  if (!root) {
+    if (isAbsolute(path)) return undefined;
     const normal = posix.normalize(path.split(sep).join("/"));
-    return normal === ".." || normal.startsWith("../") ? undefined : path;
+    return normal === ".." || normal.startsWith("../") ? undefined : normal;
   }
-  if (!root) return undefined;
-  // Links (a temporary directory, a checkout under a linked home) can make one place look like two.
-  for (const [base, file] of [
-    [resolve(root), resolve(path)],
-    [real(root), real(path)],
-  ] as const) {
-    const rel = relative(base, file);
-    if (rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return rel.split(sep).join("/");
-  }
-  return undefined;
+  const given = resolve(root, path);
+  if (existsSync(given)) return within(real(root), real(given));
+  // The root itself may be reached through a link (a temporary directory, a checkout under a linked home).
+  return within(resolve(root), given) ?? within(real(root), given);
 }
 
 /** The one path a component's code serves its OpenAPI document at; a page that shows another served path is that path. */
@@ -91,15 +95,15 @@ function servedPath(component: string, graph: Graph): string | undefined {
 export interface DocumentUrl {
   url: string;
   note?: string;
-  /** The file to read the description from: in the repository, relative to its root; outside it, as given. */
+  /** The file to read the description from: in the repository, relative to its root; outside it, where it is on this machine. */
   file?: string;
 }
 
 /**
  * The URL of a component's chosen description. A file in the repository is written relative to its root, where the
- * exported document is assumed to be kept. A file outside it is not written as a path on this machine: it is the
- * document the component serves, at the environment's `origins` entry, when the code serves one; otherwise its file
- * name, with a note to commit or publish it. A served path is joined to the environment's `origins` entry; without
+ * exported document is assumed to be kept. A file outside it is not written as a path on this machine but by its file
+ * name, with a note to commit or publish it: nothing in the code says it is the document the component serves, so a
+ * served path is not put in for it. A served path is joined to the environment's `origins` entry; without
  * one it is written as is, with a note: the origin belongs to the environment, not the code. A missing description is
  * returned as `missing`, so the steps it would serve are left out; an ambiguous one is an error: export never picks one.
  */
@@ -108,24 +112,25 @@ export function documentUrl(component: string, graph: Graph, config: Config, roo
   const file = (path: string): DocumentUrl => {
     const inside = repositoryPath(path, root);
     if (inside !== undefined) return { url: inside.split("/").map(encodeURIComponent).join("/"), file: inside };
+    const given = root ? resolve(root, path) : path;
+    const at = root ? real(given) : path;
+    const name = basename(at);
     const served = servedPath(component, graph);
-    if (origin && served) return { url: `${origin}${served}`, file: path };
-    const name = basename(path);
-    const ways = served
-      ? `publish it and set openapi.${component} to its URL, or set origins.${component} to the base URL of the server that serves it at ${served}`
-      : `or publish it and set openapi.${component} to its URL`;
+    const instead = served
+      ? `; if it is the document ${component} serves at ${served}, set openapi.${component} to ${served} and origins.${component} to the server's base URL instead`
+      : "";
     return {
       url: encodeURIComponent(name),
-      file: path,
-      note: `${component}'s OpenAPI document ${path} is outside the repository; written as ${name}, a file next to this document: commit the document to the repository, ${ways}`,
+      file: at,
+      note: `${component}'s OpenAPI document ${path}${at !== given ? ` (${at})` : ""} is outside the repository; written as ${name}, a file next to this document: commit the document to the repository, or publish it and set openapi.${component} to its URL${instead}`,
     };
   };
   if (config.openapi[component]) {
     const url = config.openapi[component];
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return { url };
-    // A root-relative choice is a served path, unless it names a file on this machine: the environment's origin goes
-    // in front of a served path, as for a found one.
-    if (url.startsWith("/") && !isFile(url)) {
+    // A root-relative choice is a served path, unless it names a file in the repository (at any revision) or on this
+    // machine: the environment's origin goes in front of a served path, as for a found one.
+    if (url.startsWith("/") && repositoryPath(url, root) === undefined && !isFile(url)) {
       return origin
         ? { url: `${origin}${url}` }
         : { url, note: `${component}'s chosen OpenAPI document ${url} is served; set origins.${component} to the server's base URL for the environment` };
@@ -313,11 +318,12 @@ export function toArazzo(
   }
   const written = [...described].filter((e): e is [string, Described] => !("missing" in e[1])).sort(([a], [b]) => a.localeCompare(b));
   for (const [, d] of written) if (d.note) limits.push(d.note);
-  // A document outside the repository is written by its file name (it has a note and a file), so two can collide.
-  const byName = new Map<string, string[]>();
-  for (const [component, d] of written) if (d.note && d.file) byName.set(d.url, [...(byName.get(d.url) ?? []), component]);
-  for (const [url, components] of byName)
-    if (components.length > 1) limits.push(`${components.join(" and ")} are both written as ${decodeURIComponent(url)}; rename one of the documents, commit them or publish them`);
+  // A document outside the repository is written by its file name, which another document's URL may already be.
+  const byUrl = new Map<string, Array<[string, string]>>();
+  for (const [component, d] of written) if (d.file) byUrl.set(d.url, [...(byUrl.get(d.url) ?? []), [component, d.file]]);
+  for (const [url, uses] of byUrl)
+    if (new Set(uses.map(([, file]) => file)).size > 1)
+      limits.push(`${uses.map(([c]) => c).join(" and ")} are written as ${decodeURIComponent(url)} from different documents; rename the documents outside the repository, commit them or publish them`);
   const sourceDescriptions = written.map(([component, d]) => ({ name: sourceName(component), url: d.url, type: "openapi" }));
   // Arazzo requires at least one workflow and one source description.
   if (exported.length === 0 || sourceDescriptions.length === 0)

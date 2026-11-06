@@ -117,7 +117,8 @@ and the rest is written. A flow that loses some steps is still written, because 
 holds and a viewer or an agent can use them; but an Arazzo workflow is a sequence and the steps left are not the
 flow, so the workflow says so in its `description` and lists the left-out steps, each with its reason, in
 `x-flow-atlas.omitted`. Whoever runs it must add those steps back or not run it as the flow. A flow with no step left
-is not written, and neither is a step that runs it. The export stops only when nothing at all can be written.
+is not written, and neither is a step that runs it. Left-out steps stop the export only when they leave no workflow
+to write; an `ambiguous` description (below) stops it whatever else could be written.
 
 atlas finds each component's OpenAPI description itself, and chooses among several only when the code decides: the
 author's `openapi` entry first, then the document the configuration reads routes from (`routes[].openapi`,
@@ -129,12 +130,15 @@ repository's to make. A component with no description at all (one atlas reads fr
 steps are left out.
 
 When the chosen document is served, the server address in front of its path differs per environment and goes into the
-configuration's `origins`. A file in the repository, named by a relative or an absolute path, is written relative to
-the repository root, and the document says it assumes it is kept there (Arazzo resolves a relative URL against the
-document). A file outside the repository is not written as a path on the machine that ran atlas: when the component's
-code serves its document at one path and `origins` has the component, it is that URL; otherwise it is written by its
-file name, as a file next to the exported document, with a `limit:` to commit the document or publish it and set
-`openapi.<component>` to its URL. Parameters, request bodies and success criteria do not come from the code; whoever
+configuration's `origins`. A file in the repository, named by a relative or an absolute path (there at the revision
+read, whether or not on this disk), is written relative to the repository root, and the document says it assumes it is
+kept there (Arazzo resolves a relative URL against the document). A file is placed where its links lead: a committed
+link to a file outside the repository is outside it, since git keeps only the link. A file outside the repository is
+not written as a path on the machine that ran atlas but by its file name, as a file next to the exported document,
+with a `limit:` to commit the document or publish it and set `openapi.<component>` to its URL. Nothing in the code says
+such a file is the document the component serves, so a served path and `origins` are not put in for it; when the code
+serves one, the `limit:` names it, and setting `openapi.<component>` to that path says they are the same. Two
+different documents written under one name are reported. Parameters, request bodies and success criteria do not come from the code; whoever
 runs the Arazzo document fills them in.
 
 ## The head of model documents

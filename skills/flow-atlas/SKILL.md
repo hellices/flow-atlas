@@ -72,10 +72,10 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | a misread file: an exception whose reason says which file and how | expiry brings the finding back |
 | the configuration | `scan` coverage |
 | the OpenAPI document the framework generates, for a component atlas cannot parse (`routes[].openapi`, `references/openapi.md`) | `scan` coverage and `limit:` lines |
-| `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one; with it, a document outside the repository that the component serves is written as the served URL |
+| `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one |
 | `openapi.<component>` when atlas reports its description `ambiguous` | `export arazzo` refuses until it is set |
 | `openapi.<component>` or `routes[].openapi` for a component with no description, when a flow step uses it | `export arazzo` leaves its steps out, says so in the workflow (`x-flow-atlas.omitted`) and prints a `limit:` per step |
-| a document outside the repository, committed or published (`openapi.<component>`: its URL) | `export arazzo` writes it by file name with a `limit:` until then |
+| a document outside the repository, committed or published (`openapi.<component>`: its URL, or the path the component serves it at) | `export arazzo` writes it by file name with a `limit:` until then |
 
 Do not hand your part to the tool: no `publicSurfaces`, exception or baseline update without a reason a person would
 accept.

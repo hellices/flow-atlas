@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import { schemaForKind, validate } from "../src/schema.js";
 import { arazzoErrors, sarifErrors } from "./standards.js";
 import { query } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
-import { toArazzo } from "../src/arazzo.js";
+import { documentUrl, repositoryPath, toArazzo } from "../src/arazzo.js";
 import { parse as parseYaml } from "yaml";
 import type { Subgraph } from "../src/model.js";
 import { inventory } from "../src/inventory.js";
@@ -447,15 +447,15 @@ describe("schemas", () => {
     expect(JSON.stringify(away.document)).not.toContain("/elsewhere");
     expect(sources(away.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
     expect(readStep(away.document).operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
-    expect(away.limits).toEqual([
-      "orders's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, publish it and set openapi.orders to its URL, or set origins.orders to the base URL of the server that serves it at /docs-json",
-    ]);
+    const awayNote =
+      "orders's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL; if it is the document orders serves at /docs-json, set openapi.orders to /docs-json and origins.orders to the server's base URL instead";
+    expect(away.limits).toEqual([awayNote]);
 
+    // Nothing in the code says the file is the document the server serves, so an origin does not stand in for it.
     const served = toArazzo(fromRoutes(unnamed, outside), files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read: readOutside });
-    expect(sources(served.document).map((s) => s.url)).toEqual(["openapi/bff.json", "http://localhost:3001/docs-json"]);
-    expect(served.limits).toEqual([]);
+    expect(sources(served.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(served.limits).toEqual([awayNote]);
 
-    // Without a path the server is known to serve it at, an origin does not make a URL.
     const unserved = { ...fromRoutes(unnamed, "../specs/orders.json"), apiDocuments: graph.apiDocuments.filter((d) => d.component !== "orders") };
     const relative = toArazzo(unserved, files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read });
     expect(arazzoErrors(relative.document)).toEqual([]);
@@ -464,10 +464,66 @@ describe("schemas", () => {
       "orders's OpenAPI document ../specs/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL",
     ]);
 
-    // Two documents outside cannot both sit next to the document under one name.
+    // Two documents cannot both sit next to the document under one name; one document for two components can.
+    const clash = "bff and orders are written as orders.json from different documents; rename the documents outside the repository, commit them or publish them";
     const twice = toArazzo(fromRoutes(fromRoutes(unnamed, outside), "/other/orders.json", "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
     expect(sources(twice.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
-    expect(twice.limits).toContain("bff and orders are both written as orders.json; rename one of the documents, commit them or publish them");
+    expect(twice.limits).toContain(clash);
+    const shared = toArazzo(fromRoutes(fromRoutes(unnamed, outside), outside, "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(shared.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(shared.limits.filter((l) => l.includes("different documents"))).toEqual([]);
+    const committed = toArazzo(fromRoutes(unnamed, outside), files, { ...config, openapi: { bff: "orders.json" } }, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(committed.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(committed.limits).toContain(clash);
+  });
+
+  it("takes an absolute path in the repository as a repository file, there or not on this disk", () => {
+    const generated = "services/orders/generated.json";
+    const read = (p: string) => (p === generated ? source.read("services/orders/openapi.json") : source.read(p));
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
+    const { document } = toArazzo(unnamed, loadFlows(source, config), { ...config, openapi: { bff: "openapi/bff.json", orders: join(root, generated) } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(document)).toEqual([]);
+    expect((document.sourceDescriptions as Array<{ url: string }>).map((s) => s.url)).toEqual(["openapi/bff.json", generated]);
+    expect((document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+  });
+
+  it("names a document read for routes by its normalized path, so the path key it writes is used", () => {
+    const flows = loadFlows(source, config);
+    const keyed = {
+      ...graph,
+      surfaces: graph.surfaces.map((s) =>
+        s.id === "orders|GET /orders/{id}" ? { ...s, operationId: undefined, described: { file: "./services/orders/openapi.json", line: 5 }, describedPath: "/orders/{orderId}" } : s,
+      ),
+      apiDescriptions: graph.apiDescriptions.map((d) =>
+        d.component === "orders" ? { component: "orders", status: "chosen" as const, location: "services/orders/openapi.json", kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d,
+      ),
+    };
+    const { document } = toArazzo(keyed, flows, { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t", flow: "view-order" });
+    expect((document.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!.operationPath).toBe("{$sourceDescriptions.orders.url}#/paths/~1orders~1{orderId}/get");
+  });
+
+  it("follows links: a link in the repository to a file outside it is outside", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-links-"));
+    try {
+      const repo = join(dir, "repo");
+      mkdirSync(repo);
+      mkdirSync(join(dir, "specs"));
+      writeFileSync(join(dir, "specs", "orders.json"), "{}");
+      writeFileSync(join(repo, "real.json"), "{}");
+      symlinkSync(join(dir, "specs", "orders.json"), join(repo, "spec.json"));
+      symlinkSync("real.json", join(repo, "alias.json"));
+      expect([repositoryPath(join(repo, "spec.json"), repo), repositoryPath("spec.json", repo)]).toEqual([undefined, undefined]);
+      expect([repositoryPath("alias.json", repo), repositoryPath(join(repo, "alias.json"), repo), repositoryPath("./sub/../real.json", undefined)]).toEqual(["real.json", "real.json", "real.json"]);
+      const target = realpathSync(join(dir, "specs", "orders.json"));
+      const linked = documentUrl("orders", { ...graph, apiDocuments: [] }, { ...config, openapi: { orders: "spec.json" } }, repo);
+      expect(linked).toEqual({
+        url: "orders.json",
+        file: target,
+        note: `orders's OpenAPI document spec.json (${target}) is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL`,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("brings the flows a selected flow runs into the export", () => {

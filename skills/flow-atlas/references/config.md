@@ -185,9 +185,10 @@ read it from the repository's deployment files.
 `atlas export arazzo` writes a step only when its component's description is decided. A component with none (a plain
 HTTP server atlas reads from code) has its steps left out with a `limit:`, and the workflows that lose steps say so in
 `x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. A file in the repository is
-written relative to the repository root, where the exported document is assumed to be kept. A file outside it is
-written as `origins.<component>` plus the path the component serves its document at, when the code serves one;
-otherwise by its file name, with a `limit:` to commit it or publish it and set `openapi.<component>` to its URL.
+written relative to the repository root, where the exported document is assumed to be kept. A file outside it (a
+committed link to one included) is written by its file name, with a `limit:` to commit it or publish it and set
+`openapi.<component>` to its URL; if it is the document the component serves, set `openapi.<component>` to the served
+path and `origins` to the server's base URL.
 
 Flow descriptions are also read from `<out>/flows/`, so a repository atlas must not write to can still be described.
 
