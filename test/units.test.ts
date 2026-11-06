@@ -9,7 +9,6 @@ import { similarity } from "../src/nearby.js";
 import ts from "typescript";
 import { resolveApiDescriptions, servedDocuments } from "../src/extract/apidocs.js";
 import type { ApiDocument, Surface } from "../src/model.js";
-import { trustTier } from "../src/flows.js";
 import { validate } from "../src/schema.js";
 import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
@@ -315,23 +314,17 @@ describe("resolveApiDescriptions", () => {
   });
 });
 
-describe("OKF trust metadata", () => {
-  it("derives the trust tier from verified alone, a bare mapping counting as one event", () => {
-    expect(trustTier(undefined)).toBe("unverified");
-    expect(trustTier({ by: "process:nightly" })).toBe("machine-confirmed");
-    expect(trustTier([{ by: "process:nightly" }, { by: "human:lead", at: "2026-10-02T09:00:00Z" }])).toBe("human-reviewed");
-  });
-
-  it("accepts OKF actors and timestamps and rejects malformed ones", () => {
+describe("flow metadata", () => {
+  it("accepts sources with OKF actors and no longer takes the removed trust fields", () => {
     const flow = (metadata: Record<string, unknown>) => ({
       apiVersion: "flow-atlas.dev/v1alpha1",
       kind: "Flow",
       metadata: { name: "a", ...metadata },
       spec: { steps: [{ stepId: "s", surface: "api|GET /x" }] },
     });
-    expect(validate("flow", flow({ generated: { by: "claude-code/opus-4", at: "2026-10-01T09:00:00Z" }, verified: { by: "human:lead" } }))).toEqual([]);
-    expect(validate("flow", flow({ generated: { by: "claude" } })).length).toBeGreaterThan(0);
-    expect(validate("flow", flow({ stale_after: "2026-10-01" })).length).toBeGreaterThan(0);
+    for (const removed of [{ generated: { by: "claude-code/opus-4" } }, { verified: { by: "human:lead" } }, { stale_after: "2027-01-01T00:00:00Z" }]) {
+      expect(validate("flow", flow(removed)).length).toBeGreaterThan(0);
+    }
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "team:docs" }] }))).toEqual([]);
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "the docs team" }] })).length).toBeGreaterThan(0);
   });

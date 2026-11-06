@@ -27,13 +27,6 @@ const chainHash = (c: Chain): string => createHash("sha256").update(c.id).digest
 
 const q = (s: string): string => JSON.stringify(s);
 
-const OKF = [
-  "  # agent: sources: [{ resource: <decision, design or issue>, title: ... }] behind the flow (OKF)",
-  "  # agent: generated: { by: <tool>/<model>, at: <ISO 8601 with offset> } once you have written the intent (OKF)",
-  "  # human: verified: { by: human:<id>, at: ... } after a person reviews the roles; never written by an agent (OKF)",
-  "  # agent: stale_after: <ISO 8601> when the roles should be reviewed again (OKF)",
-];
-
 /**
  * Flow drafts for chains, one YAML document each. The structure is the code's: each flow is one chain step, its entry
  * comes from the chain, and the requests the result offers next are listed for the author to pick from. The author
@@ -61,7 +54,7 @@ export function draftChainFlows(graph: Graph, chains: Chain[], taken: Iterable<s
       `  name: ${name}`,
       "  # agent: title: what the customer or the system achieves through this request",
       "  # agent: labels: { domain: ... } to group it with related flows",
-      ...OKF,
+      "  # agent: sources: [{ resource: <decision, design or issue>, title: ... }] behind the flow, if any",
       "spec:",
       c.entry.component === "outside"
         ? "  # tool: entry: a client outside the repository (the surface is declared in publicSurfaces); taken from the chain"

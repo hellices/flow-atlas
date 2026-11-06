@@ -28,7 +28,7 @@ and usable by agents.
 |---|---|---|---|
 | the shape of the flow files people write | Kubernetes Resource Model, the Backstage descriptor format | followed | the `apiVersion`, `kind`, `metadata`, `spec` frame with labels and annotations, the most widespread frame for describing software configuration in YAML inside a repository |
 | steps within a flow | Arazzo 1.0 | followed, with an export | step structure and names match, and `atlas export arazzo` produces Arazzo documents that pass the official schema |
-| where authored knowledge comes from, how far it is trusted, how long it holds | Google Open Knowledge Format (OKF) 0.2 | followed | `sources`, `generated`, `verified` and `stale_after` in a flow's `metadata` keep OKF's names and meanings; the trust tier is derived from `verified` only, as in OKF §5.3. OKF's file format and `status` are not taken |
+| where authored knowledge comes from | Google Open Knowledge Format (OKF) 0.2 | source shape only | `sources` in a flow's `metadata` keeps the shape of an OKF source (§5.1). OKF's `generated`, `verified`, `stale_after` and trust tier were tried and removed: on eight repositories no check read them, and a self-declared review was trusted unchecked. A flow file is reviewed in its pull request instead |
 | observed state | Kubernetes status conditions | followed | `type`, `status` (True, False, Unknown), `reason`, `message`; only the timestamp fields are left out |
 | where a generated document came from | SLSA provenance v1 (in-toto ResourceDescriptor) | shape followed | the commits and files read are recorded with digests. SLSA is a specification for build outputs, so no SLSA conformance is claimed |
 | static analysis results | SARIF 2.1.0 (OASIS) | export | GitHub code scanning, the VS Code SARIF Viewer and review bots read it as is; the output passes the official schema |
@@ -46,12 +46,11 @@ and usable by agents.
 | `metadata.name` | flow id, Arazzo `workflowId`, finding keys | kept |
 | `metadata.labels` | grouping flows in a renderer | kept |
 | `metadata.annotations` | location information the tool attaches | kept |
-| `metadata.links` | the decision documents behind a flow | replaced by OKF `sources` |
-| `metadata.generated`, `verified` | whether an agent wrote the roles, whether a person reviewed them | added (OKF); this was the gap in the three-part split |
-| `metadata.stale_after` | when the intent should be reviewed again | added (OKF); agreement with the code is checked every run, but whether the intent still holds is not something a machine knows |
+| `metadata.links` | the decision documents behind a flow | replaced by `sources`, in OKF's source shape |
+| `metadata.generated`, `verified`, `stale_after` | who wrote the roles, who reviewed them, when to review again | removed; nothing checked them, and the pull request that changes a flow file records the same |
 | `spec.lifecycle` | building the backend first (planned), retiring (deprecated) | kept; a distinction repositories that build the backend first actually needed |
 | `spec.owner` | who answers for the flow | kept |
-| `spec.entry` | checking that the app calls the first step | kept; it catches, flow by flow, APIs the app does not call |
+| `spec.entry` | the client that starts a surface-step flow, shown in the report and the Arazzo export | kept as information; a chain step takes its entry from the code, and FA001 catches a route no client calls |
 | `spec.produces` | checking that the artifacts a flow issues are listed | kept; it ties artifacts without a producer to flows |
 | `spec.dependsOn` | in Arazzo, run order | dropped; a `flow` step, which uses another flow as one step, is enough for reuse, and run order is outside this tool |
 | `steps[].role` | what each component takes on | kept; the core of keeping responsibilities from mixing. The tool cannot check it; people and agents read it |

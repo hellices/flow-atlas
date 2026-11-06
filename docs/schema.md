@@ -53,9 +53,6 @@ metadata:
     - id: screens
       resource: docs/orders.md#screens
       title: Order screen decision
-  generated: { by: claude-code/opus-4, at: 2026-10-01T09:00:00Z }
-  verified: { by: human:shop-lead, at: 2026-10-02T09:00:00Z }
-  stale_after: 2027-04-01T00:00:00Z
 spec:
   lifecycle: active
   owner: shop-team
@@ -79,26 +76,9 @@ A file may hold several flows separated by `---`, as KRM manifests do.
 `annotations` hold values tools and people attach that are not used for selection; atlas adds
 `flow-atlas.dev/location` (file and line) in its reports.
 
-The remaining four fields take their names and meanings from Google's Open Knowledge Format (OKF) 0.2, a format that
-attaches provenance, trust and a review date to knowledge people and agents write and revise. A flow's title and roles
-are such knowledge, so they use the same fields.
-
-| Field | OKF section | Meaning |
-|---|---|---|
-| `sources` | §5.1 | the decisions, design documents and issues behind the flow; `resource` is required, and `id`, `title`, `author` and `last_modified` are optional |
-| `generated` | §5.2 | who wrote the intent (`by`) and when it last changed in substance (`at`); an agent is `<tool>/<model>`, a person `human:<id>` |
-| `verified` | §5.2 | who confirmed it, one mapping or a list; agents never write a `human:` entry |
-| `stale_after` | §5.5 | from this time on, the roles need review |
-
-atlas derives the trust tier from `verified` (§5.3): none is unverified, confirmations without `human:` are
-machine-confirmed, and one with `human:` is human-reviewed. The tier is a signal and does not enter `Ready`.
-`stale_after` becomes the `Fresh` condition, compared with the time of the commit read (the present only for the
-working tree), so reading the same commit again gives the same result.
-
-Some of OKF is not taken. Its `status` (draft, stable, deprecated) is a document's maturity, while `spec.lifecycle`
-here means a step with no code yet (`planned`), so they differ; the trust tier covers review. The file format
-(Markdown with frontmatter) is not taken either: the step structure is easier in YAML, and Markdown for reading can be
-exported later. Documents the tool generates use the timestamp-free `provenance` instead of OKF's `generated.at`.
+`sources` lists the decisions, design documents and issues behind the flow; `resource` is required, and `id`, `title`,
+`author` and `last_modified` are optional. It keeps the shape of a source in Google's Open Knowledge Format (OKF) 0.2
+(§5.1). Who wrote a flow's intent and who reviewed it are in the history of the pull requests that change the file.
 
 `spec` is the shape the flow must keep.
 
@@ -264,20 +244,18 @@ chains added, removed, and changed with the surfaces they now reach or no longer
 ## FlowReport and conditions
 
 Each item of a `FlowReport` is a Flow's `metadata` and the `status` atlas observed. `status.observedRef` is the commit
-it was held against, KRM's `observedGeneration`. `conditions` always has the same seven entries in the same order.
+it was held against, KRM's `observedGeneration`. `conditions` always has the same five entries in the same order.
 
 | type | True | False | Unknown |
 |---|---|---|---|
 | `Ready` | no condition failed (`NoConditionFailed`) | any is False (`ConditionsFailed`) | planned steps are not built yet (`PlannedStepsPending`), the flow orders chains the code does not link (`OrderNotInCode`), deprecated (`Deprecated`) |
 | `Resolved` | every step is in the code (`AllStepsResolved`; `PlannedStepsPending` when only planned steps are missing) | a step is missing (`StepNotFound`) | |
-| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`); between two chain steps (a sub-flow counts as the chains at its ends), the first chain's `next` offers the second | a pair of active steps has no path (`NoPathBetweenSteps`) | not checked because a step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`); two chains one component starts, with no link in the code, ordered by the author (`OrderNotInCode`) |
-| `EntryCalled` | the entry component calls the first step (`EntryCallsFirstStep`); a first chain step's surface is declared public and nothing in the repository calls it (`ServedOutside`) | it does not (`EntryDoesNotCall`) | no `entry` (`NoEntry`), first step unresolved (`FirstStepUnresolved`), a planned flow's entry not wired yet (`PlannedStepsPending`) |
+| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`); between two chain steps (a sub-flow counts as the chains at its ends), the first chain's `next` offers the second | a pair of active surface or call steps has no path (`NoPathBetweenSteps`) | not checked because a step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`); two chains with no link in the code from the first to the second, ordered by the author, whoever makes the requests (`OrderNotInCode`) |
 | `ProducesListed` | every listed registry entry exists (`AllListed`) | some does not (`NotInRegistry`) | none listed (`NotDeclared`) |
 | `Documented` | a title and each step's role are written (`TitleAndRolesWritten`) | no title (`TitleMissing`), a step without a role (`RoleMissing`) | |
-| `Fresh` | before `stale_after` (`BeforeStaleAfter`) | past it (`PastStaleAfter`) | no `stale_after` (`NoStaleAfter`) |
 
-`Documented` and `Fresh` look at the author's part, not the code; the others check that the flow holds in the code.
-The status also carries the OKF trust tier (`trust`). Who writes what is set out in
+`Documented` looks at the author's part, not the code; the others check that the flow holds in the code. Who writes
+what is set out in
 [responsibilities.md](responsibilities.md).
 
 `reason` is a stable CamelCase code tools can branch on; `message` is for people. A viewer colours a flow by `Ready`

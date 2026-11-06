@@ -90,8 +90,6 @@ atlas diff main..WORKTREE --format markdown   # flow changes and new findings fo
 atlas export arazzo                           # flows as Arazzo 1.0 for API workflow and e2e tools
 atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
-atlas feedback <key> false-positive --note "why"
-atlas stats                                   # per-rule action and false-positive rates
 ```
 
 `--ref <commit>` reads a commit without checking it out, and every write goes to `--out`, so a repository you must not
@@ -105,8 +103,9 @@ only new findings appear: existing debt is reduced on its own schedule, and each
 introduced.
 
 A new finding is fixed, or recorded in the exceptions file with the decision behind it and a date to look again; when
-the date passes, the finding comes back. A wrong finding is recorded with `feedback`, and `stats` shows each rule's
-false-positive rate; a rule that is mostly wrong for a repository is switched off there, or its extractor fixed.
+the date passes, the finding comes back. A wrong finding is fixed in the configuration when that caused it; a misread
+file is recorded as an exception that says which file was misread and how. A rule that is mostly wrong for a
+repository is switched off there (`rules.<id>.enabled: false`), or its extractor fixed.
 
 atlas reports and does not block by default. To fail CI on new findings, use `--fail-on-new`.
 
@@ -124,10 +123,9 @@ view name renders are its outbound calls (`via view <name>`).
 
 A flow is written in `flows/*.flow.yaml` as a Kubernetes-style object (`apiVersion`, `kind: Flow`, `metadata`,
 `spec`), with Arazzo-style steps that name the repository's own routes and calls, each with the role its component
-plays. Its metadata carries [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
-trust fields: `sources`, `generated`, `verified` and `stale_after`. `atlas flows` reports Kubernetes-style conditions
-for each flow (`Ready`, `Resolved`, `Connected`, `EntryCalled`, `ProducesListed`, `Documented`, `Fresh`) and its OKF
-trust tier.
+plays, and `sources` naming the decisions behind it. `atlas flows` reports Kubernetes-style conditions for each flow
+(`Ready`, `Resolved`, `Connected`, `ProducesListed`, `Documented`). A flow file is reviewed like code, in the pull
+request that changes it.
 
 Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema), with
 `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests) and no timestamps, so

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import type { Finding, Findings } from "./model.js";
@@ -25,7 +25,6 @@ function writeJson(path: string, value: unknown): void {
 
 export const baselinePath = (out: string): string => join(out, "baseline.json");
 export const lastCheckPath = (out: string): string => join(out, "last-check.json");
-export const feedbackPath = (out: string): string => join(out, "feedback.jsonl");
 
 export function readBaseline(out: string): Baseline | undefined {
   const p = baselinePath(out);
@@ -70,29 +69,6 @@ export function writeLastCheck(out: string, value: Findings): void {
 export function readLastCheck(out: string): Findings | undefined {
   const p = lastCheckPath(out);
   return existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as Findings) : undefined;
-}
-
-export type Verdict = "fixed" | "accepted" | "false-positive";
-
-export interface FeedbackEntry {
-  key: string;
-  verdict: Verdict;
-  note?: string;
-  at: string;
-}
-
-export function appendFeedback(out: string, entry: FeedbackEntry): void {
-  mkdirSync(out, { recursive: true });
-  appendFileSync(feedbackPath(out), `${JSON.stringify(entry)}\n`);
-}
-
-export function readFeedback(out: string): FeedbackEntry[] {
-  const p = feedbackPath(out);
-  if (!existsSync(p)) return [];
-  return readFileSync(p, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as FeedbackEntry);
 }
 
 export function writeGraph(out: string, graph: unknown): void {

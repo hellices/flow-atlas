@@ -28,20 +28,19 @@ So:
 - Never type a surface id, a chain id or a step order you worked out from reading code. Take chains from
   `atlas chains` or `atlas draft flows`; take a following step from a chain's `next`. If atlas does not list what you
   see in the code, the configuration or the extractor is behind: report that, do not write around it.
-- The structural conditions (`Resolved`, `Connected`, `EntryCalled`) fail only on facts from the code: a chain that
-  is gone, a step the code does not reach, an entry that does not call. What you write fails other checks: `Documented`
-  when a title or role is empty, `Fresh` once `stale_after` has passed, and the schema check when a field is invalid.
-  None of those says the code is wrong. What you write stays `trust: unverified` until a person reviews it and records
-  `verified`.
+- The structural conditions (`Resolved`, `Connected`) fail only on facts from the code: a chain that is gone, a
+  step the code does not reach. What you write fails other checks: `Documented` when a title or role is empty, and the
+  schema check when a field is invalid. None of those says the code is wrong. What you write is a proposal until a
+  person reviews the pull request that adds it.
 - What atlas cannot settle stays visible: `Connected` and `Ready` are `Unknown (OrderNotInCode)` when you order two
-  requests one component makes, `unchained` surfaces, and chain edges joined `by name`. Leave them as they are; do not turn an
+  requests the code does not link, `unchained` surfaces, and chain edges joined `by name`. Leave them as they are; do not turn an
   Unknown into True by adding steps or edges by hand.
 
 ## Three parts
 
 atlas generates what the code settles. You write what needs intent, and atlas checks it. Between the two, you interpret
 which work belongs to which component, with the criteria in `references/boundaries.md`. Everything you decide goes
-into a file atlas reads (flow files, the exceptions file, the configuration, feedback), so the next run and the next
+into a file atlas reads (flow files, the exceptions file, the configuration), so the next run and the next
 agent see it.
 
 ### atlas generates: never write these by hand
@@ -68,19 +67,16 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | a Flow's `title` and each step's `role` | `Documented` (present, not true) |
 | a journey: which chains, in which order, picked from atlas output | `Resolved`; `Connected` from `next`, else Unknown |
 | `owner`, `labels`, `sources`, `lifecycle` (planned when a step is not built) | schema; `Resolved` counts planned steps apart |
-| `generated: { by: <tool>/<model>, at }` once you have written a flow's intent; `stale_after` when it should be reviewed (OKF) | schema; `Fresh` |
-| on a surface-step flow only: the entry component when several call the first step | `EntryCalled`, `Connected` |
 | `produces` | `ProducesListed` |
 | exceptions: reason, `decidedBy`, `reviewBy` | expiry brings the finding back |
-| false positives, with why | `stats` |
+| a misread file: an exception whose reason says which file and how | expiry brings the finding back |
 | the configuration | `scan` coverage |
 | the OpenAPI document the framework generates, for a component atlas cannot parse (`routes[].openapi`, `references/openapi.md`) | `scan` coverage and `limit:` lines |
 | `origins`: the base URL each component runs at in an environment, from the deployment files | `export arazzo` notes a missing one |
 | `openapi.<component>` when atlas reports its description `ambiguous` | `export arazzo` refuses until it is set |
 
 Do not hand your part to the tool: no `publicSurfaces`, exception or baseline update without a reason a person would
-accept. Never write a `verified` entry with a `human:` actor: that records a person's review, and the flow's trust tier
-(`unverified`, `machine-confirmed`, `human-reviewed`) depends on it.
+accept.
 
 ### You interpret: boundaries
 
@@ -123,14 +119,15 @@ the document in the same change. A client call alone does not change it.
 1. `atlas chains --unnamed` lists the requests no flow names yet; `atlas draft flows` prints a Flow for each (narrow it
    with `--component`). Save the output under `flows/<name>.flow.yaml`, or `<out>/flows/` for a repository you must not
    change.
-2. Fill only the `agent:` lines: `title`, `labels`, each step's `role`, and `generated`. Keep every line without a
+2. Fill only the `agent:` lines: `title`, `labels`, each step's `role`, and `sources` when a decision or issue is behind the flow. Keep every line without a
    marker; the step, its chain and the entry come from the code.
 3. For a journey across requests (open a page, then submit its form; attach, then send), write a flow whose steps are
    chains, in order. Take each following chain from the previous chain's `next` when atlas lists one; then `Connected`
-   is True from the code. Two requests one component makes, with nothing in the code linking them, give
-   `Connected` and `Ready` `Unknown (OrderNotInCode)`: the order is yours, and it stays Unknown.
-4. `atlas flows` until each flow is `Ready=True` or deliberately Unknown. A False `Resolved`, `Connected` or
-   `EntryCalled` means the code or the flow is wrong: decide which with `references/boundaries.md`. A False
+   is True from the code. Two requests with nothing in the code linking them, whether one component makes both or
+   one client hands off to another, give `Connected` and `Ready` `Unknown (OrderNotInCode)`: the order is yours, and
+   it stays Unknown.
+4. `atlas flows` until each flow is `Ready=True` or deliberately Unknown. A False `Resolved` or `Connected` means
+   the code or the flow is wrong: decide which with `references/boundaries.md`. A False
    `Documented` means an author field is empty.
 
 A file may hold several flows separated by `---`. Do not copy locations, edges, surfaces a chain reaches, or
@@ -141,8 +138,8 @@ package, whose `docs/schema.md` and `docs/responsibilities.md` explain it.
 ## Before finishing
 
 1. `atlas check --since <revision you started from>`. Only findings your change introduced appear.
-2. For each: `atlas explain <key>` shows the locations and similar paths. Then fix it, or record an exception, or
-   record a false positive. See "Handling a finding".
+2. For each: `atlas explain <key>` shows the locations and similar paths. Then fix it, correct the configuration, or
+   record an exception. See "Handling a finding".
 3. Put `atlas diff <base>..WORKTREE --format markdown` (or `<base>..HEAD`) and the `trace` of each new surface in
    the PR description or hand-off note. Its chain section says which requests now reach other surfaces; each such
    change is something a reviewer should see, intended or not.
@@ -187,8 +184,10 @@ Decide first whether it is a defect, a plan or a false positive (`references/bou
   ```
 
   Surfaces served to clients outside the repository go into `publicSurfaces` in the configuration.
-- When the finding is wrong: `atlas feedback <key> false-positive --note "<why>"`. If the extractor misread a file,
-  say which file and how.
+- When the finding is wrong: if the configuration caused it (a missing call file, prefix or mount), correct the
+  configuration. If the extractor misread a file, add an exception whose reason says which file and how it was misread,
+  and report the misreading so the extractor can be fixed. A rule that is mostly wrong for the repository is switched
+  off there (`rules.<id>.enabled: false`) with a person's agreement.
 
 Never run `atlas baseline update` unless a person asks for it. Never edit generated code to satisfy a finding.
 

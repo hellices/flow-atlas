@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:flow-atlas:schema:v1alpha1:flow",
   "title": "Flow",
-  "description": "One end-to-end flow, written by people and agents in YAML under flows/*.flow.yaml; several flows may share a file as separate YAML documents. The envelope follows the Kubernetes Resource Model (apiVersion, kind, metadata, spec) as Backstage's catalog-info.yaml does; the steps follow Arazzo 1.0, naming a surface, a call or another flow of this repository instead of an OpenAPI operation. Metadata also carries OKF 0.2 trust fields (sources, generated, verified, stale_after) for the authored intent. atlas reads this file and never writes it; what it observes goes into a FlowReport. Who writes what: 'author' fields need intent and are written by a person or an agent; 'from atlas' fields are ids copied from atlas output (atlas draft flow writes them); atlas checks both in its FlowReport.",
+  "description": "One end-to-end flow, written by people and agents in YAML under flows/*.flow.yaml; several flows may share a file as separate YAML documents. The envelope follows the Kubernetes Resource Model (apiVersion, kind, metadata, spec) as Backstage's catalog-info.yaml does; the steps follow Arazzo 1.0, naming a surface, a call or another flow of this repository instead of an OpenAPI operation. atlas reads this file and never writes it; what it observes goes into a FlowReport. Who writes what: 'author' fields need intent and are written by a person or an agent; 'from atlas' fields are ids copied from atlas output (atlas draft flows writes them); atlas checks both in its FlowReport.",
   "type": "object",
   "required": [
     "apiVersion",
@@ -56,41 +56,11 @@
           }
         },
         "sources": {
-          "description": "author. OKF 0.2 sources: the decisions, documents and issues behind the flow.",
+          "description": "author. The decisions, documents and issues behind the flow, shaped as OKF 0.2 sources.",
           "type": "array",
           "items": {
             "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfSource"
           }
-        },
-        "generated": {
-          "description": "author. OKF 0.2 generated: who wrote the flow's intent (title, roles) and when it last changed meaningfully. An agent writes its own actor, <tool>/<model>.",
-          "allOf": [
-            {
-              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
-            }
-          ]
-        },
-        "verified": {
-          "description": "a person, or a process they name. OKF 0.2 verified: who confirmed the intent; a human: actor makes the flow human-reviewed. An agent never adds a human: entry.",
-          "oneOf": [
-            {
-              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
-            },
-            {
-              "type": "array",
-              "items": {
-                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/okfEvent"
-              }
-            }
-          ]
-        },
-        "stale_after": {
-          "description": "author. OKF 0.2 stale_after: the instant after which the intent must be reviewed again; atlas reports Fresh=False from then on.",
-          "allOf": [
-            {
-              "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/timestamp"
-            }
-          ]
         }
       }
     },

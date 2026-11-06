@@ -504,10 +504,8 @@
             "Ready",
             "Resolved",
             "Connected",
-            "EntryCalled",
             "ProducesListed",
-            "Documented",
-            "Fresh"
+            "Documented"
           ]
         },
         "status": {
@@ -674,18 +672,18 @@
       }
     },
     "timestamp": {
-      "description": "RFC 3339 date-time with seconds and an explicit UTC offset, as OKF requires. The pattern bounds each field; the date-time format, which the validator asserts, checks the calendar day.",
+      "description": "RFC 3339 date-time with seconds and an explicit UTC offset. The pattern bounds each field; the date-time format, which the validator asserts, checks the calendar day.",
       "type": "string",
       "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:([0-5]\\d|60)(\\.\\d+)?(Z|[+-]([01]\\d|2[0-3]):[0-5]\\d)$",
       "format": "date-time"
     },
     "actor": {
-      "description": "OKF actor (0.2 §7): <producer>/<version> for agents and tools, human:<id> for people, process:<id> for automated processes. Other <kind>:<id> prefixes, such as the spec's own team:<id> example, are accepted; only human: counts toward the human-reviewed tier.",
+      "description": "Who wrote a source: <producer>/<version> for agents and tools, human:<id> for people, process:<id> for automated processes, as OKF 0.2 §7 writes actors.",
       "type": "string",
       "pattern": "^([a-z][a-z0-9-]*:[^\\s]+|[^\\s:/]+/[^\\s]+)$"
     },
     "okfSource": {
-      "description": "OKF source (0.2 §5.1): a material the knowledge derives from.",
+      "description": "A material the flow derives from, shaped as an OKF 0.2 §5.1 source.",
       "type": "object",
       "required": [
         "resource"
@@ -708,21 +706,6 @@
           "$ref": "#/$defs/actor"
         },
         "last_modified": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
-    },
-    "okfEvent": {
-      "type": "object",
-      "required": [
-        "by"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "by": {
-          "$ref": "#/$defs/actor"
-        },
-        "at": {
           "$ref": "#/$defs/timestamp"
         }
       }

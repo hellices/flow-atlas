@@ -145,11 +145,6 @@ describe("check, baseline and exceptions", () => {
     expect(byKey.get("FA004|document|coupon|no-consumer")).toBe("expired-exception");
   });
 
-  it("records feedback for stats", () => {
-    expect(run("feedback", "FA001|bff|PUT /preferences", "accepted", "--note", "intended")).toBe(0);
-    expect(readFileSync(join(out, "feedback.jsonl"), "utf8")).toContain('"verdict":"accepted"');
-    expect(run("stats")).toBe(0);
-  });
 });
 
 describe("trace", () => {
@@ -235,20 +230,10 @@ describe("flows", () => {
       Ready: "True NoConditionFailed",
       Resolved: "True AllStepsResolved",
       Connected: "True AllStepsConnected",
-      EntryCalled: "True EntryCallsFirstStep",
       ProducesListed: "True AllListed",
       Documented: "True TitleAndRolesWritten",
-      Fresh: "True BeforeStaleAfter",
     });
-    expect(view.status.trust).toBe("human-reviewed");
-    expect(flow(doc, "place-order").status.trust).toBe("unverified");
-    expect(cond(doc, "place-order")).toMatchObject({ Ready: "True NoConditionFailed", Fresh: "Unknown NoStaleAfter" });
-    const later = resolveFlows(graph, loadFlows(source, config), "2027-04-01T00:00:00Z");
-    expect(Object.fromEntries(flow(later, "view-order").status.conditions.map((c) => [c.type, `${c.status} ${c.reason}`]))).toMatchObject({
-      Ready: "False ConditionsFailed",
-      Fresh: "False PastStaleAfter",
-    });
-    expect(flowFindings(later).map((f) => f.key)).toEqual(["FA007|view-order|stale"]);
+    expect(cond(doc, "place-order")).toMatchObject({ Ready: "True NoConditionFailed" });
     expect(cond(doc, "refund-order")).toMatchObject({ Ready: "False ConditionsFailed", Resolved: "True PlannedStepsPending", Documented: "False TitleMissing" });
     expect(flowFindings(doc)).toEqual([]);
     expect(doc.unassigned).not.toContain("bff|POST /orders");
@@ -290,7 +275,7 @@ describe("flows", () => {
     ]);
     expect(cond(doc, "detached")).toMatchObject({ Documented: "False TitleMissing" });
     expect(cond(doc, "detached")).toMatchObject({ Ready: "False ConditionsFailed", Connected: "False NoPathBetweenSteps" });
-    expect(cond(doc, "broken")).toMatchObject({ Connected: "Unknown StepsUnresolved", EntryCalled: "True EntryCallsFirstStep", ProducesListed: "False NotInRegistry" });
+    expect(cond(doc, "broken")).toMatchObject({ Connected: "Unknown StepsUnresolved", ProducesListed: "False NotInRegistry" });
     expect(validate("flow-report", doc)).toEqual([]);
   });
 });
