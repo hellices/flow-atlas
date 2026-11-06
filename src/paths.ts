@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 /** Placeholder written where a call site interpolates a value into a path. */
 export const HOLE = "{}";
 
@@ -32,6 +34,27 @@ export function callPath(text: string): CallPath | undefined {
   if (!PATHLIKE.test(s) || FILE_EXT.test(s)) return undefined;
   if (s.split("/").filter(Boolean).every((seg) => seg === HOLE)) return undefined;
   return { path: s.replace(/\/+$/, ""), based };
+}
+
+/**
+ * The host (with its port, lower-cased, default ports dropped) an absolute `http` or `https` URL names literally;
+ * undefined for any other text, and for a host that is a value written into the URL (`https://${host}/x`). A literal
+ * host the URL standard rejects (`127.999.999.999`) is returned as written, lower-cased: it names no server.
+ */
+export function hostOf(text: string): string | undefined {
+  const m = text.trim().match(/^(https?):\/\/(?:[^/?#@]*@)?([^/?#]+)/i);
+  if (!m || m[2]!.includes(HOLE)) return undefined;
+  try {
+    return new URL(`${m[1]}://${m[2]}`).host;
+  } catch {
+    return m[2]!.toLowerCase();
+  }
+}
+
+/** Whether a host is a loopback address, the machine the client runs on: `localhost`, 127.0.0.0/8 or `[::1]`. */
+export function isLoopback(host: string): boolean {
+  const name = host.replace(/:\d+$/, "");
+  return name === "localhost" || name === "[::1]" || (isIP(name) === 4 && name.startsWith("127."));
 }
 
 export function joinRoute(...parts: string[]): string {

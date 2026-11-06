@@ -84,7 +84,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const spans = new Spans();
   const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
-  const read = extractCalls(source, config, coverage, spans);
+  const read = extractCalls(source, config, coverage, spans, limits);
   const calls = assignCallIds(read.map(withoutSpan));
   const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits);
   const graph: Graph = {
