@@ -355,6 +355,7 @@ describe("matching", () => {
     // Express and the like follow registration order, which is not read: every route the request fits stays.
     const ordered = matchCalls({ surfaces, calls });
     expect(ordered.targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    expect(ordered.targetsOf.has(2)).toBe(false);
     expect(ordered.unsettled.get(2)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
     // Spring scores a variable 1 and a wildcard 100: /a/{x}/{y} over /a/*/*.
     const scored = [surface("GET", "/a/*/*"), surface("GET", "/a/{x}/{y}")];
@@ -367,7 +368,9 @@ describe("matching", () => {
     // A mapping that names the method wins a tie with one that accepts any; an unknown method may reach either.
     const methods = [surface("*", "/m/{x}"), surface("GET", "/m/{x}")];
     expect(matchCalls({ surfaces: methods, calls: [call("GET", "/m/1")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /m/{x}"]);
-    expect(matchCalls({ surfaces: methods, calls: [call("*", "/m/1")] }, new Map([["s", "spring"]])).unsettled.get(0)!.map((s) => s.id)).toEqual(["s|* /m/{x}", "s|GET /m/{x}"]);
+    const tie = matchCalls({ surfaces: methods, calls: [call("*", "/m/1")] }, new Map([["s", "spring"]]));
+    expect(tie.targetsOf.has(0)).toBe(false);
+    expect(tie.unsettled.get(0)!.map((s) => s.id)).toEqual(["s|* /m/{x}", "s|GET /m/{x}"]);
   });
 
   it("matches a catch-all against the rest of the path", () => {

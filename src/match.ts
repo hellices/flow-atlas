@@ -85,7 +85,7 @@ export interface Matches {
   targetsOf: Map<number, Surface[]>;
   /**
    * Calls whose method is not read and whose routes take different methods, keyed by the call's index, with the
-   * surfaces they fit: which of them a call reaches depends on its method, so it is taken to reach none.
+   * surfaces they fit: which of them a call reaches depends on its method, so it is matched to none.
    */
   unsettled: Map<number, Surface[]>;
 }
@@ -129,7 +129,7 @@ export function unsettledLimits(graph: Pick<Graph, "calls">, unsettled: Matches[
     const c = graph.calls[ci]!;
     const methods = [...new Set(fits.map((s) => (s.method === "*" ? "any method" : s.method)))].sort();
     const list = methods.length > 1 ? `${methods.slice(0, -1).join(", ")} and ${methods[methods.length - 1]}` : methods[0];
-    return `calls ${c.from}->${c.to}: * ${c.path} at ${c.at.file}:${c.at.line} fits routes of ${list}; its method is not read, so it reaches none of them`;
+    return `calls ${c.from}->${c.to}: * ${c.path} at ${c.at.file}:${c.at.line} fits routes of ${list}; its method is not read, so it is matched to none of them`;
   });
 }
 

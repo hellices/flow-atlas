@@ -102,7 +102,7 @@ describe("shop fixture", () => {
     expect(evaluate(none, unmanaged).some((f) => f.key.startsWith("FA003|undeclared"))).toBe(false);
   });
 
-  it("takes a call of unread method to reach none of routes that take different methods, and its component still", () => {
+  it("leaves a call of unread method unmatched among routes of different methods, and still counts the component it calls", () => {
     const get = graph.surfaces.find((s) => s.id === "orders|GET /orders/{id}")!;
     const put = { ...get, id: "orders|PUT /orders/{id}", method: "PUT" };
     const calls = graph.calls.map((c) => (c.from === "web" && c.to === "orders" ? { ...c, method: "*" } : c));

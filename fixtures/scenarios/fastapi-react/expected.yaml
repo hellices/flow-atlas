@@ -9,8 +9,8 @@ case: |
   atlas does not read into the wrapper, so `authFetch(url)` has no method it can read. Such a call to
   `/api/reports/${name}` used to reach `POST /api/reports/run` as well as the catch-all it reads, and one to
   `/api/templates/${name}` the PUT that saves a template, so both showed as callers of writes they never make. A call
-  whose method is not read now reaches the routes it fits only when they take one method; otherwise a limit names it,
-  it reaches none, and the routes it fits are not reported as having no caller.
+  whose method is not read is now matched to the routes it fits only when they take one method; otherwise atlas leaves
+  it unmatched, a limit names it, and the routes it fits are not reported as having no caller.
 surfaces:
   - backend|DELETE /api/exports/{workspace_id}/{timestamp}
   - backend|GET /api/reports

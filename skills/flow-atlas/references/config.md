@@ -171,9 +171,9 @@ a `spring` component a request whose path is fully known reaches that route only
 which atlas does not read, so there a request reaches every route it fits.
 
 A request whose method is not read (`*`: a project's wrapper called without a method, an init built at run time, a
-`data-*` URL) reaches those routes only when they all take one method, or all take any. Where they take several, which
-one it calls depends on the method: it reaches none of them, a limit names the call and the methods, FA002 is not
-reported for it and FA001 for none of the routes it fits. A wrapper's own code is not read, so `authFetch(url)` is
+`data-*` URL) is matched to those routes only when they all take one method, or all take any. Where they take several,
+which one it calls depends on the method, which atlas does not settle: it leaves the call unmatched, a limit names the
+call and the methods, FA002 is not reported for it and FA001 for none of the routes it fits. A wrapper's own code is not read, so `authFetch(url)` is
 such a request even when the wrapper hands its arguments to `fetch`; `authFetch(url, { method: "POST" })` states its
 method.
 

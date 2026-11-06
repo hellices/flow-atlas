@@ -110,9 +110,9 @@ is ts-rest. Keeping such tools alive is costly, which argues for a narrow scope.
 The configuration reference (`skills/flow-atlas/references/config.md`) gives the exact reading of each style.
 
 A finding about absence is limited by this scope. "No caller" and "no route serves this call" mean none among the
-configured and readable call sites. A call whose method is not read reaches the routes its path fits only when they
-all take one method. Where they take several, which one it calls is not read: it reaches none of them, a limit names
-it, and none of those routes is reported as having no caller. Declare surfaces served outside the repository in `publicSurfaces`, and record a
+configured and readable call sites. A call whose method is not read is matched to the routes its path fits only when
+they all take one method. Where they take several, which one it calls is not read: atlas leaves it unmatched, a limit
+names it, and none of those routes is reported as having no caller. Declare surfaces served outside the repository in `publicSurfaces`, and record a
 decision as an exception.
 
 Rules that keep the scope:

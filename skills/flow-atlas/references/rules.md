@@ -30,8 +30,8 @@ A configured call site whose request matches no route of its target. Reported on
 sources in the configuration (even if none of its routes is left) and the request is clearly a path on that target:
 it starts from a base address, or its first segment is one the target serves.
 
-A call of unread method whose path fits routes of several methods is not reported either; it reaches none of them
-and a `limit:` line names it.
+A call of unread method whose path fits routes of several methods is not reported either: it may reach any of them,
+so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.
