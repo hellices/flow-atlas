@@ -257,7 +257,7 @@ describe("inventory", () => {
     expect(names(app('name: app\ndependencies:\n  flutter:\n    sdk: "flutter"\n'))).toEqual(["app:app"]);
     expect(names(app("name: app\ndependencies:\n  flutter: { sdk: 'flutter' }   # the SDK\n"))).toEqual(["app:app"]);
     expect(names(app("name: app\ndependencies:\n  flutter:\n    sdk: flutter # Flutter SDK\n"))).toEqual(["app:app"]);
-    expect(names(app("name: app\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n"))).toEqual(["app:app", "android-app:app/android/app"]);
+    expect(names(app("name: app\ndev_dependencies:\n  flutter:\n    sdk: flutter\n"))).toEqual(["app:app", "android-app:app/android/app"]);
   });
   it("names components that share a directory name by their paths, and says so", () => {
     const files = {
