@@ -4,7 +4,8 @@ case: |
   the path often starts the next line, so 37 of 39 calls had no method; with the prefix unread none matched, and every
   route came back as FA001. With the verb read across type arguments and line breaks, the client's prefix declared,
   and the call files narrowed to the code that calls Dio, every call matches and only the admin create route, which
-  the app does not call, is reported.
+  the app does not call, is reported. Inventory offered the Gradle projects in the app's android/ folder as two more
+  components, one of them also named app; they are the Flutter app's own Android host, and are left out.
 surfaces:
   - backend|GET /api/v1/courses/{id}/detail
   - backend|GET /api/v1/courses/{id}/related
@@ -17,6 +18,9 @@ chains:
   - app->backend|GET /api/v1/courses/{id}/related
   - app->backend|POST /api/v1/forum/courses/{courseId}/posts
 inventory:
+  components:
+    - app app/pubspec.yaml
+    - backend backend/build.gradle
   routes:
     - backend/src/main/java/com/example/course/CourseController.java spring 4
     - backend/src/main/java/com/example/course/ForumController.java spring 2

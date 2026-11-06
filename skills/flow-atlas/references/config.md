@@ -3,7 +3,9 @@
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
 material: components from manifests, files that register routes (and in which style), files whose strings look like
 client requests and OpenAPI documents. It does not choose; many candidates are tests
-helpers, tools or contracts, not clients. Expect two or three rounds of `atlas scan` and correction before the
+helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
+part of the app beside them (`android/`, `ios/` and the like of a Flutter app, a React Native app or an Expo module) is
+that app's, not a component; components that would share a name are named by their paths (`mobile-app`), with a note. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
 ```yaml

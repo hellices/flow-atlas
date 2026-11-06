@@ -14,9 +14,9 @@ import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js
 import { traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
 import { inventory } from "../src/inventory.js";
-import type { Subgraph, Surface } from "../src/model.js";
+import { API_VERSION, type Subgraph, type Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
-import { configDependency } from "../src/provenance.js";
+import { codeDependency, configDependency, provenance } from "../src/provenance.js";
 import { coverageDrops } from "../src/commands.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
@@ -226,6 +226,45 @@ describe("inventory", () => {
     expect(inventory(memory(service), []).components.map((c) => `${c.name}:${c.path}`)).toEqual([":", "web:web"].map((x) => (x === ":" ? "root:" : x)));
     const workspace = { "package.json": '{"name":"mono","workspaces":["web"]}', "web/package.json": '{"name":"web"}' };
     expect(inventory(memory(workspace), []).components.map((c) => c.name)).toEqual(["web"]);
+  });
+  it("takes no component from the platform folders a cross-platform app builds", () => {
+    const files = {
+      "app/pubspec.yaml": "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+      "app/android/settings.gradle.kts": 'include(":app")\n',
+      "app/android/build.gradle.kts": "",
+      "app/android/app/build.gradle.kts": "",
+      "app/ios/Podfile": "",
+      "tool/pubspec.yaml": "name: tool\n",
+      "tool/android/build.gradle": "",
+      "mobile/package.json": '{"name":"mobile","dependencies":{"react-native":"0.80.0"}}',
+      "mobile/android/build.gradle": "",
+      "mobile/android/app/build.gradle": "",
+      "mobile/modules/blur/expo-module.config.json": "{}",
+      "mobile/modules/blur/android/build.gradle": "",
+      "backend/build.gradle": "",
+    };
+    expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`)).toEqual(["app:app", "backend:backend", "mobile:mobile", "tool:tool", "android:tool/android"]);
+  });
+  it("names components that share a directory name by their paths, and says so", () => {
+    const files = {
+      "deploy/mobile/app/build.gradle.kts": "",
+      "deploy/catalog/app/build.gradle.kts": "",
+      "packages/a/python/pyproject.toml": "",
+      "packages/b/python/pyproject.toml": "",
+      "packages/b/package.json": '{"name":"b"}',
+      "web/package.json": '{"name":"site"}',
+    };
+    const inv = inventory(memory(files), []);
+    expect(inv.components.map((c) => `${c.name}:${c.path}${c.note ? ` (${c.note})` : ""}`)).toEqual([
+      "catalog-app:deploy/catalog/app (named by its path: 2 components would be named app)",
+      "mobile-app:deploy/mobile/app (named by its path: 2 components would be named app)",
+      "a-python:packages/a/python (named by its path: 2 components would be named python)",
+      "b:packages/b",
+      "b-python:packages/b/python (named by its path: 2 components would be named python)",
+      "site:web",
+    ]);
+    const doc = { apiVersion: API_VERSION, kind: "Inventory", provenance: provenance("Inventory", { ref: "WORKTREE" }, [codeDependency("code", "WORKTREE")]), ...inv };
+    expect(validate("inventory", doc)).toEqual([]);
   });
 });
 

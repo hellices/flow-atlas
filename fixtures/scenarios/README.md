@@ -12,7 +12,7 @@ result shows as a difference in a case someone met.
 | `express-spring-twins` | the same API in Express and Spring, a k6 load script as client | Express routers served only under a literal or declared mount path; an undeclared one left out with a limit, as is a route on a path the file does not spell out |
 | `nextjs-app` | a Next.js app whose browser code calls its own route handlers | route handlers as surfaces, the HEAD and OPTIONS Next.js answers itself, no cycle for a component calling itself |
 | `nextjs-pages` | a Next.js app whose pages link to each other, and a client of one route handler | pages as GET surfaces, links and share-link helpers reaching them, a literal type that is no request |
-| `flutter-spring` | a Flutter app on Dio, a Spring backend under `/api/v1` | verbs with type arguments and paths on the next line, a declared client prefix, call files narrowed to the code that calls Dio |
+| `flutter-spring` | a Flutter app on Dio, a Spring backend under `/api/v1` | verbs with type arguments and paths on the next line, a declared client prefix, call files narrowed to the code that calls Dio, no components from the app's Android host |
 | `ts-monorepo-bases` | Kotlin app → BFF → core service → file service, and a Python agent | URLs built on a `const` base, f-string URLs, route registrations that are no requests, `res.send()` that names no port, a journey whose order only the flow states, event streams on paths held in consts named in limits |
 
 To add one: reproduce the shape in a new directory with an `atlas.config.yaml` (and `flows/` if the case is about

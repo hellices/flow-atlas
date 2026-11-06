@@ -25,8 +25,11 @@ interface Expected {
   limits?: string[];
   /** Each flow's Ready; none when the scenario has no flow descriptions. */
   flows?: Record<string, string>;
-  /** What `atlas inventory` offers: route files with their style and count, client-call files with their count. */
-  inventory: { routes: string[]; calls: string[] };
+  /**
+   * What `atlas inventory` offers: components by name and manifest (none when the scenario has no manifests), route
+   * files with their style and count, client-call files with their count.
+   */
+  inventory: { components?: string[]; routes: string[]; calls: string[] };
 }
 
 const root = fileURLToPath(new URL("../fixtures/scenarios", import.meta.url));
@@ -48,6 +51,7 @@ function run(dir: string) {
     chains: chains.chains.map((c) => [c.id, ...c.surfaces.filter((s) => s !== c.root).sort()].join(" + ")).sort(),
     limits: graph.limits,
     inventory: {
+      components: offered.components.map((c) => `${c.name} ${c.manifest}${c.note ? ` (${c.note})` : ""}`),
       routes: offered.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort(),
       calls: offered.calls.map((c) => `${c.file} ${c.count}`).sort(),
     },
@@ -68,7 +72,11 @@ describe("scenarios from real repositories", () => {
       expect(actual.limits.length).toBe((expected.limits ?? []).length);
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));
       expect(actual.flows).toEqual(expected.flows ?? {});
-      expect(actual.inventory).toEqual({ routes: [...expected.inventory.routes].sort(), calls: [...expected.inventory.calls].sort() });
+      expect(actual.inventory).toEqual({
+        components: expected.inventory.components ?? [],
+        routes: [...expected.inventory.routes].sort(),
+        calls: [...expected.inventory.calls].sort(),
+      });
     });
   }
 });
