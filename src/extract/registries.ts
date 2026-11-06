@@ -1,7 +1,8 @@
 import { isMap, isScalar, isSeq, parseDocument, type Node as YamlNode } from "yaml";
 import type { ActiveList, Config } from "../config.js";
-import type { Place, RegistryEntry } from "../model.js";
+import type { Coverage, Place, RegistryEntry } from "../model.js";
 import { lineOf, select, type Source } from "../source.js";
+import { addCoverage } from "./coverage.js";
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -55,18 +56,20 @@ function keysFrom(source: Source, file: string, pattern: string | undefined, fie
   return out;
 }
 
-function activeKeys(source: Source, active: ActiveList | { files: string; pattern?: string; field?: string }): Keyed[] {
-  const files = "file" in active ? [active.file] : select(source, [active.files], []);
-  return files.flatMap((f) => keysFrom(source, f, active.pattern, active.field));
+function activeKeys(source: Source, active: ActiveList | { files: string; pattern?: string; field?: string }): { files: number; keys: Keyed[] } {
+  const files = ("file" in active ? [active.file] : select(source, [active.files], [])).filter((f) => source.read(f) !== undefined);
+  return { files: files.length, keys: files.flatMap((f) => keysFrom(source, f, active.pattern, active.field)) };
 }
 
-export function extractRegistries(source: Source, config: Config): RegistryEntry[] {
+/** `coverage` gets one `registries <name>` entry per registry: the active files read and the entries they list. */
+export function extractRegistries(source: Source, config: Config, coverage: Coverage[] = []): RegistryEntry[] {
   const out: RegistryEntry[] = [];
   for (const reg of config.registries) {
     const seen = new Set<string>();
     const producerFiles = select(source, reg.producers, config.exclude);
     const consumerFiles = select(source, reg.consumers, config.exclude);
-    for (const { key, at } of activeKeys(source, reg.active)) {
+    const active = activeKeys(source, reg.active);
+    for (const { key, at } of active.keys) {
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
@@ -78,6 +81,7 @@ export function extractRegistries(source: Source, config: Config): RegistryEntry
         consumers: occurrences(source, consumerFiles, [key]),
       });
     }
+    addCoverage(coverage, `registries ${reg.name}`, active.files, seen.size);
   }
   return out;
 }

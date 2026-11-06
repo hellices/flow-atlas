@@ -17,6 +17,7 @@ import { inventory } from "../src/inventory.js";
 import type { Subgraph, Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
 import { configDependency } from "../src/provenance.js";
+import { coverageDrops } from "../src/commands.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import { GitRefSource, WorktreeSource, type Source } from "../src/source.js";
@@ -107,6 +108,43 @@ describe("registry locations", () => {
     const config = normalizeConfig({ registries: [{ name: "kind", active: { file: "Kind.java", pattern: "\\n    ([A-Z_]+)[,\\n]" }, producers: [], consumers: [] }] });
     const entries = extractRegistries(memory({ "Kind.java": enumFile }), config);
     expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["ALPHA:2", "BETA:3"]);
+  });
+});
+
+describe("registry coverage", () => {
+  const registry = (name: string, active: Record<string, string>) => ({ name, active, producers: ["src/**"], consumers: ["web/**"] });
+  const config = normalizeConfig({
+    registries: [
+      registry("kind", { file: "Kind.java", pattern: "\\n    ([A-Z_]+)[,\\n]" }),
+      registry("renamed", { file: "Kind.java", pattern: "\\n  ([a-z]+)," }),
+      registry("moved", { file: "gone/active.json" }),
+      registry("tool", { files: "tools/*.json", field: "name" }),
+    ],
+  });
+  const files = {
+    "Kind.java": "public enum Kind {\n    ALPHA,\n    BETA\n}\n",
+    "tools/a.json": '{ "name": "search" }',
+    "tools/b.json": '{ "name": "search" }',
+  };
+  const graph = scan(memory(files), config);
+
+  it("says per registry how many files its active list read and how many entries it found", () => {
+    expect(graph.coverage).toEqual([
+      { source: "registries kind", files: 1, items: 2 },
+      { source: "registries renamed", files: 1, items: 0 },
+      { source: "registries moved", files: 0, items: 0 },
+      { source: "registries tool", files: 2, items: 1 },
+    ]);
+    expect(validate("graph", graph)).toEqual([]);
+  });
+  it("gives a limit for an active list that yields no entries", () => {
+    expect(graph.limits).toEqual([
+      "registries renamed: 1 files read, nothing extracted",
+      "registries moved: the configured files match nothing",
+    ]);
+  });
+  it("does not warn against a baseline recorded before registries had coverage", () => {
+    expect(coverageDrops(graph, {})).toEqual([]);
   });
 });
 

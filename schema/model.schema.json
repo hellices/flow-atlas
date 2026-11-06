@@ -329,7 +329,7 @@
       "properties": {
         "source": {
           "type": "string",
-          "pattern": "^(routes|calls) "
+          "pattern": "^(routes|calls|registries) "
         },
         "files": {
           "type": "integer",

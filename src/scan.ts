@@ -96,7 +96,7 @@ export function scan(source: Source, config: Config, context: { root?: string; r
     calls,
     edges,
     declared,
-    registries: extractRegistries(source, config),
+    registries: extractRegistries(source, config, coverage),
     apiDocuments,
     apiDescriptions: resolveApiDescriptions(apiDocuments, surfaces, config),
     coverage,

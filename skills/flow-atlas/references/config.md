@@ -79,7 +79,8 @@ rules:
    back as FA004 with nothing to fix.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
-   continue through.
+   continue through. A registry's line counts the active files read and the entries they list; one that reads no file
+   or lists nothing also gives a `limit:` line, usually a moved file or a `pattern` or `field` that no longer fits.
 6. Run `atlas baseline update` once, with the person who owns the repository. The baseline also records what each
    source yielded; a later check warns when a source falls below half of that, which usually means code moved and
    the configuration did not.
