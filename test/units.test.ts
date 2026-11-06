@@ -234,6 +234,15 @@ describe("Reach", () => {
     expect(reach.from("src/w.ts", (reach.parse("src/w.ts")!.sf.statements[0] as ts.ExpressionStatement).expression)).toEqual([]);
   });
 
+  it("treats a parameter as the framework's only when every call hands it the response", () => {
+    const mixed: Record<string, string> = {
+      "src/h.ts": 'function forward(x) { x.send(); }\napp.get("/x", (req, res) => { forward(res); forward(req.mailPort); });',
+    };
+    const reach = new Reach({ ...source, read: (p) => mixed[p], list: () => Object.keys(mixed) });
+    const call = (reach.parse("src/h.ts")!.sf.statements[1] as ts.ExpressionStatement).expression;
+    expect(reach.from("src/h.ts", call)).toEqual(["send"]);
+  });
+
   it("treats a parameter the handler hands its response to as the framework's", () => {
     const handled: Record<string, string> = {
       "src/h.ts": 'import * as helpers from "./helpers";\napp.get("/x", (req, res) => { helpers.respond(res); });',

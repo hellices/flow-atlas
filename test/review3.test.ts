@@ -198,7 +198,7 @@ describe("framework rules", () => {
     const graph = scan(memory(files), config);
     expect(graph.edges.filter((e) => e.kind === "match").map((e) => e.to)).toEqual(["api|GET /api/users/me"]);
     // The me route has no DELETE: Next.js answers 405 rather than trying /api/users/[id].
-    expect(evaluate(graph, config).map((f) => f.key)).toContain("FA002|web->api|DELETE /api/users/me");
+    expect(evaluate(graph, config).map((f) => f.key).filter((k) => k.startsWith("FA002"))).toEqual(["FA002|web->api|DELETE /api/users/me"]);
   });
 
   it("drops a route registration from the calls, and keeps the request its handler makes on the same path", () => {
@@ -212,6 +212,9 @@ describe("framework rules", () => {
     expect(graph.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /users"]);
     // The handler's request belongs to the bff route that holds it, not to core's route of the same path.
     expect(graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${graph.calls.find((c) => c.id === e.to)!.path}`)).toEqual(["bff|GET /users -> /users"]);
+    // A path built with `+` is the registration; a call written inside it runs, and its request is read.
+    const built = scan(memory({ "bff/routes.ts": 'app.get("/" + (sync(client.get("/health")), "ready"), h);' }), config);
+    expect(built.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /health"]);
   });
 
   it("reaches what a framework answers by itself only by a request that names the method", () => {
@@ -335,10 +338,13 @@ describe("inventory", () => {
       "lib/shelf.dart": "final api = Router();\napi.get('/orders', handler);\nfinal admin = new Router();\nadmin.get('/users', handler);",
       // Cascades register on the receiver before `..`.
       "lib/cascade.dart": "final router = Router()..get('/x', handler);\nrouter..post('/y', handler);",
-      // Next.js's prefetch loads a route ahead; it is no request wrapper.
-      "web/nav.ts": 'router.prefetch("/dashboard");\nconst me = authFetch("/api/me");',
+      // Next.js's prefetch loads a route ahead; it is no request wrapper. A wrapper named after fetch is.
+      "web/nav.ts": 'router.prefetch("/dashboard");',
+      "web/me.ts": 'const me = authFetch("/api/me");',
+      // A shelf Router taken from a prefixed import registers routes too.
+      "lib/prefixed.dart": "final routes = shelf.Router();\nroutes.get('/x', handler);",
     };
-    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`).sort()).toEqual(["agent/a.py 1", "lib/api.dart 1", "web/nav.ts 1"]);
+    expect(inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`).sort()).toEqual(["agent/a.py 1", "lib/api.dart 1", "web/me.ts 1"]);
   });
 });
 
@@ -412,6 +418,8 @@ describe("names resolve by their bindings", () => {
       "p = client.get(f\"/pad/{n:'>10}/x\")",
       // A request made inside a field runs too.
       "s = f\"{requests.get('/users')}\"",
+      // Python 3.12: a field may hold a string in the f-string's own quote.
+      's = f"{requests.get("/same")}"',
       // A route's own f-string path is no request; a request in its field still is.
       "@app.get(f\"/{requests.get('/config').text}\")",
     ].join("\n");
@@ -421,6 +429,7 @@ describe("names resolve by their bindings", () => {
       "GET /keys/{}/users",
       "GET /pad/{}/x",
       "GET /users",
+      "GET /same",
       "GET /config",
     ]);
     // A route literal is read as Python reads it: escapes decoded.
@@ -433,6 +442,9 @@ describe("names resolve by their bindings", () => {
     const helper = { component: "c", files: [], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     expect(routesFromPython("r.py", joined, helper).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/users", "GET /v2/orders", "GET /v3/carts", "POST /v1/items"]);
     // The path may be passed by name.
+    // A mount's path and app by name.
+    const mounted = 'app.mount(path="/static", app=StaticFiles(directory="s"))\napp.mount(app=StaticFiles(directory="t"), path="/assets")';
+    expect(routesFromPython("r.py", mounted, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /static/**", "HEAD /static/**", "GET /assets/**", "HEAD /assets/**"]);
     const named = '@app.get(path="/items")\ndef a(): ...\n@app.api_route(methods=["PUT"], path="/carts")\ndef b(): ...\n@app.get(response_model=X)\ndef c(): ...';
     expect(routesFromPython("r.py", named, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /items", "PUT /carts"]);
   });

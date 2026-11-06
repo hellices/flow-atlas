@@ -113,6 +113,12 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   return undefined;
 }
 
+/** The operands a `+` chain joins, through the parentheses around a part of it. */
+function operands(e: ts.Expression): ts.Expression[] {
+  const u = ts.isParenthesizedExpression(e) && isPlus(e.expression) ? e.expression : e;
+  return isPlus(u) ? [...operands(u.left), ...operands(u.right)] : [e];
+}
+
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
 function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   const d = declarationOf(id);
@@ -149,7 +155,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
-      const parsed = spans?.holds(file, node.getStart(sf)) ? undefined : callPath(raw);
+      const parsed = registered(node) ? undefined : callPath(raw);
       if (parsed) {
         found.push({ node, call: {
           from: spec.from,
@@ -162,9 +168,23 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
           scope: scopeOf(node),
         } });
       }
-      if (whole || !ts.isTemplateExpression(node)) return;
+      // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
+      if (whole) {
+        for (const o of operands(node)) {
+          if (ts.isTemplateExpression(o)) o.templateSpans.forEach((part) => visit(part.expression));
+          else if (!ts.isStringLiteral(o) && !ts.isNoSubstitutionTemplateLiteral(o)) visit(o);
+        }
+        return;
+      }
+      if (!ts.isTemplateExpression(node)) return;
     }
     ts.forEachChild(node, visit);
+  };
+  // A string in a registration's path is the path, unless a call written inside that path takes it: that call runs.
+  const registered = (node: ts.Node): boolean => {
+    if (!spans?.holds(file, node.getStart(sf))) return false;
+    for (let a = node.parent; a && spans.holds(file, a.getStart(sf)); a = a.parent) if (ts.isCallExpression(a)) return false;
+    return true;
   };
   visit(sf);
   // One pass over the file: a base used anywhere but at the start of a URL is a request of its own too.
@@ -217,6 +237,23 @@ function fieldEnd(body: string, from: number, expression?: (start: number, end: 
     }
   }
   return body.length;
+}
+
+/**
+ * Where the f-string whose quote is at `open` closes: the next unescaped quote of its kind outside its replacement
+ * fields; undefined when the line ends first.
+ */
+function fStringEnd(text: string, open: number): number | undefined {
+  const quote = text[open]!;
+  for (let i = open + 1; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "\n") return undefined;
+    if (c === "\\") i++;
+    else if ((c === "{" || c === "}") && text[i + 1] === c) i++;
+    else if (c === "{") i = fieldEnd(text, i + 1) - 1;
+    else if (c === quote) return i;
+  }
+  return undefined;
 }
 
 /**
@@ -316,16 +353,24 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const out: Draft<Call>[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
+  const python = /\.pyi?$/.test(file);
   const read = (segment: string, offset: number): void => {
-    for (const m of segment.matchAll(STRING)) read1(m, offset + (m.index ?? 0));
+    const re = new RegExp(STRING.source, "g");
+    for (let m = re.exec(segment); m; m = re.exec(segment)) {
+      const at = m.index;
+      const fString = python && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(segment.slice(Math.max(0, at - 2), at));
+      // An f-string ends at its own closing quote, past fields that hold strings in the same quote (Python 3.12).
+      const end = fString ? fStringEnd(segment, at) : undefined;
+      const body = end !== undefined ? segment.slice(at + 1, end) : (m[1] ?? m[2]!);
+      if (end !== undefined) re.lastIndex = end + 1;
+      read1(body, offset + at, body.length + 2, fString);
+    }
   };
-  const read1 = (m: RegExpMatchArray, index: number): void => {
+  const read1 = (body: string, index: number, length: number, fString: boolean): void => {
     // A route's own path is no request; the code in its f-string fields still runs, and is read below.
     const registered = spans?.holds(file, index);
-    const body = m[1] ?? m[2]!;
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
     // code in a field runs, so the requests written in it are read too.
-    const fString = /\.pyi?$/.test(file) && /(?<![\w])(?:[fF][rR]?|[rR][fF])$/.test(text.slice(Math.max(0, index - 2), index));
     const fields: Array<[number, number]> = [];
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start);
@@ -336,7 +381,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const lineEnd = text.indexOf("\n", index);
     const before = text.slice(Math.max(0, index - 200), index);
     const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + m[0].length);
+    const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + length);
     out.push({
       from: spec.from,
       to: spec.to,

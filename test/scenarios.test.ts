@@ -23,9 +23,10 @@ interface Expected {
   chains: string[];
   /** Fragments of the limits atlas reports, one per limit, in order. */
   limits?: string[];
+  /** Each flow's Ready; none when the scenario has no flow descriptions. */
   flows?: Record<string, string>;
   /** What `atlas inventory` offers: route files with their style and count, client-call files with their count. */
-  inventory?: { routes: string[]; calls: string[] };
+  inventory: { routes: string[]; calls: string[] };
 }
 
 const root = fileURLToPath(new URL("../fixtures/scenarios", import.meta.url));
@@ -66,8 +67,8 @@ describe("scenarios from real repositories", () => {
       expect(actual.chains).toEqual([...expected.chains].sort());
       expect(actual.limits.length).toBe((expected.limits ?? []).length);
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));
-      if (expected.flows) expect(actual.flows).toEqual(expected.flows);
-      if (expected.inventory) expect(actual.inventory).toEqual({ routes: [...expected.inventory.routes].sort(), calls: [...expected.inventory.calls].sort() });
+      expect(actual.flows).toEqual(expected.flows ?? {});
+      expect(actual.inventory).toEqual({ routes: [...expected.inventory.routes].sort(), calls: [...expected.inventory.calls].sort() });
     });
   }
 });

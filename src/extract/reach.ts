@@ -190,6 +190,10 @@ export class Reach {
           ? [start.parent]
           : [];
     const framework = new Set<ts.Node>(handlers.flatMap((h) => [...h.parameters]));
+    // What each call hands a function's parameter, decided once every call is known: a parameter is the framework's
+    // only when every call that reaches it hands it the framework's object.
+    const handed: Array<{ arg: ts.Expression; param: ts.ParameterDeclaration }> = [];
+    const handedTo = new Map<ts.Node, { framework: boolean; other: boolean }>();
     // `res.send()`, and `res.status(500).send()` on what a chainable response method returns (Express's and Fastify's
     // return the response). Something kept on a parameter (`req.services.mail.send()`), or returned by another of its
     // methods (`req.getClient().send()`), is the component's own, and is followed.
@@ -201,7 +205,8 @@ export class Reach {
       const visited = new Set<ts.Node>();
       while (ts.isIdentifier(at)) {
         const decl = declarationOf(at);
-        if (decl && framework.has(decl)) return true;
+        const passed = decl && handedTo.get(decl);
+        if (decl && (framework.has(decl) || (passed?.framework && !passed.other))) return true;
         if (!decl || visited.has(decl)) return false;
         visited.add(decl);
         const alias = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
@@ -217,9 +222,10 @@ export class Reach {
       if (!fn) return;
       call.arguments.forEach((arg, i) => {
         const param = fn.parameters[i];
-        if (param && !param.dotDotDotToken && fromFramework(arg)) framework.add(param);
+        if (param && !param.dotDotDotToken) handed.push({ arg, param });
       });
     };
+    const calls: Array<{ member: string; receiver: ts.Expression }> = [];
     while (queue.length && seen.size < MAX_FUNCTIONS) {
       const { file: f, node } = queue.shift()!;
       const parsed = this.parse(f);
@@ -246,7 +252,7 @@ export class Reach {
               seen.add(key);
               queue.push(implementation);
             }
-          } else if (!fromFramework(receiver)) names.add(member);
+          } else calls.push({ member, receiver });
           if (n.expression.expression.kind === ts.SyntaxKind.ThisKeyword && classOf) {
             const method = classOf.members.find((m) => ts.isMethodDeclaration(m) && m.name.getText(parsed.sf) === member);
             const key = `${f}#this.${member}`;
@@ -280,6 +286,20 @@ export class Reach {
       };
       visit(node);
     }
+    // What each parameter is handed settles in as many rounds as hand-offs can chain.
+    for (let round = 0; round <= handed.length; round++) {
+      let changed = false;
+      for (const { arg, param } of handed) {
+        const state = handedTo.get(param) ?? handedTo.set(param, { framework: false, other: false }).get(param)!;
+        const key = fromFramework(arg) ? "framework" : "other";
+        if (!state[key]) {
+          state[key] = true;
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    for (const { member, receiver } of calls) if (!fromFramework(receiver)) names.add(member);
     return [...names].sort();
   }
 }

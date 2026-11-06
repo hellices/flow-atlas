@@ -153,7 +153,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     let count = 0;
     let firstAt: number | undefined;
     // The names the file binds to a `Router()`, besides the usual `app` and `router`.
-    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?Router\s*\(/g)].map((m) => m[1]!)]);
+    const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?(?:[A-Za-z_]\w*\.)*Router\s*\(/g)].map((m) => m[1]!)]);
     for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
       for (const m of text.matchAll(re)) {
         if (re === VERB_CALL && m[1] !== undefined && (routers.has(m[1]) || m[1] === "Router")) continue;

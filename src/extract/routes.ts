@@ -512,11 +512,18 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   for (const m of fastapi ? code.matchAll(/\b(\w+)\.mount\(\s*/g) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
-    const path = pythonLiteral(text.slice(argsStart));
+    // `mount("/x", app)` or by name, `mount(path="/x", app=...)`.
+    const all = pythonArgStarts(code, argsStart);
+    const keyword = (name: string) => all.map((at) => ({ at, m: new RegExp(`^${name}\\s*=\\s*`).exec(code.slice(at)) })).find((a) => a.m);
+    const positional = all.filter((a) => !/^\w+\s*=(?!=)/.test(code.slice(a)));
+    const named = keyword("path");
+    const pathAt = named ? named.at + named.m![0].length : positional[0];
+    if (pathAt === undefined) continue;
+    const path = pythonLiteral(text.slice(pathAt));
     if (!path?.startsWith("/")) continue;
-    spans?.add(file, argsStart, argsStart + (pythonLiteralLength(text.slice(argsStart)) ?? 0));
-    const args = pythonArgStarts(code, argsStart).slice(1);
-    const mounted = args.find((a) => /^app\s*=/.test(code.slice(a))) ?? args.find((a) => !/^\w+\s*=(?!=)/.test(code.slice(a)));
+    spans?.add(file, pathAt, pathAt + (pythonLiteralLength(text.slice(pathAt)) ?? 0));
+    const app = keyword("app");
+    const mounted = app ? app.at : positional.find((a) => a !== pathAt);
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
       add("GET", joinRoute(path, "**"), m.index ?? 0);
       add("HEAD", joinRoute(path, "**"), m.index ?? 0, true);
