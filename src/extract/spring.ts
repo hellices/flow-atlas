@@ -295,8 +295,17 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
     if (imported.has(name)) return undefined;
     return kotlin ? only(declared.filter((d) => d.name === name && d.owner === undefined)) : undefined;
   };
-  const qualified = (type: string, name: string): (typeof declared)[number] | undefined => {
-    const named = types.filter((t) => t.name === type && !t.companion);
+  // Types a single-type import names (`import a.b.Paths;`): a same-named type of this file nested elsewhere is not it.
+  const importedTypes = new Set(
+    [...masked.matchAll(kotlin ? /^\s*import\s+[\w.]+\.([A-Z]\w*)(?:\s+as\s+(\w+))?/gm : /^\s*import\s+(?!static\b)[\w.]+\.([A-Z]\w*)\s*;/gm)].map((m) => m[2] ?? m[1]!),
+  );
+  // The type a simple name means where it is used: one of the file's top-level types, or a member type of a type around
+  // the use. A type nested elsewhere is out of scope, and an imported one is not this file's.
+  const parentOf = (t: DeclaredType): DeclaredType | undefined => types.filter((p) => p !== t && p.start < t.start && t.end <= p.end).sort((a, b) => b.start - a.start)[0];
+  const qualified = (type: string, name: string, at: number): (typeof declared)[number] | undefined => {
+    if (importedTypes.has(type)) return undefined;
+    const around = chain(at);
+    const named = types.filter((t) => t.name === type && !t.companion && (parentOf(t) === undefined || around.includes(parentOf(t)!)));
     if (named.length !== 1) return undefined;
     const own = declared.filter((d) => d.name === name && d.owner === named[0]);
     return own.length ? only(own) : undefined;
@@ -310,7 +319,7 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
         continue;
       }
       const name = /^(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)$/.exec(term);
-      const found = name ? (name[1] ? qualified(name[1], name[2]!) : lookup(name[2]!, at)) : undefined;
+      const found = name ? (name[1] ? qualified(name[1], name[2]!, at) : lookup(name[2]!, at)) : undefined;
       if (!found || seen.has(found.at)) return undefined;
       const resolved = evaluate(found.expression, found.at, new Set([...seen, found.at]));
       if (resolved === undefined) return undefined;

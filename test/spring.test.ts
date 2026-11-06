@@ -133,6 +133,22 @@ describe("Spring routes", () => {
       limits: ["S.java:7 maps a path the file does not spell out (Paths.ELSEWHERE); its routes are not read"],
     });
     const rows: Array<[string, string, { routes: string[]; limits: string[] }]> = [
+      // `Paths.P` means the imported Paths, or a type in scope; never one nested in another type.
+      [
+        "S.java",
+        'import external.Paths;\nclass Holder { static class Paths { static final String P = "/wrong"; } }\n@RestController class A {\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: [], limits: ["S.java:4 maps a path the file does not spell out (Paths.P); its routes are not read"] },
+      ],
+      [
+        "S.java",
+        'class Holder { static class Paths { static final String P = "/wrong"; } }\n@RestController class A {\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: [], limits: ["S.java:3 maps a path the file does not spell out (Paths.P); its routes are not read"] },
+      ],
+      [
+        "S.java",
+        '@RestController class A {\n  static class Paths { static final String P = "/right"; }\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: ["GET /right 3"], limits: [] },
+      ],
       // Imported by name, or possibly inherited: another type's constant of that name is not the one meant.
       [
         "S.java",
