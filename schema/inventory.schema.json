@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:flow-atlas:schema:v1alpha1:inventory",
   "title": "Flow Atlas inventory",
-  "description": "Candidates for writing a configuration. Lists what looks like components, route registrations, client requests and versioned files; decides nothing.",
+  "description": "Candidates for writing a configuration. Lists what looks like components, route registrations and client requests; decides nothing.",
   "type": "object",
   "required": [
     "apiVersion",
@@ -11,8 +11,6 @@
     "components",
     "routes",
     "calls",
-    "versions",
-    "activeLists",
     "apiDocuments"
   ],
   "additionalProperties": false,
@@ -104,59 +102,6 @@
             "minimum": 1
           },
           "example": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "versions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "dir",
-          "pattern",
-          "families",
-          "files"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "dir": {
-            "type": "string"
-          },
-          "pattern": {
-            "type": "string"
-          },
-          "families": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "files": {
-            "type": "integer",
-            "minimum": 1
-          }
-        }
-      }
-    },
-    "activeLists": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "file",
-          "names",
-          "dir"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "file": {
-            "type": "string"
-          },
-          "names": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "dir": {
             "type": "string"
           }
         }

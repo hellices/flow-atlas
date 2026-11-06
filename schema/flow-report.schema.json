@@ -97,7 +97,6 @@
       "required": [
         "observedRef",
         "lifecycle",
-        "trust",
         "conditions",
         "steps",
         "produces"
@@ -115,16 +114,8 @@
             "deprecated"
           ]
         },
-        "trust": {
-          "description": "OKF 0.2 §5.3 trust tier of the authored intent, from metadata.verified: unverified, machine-confirmed (no human: actor), human-reviewed.",
-          "enum": [
-            "unverified",
-            "machine-confirmed",
-            "human-reviewed"
-          ]
-        },
         "conditions": {
-          "description": "Always the same seven types in the same order; Ready is False when any other is False. Documented and Fresh look at the author's part (title and roles written, stale_after not passed at the report's asOf); the others check the code.",
+          "description": "Always the same five types in the same order; Ready is False when any other is False. Documented looks at the author's part (a title and each step's role written); the others check the code.",
           "type": "array",
           "prefixItems": [
             {
@@ -190,24 +181,6 @@
                   "type": "object",
                   "properties": {
                     "type": {
-                      "const": "EntryCalled"
-                    }
-                  },
-                  "required": [
-                    "type"
-                  ]
-                }
-              ]
-            },
-            {
-              "allOf": [
-                {
-                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "type": {
                       "const": "ProducesListed"
                     }
                   },
@@ -234,28 +207,10 @@
                   ]
                 }
               ]
-            },
-            {
-              "allOf": [
-                {
-                  "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/condition"
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "const": "Fresh"
-                    }
-                  },
-                  "required": [
-                    "type"
-                  ]
-                }
-              ]
             }
           ],
           "items": false,
-          "minItems": 7,
+          "minItems": 5,
           "if": {
             "type": "array",
             "contains": {

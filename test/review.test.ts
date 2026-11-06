@@ -13,7 +13,6 @@ import { extractComponents } from "../src/extract/components.js";
 import { Reach } from "../src/extract/reach.js";
 import { pythonCode, routesFromPython } from "../src/extract/routes.js";
 import { resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
-import { inventory } from "../src/inventory.js";
 import type { Finding, Graph } from "../src/model.js";
 import { nearby } from "../src/nearby.js";
 import { callPath } from "../src/paths.js";
@@ -166,19 +165,6 @@ describe("flow coverage", () => {
     const object: FlowObject = { apiVersion: "flow-atlas.dev/v1alpha1", kind: "Flow", metadata: { name: "one" }, spec: { steps: [{ stepId: "c", call: match.from }] } };
     const report = resolveFlows(graph, [{ file: "f.flow.yaml", text: "", errors: [], flows: [{ object, line: 1, stepLine: () => 1 }] }], "2026-11-01T00:00:00Z");
     expect(report.unassigned).not.toContain("orders|POST /orders");
-  });
-});
-
-describe("inventory active lists", () => {
-  it("keeps the directory of the names a list holds when another directory has the same file names", () => {
-    const files = {
-      "a/active.json": '["invoice-v1.json","invoice-v2.json"]',
-      "a/schemas/invoice-v1.json": "{}",
-      "a/schemas/invoice-v2.json": "{}",
-      "b/schemas/invoice-v1.json": "{}",
-      "b/schemas/invoice-v2.json": "{}",
-    };
-    expect(inventory(memory(files), []).activeLists).toEqual([{ file: "a/active.json", names: 2, dir: "a/schemas" }]);
   });
 });
 

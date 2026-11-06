@@ -1,6 +1,6 @@
 import { isMap, isScalar, isSeq, parseDocument, type Node as YamlNode } from "yaml";
 import type { ActiveList, Config } from "../config.js";
-import type { ContractVersion, Place, RegistryEntry } from "../model.js";
+import type { Place, RegistryEntry } from "../model.js";
 import { lineOf, select, type Source } from "../source.js";
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -77,43 +77,6 @@ export function extractRegistries(source: Source, config: Config): RegistryEntry
         consumers: occurrences(source, consumerFiles, [key]),
       });
     }
-  }
-  return out;
-}
-
-const owner = (companion: RegExp | undefined, family: string): string => (companion && companion.exec(family)?.[1]) || family;
-
-const pascal = (s: string): string => s.replace(/(^|[-_.])([a-z0-9])/g, (_, __, c: string) => c.toUpperCase());
-
-export function extractVersions(source: Source, config: Config): ContractVersion[] {
-  const out: ContractVersion[] = [];
-  for (const spec of config.versions) {
-    const re = new RegExp(spec.pattern);
-    const companion = spec.companionOf ? new RegExp(spec.companionOf) : undefined;
-    const isActive = (set: Set<string>, family: string, version: number, base: string): boolean =>
-      set.has(`${family}-v${version}`) || set.has(base) || set.has(`${family}@${version}`);
-    const versionFiles = select(source, [spec.files], []);
-    const active = spec.active ? new Set(keysFrom(source, spec.active.file, spec.active.pattern, spec.active.field).map((k) => k.key)) : undefined;
-    const referenceFiles = select(source, spec.references, [...config.exclude, spec.files]);
-    const found = new Map<string, ContractVersion>();
-    for (const file of versionFiles) {
-      const base = file.split("/").pop()!;
-      const m = re.exec(base);
-      if (!m?.[1] || !m[2]) continue;
-      const family = m[1];
-      const version = Number(m[2]);
-      const name = `${family}-v${version}`;
-      if (found.has(name)) continue;
-      found.set(name, {
-        id: name,
-        family,
-        version,
-        active: active ? isActive(active, family, version, base) || isActive(active, owner(companion, family), version, base.replace(family, owner(companion, family))) : undefined,
-        at: { file, line: 1 },
-        references: occurrences(source, referenceFiles, [name, `${pascal(family)}V${version}`]),
-      });
-    }
-    out.push(...found.values());
   }
   return out;
 }

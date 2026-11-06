@@ -33,10 +33,10 @@ A flow's structure comes from atlas; only its words come from an agent or a pers
 3. **Intent (agent or person).** Titles, labels, owners, each step's role, and for a journey across requests, which
    chains in which order, picked from atlas output.
 
-A check fails only on facts from layers 1 and 2: a chain that is gone, a step the code does not reach, an entry that
-does not call. Layer 3 is checked for presence and for naming chains that exist; whether it is right is a person's
-review (`verified`). An order the code neither shows nor contradicts, such as two requests one app makes, stays
-`Connected: Unknown`.
+A check fails only on facts from layers 1 and 2: a chain that is gone, a step the code does not reach. Layer 3 is
+checked for presence and for naming chains that exist; whether it is right is a person's review of the pull request
+that changes the flow file. An order the code neither shows nor contradicts, such as two requests one app makes or a
+hand-off from one client to another, stays `Connected: Unknown`.
 
 Measured on the private monorepo, the derived chains alone covered 45 of 65 routes, where 27 flows written by hand
 earlier covered 37; the remaining 20 were routes nothing calls or whose callers atlas cannot read. The values an agent
@@ -121,6 +121,31 @@ Rules that keep the scope:
 3. Where a reading cannot settle a value, it stops and says so (coverage, limits); it does not split, guess or default
    to something that looks plausible.
 
+## Trimmed after eight repositories
+
+In November 2026 atlas was configured and run on eight repositories of different shapes: a TypeScript and Kotlin
+monorepo with a mobile app, a BFF and services; a Spring and Flutter app; a Spring Modulith service; a FastAPI and React
+app; a Next.js app with an agent; an Express and Spring pair; a Rust, MCP and browser-extension workspace. What no
+repository used was removed:
+
+- **FA006 contract versions**, the `cases` command and the surface-seeded `draft flow <surface>`: configured nowhere, or
+  replaced by chain drafts.
+- **`feedback` and `stats`**: on 49 judged findings, `stats` only restated the judgements; its three verdicts could not
+  tell a defect from a plan; feedback did not change what `check` reported. `publicSurfaces`, exceptions and correcting
+  the configuration covered every case.
+- **OKF `generated`, `verified`, `stale_after`, the trust tier and `Fresh`**: no check read `generated`; a
+  self-declared `verified` made a flow machine-confirmed with nothing checked; a passed `stale_after` was reported as
+  FA007, a code finding, though it is a calendar reminder. `sources` stays, in OKF's shape.
+- **`EntryCalled`**: always True for chain steps, whose entry is copied from the chain.
+
+`Connected` changed: two chain steps with no `next` between them were False when different components made the
+requests. On two repositories that failed real journeys (an outside client's sequence, a queue an extension fills and
+an app polls), so every such pair is now `Unknown (OrderNotInCode)`, as the rule above already said.
+
+FA004 stays. It found six real defects on three repositories (artifact kinds an app does not render, an agent tool
+missing from its tool list) and only noise on registries whose entries live in data or are served by one generic
+route; the configuration reference now says which registries to leave out.
+
 ## Possible extensions
 
 None of these is committed. Each fits the decision above and would be taken up when a real repository needs it.
@@ -161,7 +186,8 @@ would change that.
 Measure, on at least two repositories over two to four weeks:
 
 1. how often an agent's `query` or `trace` before a change led it to reuse an existing endpoint instead of adding one;
-2. the share of findings people acted on; a rule below 70% is turned off or narrowed;
+2. the share of findings people acted on, counted from the fixes and exceptions in the history; a rule below 70% is
+   turned off or narrowed;
 3. the time spent per supported framework on reading changes.
 
 If the first is close to zero, atlas should shrink to the flow check and the Arazzo export.

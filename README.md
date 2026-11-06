@@ -1,8 +1,7 @@
 # flow-atlas
 
 Find where flows that cross components of a monorepo come apart: an API no client calls, a client call no service
-serves, a call across a boundary the manifests do not declare, an artifact nothing produces, a contract version
-nothing uses. Every finding comes with a file and a line, and the same code always gives the same findings: no LLM is
+serves, a call across a boundary the manifests do not declare, an artifact nothing produces. Every finding comes with a file and a line, and the same code always gives the same findings: no LLM is
 involved.
 
 It is built for coding agents. An agent works on part of a repository at a time, so it easily adds a second API that
@@ -18,7 +17,6 @@ another. flow-atlas shows those gaps where the work happens, instead of in a lat
 | FA002 | a call to a path its target component does not serve |
 | FA003 | a call between components the manifests do not declare, and component cycles |
 | FA004 | a registry entry (artifact, tool, event) with no producer or no consumer |
-| FA006 | a contract version that is neither active nor referenced |
 | FA007 | a flow description that the code does not bear out |
 
 Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
@@ -78,7 +76,7 @@ or copy the directory into your host's skills directory (for example `.github/sk
 ## Use
 
 ```bash
-atlas inventory --root <repo>                 # candidate components, routes, client calls, versioned files
+atlas inventory --root <repo>                 # candidate components, routes, client calls
 atlas scan --root <repo>                      # what each configured source yielded
 atlas query --path /orders                    # surfaces and calls by path or component
 atlas trace "bff|GET /screens/order/{id}"     # callers upstream and services downstream
@@ -92,8 +90,6 @@ atlas diff main..WORKTREE --format markdown   # flow changes and new findings fo
 atlas export arazzo                           # flows as Arazzo 1.0 for API workflow and e2e tools
 atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
-atlas feedback <key> false-positive --note "why"
-atlas stats                                   # per-rule action and false-positive rates
 ```
 
 `--ref <commit>` reads a commit without checking it out, and every write goes to `--out`, so a repository you must not
@@ -107,8 +103,9 @@ only new findings appear: existing debt is reduced on its own schedule, and each
 introduced.
 
 A new finding is fixed, or recorded in the exceptions file with the decision behind it and a date to look again; when
-the date passes, the finding comes back. A wrong finding is recorded with `feedback`, and `stats` shows each rule's
-false-positive rate; a rule that is mostly wrong for a repository is switched off there, or its extractor fixed.
+the date passes, the finding comes back. A wrong finding is fixed in the configuration when that caused it; a misread
+file is recorded as an exception that says which file was misread and how. A rule that is mostly wrong for a
+repository is switched off there (`rules.<id>.enabled: false`), or its extractor fixed.
 
 atlas reports and does not block by default. To fail CI on new findings, use `--fail-on-new`.
 
@@ -126,10 +123,9 @@ view name renders are its outbound calls (`via view <name>`).
 
 A flow is written in `flows/*.flow.yaml` as a Kubernetes-style object (`apiVersion`, `kind: Flow`, `metadata`,
 `spec`), with Arazzo-style steps that name the repository's own routes and calls, each with the role its component
-plays. Its metadata carries [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
-trust fields: `sources`, `generated`, `verified` and `stale_after`. `atlas flows` reports Kubernetes-style conditions
-for each flow (`Ready`, `Resolved`, `Connected`, `EntryCalled`, `ProducesListed`, `Documented`, `Fresh`) and its OKF
-trust tier.
+plays, and `sources` naming the decisions behind it. `atlas flows` reports Kubernetes-style conditions for each flow
+(`Ready`, `Resolved`, `Connected`, `ProducesListed`, `Documented`). A flow file is reviewed like code, in the pull
+request that changes it.
 
 Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema), with
 `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests) and no timestamps, so
@@ -148,7 +144,7 @@ pnpm test
 The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
 `.git/hooks` still runs after them, with the same refs. CI runs the same checks.
 
-`fixtures/shop` is a small monorepo with nine planted problems; the tests check that exactly those are found, that
+`fixtures/shop` is a small monorepo with eight planted problems; the tests check that exactly those are found, that
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
 through a BFF handler's port call to a service, and that SARIF and Arazzo output pass the official schemas.
 

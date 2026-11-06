@@ -4,7 +4,7 @@
 calls or surfaces with a similar path, which usually tells a typo from a missing piece.
 
 Each rule reports facts from configured files only. A key identifies a finding across commits, so the
-baseline, exceptions and feedback refer to it.
+baseline and exceptions refer to it.
 
 ## FA001 surface with no caller in the repository
 
@@ -61,30 +61,20 @@ an entry left active after its feature was removed.
 Fix: add the missing side, or deactivate the entry. A producer that names entries indirectly (a generated map,
 a computed name) needs its source file added to `producers`.
 
-## FA006 contract version neither active nor referenced
-
-Key `FA006|<family>-v<N>`.
-
-A versioned contract file that is not in the active list (or, without one, is not the latest version), and
-whose name nothing outside generated code references, as `family-vN` or `FamilyVN`.
-
-Common causes: an old version kept after its last reader moved on. Some repositories keep every published version
-on purpose; then baseline the existing ones once and treat new findings as the signal that a version just lost
-its last reader.
-
-Fix: retire the version and its generated code through the repository's versioning process, or reference it where
-it is still meant to be used. Use `companionOf` when companion files (for example `action-<family>-vN`) follow
-the activity of their owning family.
+The lookup is by name, so it fits only registries whose entries both sides name in code. When most findings of a
+registry are entries kept in data, served by one generic route or rendered generically, remove the registry from the
+configuration rather than excepting each entry.
 
 ## FA007 flow description that the code does not bear out
 
-Keys `FA007|<flow>|<step>|unresolved`, `|<step>|disconnected`, `FA007|<flow>|entry`, `|produces|<entry>`,
+Keys `FA007|<flow>|<step>|unresolved`, `|<step>|disconnected`, `|produces|<entry>`,
 `|undocumented`, `|duplicate`, and `FA007|<file>|invalid`.
 
-An active Flow in `flows/*.flow.yaml` names a surface or call the code does not have, two consecutive steps with no
-chain of edges between them, an entry component that does not call the first step, a registry entry no registry
-lists, a sub-flow step naming a flow nobody describes, or an empty title or step role. Each corresponds to a False
-condition in `atlas flows` (`Resolved`, `Connected`, `EntryCalled`, `ProducesListed`, `Documented`). `undocumented`
+An active Flow in `flows/*.flow.yaml` names a surface or call the code does not have, two consecutive surface or call steps with
+no chain of edges between them, a registry entry no registry lists, a sub-flow step naming a flow nobody describes, or an empty title or step role. Each corresponds to a False
+condition in `atlas flows` (`Resolved`, `Connected`, `ProducesListed`, `Documented`). Two consecutive chain steps
+with no `next` linking them are not a finding: the code neither shows nor contradicts their order, so `Connected` is
+`Unknown (OrderNotInCode)` and the order stays the author's. `undocumented`
 is the only one about the author's part rather than the code: write the title and each step's role. An invalid file does not follow `flow.schema.json` and is
 not resolved at all.
 

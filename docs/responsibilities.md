@@ -13,8 +13,8 @@ If the answer needs intent or context outside the code, it is the agent's job. W
 owns in it, whether a finding is a defect or a planned state: none of this is written in the code. A tool that guessed
 would leave plausible wrong answers looking like facts.
 
-What the agent decides goes only into files the tool reads back: flow files, the exceptions file, the configuration,
-feedback. The tool never writes these files; even a draft goes to standard output, and the agent saves it. So the files
+What the agent decides goes only into files the tool reads back: flow files, the exceptions file and the configuration.
+The tool never writes these files; even a draft goes to standard output, and the agent saves it. So the files
 alone show whether a value came from the code or from a person.
 
 ## What the tool generates
@@ -24,15 +24,14 @@ alone show whether a value came from the code or from a person.
 | routes, calls, edges, operationIds | `scan` | parsed code and the files the configuration names; for a framework atlas cannot parse, the OpenAPI document that framework generates |
 | locations of each component's OpenAPI documents | `scan`, `inventory` | committed files such as `openapi.yaml`, and the paths the code serves a document at (`SwaggerModule.setup`, `@fastify/swagger-ui`, an `/openapi.json` route) |
 | which description is a component's, when there are several | `scan` | paths that show the same document are one; a committed file is compared with the routes the code serves. If the code cannot decide, nothing is chosen and the result is `ambiguous` |
-| producers and consumers of registry entries, references to contract versions | `scan` | names searched in files |
+| producers and consumers of registry entries | `scan` | names searched in files |
 | routes and calls by path or component | `query` | the graph |
 | what leads to a route and what it leads to | `trace` | graph edges |
 | chains: each request, everything it reaches in that request, who makes it, what may follow it | `chains` | graph edges; a page's template links and forms are what may follow, not part of the request |
 | a flow draft per chain: name, step, chain and entry | `draft flows` | the chains |
-| an older flow draft from one surface: name, steps and entry component | `draft flow <surface>` | the trace path; where it branches, only the candidates |
-| whether a flow holds in the code | `flows` | steps resolved, paths between steps (between chains, a `next` the code offers), the entry's call, registry lists |
+| whether a flow holds in the code | `flows` | steps resolved, paths between steps (between chains, a `next` the code offers), registry lists |
 | whether the author's fields are written | `flows` (`Documented`) | a title and each step's role present |
-| findings FA001 to FA007 | `check` | the facts above |
+| findings FA001, FA002, FA003, FA004 and FA007 | `check` | the facts above |
 | routes, links, chains and findings that changed | `diff` | the graphs of two revisions |
 | configuration candidates | `inventory` | manifests and file shapes |
 | how much of the code the configuration covers | `scan`, `check` | what each configured source read, and drops against the baseline |
@@ -47,15 +46,12 @@ The tool does not decide how to fix anything. `explain` shows only the locations
 | a flow's title (`metadata.title`) | what a flow is for is not in the code | `Documented` |
 | each step's role (`steps[].role`) | what a component takes on and leaves to others is an agreement | `Documented` |
 | owner, labels, source documents (`sources`) | organisational and documentary facts | schema |
-| who wrote the intent (`generated`) | only the writer knows | schema (OKF actor form) |
-| a person's review (`verified` with `human:`) | only a person can review; an agent never writes it | trust tier (OKF §5.3) |
-| when to review again (`stale_after`) | how long the intent holds is the author's call | `Fresh` |
 | a flow's state (`lifecycle`) | whether a missing step is planned or a defect is intent | planned steps are counted apart in `Resolved` |
 | a journey: which chains, in which order | which requests a person makes one after another is intent; take each from atlas output | `Resolved`; `Connected` from a chain's `next`, otherwise Unknown (`OrderNotInCode`) |
-| on a surface-step flow only: the entry component when several call the first step, the next step where a handler branches | the older step-by-step form leaves these choices; a chain step does not | `EntryCalled`, `Resolved`, `Connected` |
+| on a surface-step flow only: the next step where a handler branches | a surface-step flow leaves this choice; a chain step does not | `Resolved`, `Connected` |
 | registry entries a flow issues (`produces`) | which artifact is this flow's result is intent | `ProducesListed` |
 | an exception's reason, the decision behind it and a date to review | why something is fine for now is a decision | when the date passes, the finding returns |
-| false-positive marks and why | whether extraction went wrong takes reading the code | false-positive rate in `stats` |
+| a misread file: which file and how, as an exception's reason | whether extraction went wrong takes reading the code | the exception's review date |
 | the configuration | which files are clients differs per repository | `scan` coverage |
 | OpenAPI documents frameworks generate (`routes[].openapi`) | generating one runs the application's code; the tool only reads files | `scan` coverage and `limit:` lines |
 | server addresses per environment (`origins`) | the code knows document paths; where a server runs is the deployment's business | `export arazzo` notes a missing one |
@@ -71,7 +67,7 @@ criteria and the order to apply them in; the details are in the skill's `referen
 |---|---|
 | Does this hop belong to this component? | follow the repository's rules (AGENTS.md, design documents, manifests), then the flow's roles, then the code |
 | Is there already a route that does this? | look for similar paths and operationIds with `query`; if roles overlap, do not add another |
-| Fix, exception, or false positive? | if the code differs from the intent, fix it; if the order is intended, record the decision as an exception; if extraction went wrong, it is a false positive |
+| Fix, exception, or false positive? | if the code differs from the intent, fix it; if the order is intended, record the decision as an exception; if extraction went wrong, correct the configuration or record the misread file as an exception |
 | Can a name-joined edge (`~`) be trusted? | if it passes through a common name such as `get` or `send`, open the code |
 | Where does a flow start and end? | at units a person names: one screen, one request |
 | Is a missing step planned or a defect? | with a decision or an issue, planned (`planned`); without, a defect |
@@ -80,16 +76,16 @@ criteria and the order to apply them in; the details are in the skill's `referen
 
 Take the drafts from `atlas draft flows`: each is one chain, with its entry from the code. Fill only the fields marked
 `agent:`. For a journey, list chains in order, each following one taken from the previous chain's `next` where atlas
-lists one. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`,
-`Connected` or `EntryCalled` means the code or the flow is wrong; which one is decided with the boundary criteria. A
+lists one. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`
+or `Connected` means the code or the flow is wrong; which one is decided with the boundary criteria. A
 False `Documented` means a field the author writes is empty.
 
 ## What keeps the line in place
 
 The structure of a flow is atlas's: a chain step carries no surfaces, edges or entry written by hand, and a journey
-can only order chains atlas lists. The structural conditions (`Resolved`, `Connected`, `EntryCalled`) fail only on a fact from the code. What
+can only order chains atlas lists. The structural conditions (`Resolved`, `Connected`) fail only on a fact from the code. What
 the author writes is checked for presence and validity, not for meaning: `Documented` and FA007 fail on an empty title
-or role, `Fresh` once `stale_after` has passed, the schema check on an invalid field; none of those says the code is
-wrong. A person's review is recorded apart (`verified`). The flow schema says in each field's description who
+or role, the schema check on an invalid field; none of those says the code is wrong. A person reviews the intent in
+the pull request that changes the flow file. The flow schema says in each field's description who
 writes it (`author`, `from atlas`). The tool writes neither flow files nor the exceptions file, and prints drafts to
 standard output only. The baseline is updated only when a person asks.

@@ -4,15 +4,13 @@ import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
 
 /**
- * Raw material for writing a configuration: where components, routes, client calls and versioned files appear to be.
+ * Raw material for writing a configuration: where components, routes and client calls appear to be.
  * It decides nothing; whoever writes the configuration chooses what to keep.
  */
 export interface Inventory {
   components: Array<{ name: string; path: string; manifest: string }>;
   routes: Array<{ component: string; file: string; style: string; count: number; example: string }>;
   calls: Array<{ component: string; file: string; count: number; example: string }>;
-  versions: Array<{ dir: string; pattern: string; families: number; files: number }>;
-  activeLists: Array<{ file: string; names: number; dir: string }>;
   /** OpenAPI descriptions committed or served by code, by owning component. */
   apiDocuments: ApiDocument[];
 }
@@ -77,8 +75,6 @@ const CALL_SHAPES = [
 // A receiver that is a router registers a route (`router.get("/x", handler)` in Dart's shelf_router): not a request.
 // A Dart cascade (`router..get(...)`, `Router()..get(...)`) registers on the receiver before the `..`.
 const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\.?)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
-
-const VERSIONED = /^(.+)-v(\d+)(\.[\w.]+)$/;
 
 function ownerOf(file: string, roots: Array<{ name: string; path: string }>): string {
   let best: { name: string; path: string } | undefined;
@@ -165,52 +161,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (count) calls.push({ component, file, count, example: `${file}:${lineOf(text, firstAt ?? 0)}` });
   }
 
-  const groups = new Map<string, { dir: string; pattern: string; families: Set<string>; files: string[] }>();
-  for (const f of all) {
-    const base = f.split("/").pop()!;
-    const m = VERSIONED.exec(base);
-    if (!m) continue;
-    const dir = dirname(f);
-    const key = `${dir}|${m[3]}`;
-    const g = groups.get(key) ?? { dir, pattern: `(.+)-v(\\d+)${m[3]!.replace(/\./g, "\\.")}`, families: new Set(), files: [] };
-    g.families.add(m[1]!);
-    g.files.push(base);
-    groups.set(key, g);
-  }
-  const versions = [...groups.values()]
-    .filter((g) => g.files.length >= 2)
-    .map((g) => ({ dir: g.dir, pattern: g.pattern, families: g.families.size, files: g.files.length }))
-    .sort((a, b) => b.files - a.files);
-
-  const jsonFiles = all.filter((f) => f.endsWith(".json") && !VERSIONED.test(f.split("/").pop()!));
-  const activeLists: Inventory["activeLists"] = [];
-  if (groups.size) {
-    // A list may sit anywhere under the parent of the versioned directory; a top-level directory's parent is the root.
-    const under = (f: string, dir: string) => dir === "." || dir === "" || f.startsWith(`${dir}/`);
-    const candidates = jsonFiles.filter((f) => versions.some((v) => under(f, dirname(v.dir))));
-    select(source, candidates, []);
-    // Names are matched within one directory's group, so the same file name in two directories is not confused.
-    const shared = (a: string, b: string) => {
-      const x = a.split("/");
-      const y = b.split("/");
-      let n = 0;
-      while (n < x.length && n < y.length && x[n] === y[n]) n++;
-      return n;
-    };
-    for (const f of candidates) {
-      const text = source.read(f) ?? "";
-      let best: { dir: string; names: number; near: number } | undefined;
-      for (const g of groups.values()) {
-        const names = new Set(g.files.filter((n) => text.includes(`"${n}"`))).size;
-        if (names < 2) continue;
-        const near = shared(dirname(f), g.dir);
-        if (!best || names > best.names || (names === best.names && near > best.near)) best = { dir: g.dir, names, near };
-      }
-      if (best) activeLists.push({ file: f, names: best.names, dir: best.dir });
-    }
-  }
-
-  return { components, routes, calls, versions, activeLists, apiDocuments };
+  return { components, routes, calls, apiDocuments };
 }
 
 export function inventoryText(inv: Inventory): string {
@@ -227,10 +178,6 @@ export function inventoryText(inv: Inventory): string {
     lines.push(`  ${component}: ${total} in ${files.length} files`);
     for (const f of [...files].sort((a, b) => b.count - a.count).slice(0, 8)) lines.push(`    ${f.count}  ${f.example}`);
   }
-  lines.push("", "versioned files (directory, pattern, families, files)");
-  for (const v of inv.versions) lines.push(`  ${v.dir}  ${v.pattern}  ${v.families}  ${v.files}`);
-  lines.push("", "lists naming versioned files (active-list candidates)");
-  for (const a of inv.activeLists) lines.push(`  ${a.file}  names ${a.names} from ${a.dir}`);
   lines.push("", "OpenAPI descriptions (component, kind, location, how found)");
   for (const d of inv.apiDocuments) lines.push(`  ${d.component}  ${d.kind}  ${d.location}  ${d.convention}  ${d.at.file}:${d.at.line}`);
   return `${lines.join("\n")}\n`;

@@ -2,6 +2,7 @@ import { parseAllDocuments } from "yaml";
 import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
+import { flowsText } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { draftChainFlows } from "../src/draft.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
@@ -85,30 +86,38 @@ describe("chains", () => {
       "Ready=True",
       "Resolved=True",
       "Connected=True",
-      "EntryCalled=True",
       "ProducesListed=Unknown",
       "Documented=True",
-      "Fresh=Unknown",
     ]);
     expect(flows.unassigned).toEqual(expect.not.arrayContaining(["backend|GET /orders", "backend|GET /users"]));
     expect(validate("flow-report", flows)).toEqual([]);
   });
 
-  it("leaves the order of two requests one component makes to the author, and fails a pair the code contradicts", () => {
+  it("leaves the order of two requests the code does not link to the author, whoever makes them", () => {
     const journey = flow("journey", [
       { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
       { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
     ]);
-    const wrong = flow("wrong", [
+    const handoff = flow("handoff", [
       { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
       { stepId: "admin", chain: "outside->backend|GET /admin/report", role: "reports" },
     ]);
-    const flows = resolveFlows(graph, [flowFile(journey, wrong)], "2026-11-01T00:00:00Z", report);
+    const flows = resolveFlows(graph, [flowFile(journey, handoff)], "2026-11-01T00:00:00Z", report);
     const connected = flows.items.map((i) => i.status.conditions.find((c) => c.type === "Connected")!);
-    expect(connected.map((c) => `${c.status} ${c.reason}`)).toEqual(["Unknown OrderNotInCode", "False NoPathBetweenSteps"]);
+    // A hand-off between components, such as one client queueing work another picks up, is no more a fault than one
+    // component making both requests: the code neither shows nor contradicts the order.
+    expect(connected.map((c) => `${c.status} ${c.reason}`)).toEqual(["Unknown OrderNotInCode", "Unknown OrderNotInCode"]);
     // An order only the flow states cannot make the flow ready.
     expect(flows.items[0]!.status.conditions[0]).toMatchObject({ type: "Ready", status: "Unknown", reason: "OrderNotInCode" });
-    expect(flowFindings(flows).map((f) => f.key)).toEqual(["FA007|wrong|read|disconnected"]);
+    expect(flowFindings(flows)).toEqual([]);
+    // Each flow's own block shows its pair as an order the flow states, between its two steps.
+    const blocks = flowsText(flows, graph.surfaces.length).split("\n\n");
+    for (const [name, second] of [["journey", "stop"], ["handoff", "admin"]] as const) {
+      const lines = blocks.filter((b) => b.startsWith(`${name}  `)).flatMap((b) => b.split("\n").map((l) => l.trim()));
+      const pair = lines.filter((l) => /^\d+\. |^->/.test(l)).map((l) => l.split("  ")[0]);
+      expect(pair, name).toEqual(["1. read", "-> next in the order the flow states; the code shows no link", `2. ${second}`]);
+    }
+    expect(blocks.join("\n")).not.toContain("NOT CONNECTED");
   });
 
   it("reads the chains at a sub-flow's ends when it orders steps", () => {
@@ -136,7 +145,7 @@ describe("chains", () => {
       "2026-11-01T00:00:00Z",
       report,
     );
-    expect(flows.items[0]!.status.conditions.find((c) => c.type === "EntryCalled")).toEqual({ type: "EntryCalled", status: "True", reason: "ServedOutside" });
+    expect(flows.items[0]!.status.entry).toBeUndefined();
     expect(flowFindings(flows).map((f) => f.key)).toEqual(["FA007|gone|x|unresolved"]);
   });
 
@@ -150,7 +159,7 @@ describe("chains", () => {
     ]);
     for (const d of docs) expect(validate("flow", d)).toEqual([]);
     const agentLines = text.split("\n").filter((l) => l.trim().startsWith("# agent:"));
-    expect(new Set(agentLines.map((l) => /# agent: (\w+)/.exec(l)![1]))).toEqual(new Set(["title", "labels", "sources", "generated", "stale_after", "role"]));
+    expect(new Set(agentLines.map((l) => /# agent: (\w+)/.exec(l)![1]))).toEqual(new Set(["title", "labels", "sources", "role"]));
   });
 
   it("names drafts by the whole chain, so separate drafts and saved flows never share a name", () => {

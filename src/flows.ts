@@ -19,11 +19,8 @@ export interface FlowObject {
     description?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
-    /** OKF 0.2 trust and provenance of the authored intent. */
+    /** The decisions, designs or issues behind the flow. */
     sources?: Array<{ id?: string; resource: string; title?: string; author?: string; last_modified?: string }>;
-    generated?: OkfEvent;
-    verified?: OkfEvent | OkfEvent[];
-    stale_after?: string;
   };
   spec: {
     lifecycle?: Lifecycle;
@@ -35,20 +32,6 @@ export interface FlowObject {
 }
 
 export type Lifecycle = "active" | "planned" | "deprecated";
-
-export interface OkfEvent {
-  by: string;
-  at?: string;
-}
-
-export type TrustTier = "unverified" | "machine-confirmed" | "human-reviewed";
-
-/** OKF 0.2 §5.3: the tier follows only from `verified`; a bare mapping is a one-element list. */
-export function trustTier(verified: FlowObject["metadata"]["verified"]): TrustTier {
-  const events = verified === undefined ? [] : Array.isArray(verified) ? verified : [verified];
-  if (events.length === 0) return "unverified";
-  return events.some((e) => e.by.startsWith("human:")) ? "human-reviewed" : "machine-confirmed";
-}
 
 export interface StepSpec {
   stepId: string;
@@ -68,7 +51,7 @@ export interface LoadedFile {
   errors: string[];
 }
 
-export type ConditionType = "Ready" | "Resolved" | "Connected" | "EntryCalled" | "ProducesListed" | "Documented" | "Fresh";
+export type ConditionType = "Ready" | "Resolved" | "Connected" | "ProducesListed" | "Documented";
 
 /** After Kubernetes conditions, without transition times: the same inputs give the same document. */
 export interface Condition {
@@ -89,8 +72,8 @@ export interface StepStatus {
   at?: Place;
   /**
    * The shortest chain of edges to the next step; absent on the last step or when either side is unresolved. `order:
-   * declared` when both steps are requests one component makes and the code does not show which comes first: the
-   * order is the author's, neither confirmed nor contradicted.
+   * declared` when both steps are requests and the code does not show that the first leads to the second: the order is
+   * the author's, neither confirmed nor contradicted.
    */
   toNext?: { connected: boolean; edges: Edge[]; order?: "declared" };
 }
@@ -99,7 +82,6 @@ export interface FlowStatus {
   /** The commit the flow was held against, or WORKTREE. */
   observedRef: string;
   lifecycle: Lifecycle;
-  trust: TrustTier;
   conditions: Condition[];
   entry?: { component: string; callers: string[] };
   steps: StepStatus[];
@@ -182,7 +164,7 @@ const condition = (type: ConditionType, status: Condition["status"], reason: str
 });
 
 /**
- * `asOf` is when the code read was current (the commit's time for a commit); `stale_after` is compared with it.
+ * `asOf` is when the code read was current (the commit's time for a commit), recorded in the provenance.
  * `chains` are the ones atlas derives from the same graph; chain steps name them.
  */
 export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, chains: ChainReport = deriveChains(graph, { publicSurfaces: [] })): FlowReport {
@@ -240,14 +222,11 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         const a = boundaryChain(spec.steps[i]!, "last");
         const b = boundaryChain(spec.steps[i + 1]!, "first");
         if (a && b) {
-          // Between two requests, only what the first returns can lead to the second: a page that offers it.
+          // Between two requests, only what the first returns can lead to the second: a page that offers it. Without
+          // one, the code neither shows nor contradicts the order, whoever makes the requests.
           const offer = a.next.find((n) => n.chain === b.id);
           const edges = offer ? index.path(offer.from, b.root, 2) : undefined;
-          steps[i]!.toNext = edges
-            ? { connected: true, edges }
-            : a.entry.component === b.entry.component && a.entry.component !== "outside"
-              ? { connected: false, edges: [], order: "declared" }
-              : { connected: false, edges: [] };
+          steps[i]!.toNext = edges ? { connected: true, edges } : { connected: false, edges: [], order: "declared" };
           continue;
         }
         const from = node(spec.steps[i]!, "last");
@@ -280,7 +259,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
           }
         : undefined;
       const produces = (spec.produces ?? []).map((id) => ({ id, found: registries.has(id) }));
-      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, entry, produces, object, asOf, outside);
+      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
         for (const s of steps) if (s.kind === "chain") for (const id of chainById.get(s.target)?.surfaces ?? []) covered.add(id);
@@ -298,7 +277,6 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         status: {
           observedRef: commit,
           lifecycle,
-          trust: trustTier(object.metadata.verified),
           conditions,
           ...(entry ? { entry } : {}),
           steps,
@@ -319,19 +297,12 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
 }
 
 function deprecatedConditions(): Condition[] {
-  return (["Ready", "Resolved", "Connected", "EntryCalled", "ProducesListed", "Documented", "Fresh"] as const).map((t) =>
+  return (["Ready", "Resolved", "Connected", "ProducesListed", "Documented"] as const).map((t) =>
     condition(t, "Unknown", "Deprecated"),
   );
 }
 
-function conditionsFor(
-  steps: StepStatus[],
-  entry: FlowStatus["entry"],
-  produces: FlowStatus["produces"],
-  object: FlowObject,
-  asOf: string,
-  outside = false,
-): Condition[] {
+function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject): Condition[] {
   const unresolved = steps.filter((s) => !s.resolved);
   const missing = unresolved.filter((s) => s.lifecycle === "active");
   const resolved =
@@ -357,20 +328,8 @@ function conditionsFor(
         : planned.length > 0
           ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${planned.map(pairName).join(", ")}`)
           : declared.length > 0
-            ? condition("Connected", "Unknown", "OrderNotInCode", `the code shows no link, only that one component makes both requests: ${declared.map(pairName).join(", ")}`)
+            ? condition("Connected", "Unknown", "OrderNotInCode", `the code shows no link from one request to the next: ${declared.map(pairName).join(", ")}`)
             : condition("Connected", "True", "AllStepsConnected");
-
-  const entryCalled = outside
-    ? condition("EntryCalled", "True", "ServedOutside")
-    : !entry
-    ? condition("EntryCalled", "Unknown", "NoEntry")
-    : !steps[0]?.resolved
-      ? condition("EntryCalled", "Unknown", "FirstStepUnresolved")
-      : entry.callers.length
-        ? condition("EntryCalled", "True", "EntryCallsFirstStep")
-        : steps[0].lifecycle === "planned"
-          ? condition("EntryCalled", "Unknown", "PlannedStepsPending", `${entry.component} does not call ${steps[0].target} yet`)
-          : condition("EntryCalled", "False", "EntryDoesNotCall", `${entry.component} does not call ${steps[0].target}`);
 
   const notListed = produces.filter((p) => !p.found);
   const producesListed = !produces.length
@@ -392,19 +351,12 @@ function conditionsFor(
         )
       : condition("Documented", "True", "TitleAndRolesWritten");
 
-  const staleAfter = object.metadata.stale_after;
-  const fresh = !staleAfter
-    ? condition("Fresh", "Unknown", "NoStaleAfter")
-    : Date.parse(asOf) >= Date.parse(staleAfter)
-      ? condition("Fresh", "False", "PastStaleAfter", `stale_after ${staleAfter}, as of ${asOf}`)
-      : condition("Fresh", "True", "BeforeStaleAfter");
-
-  const rest = [resolved, connected, entryCalled, producesListed, documented, fresh];
+  const rest = [resolved, connected, producesListed, documented];
   const failing = rest.filter((c) => c.status === "False");
   const ready = failing.length
     ? condition("Ready", "False", "ConditionsFailed", failing.map((c) => c.type).join(", "))
-    : unresolved.length || planned.length || entryCalled.reason === "PlannedStepsPending"
-      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName), ...(entryCalled.reason === "PlannedStepsPending" ? ["entry"] : [])].join(", ")}`)
+    : unresolved.length || planned.length
+      ? condition("Ready", "Unknown", "PlannedStepsPending", `planned: ${[...unresolved.map((s) => s.stepId), ...planned.map(pairName)].join(", ")}`)
       : declared.length
         ? condition("Ready", "Unknown", "OrderNotInCode", `order stated by the flow only: ${declared.map(pairName).join(", ")}`)
         : condition("Ready", "True", "NoConditionFailed");
@@ -446,12 +398,8 @@ export function flowFindings(report: FlowReport): Finding[] {
         add(`${name}|${step.stepId}|disconnected`, `nothing in the code leads from step ${step.stepId} (${step.target}) to step ${next.stepId} (${next.target}) of ${name}.`, [place, ...(step.at ? [step.at] : [])]);
       }
     });
-    const fresh = s.conditions.find((c) => c.type === "Fresh");
-    if (fresh?.status === "False") add(`${name}|stale`, `${name} is past its stale_after (${fresh.message}); review its intent and move stale_after.`, [here]);
     const documented = s.conditions.find((c) => c.type === "Documented");
     if (documented?.status === "False") add(`${name}|undocumented`, `${name} is not documented (${documented.message}); the title and each step's role are written by its author.`, [here]);
-    const entryCalled = s.conditions.find((c) => c.type === "EntryCalled");
-    if (entryCalled?.status === "False") add(`${name}|entry`, `${entryCalled.message} in flow ${name}.`, [here]);
     for (const p of s.produces) if (!p.found) add(`${name}|produces|${p.id}`, `${name} produces ${p.id}, which no configured registry lists.`, [here]);
   }
   return out.sort((a, b) => a.key.localeCompare(b.key));

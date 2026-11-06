@@ -2,7 +2,7 @@
 
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
 material: components from manifests, files that register routes (and in which style), files whose strings look like
-client requests, versioned file families and the lists that name them. It does not choose; many candidates are tests
+client requests and OpenAPI documents. It does not choose; many candidates are tests
 helpers, tools or contracts, not clients. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
@@ -45,15 +45,6 @@ registries:
     producers: ["services/**"]
     consumers: ["apps/**"]
 
-# Versioned contract files.
-versions:
-  - name: document-schema
-    files: "catalog/schemas/*.schema.json"
-    pattern: "(.+)-v(\\d+)\\.schema\\.json"     # group 1 family, group 2 version
-    active: { file: catalog/active.json, pattern: "(.+)\\.schema\\.json" }
-    companionOf: "^action-(.+)$"               # optional: action-<family> shares <family>'s activity
-    references: ["apps/**", "services/**"]
-
 # Surfaces used by clients outside the repository. `*` stays within a segment, `**` crosses segments.
 publicSurfaces:
   - "orders|GET /health"
@@ -70,7 +61,7 @@ openapi:                      # only to override the OpenAPI description atlas f
 
 rules:
   FA003: { cycles: false }    # when the repository already checks cycles
-  FA006: { enabled: false }
+  FA004: { enabled: false }   # any rule can be switched off for a repository
 ```
 
 ## Order of work
@@ -82,7 +73,10 @@ rules:
    client. FA001 is only evaluated for components that appear as `to`. Run `atlas check` and open a few FA001
    findings: a route that is in fact called points to call files missing from `files`, or a call shape the extractor
    cannot read.
-4. Registries and versions, if the repository has them.
+4. Registries, if the repository has a list whose entries both a producer and a consumer name literally in code
+   (artifact kinds a backend issues and an app renders, tools an agent registers and calls). Leave out lists whose
+   entries live in data rows, are served by one generic route, or are rendered generically: every entry then comes
+   back as FA004 with nothing to fix.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
    continue through.
@@ -190,8 +184,7 @@ read it from the repository's deployment files.
 
 Flow descriptions are also read from `<out>/flows/`, so a repository atlas must not write to can still be described.
 
-All writes go to `--out` (default `<root>/.atlas`): `graph.json`, `last-check.json`, `baseline.json` (keys and
-coverage),
-`feedback.jsonl`. Exceptions are read from `<root>/flows/atlas-exceptions.yaml`, then `<out>/exceptions.yaml`.
+All writes go to `--out` (default `<root>/.atlas`): `graph.json`, `last-check.json` and `baseline.json` (keys and
+coverage). Exceptions are read from `<root>/flows/atlas-exceptions.yaml`, then `<out>/exceptions.yaml`.
 To analyse a repository you must not change, keep the configuration and all state in `--out` and use
 `--ref <commit>` to read commits without checking them out.

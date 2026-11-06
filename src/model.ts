@@ -114,15 +114,6 @@ export interface RegistryEntry {
   consumers: Place[];
 }
 
-export interface ContractVersion {
-  /** `family-vN`. */
-  id: string;
-  family: string;
-  version: number;
-  active: boolean | undefined;
-  at: Place;
-  references: Place[];
-}
 
 /**
  * An OpenAPI description of a component. `file`: committed in the repository, `location` is the file. `served`: the
@@ -178,7 +169,6 @@ export interface Graph extends Document<"Graph"> {
   edges: Edge[];
   declared: DeclaredEdge[];
   registries: RegistryEntry[];
-  versions: ContractVersion[];
   /** Every OpenAPI description found per component. */
   apiDocuments: ApiDocument[];
   /** Per component, which of them is its description, or why that is not decided. */
@@ -196,7 +186,7 @@ export interface Subgraph extends Document<"Trace" | "Query"> {
   edges: Edge[];
 }
 
-export type RuleId = "FA001" | "FA002" | "FA003" | "FA004" | "FA006" | "FA007";
+export type RuleId = "FA001" | "FA002" | "FA003" | "FA004" | "FA007";
 
 export interface Finding {
   rule: RuleId;

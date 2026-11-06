@@ -183,10 +183,6 @@ describe("inventory", () => {
     const workspace = { "package.json": '{"name":"mono","workspaces":["web"]}', "web/package.json": '{"name":"web"}' };
     expect(inventory(memory(workspace), []).components.map((c) => c.name)).toEqual(["web"]);
   });
-  it("finds an active list for a top-level versioned directory", () => {
-    const files = { "schemas/active.json": '["invoice-v1.json","invoice-v2.json"]', "schemas/invoice-v1.json": "{}", "schemas/invoice-v2.json": "{}" };
-    expect(inventory(memory(files), []).activeLists).toEqual([{ file: "schemas/active.json", names: 2, dir: "schemas" }]);
-  });
 });
 
 describe("hole matching", () => {

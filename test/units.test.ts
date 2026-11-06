@@ -7,10 +7,8 @@ import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
 import { similarity } from "../src/nearby.js";
 import ts from "typescript";
-import { extractVersions } from "../src/extract/registries.js";
 import { resolveApiDescriptions, servedDocuments } from "../src/extract/apidocs.js";
 import type { ApiDocument, Surface } from "../src/model.js";
-import { trustTier } from "../src/flows.js";
 import { validate } from "../src/schema.js";
 import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
@@ -120,31 +118,9 @@ describe("documentStart", () => {
   });
 });
 
-describe("extractVersions", () => {
-  const files: Record<string, string> = {
-    "schemas/flow-v1.json": "{}",
-    "schemas/flow-v2.json": "{}",
-    "schemas/action-flow-v1.json": "{}",
-    "schemas/action-flow-v2.json": "{}",
-    "active.json": JSON.stringify(["flow-v2.json"]),
-  };
-  const source: Source = { ref: "TEST", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-11-01T00:00:00Z" };
-  const config = normalizeConfig({
-    versions: [
-      {
-        name: "schema",
-        files: "schemas/*.json",
-        pattern: "(.+)-v(\\d+)\\.json",
-        active: { file: "active.json", pattern: "(.+)\\.json" },
-        companionOf: "^action-(.+)$",
-        references: [],
-      },
-    ],
-  });
-
-  it("lets a companion share the activity of its owning version", () => {
-    const active = Object.fromEntries(extractVersions(source, config).map((v) => [v.id, v.active]));
-    expect(active).toEqual({ "flow-v1": false, "flow-v2": true, "action-flow-v1": false, "action-flow-v2": true });
+describe("normalizeConfig", () => {
+  it("rejects the removed versions section instead of ignoring it", () => {
+    expect(() => normalizeConfig({ versions: [] })).toThrow(/versions: contract-version checks \(FA006\) were removed/);
   });
 });
 
@@ -338,23 +314,17 @@ describe("resolveApiDescriptions", () => {
   });
 });
 
-describe("OKF trust metadata", () => {
-  it("derives the trust tier from verified alone, a bare mapping counting as one event", () => {
-    expect(trustTier(undefined)).toBe("unverified");
-    expect(trustTier({ by: "process:nightly" })).toBe("machine-confirmed");
-    expect(trustTier([{ by: "process:nightly" }, { by: "human:lead", at: "2026-10-02T09:00:00Z" }])).toBe("human-reviewed");
-  });
-
-  it("accepts OKF actors and timestamps and rejects malformed ones", () => {
+describe("flow metadata", () => {
+  it("accepts sources with OKF actors and no longer takes the removed trust fields", () => {
     const flow = (metadata: Record<string, unknown>) => ({
       apiVersion: "flow-atlas.dev/v1alpha1",
       kind: "Flow",
       metadata: { name: "a", ...metadata },
       spec: { steps: [{ stepId: "s", surface: "api|GET /x" }] },
     });
-    expect(validate("flow", flow({ generated: { by: "claude-code/opus-4", at: "2026-10-01T09:00:00Z" }, verified: { by: "human:lead" } }))).toEqual([]);
-    expect(validate("flow", flow({ generated: { by: "claude" } })).length).toBeGreaterThan(0);
-    expect(validate("flow", flow({ stale_after: "2026-10-01" })).length).toBeGreaterThan(0);
+    for (const removed of [{ generated: { by: "claude-code/opus-4" } }, { verified: { by: "human:lead" } }, { stale_after: "2027-01-01T00:00:00Z" }]) {
+      expect(validate("flow", flow(removed)).length).toBeGreaterThan(0);
+    }
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "team:docs" }] }))).toEqual([]);
     expect(validate("flow", flow({ sources: [{ resource: "docs/a.md", author: "the docs team" }] })).length).toBeGreaterThan(0);
   });

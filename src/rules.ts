@@ -10,7 +10,6 @@ export const RULES: Record<Finding["rule"], { title: string }> = {
   FA002: { title: "call that no surface serves" },
   FA003: { title: "boundary call or cycle the declarations do not state" },
   FA004: { title: "registry entry with no producer or no consumer" },
-  FA006: { title: "contract version that is neither active nor referenced" },
   FA007: { title: "flow description that the code does not bear out" },
 };
 
@@ -99,17 +98,6 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
         out.push(finding("FA004", `${e.registry}|${e.key}|no-consumer`, `${e.registry} ${e.key} is active and produced in ${e.producers.length} files, but no consumer file names it.`, [e.at, ...e.producers.slice(0, 3)]));
       else if (e.consumers.length === 0 && e.producers.length === 0)
         out.push(finding("FA004", `${e.registry}|${e.key}|unused`, `${e.registry} ${e.key} is active, but neither a producer nor a consumer file names it.`, [e.at]));
-    }
-  }
-
-  if (ruleEnabled(config, "FA006")) {
-    const latest = new Map<string, number>();
-    for (const v of graph.versions) latest.set(v.family, Math.max(latest.get(v.family) ?? 0, v.version));
-    for (const v of graph.versions) {
-      if (v.references.length > 0) continue;
-      const live = v.active === undefined ? v.version === latest.get(v.family) : v.active;
-      if (live) continue;
-      out.push(finding("FA006", v.id, `${v.id} is not active and nothing outside generated code references it.`, [v.at]));
     }
   }
 

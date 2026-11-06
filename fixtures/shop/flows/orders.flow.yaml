@@ -9,9 +9,6 @@ metadata:
     - id: screens
       resource: docs/orders.md#screens
       title: Order screen decision
-  generated: { by: claude-code/opus-4, at: 2026-10-01T09:00:00Z }
-  verified: { by: human:shop-lead, at: 2026-10-02T09:00:00Z }
-  stale_after: 2027-04-01T00:00:00Z
 spec:
   owner: shop-team
   entry:
@@ -31,7 +28,6 @@ kind: Flow
 metadata:
   name: place-order
   title: The android app places an order
-  generated: { by: claude-code/opus-4, at: 2026-10-01T09:00:00Z }
   labels:
     domain: orders
 spec:

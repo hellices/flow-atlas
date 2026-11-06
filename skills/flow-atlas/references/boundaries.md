@@ -2,7 +2,7 @@
 
 atlas shows what the code does. Whether that is what each component should do is your judgment. These criteria keep
 that judgment consistent between agents and sessions. Record every conclusion in a file atlas reads: the flow file,
-the exceptions file, the configuration, or feedback.
+the exceptions file or the configuration.
 
 ## Which source decides
 
@@ -40,14 +40,14 @@ split a chain into steps by hand to tell a story the code does not hold.
 ## Defect, plan, or false positive?
 
 - Defect: the code differs from an agreement, and nothing records why. An agreement is a repository rule or design
-  document, or a `human-reviewed` flow that is still `Fresh`. Fix it.
-- Open question: the code differs from an `unverified` or `machine-confirmed` flow, or from one past its
-  `stale_after`. Its roles are a proposal (see "How far to trust a flow's intent"): ask a person whether the code or
+  document, or a flow merged through a reviewed pull request. Fix it.
+- Open question: the code differs from a flow nobody has reviewed yet. Its roles are a proposal (see "How far to trust a flow's intent"): ask a person whether the code or
   the flow is right before calling it a defect.
 - Plan: the gap is intended, such as a provider built before its client. A decision or issue says so. Mark the step
   or flow `lifecycle: planned`, or add an exception with `decidedBy` and `reviewBy`.
-- False positive: atlas misread the code (a path built far from the call, a string that is not a request). Record
-  `atlas feedback <key> false-positive` with the file that was misread.
+- False positive: atlas misread the code (a path built far from the call, a string that is not a request). Correct
+  the configuration if it caused the misreading; otherwise add an exception whose reason names the misread file and
+  how, and report it so the extractor can be fixed.
 
 Never decide "plan" without a decision you can link.
 
@@ -87,15 +87,11 @@ ambiguous; `atlas scan` prints it with the choice.
 
 ## How far to trust a flow's intent
 
-`atlas flows` reports each flow's OKF trust tier from `metadata.verified`. Treat an `unverified` or
-`machine-confirmed` flow's roles as a proposal: use them, but when a boundary decision rests on one, say so and ask a
-person to confirm. A `human-reviewed` flow's roles are an agreement; change them only with a person. A flow past its
-`stale_after` (`Fresh=False`) needs its roles reviewed before you rely on them.
-
-When you write or change a flow's intent, set `generated` to your own actor and the current time. Leave `verified`
-to people.
+A flow file merged through a reviewed pull request is an agreement: change its roles only with a person. A flow added
+or changed in the current, unmerged change, or one written by an agent and not yet reviewed, is a proposal: use it,
+but when a boundary decision rests on it, say so and ask a person to confirm.
 
 ## What not to decide
 
 Do not decide the configuration's scope, the baseline, or which rules apply to the repository on your own. Propose them
-to a person with the evidence (`atlas inventory`, `atlas scan` coverage, `atlas stats`).
+to a person with the evidence (`atlas inventory`, `atlas scan` coverage, the findings you judged and why).

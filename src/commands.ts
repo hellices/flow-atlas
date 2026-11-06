@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { parse, stringify } from "yaml";
+import { stringify } from "yaml";
 import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
 import { toArazzo } from "./arazzo.js";
 import { chainsText, deriveChains, type ChainReport } from "./chains.js";
-import { draftChainFlows, draftFlow } from "./draft.js";
+import { draftChainFlows } from "./draft.js";
 import { diffGraphs, diffMarkdown } from "./diff.js";
 import { FlowIndex, seedsFor, trace, traceText } from "./flow.js";
 import { flowFindings, loadFlows, LOCATION, resolveFlows, type FlowReport } from "./flows.js";
@@ -18,17 +18,14 @@ import { toSarif } from "./sarif.js";
 import { scan } from "./scan.js";
 import { openSource } from "./source.js";
 import {
-  appendFeedback,
   exceptionFor,
   readBaseline,
   readExceptions,
-  readFeedback,
   readGraph,
   readLastCheck,
   writeBaseline,
   writeGraph,
   writeLastCheck,
-  type Verdict,
 } from "./state.js";
 import { codeDependency, configDependency, derived, provenance } from "./provenance.js";
 
@@ -37,22 +34,19 @@ const HELP = `atlas: find cross-component flow problems in a monorepo
 Usage: atlas <command> [options]
 
 Commands
-  inventory                 list where components, routes, client calls and versioned files appear to be
+  inventory                 list where components, routes and client calls appear to be
   scan                      build the flow graph and print what each configured source yielded
   query                     list surfaces and calls, filtered by --component, --path, --method, --kind
   trace <surface>           follow a surface back to its callers and forward to what it calls
   chains                    list the requests the code makes and every surface each reaches (--unnamed: no flow names it)
   draft flows               print a Flow draft for every chain no flow names (--component to narrow); fill 'agent:' lines
-  draft flow <chain>        print a Flow draft for one chain; a surface instead gives the older step-by-step draft
+  draft flow <chain>        print a Flow draft for one chain
   flows                     hold the flow descriptions against the code: resolution, connections, uncovered surfaces
   check                     run the rules and show findings new since the baseline or --since
   diff <base>..<head>       compare the flow graph and findings of two revisions (head may be WORKTREE)
   export arazzo             write the flows as an Arazzo 1.0 description (YAML; --format json), --flow for one
   explain <key>             show one finding from the last check with nearby calls or surfaces
   baseline update           record the current findings as the accepted baseline
-  feedback <key> <verdict>  record fixed, accepted or false-positive for a finding
-  stats                     show per-rule counts and rates from feedback
-  cases <file>              run expected-findings cases against past commits
 
 Options
   --root <dir>        repository to read (default: current directory)
@@ -64,13 +58,11 @@ Options
   --format <f>        text (default), json, yaml; markdown for check and diff; sarif (SARIF 2.1.0) for check
   --all               also show baseline and excepted findings
   --fail-on-new       exit 1 when there are new findings
-  --note <text>       note for feedback
   --component <name>  query: only this component
   --path <path>       query: surfaces whose route matches the path, or whose path contains it
   --method <m>        query: only this method
   --kind <k>          query: surfaces, calls or both (default)
   --flow <name>       export: only this flow
-  --to <surface>      draft: follow the code to this surface
   --unnamed           chains: only the chains no flow names
 `;
 
@@ -84,13 +76,11 @@ interface Options {
   format: "text" | "json" | "yaml" | "markdown" | "sarif";
   all: boolean;
   failOnNew: boolean;
-  note?: string;
   component?: string;
   path?: string;
   method?: string;
   kind?: "surfaces" | "calls" | "both";
   flow?: string;
-  to?: string;
   unnamed?: boolean;
   args: string[];
 }
@@ -112,7 +102,6 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--since") o.since = value();
     else if (a === "--exceptions") o.exceptions = value();
     else if (a === "--format") o.format = value() as Options["format"];
-    else if (a === "--note") o.note = value();
     else if (a === "--component") o.component = value();
     else if (a === "--path") o.path = value();
     else if (a === "--method") o.method = value().toUpperCase();
@@ -122,7 +111,6 @@ function parseArgs(argv: string[]): Options {
       o.kind = kind;
     }
     else if (a === "--flow") o.flow = value();
-    else if (a === "--to") o.to = value();
     else if (a === "--all") o.all = true;
     else if (a === "--unnamed") o.unnamed = true;
     else if (a === "--fail-on-new") o.failOnNew = true;
@@ -197,7 +185,7 @@ function cmdScan(o: Options): number {
   console.log(`ref ${graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit ?? "WORKTREE"}`);
   console.log(`components ${graph.components.length}, declared edges ${graph.declared.length}`);
   console.log(`surfaces ${graph.surfaces.length} (${[...byComponent].map(([c, n]) => `${c} ${n}`).join(", ")})`);
-  console.log(`call sites ${graph.calls.length}, edges ${graph.edges.length}, registry entries ${graph.registries.length}, contract versions ${graph.versions.length}`);
+  console.log(`call sites ${graph.calls.length}, edges ${graph.edges.length}, registry entries ${graph.registries.length}`);
   console.log("");
   console.log(coverageText(graph));
   if (graph.apiDescriptions.length) {
@@ -307,67 +295,6 @@ function cmdBaseline(o: Options): number {
   return 0;
 }
 
-function cmdFeedback(o: Options): number {
-  const [key, verdict] = o.args;
-  const verdicts: Verdict[] = ["fixed", "accepted", "false-positive"];
-  if (!key || !verdicts.includes(verdict as Verdict)) throw new Error("usage: atlas feedback <key> fixed|accepted|false-positive [--note <text>]");
-  appendFeedback(o.out, { key, verdict: verdict as Verdict, note: o.note, at: new Date().toISOString() });
-  console.log(`recorded ${verdict} for ${key}`);
-  return 0;
-}
-
-function cmdStats(o: Options): number {
-  const feedback = readFeedback(o.out);
-  const latest = new Map<string, string>();
-  for (const f of feedback) latest.set(f.key, f.verdict);
-  const shown = new Map<string, number>();
-  for (const { finding } of readLastCheck(o.out)?.items ?? []) shown.set(finding.rule, (shown.get(finding.rule) ?? 0) + 1);
-  const rules = [...new Set([...shown.keys(), ...[...latest.keys()].map((k) => k.split("|")[0]!)])].sort();
-  console.log("rule   shown  fixed  accepted  false-positive  action-rate  false-positive-rate");
-  for (const r of rules) {
-    const verdicts = [...latest].filter(([k]) => k.startsWith(`${r}|`)).map(([, v]) => v);
-    const n = (v: string) => verdicts.filter((x) => x === v).length;
-    const judged = verdicts.length;
-    const pct = (x: number) => (judged ? `${Math.round((x / judged) * 100)}%` : "-");
-    console.log(
-      `${r.padEnd(6)} ${String(shown.get(r) ?? 0).padStart(5)}  ${String(n("fixed")).padStart(5)}  ${String(n("accepted")).padStart(8)}  ${String(n("false-positive")).padStart(14)}  ${pct(n("fixed") + n("accepted")).padStart(11)}  ${pct(n("false-positive")).padStart(19)}`,
-    );
-  }
-  return 0;
-}
-
-interface Case {
-  name: string;
-  ref: string;
-  include?: string[];
-  exclude?: string[];
-  count?: Record<string, number>;
-}
-
-function cmdCases(o: Options): number {
-  const file = o.args[0];
-  if (!file) throw new Error("cases needs a file");
-  const cases = parse(readFileSync(resolve(file), "utf8")) as Case[];
-  const config = configFor(o);
-  let failed = 0;
-  for (const c of cases) {
-    const { findings } = analyze(o, config, c.ref);
-    const keys = new Set(findings.map((f) => f.key));
-    const problems: string[] = [];
-    for (const k of c.include ?? []) if (!keys.has(k)) problems.push(`missing ${k}`);
-    for (const k of c.exclude ?? []) if (keys.has(k)) problems.push(`unexpected ${k}`);
-    for (const [rule, n] of Object.entries(c.count ?? {})) {
-      const got = findings.filter((f) => f.rule === rule).length;
-      if (got !== n) problems.push(`${rule} count ${got}, expected ${n}`);
-    }
-    console.log(`${problems.length ? "FAIL" : "ok  "} ${c.name} (${c.ref})`);
-    for (const p of problems) console.log(`     ${p}`);
-    if (problems.length) failed++;
-  }
-  console.log(`${cases.length - failed}/${cases.length} cases passed`);
-  return failed ? 1 : 0;
-}
-
 function cmdInventory(o: Options): number {
   const config = o.config || configCandidates(o).some((c) => existsSync(c)) ? configFor(o) : undefined;
   const source = openSource(o.root, o.ref);
@@ -458,14 +385,22 @@ export function flowsText(doc: FlowReport, total: number): string {
   for (const item of doc.items) {
     const { metadata, status } = item;
     const ready = status.conditions.find((c) => c.type === "Ready")!;
-    lines.push("", `${metadata.name}  ${status.lifecycle}  Ready=${ready.status}  trust=${status.trust}  ${metadata.annotations?.[LOCATION] ?? ""}${metadata.title ? `  ${metadata.title}` : ""}`);
+    lines.push("", `${metadata.name}  ${status.lifecycle}  Ready=${ready.status}  ${metadata.annotations?.[LOCATION] ?? ""}${metadata.title ? `  ${metadata.title}` : ""}`);
     for (const c of status.conditions.slice(1)) if (c.status !== "Unknown" || c.reason !== "NotDeclared") lines.push(`  ${c.type}=${c.status} ${c.reason}${c.message ? `: ${c.message}` : ""}`);
     status.steps.forEach((s, i) => {
       const where = s.resolved ? (s.at ? `${s.at.file}:${s.at.line}` : "resolved") : s.lifecycle === "planned" || status.lifecycle === "planned" ? "planned" : "NOT FOUND";
       lines.push(`  ${i + 1}. ${s.stepId}  ${s.target}  ${where}`);
       if (s.toNext) {
         const via = s.toNext.edges.filter((e) => e.via).map((e) => e.via);
-        lines.push(`       ${s.toNext.connected ? `-> connected in ${s.toNext.edges.length} edges${via.length ? ` via ${via.join(", ")}` : ""}` : "-> NOT CONNECTED to the next step"}`);
+        lines.push(
+          `       ${
+            s.toNext.connected
+              ? `-> connected in ${s.toNext.edges.length} edges${via.length ? ` via ${via.join(", ")}` : ""}`
+              : s.toNext.order === "declared"
+                ? "-> next in the order the flow states; the code shows no link"
+                : "-> NOT CONNECTED to the next step"
+          }`,
+        );
       }
     });
   }
@@ -523,24 +458,14 @@ function cmdDraft(o: Options): number {
     process.stderr.write(`${open.length} drafts; left for the author: metadata.title, metadata.labels, spec.steps[0].role\n`);
     return 0;
   }
-  if (what !== "flow" || !seedText) throw new Error("usage: atlas draft flows | atlas draft flow <chain or surface> [--to <surface>]");
+  if (what !== "flow" || !seedText) throw new Error("usage: atlas draft flows | atlas draft flow <chain>");
+  if (!seedText.includes("->")) throw new Error(`${seedText} is not a chain id; take one from \`atlas chains\``);
   const config = configFor(o);
   const { graph, chains, flows } = analyze(o, config, o.ref);
-  if (seedText.includes("->")) {
-    const chain = chains.chains.find((c) => c.id === seedText);
-    if (!chain) throw new Error(`no chain ${seedText}; see \`atlas chains\``);
-    process.stdout.write(draftChainFlows(graph, [chain], flows.items.map((i) => i.metadata.name)));
-    process.stderr.write("left for the author: metadata.title, metadata.labels, spec.steps[0].role\n");
-    return 0;
-  }
-  const pick = (text: string): ReturnType<typeof seedsFor>[number] => {
-    const found = seedsFor(graph, text);
-    if (found.length !== 1) throw new Error(`${text} names ${found.length} surfaces; give one as component|METHOD /path (see \`atlas query\`)`);
-    return found[0]!;
-  };
-  const { yaml, open } = draftFlow(graph, pick(seedText), o.to ? pick(o.to) : undefined);
-  process.stdout.write(yaml);
-  process.stderr.write(`left for the author: ${open.join(", ")}\n`);
+  const chain = chains.chains.find((c) => c.id === seedText);
+  if (!chain) throw new Error(`no chain ${seedText}; see \`atlas chains\``);
+  process.stdout.write(draftChainFlows(graph, [chain], flows.items.map((i) => i.metadata.name)));
+  process.stderr.write("left for the author: metadata.title, metadata.labels, spec.steps[0].role\n");
   return 0;
 }
 
@@ -573,9 +498,6 @@ const COMMANDS: Record<string, (o: Options) => number> = {
   draft: cmdDraft,
   explain: cmdExplain,
   baseline: cmdBaseline,
-  feedback: cmdFeedback,
-  stats: cmdStats,
-  cases: cmdCases,
 };
 
 export function main(argv: string[]): number {

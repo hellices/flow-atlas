@@ -1,7 +1,7 @@
 {
   "name": "flow-atlas",
   "version": "0.1.0",
-  "description": "Find cross-component flow problems in a monorepo while you develop: surfaces nobody calls, calls nothing serves, undeclared boundary calls, registry entries without a producer, and contract versions nobody uses.",
+  "description": "Find cross-component flow problems in a monorepo while you develop: surfaces nobody calls, calls nothing serves, undeclared boundary calls, and registry entries without a producer or consumer.",
   "type": "module",
   "license": "MIT",
   "private": true,

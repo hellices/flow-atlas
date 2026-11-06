@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:flow-atlas:schema:v1alpha1:graph",
   "title": "Flow Atlas graph",
-  "description": "Everything atlas extracted from one commit: components, surfaces, calls, the edges between them, registries, contract versions and how much each configured source yielded. Written by `atlas scan` to graph.json.",
+  "description": "Everything atlas extracted from one commit: components, surfaces, calls, the edges between them, registries and how much each configured source yielded. Written by `atlas scan` to graph.json.",
   "type": "object",
   "required": [
     "apiVersion",
@@ -14,7 +14,6 @@
     "edges",
     "declared",
     "registries",
-    "versions",
     "apiDocuments",
     "apiDescriptions",
     "coverage",
@@ -65,12 +64,6 @@
       "type": "array",
       "items": {
         "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntry"
-      }
-    },
-    "versions": {
-      "type": "array",
-      "items": {
-        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/contractVersion"
       }
     },
     "apiDocuments": {

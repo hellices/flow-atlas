@@ -73,21 +73,4 @@ describe("reading commits without a checkout", () => {
     expect(text).toContain("DELETE /orders/audit");
     expect(text).toContain("Resolved findings");
   });
-
-  it("cases run expectations against commits", () => {
-    const cases = join(out, "cases.yaml");
-    writeFileSync(
-      cases,
-      [
-        `- name: history has no caller at base`,
-        `  ref: ${base}`,
-        `  include: ["FA001|orders|GET /orders/{id}/history"]`,
-        `- name: history is called at head`,
-        `  ref: ${head}`,
-        `  exclude: ["FA001|orders|GET /orders/{id}/history"]`,
-        `  count: { FA002: 2 }`,
-      ].join("\n"),
-    );
-    expect(main(["cases", cases, "--root", repo, "--out", out])).toBe(0);
-  });
 });
