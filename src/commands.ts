@@ -477,6 +477,7 @@ function cmdExport(o: Options): number {
   const { document, limits } = toArazzo(graph, loadFlows(source, config, o.out), config, {
     flow: o.flow,
     title: `Flows of ${basename(o.root)}`,
+    root: o.root,
     // A description outside the repository, given by absolute path, is read from disk as route extraction reads it.
     read: (path) => (isAbsolute(path) ? (existsSync(path) ? readFileSync(path, "utf8") : undefined) : source.read(path)),
   });

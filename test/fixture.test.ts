@@ -393,6 +393,83 @@ describe("schemas", () => {
     );
   });
 
+  it("writes the flows it can when a component has no description, and states the steps it left out", () => {
+    const undescribed = (...names: string[]) => ({
+      ...graph,
+      apiDescriptions: graph.apiDescriptions.map((d) => (names.includes(d.component) ? { component: d.component, status: "none" as const, reason: "NoneFound", candidates: [] } : d)),
+    });
+    const files = loadFlows(source, config);
+    const readOrder = { ...files[0]!.flows[0]!.object, metadata: { name: "read-order" }, spec: { steps: [{ stepId: "read", surface: "orders|GET /orders/{id}" }] } };
+    files.push({ file: "flows/read.flow.yaml", text: "", errors: [], flows: [{ object: readOrder, line: 1, stepLine: () => 1 }] });
+    const { document, limits } = toArazzo(undescribed("orders"), files, config, { title: "t" });
+    expect(arazzoErrors(document)).toEqual([]);
+    const workflows = document.workflows as Array<{ workflowId: string; description?: string; steps: Array<{ stepId: string }>; "x-flow-atlas": { omitted?: unknown } }>;
+    expect(workflows.map((w) => `${w.workflowId}:${w.steps.map((s) => s.stepId).join(",")}`)).toEqual(["view-order:screen", "place-order:submit", "refund-order:request"]);
+    expect(workflows[0]!["x-flow-atlas"].omitted).toEqual([{ stepId: "read", reason: "no OpenAPI description is decided for orders: NoneFound" }]);
+    expect(workflows[0]!.description).toBe("Left out of this export, so these steps are not the whole flow: read (no OpenAPI description is decided for orders: NoneFound).");
+    expect(document.sourceDescriptions).toEqual([{ name: "bff", url: "/openapi.json", type: "openapi" }]);
+    const what = "set openapi.orders to its OpenAPI document, or routes[].openapi to the one its framework generates";
+    expect(limits.filter((l) => !l.startsWith("bff serves"))).toEqual([
+      `view-order.read: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `place-order.create: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `refund-order.refund: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      `read-order.read: no OpenAPI description is decided for orders: NoneFound; ${what}`,
+      "read-order: no step could be written as an operation",
+    ]);
+    expect(() => toArazzo(undescribed("orders", "bff"), files, config, { title: "t", flow: "view-order" })).toThrow(
+      `nothing to export: no step of the selected flows could be written as an operation\nview-order.screen: no OpenAPI description is decided for bff: NoneFound`,
+    );
+  });
+
+  it("writes a description in the repository relative to its root, and one outside it without this machine's path", () => {
+    const files = loadFlows(source, config);
+    const unnamed = { ...graph, surfaces: graph.surfaces.map((s) => ({ ...s, operationId: undefined })) };
+    const read = (p: string) => source.read(p);
+    const sources = (doc: Record<string, unknown>) => doc.sourceDescriptions as Array<{ name: string; url: string }>;
+    const readStep = (doc: Record<string, unknown>) => (doc.workflows as Array<{ steps: Array<Record<string, unknown>> }>)[0]!.steps[1]!;
+
+    const inside = toArazzo(unnamed, files, { ...config, openapi: { bff: "openapi/bff.json", orders: join(root, "services/orders/openapi.json") } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(inside.document)).toEqual([]);
+    expect(sources(inside.document).map((s) => s.url)).toEqual(["openapi/bff.json", "services/orders/openapi.json"]);
+    // Read at the repository's revision, through its path in the repository.
+    expect(readStep(inside.document).operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+    expect((inside.document.info as { description: string }).description).toContain("Relative source description URLs are resolved against this document, which is assumed to sit at the repository root.");
+
+    const outside = "/elsewhere/generated/orders.json";
+    const fromRoutes = (g: typeof unnamed, location: string, component = "orders") => ({
+      ...g,
+      apiDescriptions: g.apiDescriptions.map((d) => (d.component === component ? { component, status: "chosen" as const, location, kind: "author" as const, reason: "ReadForRoutes", candidates: [] } : d)),
+    });
+    const readOutside = (p: string) => (p === outside ? source.read("services/orders/openapi.json") : source.read(p));
+    const chosen = { ...config, openapi: { bff: "openapi/bff.json" } };
+    const away = toArazzo(fromRoutes(unnamed, outside), files, chosen, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(arazzoErrors(away.document)).toEqual([]);
+    expect(JSON.stringify(away.document)).not.toContain("/elsewhere");
+    expect(sources(away.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(readStep(away.document).operationId).toBe("$sourceDescriptions.orders.OrdersController_get");
+    expect(away.limits).toEqual([
+      "orders's OpenAPI document /elsewhere/generated/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, publish it and set openapi.orders to its URL, or set origins.orders to the base URL of the server that serves it at /docs-json",
+    ]);
+
+    const served = toArazzo(fromRoutes(unnamed, outside), files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(served.document).map((s) => s.url)).toEqual(["openapi/bff.json", "http://localhost:3001/docs-json"]);
+    expect(served.limits).toEqual([]);
+
+    // Without a path the server is known to serve it at, an origin does not make a URL.
+    const unserved = { ...fromRoutes(unnamed, "../specs/orders.json"), apiDocuments: graph.apiDocuments.filter((d) => d.component !== "orders") };
+    const relative = toArazzo(unserved, files, { ...chosen, origins: { orders: "http://localhost:3001/" } }, { title: "t", flow: "view-order", root, read });
+    expect(arazzoErrors(relative.document)).toEqual([]);
+    expect(sources(relative.document).map((s) => s.url)).toEqual(["openapi/bff.json", "orders.json"]);
+    expect(relative.limits).toEqual([
+      "orders's OpenAPI document ../specs/orders.json is outside the repository; written as orders.json, a file next to this document: commit the document to the repository, or publish it and set openapi.orders to its URL",
+    ]);
+
+    // Two documents outside cannot both sit next to the document under one name.
+    const twice = toArazzo(fromRoutes(fromRoutes(unnamed, outside), "/other/orders.json", "bff"), files, config, { title: "t", flow: "view-order", root, read: readOutside });
+    expect(sources(twice.document).map((s) => s.url)).toEqual(["orders.json", "orders.json"]);
+    expect(twice.limits).toContain("bff and orders are both written as orders.json; rename one of the documents, commit them or publish them");
+  });
+
   it("brings the flows a selected flow runs into the export", () => {
     const files = loadFlows(source, config);
     const parent = { ...files[0]!.flows[1]!.object, metadata: { name: "checkout" }, spec: { steps: [{ stepId: "place", flow: "place-order" }] } };

@@ -109,18 +109,33 @@ file atlas can read, each operation is resolved against it: that document's oper
 the path key the document writes (which may name parameters differently from the code, such as `{orderId}`); an
 operation the document does not declare is left out with a note. Otherwise a route's operationId is used, else an
 `operationPath` (`{$sourceDescriptions.bff.url}#/paths/~1orders~1{id}/get`). The flows a selected flow runs are
-exported with it, and an export with no workflow stops.
+exported with it.
+
+A step that cannot be written (its component has no decided description, its route accepts any method, its document
+does not declare it, the flow it runs is not exported) is left out with a `limit:` line saying why and what to set,
+and the rest is written. A flow that loses some steps is still written, because its other steps are what the code
+holds and a viewer or an agent can use them; but an Arazzo workflow is a sequence and the steps left are not the
+flow, so the workflow says so in its `description` and lists the left-out steps, each with its reason, in
+`x-flow-atlas.omitted`. Whoever runs it must add those steps back or not run it as the flow. A flow with no step left
+is not written, and neither is a step that runs it. The export stops only when nothing at all can be written.
 
 atlas finds each component's OpenAPI description itself, and chooses among several only when the code decides: the
 author's `openapi` entry first, then the document the configuration reads routes from (`routes[].openapi`,
 `ReadForRoutes`), then the one committed file that declares every route the code serves, then the one document the code
 serves. Paths that show the same document are one: a swagger-ui page whose `uiConfig.url` shows `/openapi.json` is an
 alias of it. A committed file that lacks routes is taken as a stale copy, and the difference is reported. When nothing
-decides, the description is `ambiguous` and `export arazzo` stops.
+decides, the description is `ambiguous` and `export arazzo` stops: the choice is one line of configuration and the
+repository's to make. A component with no description at all (one atlas reads from code only) does not stop it; its
+steps are left out.
 
 When the chosen document is served, the server address in front of its path differs per environment and goes into the
-configuration's `origins`. Parameters, request bodies and success criteria do not come from the code; whoever runs the
-Arazzo document fills them in.
+configuration's `origins`. A file in the repository, named by a relative or an absolute path, is written relative to
+the repository root, and the document says it assumes it is kept there (Arazzo resolves a relative URL against the
+document). A file outside the repository is not written as a path on the machine that ran atlas: when the component's
+code serves its document at one path and `origins` has the component, it is that URL; otherwise it is written by its
+file name, as a file next to the exported document, with a `limit:` to commit the document or publish it and set
+`openapi.<component>` to its URL. Parameters, request bodies and success criteria do not come from the code; whoever
+runs the Arazzo document fills them in.
 
 ## The head of model documents
 
