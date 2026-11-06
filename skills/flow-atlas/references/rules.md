@@ -72,7 +72,9 @@ Keys `FA007|<flow>|<step>|unresolved`, `|<step>|disconnected`, `|produces|<entry
 
 An active Flow in `flows/*.flow.yaml` names a surface or call the code does not have, two consecutive surface or call steps with
 no chain of edges between them, a registry entry no registry lists, a sub-flow step naming a flow nobody describes, or an empty title or step role. Each corresponds to a False
-condition in `atlas flows` (`Resolved`, `Connected`, `ProducesListed`, `Documented`). `undocumented`
+condition in `atlas flows` (`Resolved`, `Connected`, `ProducesListed`, `Documented`). Two consecutive chain steps
+with no `next` linking them are not a finding: the code neither shows nor contradicts their order, so `Connected` is
+`Unknown (OrderNotInCode)` and the order stays the author's. `undocumented`
 is the only one about the author's part rather than the code: write the title and each step's role. An invalid file does not follow `flow.schema.json` and is
 not resolved at all.
 

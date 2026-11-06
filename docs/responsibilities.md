@@ -31,7 +31,7 @@ alone show whether a value came from the code or from a person.
 | a flow draft per chain: name, step, chain and entry | `draft flows` | the chains |
 | whether a flow holds in the code | `flows` | steps resolved, paths between steps (between chains, a `next` the code offers), registry lists |
 | whether the author's fields are written | `flows` (`Documented`) | a title and each step's role present |
-| findings FA001 to FA007 | `check` | the facts above |
+| findings FA001, FA002, FA003, FA004 and FA007 | `check` | the facts above |
 | routes, links, chains and findings that changed | `diff` | the graphs of two revisions |
 | configuration candidates | `inventory` | manifests and file shapes |
 | how much of the code the configuration covers | `scan`, `check` | what each configured source read, and drops against the baseline |
