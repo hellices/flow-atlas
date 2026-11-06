@@ -8,7 +8,7 @@ import { normalizeConfig } from "../src/config.js";
 import { callsFromTemplate, callsFromTypeScript } from "../src/extract/calls.js";
 import { handlerNames } from "../src/extract/openapi.js";
 import { extractRoutes } from "../src/extract/routes.js";
-import { routesFromSpring, type Views } from "../src/extract/spring.js";
+import { fileConstants, routesFromSpring, type Views } from "../src/extract/spring.js";
 import { documentUrl } from "../src/arazzo.js";
 import { inventory } from "../src/inventory.js";
 import { matchCalls } from "../src/match.js";
@@ -109,6 +109,18 @@ describe("Spring routes", () => {
     expect(config("http.formLogin(f -> f.loginProcessingUrl(LOGIN_URL)).logout(l -> l.logoutUrl(Paths.OUT));")).toEqual([]);
     expect(config("http.logout(l -> l.logoutRequestMatcher(matcher));")).toEqual([]);
     expect(routes("class C { void out(HttpServletRequest request) { request.logout(); } }")).toEqual([]);
+  });
+
+  it("evaluates each constant once, however often other constants repeat it", () => {
+    // Without keeping values, C12 alone would evaluate C0 4096 times and the chain 8190 declarations.
+    const chain = Array.from({ length: 12 }, (_, i) => `  static final String C${i + 1} = C${i} + C${i};`);
+    const text = ["@RestController", "class A {", '  static final String C0 = "";', ...chain, '  @GetMapping(C12 + "/x") void a() {}', "}"].join("\n");
+    const evaluated: number[] = [];
+    const constant = fileConstants("S.java", text, (at) => evaluated.push(at));
+    expect(constant('C12 + "/x"', text.indexOf("@GetMapping"))).toBe("/x");
+    expect(evaluated).toHaveLength(13);
+    expect(new Set(evaluated).size).toBe(13);
+    expect(routesFromSpring("S.java", text, spec).map((r) => `${r.method} ${r.path}`)).toEqual(["GET /x"]);
   });
 
   it("reads a path from a string constant the file declares, and says when it cannot", () => {

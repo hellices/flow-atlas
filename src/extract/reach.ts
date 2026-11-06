@@ -30,6 +30,10 @@ interface Parsed {
   namespaces: Map<string, string>;
   /** What `export default` gives: a function node, or the name of a top-level function. */
   defaultExport?: ts.Node | string;
+  /** Names this module exports as values under their own name (`export function GET`, `export { run }`). */
+  exports: Set<string>;
+  /** Whether the module uses ES export syntax at all; one that does not (CommonJS) is read by its top-level names. */
+  esm: boolean;
 }
 
 const isFunctionValue = (n: ts.Node | undefined): boolean =>
@@ -37,6 +41,11 @@ const isFunctionValue = (n: ts.Node | undefined): boolean =>
 
 const hasDefault = (n: ts.Node): boolean =>
   ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+
+const hasExport = (n: ts.Node): boolean =>
+  ts.canHaveModifiers(n) &&
+  !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+  !ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
 
 function bindingNames(name: ts.BindingName, out: string[] = []): string[] {
   if (ts.isIdentifier(name)) out.push(name.text);
@@ -112,8 +121,13 @@ export class Reach {
       return null;
     }
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-    const parsed: Parsed = { sf, functions: new Map(), imports: new Map(), reexports: new Map(), stars: [], namespaces: new Map() };
+    const parsed: Parsed = { sf, functions: new Map(), imports: new Map(), reexports: new Map(), stars: [], namespaces: new Map(), exports: new Set(), esm: false };
     for (const st of sf.statements) {
+      if (ts.isExportDeclaration(st) || ts.isExportAssignment(st) || hasExport(st)) parsed.esm = true;
+      if (hasExport(st) && !hasDefault(st)) {
+        if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) parsed.exports.add(st.name.text);
+        if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name)) parsed.exports.add(d.name.text);
+      }
       if (ts.isFunctionDeclaration(st) && st.body) {
         if (st.name) parsed.functions.set(st.name.text, st.body);
         if (hasDefault(st)) parsed.defaultExport = st.body;
@@ -133,18 +147,24 @@ export class Reach {
         if (target && nb && ts.isNamedImports(nb)) {
           for (const el of nb.elements) parsed.imports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
         }
-      } else if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
-        // `export { run as handler }` names a binding of this file under another name.
+      } else if (ts.isExportDeclaration(st) && !st.isTypeOnly && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+        // `export { run as handler }` names a binding of this file under another name; `export { type run as GET }`
+        // and `export type { run as GET }` name only its type.
         for (const el of st.exportClause.elements) {
+          if (el.isTypeOnly) continue;
           const local = (el.propertyName ?? el.name).text;
           if (local !== el.name.text) parsed.reexports.set(el.name.text, { file, name: local });
+          else parsed.exports.add(local);
         }
-      } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+      } else if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+        // A type-only re-export carries no value, so nothing is followed through it.
         const target = this.resolve(file, st.moduleSpecifier.text);
         if (!target) continue;
         if (!st.exportClause) parsed.stars.push(target);
         else if (ts.isNamedExports(st.exportClause)) {
-          for (const el of st.exportClause.elements) parsed.reexports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
+          for (const el of st.exportClause.elements) {
+            if (!el.isTypeOnly) parsed.reexports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
+          }
         }
       }
     }
@@ -160,20 +180,32 @@ export class Reach {
     return resolveModule(from, spec, (f) => this.source.read(f) !== undefined);
   }
 
-  /** The function a module exports under a name, following re-exports to any depth; a re-export cycle ends the search. */
+  /**
+   * The function a module exports under a name, following re-exports to any depth; a re-export cycle ends the search.
+   * Only what the module exports as a value counts: a name it keeps to itself, or exports only as a type, is not
+   * reached through `export *` or an import.
+   */
   exported(file: string, name: string, visiting = new Set<string>()): { file: string; node: ts.Node } | undefined {
     const key = `${file}#${name}`;
     const p = this.parse(file);
     if (!p || visiting.has(key)) return undefined;
     visiting.add(key);
+    // A binding of this module: a top-level function, or an import, followed to the module that exports it.
+    const binding = (local: string): { file: string; node: ts.Node } | undefined => {
+      const fn = p.functions.get(local);
+      if (fn) return { file, node: fn };
+      const imported = p.imports.get(local);
+      return imported ? this.exported(imported.file, imported.name, visiting) : undefined;
+    };
     if (name === "default" && p.defaultExport !== undefined) {
-      if (typeof p.defaultExport !== "string") return { file, node: p.defaultExport };
-      return this.exported(file, p.defaultExport, visiting);
+      return typeof p.defaultExport !== "string" ? { file, node: p.defaultExport } : binding(p.defaultExport);
     }
-    const local = p.functions.get(name);
-    if (local) return { file, node: local };
-    const re = p.reexports.get(name) ?? p.imports.get(name);
-    if (re) return this.exported(re.file, re.name, visiting);
+    const re = p.reexports.get(name);
+    if (re) return re.file === file ? binding(re.name) : this.exported(re.file, re.name, visiting);
+    if (p.exports.has(name) || !p.esm) {
+      const found = binding(name);
+      if (found) return found;
+    }
     for (const star of p.stars) {
       const found = this.exported(star, name, visiting);
       if (found) return found;
@@ -182,8 +214,8 @@ export class Reach {
   }
 
   /**
-   * Member method names called under `start` in `file`, sorted; `executed` collects `file:line` of each string the code
-   * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
+   * Member method names called under `start` in `file`, sorted; `executed` collects `file@offset` of each expression the code
+   * hands to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
    * local name, is followed only where it is used; a function written inline counts as run when it is a callback
    * argument or called on the spot, and not when it is returned or stored.
    */
@@ -299,8 +331,19 @@ export class Reach {
         // An inline function runs when it is handed to a call (`then(() => ...)`, `new Promise(...)`) or called on the
         // spot; one returned or stored is run by whoever receives it, which is not known here.
         if (n !== node && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && !handedToCall(n)) return;
-        if (executed && inCall && notes && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
-          executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
+        // What a call it runs is handed: each argument and the expressions it is made of (`fetch(BASE + id)`,
+        // `fetch(ok ? "/a" : "/b")`), down to a call or function inside it, whose own arguments are its own. A URL is
+        // run when one of these starts where it does; a URL built around a call's result is not that call's argument.
+        // A constructor's arguments count as a call's: `fetch(new Request("/x"))` requests "/x". While rendering, an
+        // element's attributes are left to the JSX rules above: `<a href="/next">` handed to a call is still a link.
+        const handed = !!n.parent && (ts.isCallExpression(n.parent) || ts.isNewExpression(n.parent)) && !!n.parent.arguments?.some((a) => a === n);
+        if (executed && inCall && notes && handed) {
+          const mark = (m: ts.Node): void => {
+            if (render && ts.isJsxAttribute(m)) return;
+            executed.add(`${f}@${m.getStart(parsed.sf)}`);
+            if (!ts.isCallExpression(m) && !ts.isNewExpression(m) && !ts.isFunctionLike(m)) ts.forEachChild(m, mark);
+          };
+          mark(n);
         }
         // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
         if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {

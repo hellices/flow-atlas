@@ -218,6 +218,43 @@ describe("framework rules", () => {
     ]);
   });
 
+  it("serves no method a route re-exports only as a type", () => {
+    const files = {
+      // A type-only re-export, of every name or of named ones, exports no runtime value Next.js could call.
+      "app/stars/route.ts": 'export function POST() {}\nexport type * from "./handlers";',
+      "app/named/route.ts": 'export function POST() {}\nexport type { GET } from "./handlers";\nexport { type PUT } from "./handlers";',
+      // Nor does a value re-export that reaches the handler only through a type-only one.
+      "app/through/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/through/types.ts": 'export type * from "../stars/handlers";',
+      // A local binding exported only as a type, under a method's name, in the route or in a module it re-exports.
+      "app/local/route.ts": 'import { run } from "./handlers";\nexport function POST() {}\nexport type { run as GET };\nexport { type run as PUT };',
+      "app/aliased/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/aliased/types.ts": 'import { run } from "../local/handlers";\nexport type { run as GET };\nexport { type run as PUT };',
+      "app/local/handlers.ts": "export function run() {}",
+      // A star re-export carries only what the module exports as a value: not a name it imports and exports as a type,
+      // nor a function it keeps to itself.
+      "app/hidden/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/hidden/types.ts": 'import { GET } from "./handlers";\nexport type { GET };\nfunction PUT() {}\nexport const version = 1;',
+      "app/hidden/handlers.ts": "export function GET() {}",
+      "app/stars/handlers.ts": "export function GET() {}\nexport function PUT() {}",
+      "app/named/handlers.ts": "export function GET() {}\nexport function PUT() {}",
+    };
+    expect(scanned(files)).toEqual([
+      "api|OPTIONS /aliased (implicit)",
+      "api|OPTIONS /hidden (implicit)",
+      "api|OPTIONS /local (implicit)",
+      "api|OPTIONS /named (implicit)",
+      "api|OPTIONS /stars (implicit)",
+      "api|OPTIONS /through (implicit)",
+      "api|POST /aliased",
+      "api|POST /hidden",
+      "api|POST /local",
+      "api|POST /named",
+      "api|POST /stars",
+      "api|POST /through",
+    ]);
+  });
+
   it("follows what a server page runs while rendering, and not its links or what the browser runs later", () => {
     const files = {
       "app/notes/[id]/page.tsx": [
@@ -300,6 +337,66 @@ describe("framework rules", () => {
     const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     const pages = ["notes", "alias", "re", "field", "quoted", "computed", "overload", "inherits", "imported"];
     expect(pages.map((p) => reached(`web|GET /${p}`))).toEqual(pages.map((p) => [`/api/${p}`]));
+  });
+
+  it("joins a page only to the requests it makes while rendering, not to a link on the same line", () => {
+    const files = {
+      "app/one/page.tsx": 'export default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
+      "app/next/page.tsx": "export default function Next() { return null; }",
+      "app/api/data/route.ts": "export function GET() {}",
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["app/**/*.{ts,tsx}"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["app/**/*.tsx"] }],
+    });
+    const graph = scan(memory(files), config);
+    const reached = graph.edges.filter((e) => e.kind === "reach" && e.from === "web|GET /one").map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    expect(graph.calls.map((c) => c.path).sort()).toEqual(["/api/data", "/next"]);
+    expect(reached).toEqual(["/api/data"]);
+  });
+
+  it("joins a request to the URL that holds it, not to a URL built around it", () => {
+    const files = {
+      // The fetch runs while rendering; the address it helps build is the link's, requested later by the browser.
+      "app/two/page.tsx": [
+        "export default async function Two() {",
+        '  const href = "/next/" +',
+        '    (await fetch("/api/data")).id;',
+        "  return <Link href={href}>Next</Link>;",
+        "}",
+      ].join("\n"),
+      // A call that only builds the link's address runs while rendering, but the address is still the browser's.
+      "app/three/page.tsx": 'export default function Three({ slug }) {\n  const href = "/next/" + encodeURIComponent(slug);\n  return <Link href={href}>Next</Link>;\n}',
+      // Either branch of a URL handed to a request is the request's.
+      "app/four/page.tsx": 'export default async function Four({ ok }) {\n  const d = await fetch(ok ? "/api/a" : "/api/b");\n  return <p>{d}</p>;\n}',
+      // A URL handed to a constructor whose result the request gets is the request's.
+      "app/wrapped/route.ts": 'export async function GET() {\n  await fetch(new Request("https://api.example.com/data"));\n}',
+      // A link inside an element a call is handed while rendering is still the browser's.
+      "app/five/page.tsx": 'export default function Five() {\n  return Promise.resolve(<a href="/next">x</a>);\n}',
+      // A URL with no literal of its own at the call: the request still runs in the handler.
+      "app/items/route.ts": 'const BASE = "/api/";\nexport async function GET() {\n  const id = 1;\n  await fetch(BASE + id, { method: "POST" });\n}',
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["app/**/*.{ts,tsx}"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["app/**/*.{ts,tsx}"] }],
+    });
+    const graph = scan(memory(files), config);
+    const reached = (id: string) =>
+      graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!).map((c) => `${c.method} ${c.path}`);
+    // The links are calls of their own; only the requests made while rendering join the page.
+    const callsIn = (file: string) => graph.calls.filter((c) => c.at.file === file).map((c) => `${c.method} ${c.path}`).sort();
+    expect(callsIn("app/two/page.tsx")).toEqual(["* /next/{}", "GET /api/data"]);
+    expect(callsIn("app/three/page.tsx")).toEqual(["* /next/{}"]);
+    expect(callsIn("app/five/page.tsx")).toEqual(["GET /next"]);
+    expect(callsIn("app/wrapped/route.ts")).toEqual(["GET /data"]);
+    expect(reached("web|GET /two")).toEqual(["GET /api/data"]);
+    expect(reached("web|GET /items")).toEqual(["POST /api/{}"]);
+    expect(reached("web|GET /three")).toEqual([]);
+    expect(reached("web|GET /five")).toEqual([]);
+    expect(reached("web|GET /wrapped")).toEqual(["GET /data"]);
+    expect(reached("web|GET /four").sort()).toEqual(["GET /api/a", "GET /api/b"]);
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {

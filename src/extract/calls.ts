@@ -209,9 +209,22 @@ function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   return d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && d.initializer && d.parent.flags & ts.NodeFlags.Const ? d : undefined;
 }
 
-export function callsFromTypeScript(file: string, text: string, spec: CallSource, spans?: Spans): Draft<Call>[] {
+/**
+ * A call as read, with the offsets of the expression that holds its URL in a parsed file. The offsets join it to the
+ * strings a handler runs (`Reach.from`) and are not part of the graph.
+ */
+export type ReadCall = Draft<Call> & { span?: [number, number] };
+
+/** The call as the graph holds it, without the offsets it was read at. */
+export function withoutSpan(c: ReadCall): Draft<Call> {
+  const out = { ...c };
+  delete out.span;
+  return out;
+}
+
+export function callsFromTypeScript(file: string, text: string, spec: CallSource, spans?: Spans): ReadCall[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const found: Array<{ node: ts.Node; call: Draft<Call> }> = [];
+  const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
   const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
   const urlText = (node: ts.Node, depth: number): string | undefined => {
@@ -252,6 +265,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
           at: { file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 },
           evidence: "static",
           scope: scopeOf(node),
+          span: [node.getStart(sf), node.getEnd()],
         } });
       }
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
@@ -845,7 +859,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     if (external || (type && !JAVASCRIPT_TYPES.has(type))) continue;
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...c, at: { file, line: c.at.line + shift } });
+    // Offsets in the script body are not offsets in the template; no handler runs a template's script anyway.
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
       for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
@@ -858,8 +873,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
 }
 
 /** `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests. */
-export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans): Draft<Call>[] {
-  const out: Draft<Call>[] = [];
+export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans): ReadCall[] {
+  const out: ReadCall[] = [];
   for (const spec of config.calls) {
     const files = select(source, spec.files, config.exclude);
     const before = out.length;

@@ -252,7 +252,7 @@ function declaredTypes(masked: string): DeclaredType[] {
  * or one imported by name (`import static a.Paths.PATH`). A type's own annotation sits outside its body, so a name used
  * there is not one of its members.
  */
-function stringConstants(code: string, masked: string, kotlin: boolean): Constant {
+function stringConstants(code: string, masked: string, kotlin: boolean, evaluated?: (at: number) => void): Constant {
   const types = declaredTypes(masked);
   // The type whose members a position is among: the innermost body around it, a companion counting as its class.
   const chain = (at: number): DeclaredType[] => types.filter((t) => t.start < at && at < t.end).sort((a, b) => b.start - a.start);
@@ -310,6 +310,9 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
     const own = declared.filter((d) => d.name === name && d.owner === named[0]);
     return own.length ? only(own) : undefined;
   };
+  // A declaration's value depends only on the declaration, so each is evaluated once. One that fails through a cycle is
+  // itself on or behind that cycle, so its failure holds wherever the evaluation started.
+  const values = new Map<number, string | undefined>();
   const evaluate = (expression: string, at: number, seen: Set<number>): string | undefined => {
     let out = "";
     for (const term of splitTop(expression, "+")) {
@@ -321,13 +324,23 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
       const name = /^(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)$/.exec(term);
       const found = name ? (name[1] ? qualified(name[1], name[2]!, at) : lookup(name[2]!, at)) : undefined;
       if (!found || seen.has(found.at)) return undefined;
-      const resolved = evaluate(found.expression, found.at, new Set([...seen, found.at]));
+      if (!values.has(found.at)) {
+        evaluated?.(found.at);
+        values.set(found.at, evaluate(found.expression, found.at, new Set([...seen, found.at])));
+      }
+      const resolved = values.get(found.at);
       if (resolved === undefined) return undefined;
       out += resolved;
     }
     return out;
   };
   return (expression, at) => evaluate(expression, at, new Set());
+}
+
+/** The string constants a Java or Kotlin file declares, as a mapping at an offset sees them; `evaluated` hears each declaration evaluated. */
+export function fileConstants(file: string, text: string, evaluated?: (at: number) => void): Constant {
+  const code = withoutComments(file, text);
+  return stringConstants(code, maskStrings(file, code), /\.kts?$/.test(file), evaluated);
 }
 
 /**

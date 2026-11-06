@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import { extractApiDocuments, resolveApiDescriptions } from "./extract/apidocs.js";
-import { extractCalls } from "./extract/calls.js";
+import { extractCalls, withoutSpan } from "./extract/calls.js";
 import { extractComponents } from "./extract/components.js";
 import { Reach } from "./extract/reach.js";
 import { extractRegistries } from "./extract/registries.js";
@@ -24,10 +24,17 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
 
 /**
  * `match` edges from calls to the surfaces they reach; `reach` edges from surfaces to the outbound calls their handlers
- * lead to: a call the handler's code runs (its line is in `executed`, evidence `static`), or one held in a method the
- * handler calls by name (evidence `name`).
+ * lead to: a call the handler's code runs (evidence `static`), or one held in a method the handler calls by name
+ * (evidence `name`). `spans[i]` are the offsets of the expression holding `calls[i]`'s URL; the handler runs the call
+ * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
+ * built from a request's result, starts elsewhere.
  */
-export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map<string, Set<string>>, ranked?: Map<string, Ranking>): Edge[] {
+export function edgesOf(
+  graph: Pick<Graph, "surfaces" | "calls">,
+  executed?: Map<string, Set<string>>,
+  ranked?: Map<string, Ranking>,
+  spans: Array<[number, number] | undefined> = [],
+): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf } = matchCalls(graph, ranked);
   graph.calls.forEach((c, i) => {
@@ -38,13 +45,17 @@ export function edgesOf(graph: Pick<Graph, "surfaces" | "calls">, executed?: Map
     const runs = executed?.get(s.id);
     if (!reached.size && !runs?.size) continue;
     const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
-    for (const c of graph.calls) {
+    const runsIn = (i: number, file: string): boolean => {
+      const span = spans[i];
+      return !!span && !!runs?.has(`${file}@${span[0]}`);
+    };
+    for (const [i, c] of graph.calls.entries()) {
       if (rendered.has(c.at.file)) {
         edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: `view ${rendered.get(c.at.file)}` });
         continue;
       }
       if (c.from !== s.component) continue;
-      if (runs?.has(`${c.at.file}:${c.at.line}`)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
+      if (runsIn(i, c.at.file)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
   }
@@ -70,8 +81,9 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const spans = new Spans();
   const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces);
-  const calls = assignCallIds(extractCalls(source, config, coverage, spans));
-  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config));
+  const read = extractCalls(source, config, coverage, spans);
+  const calls = assignCallIds(read.map(withoutSpan));
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span));
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",
