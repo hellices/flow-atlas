@@ -13,6 +13,7 @@ import { addCoverage } from "./coverage.js";
 import { expressMounts, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
+import { declarationOf } from "./binding.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -208,12 +209,10 @@ export function routesFromTypeScript(
   const constPattern = spec.constants ? new RegExp(spec.constants) : undefined;
   const out: Surface[] = [];
   const at = (node: ts.Node) => ({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 });
-  /** A registration whose path is not a literal: said in `limits`, unless `constants` names the constant it is. */
-  const unread = (arg: ts.Expression) => {
-    const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
-    if (constPattern && ts.isIdentifier(inner) && constPattern.test(inner.text)) return;
-    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
-  };
+  /** The declarations `constants` turned into routes, and the registrations whose path is not a literal. */
+  const readConstants = new Set<ts.Node>();
+  const unreadPaths: ts.Expression[] = [];
+  const unread = (arg: ts.Expression) => unreadPaths.push(arg);
   const add = (
     method: string,
     path: string,
@@ -392,11 +391,19 @@ export function routesFromTypeScript(
       if (path?.startsWith("/")) {
         span(node.initializer);
         add("GET", path, node);
+        readConstants.add(node);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  // A path that is a constant read as a route above is read; any other is said in `limits`.
+  for (const arg of unreadPaths) {
+    const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
+    const declaration = ts.isIdentifier(inner) ? declarationOf(inner) : undefined;
+    if (declaration && readConstants.has(declaration)) continue;
+    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+  }
   for (const name of unmounted) {
     limits?.push(`routes ${spec.component}: router ${name} in ${file} is mounted where the code gives no literal path; its routes are not read (declare it in mounts)`);
   }

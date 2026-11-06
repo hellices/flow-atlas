@@ -114,6 +114,23 @@ describe("routesFromTypeScript", () => {
     expect(unread(sse, fastify)).toEqual({ routes: ["POST /outputs"], limits: [not(3, "outputPath"), not(5, "`${snapshotPath}`")] });
     // Named in `constants`, the path is read as a GET route, so nothing is left unread.
     expect(unread(sse, { ...fastify, constants: "^(outputPath|snapshotPath)$" })).toEqual({ routes: ["GET /outputs", "GET /outputs/snapshot", "POST /outputs"], limits: [] });
+    // Only a constant that reader turned into a route: an imported one, one computed at run time or a parameter that
+    // shadows a read one leaves the registration unread, whatever its name.
+    const elsewhere = [
+      'import { outputPath } from "./paths";',
+      "fastify.get(outputPath, h);",
+      "const snapshotPath = makePath();",
+      "fastify.get(snapshotPath, h);",
+      "function register(fastify, streamPath) {",
+      "  fastify.get(streamPath, h);",
+      "}",
+      'const streamPath = "/stream";',
+      "fastify.get(streamPath, h);",
+    ].join("\n");
+    expect(unread(elsewhere, { ...fastify, constants: "Path$" })).toEqual({
+      routes: ["GET /stream"],
+      limits: [not(2, "outputPath"), not(4, "snapshotPath"), not(6, "streamPath")],
+    });
     // A setting read with one argument, a receiver atlas does not know, or a literal that is no path register nothing.
     expect(unread('app.get(SETTING);\ncache.get(key, h);\napp.get("*", h);', { ...fastify, receivers: ["app"] })).toEqual({ routes: [], limits: [] });
     const helper = { component: "svc", files: [], calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
