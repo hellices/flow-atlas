@@ -26,9 +26,3 @@ registries:
     active: { file: catalog/active.json, pattern: "(.+)-v\\d+\\.schema\\.json" }
     producers: ["services/**"]
     consumers: ["apps/**"]
-versions:
-  - name: document-schema
-    files: "catalog/schemas/*.schema.json"
-    pattern: "(.+)-v(\\d+)\\.schema\\.json"
-    active: { file: catalog/active.json, pattern: "(.+)\\.schema\\.json" }
-    references: ["apps/**", "services/**"]

@@ -113,7 +113,7 @@ exported later. Documents the tool generates use the timestamp-free `provenance`
 A step follows Arazzo's Step: it has a `stepId` and points at its target with one of `chain`, `surface`, `call` or
 `flow`, where Arazzo has `operationId`, `operationPath` or `workflowId`. A `chain` step is one request and everything
 it reaches (see Chains); it is the form to write, since its structure comes from the code. `surface` and `call` steps
-are kept for plans that name a route not called yet and for older flows. `role` is what the component does in that
+are kept for plans that name a route not called yet and for flows written before chains. `role` is what the component does in that
 step; keeping modules' responsibilities from mixing needs this written down. Not every hop between surface steps has to
 be listed: atlas finds the shortest path along the graph's edges to the next step. Between two chain steps the link is
 a request the first chain's result offers (`next`); with none, two chains one component starts are in the author's
@@ -175,7 +175,7 @@ tree, `code` has no digest.
 
 | kind | Command | Holds |
 |---|---|---|
-| `Graph` | `scan` | components, routes, calls, edges, registry entries, contract versions, what each configured source read |
+| `Graph` | `scan` | components, routes, calls, edges, registry entries, what each configured source read |
 | `Trace` | `trace` | the subgraph upstream and downstream of a starting route |
 | `Query` | `query` | the routes and calls that match, with their neighbours one edge away |
 | `FlowReport` | `flows` | each flow's metadata and status |
@@ -195,7 +195,6 @@ tree, `code` has no digest.
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
 | description choice | component | `status` (chosen, ambiguous, none), `location`, `kind`, `reason`, `candidates` |
-| contract version | `family-vN` | `active`, `references` |
 
 Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`.
 The same route has the same id whichever framework registered it, and matches an OpenAPI `paths` key as is. Two forms
@@ -294,7 +293,7 @@ finding. A `planned` flow treats all its steps as planned; its conditions are co
 `atlas check --format sarif` writes findings as SARIF 2.1.0. The finding key becomes
 `partialFingerprints.flowAtlasKey/v1`, the baseline `baselineState` (new, unchanged), and an exception `suppressions`
 (external, accepted, the reason in `justification`). Rules go into `tool.driver.rules` with their name and default
-level (error for FA002, note for FA006, warning for the rest), artifact locations are relative URI references with
+level (error for FA002, warning for the rest), artifact locations are relative URI references with
 each path segment percent-encoded, and the document's provenance goes into the run's `properties`. GitHub code
 scanning and the VS Code SARIF Viewer read it as is.
 

@@ -61,21 +61,6 @@ an entry left active after its feature was removed.
 Fix: add the missing side, or deactivate the entry. A producer that names entries indirectly (a generated map,
 a computed name) needs its source file added to `producers`.
 
-## FA006 contract version neither active nor referenced
-
-Key `FA006|<family>-v<N>`.
-
-A versioned contract file that is not in the active list (or, without one, is not the latest version), and
-whose name nothing outside generated code references, as `family-vN` or `FamilyVN`.
-
-Common causes: an old version kept after its last reader moved on. Some repositories keep every published version
-on purpose; then baseline the existing ones once and treat new findings as the signal that a version just lost
-its last reader.
-
-Fix: retire the version and its generated code through the repository's versioning process, or reference it where
-it is still meant to be used. Use `companionOf` when companion files (for example `action-<family>-vN`) follow
-the activity of their owning family.
-
 ## FA007 flow description that the code does not bear out
 
 Keys `FA007|<flow>|<step>|unresolved`, `|<step>|disconnected`, `FA007|<flow>|entry`, `|produces|<entry>`,

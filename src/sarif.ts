@@ -16,7 +16,6 @@ const LEVEL: Record<RuleId, "error" | "warning" | "note"> = {
   FA002: "error",
   FA003: "warning",
   FA004: "warning",
-  FA006: "note",
   FA007: "warning",
 };
 
@@ -25,7 +24,6 @@ const NAME: Record<RuleId, string> = {
   FA002: "CallWithoutSurface",
   FA003: "UndeclaredBoundaryOrCycle",
   FA004: "RegistryEntryWithoutProducerOrConsumer",
-  FA006: "UnusedContractVersion",
   FA007: "FlowNotBorneOut",
 };
 

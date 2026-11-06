@@ -318,43 +318,6 @@
         }
       }
     },
-    "contractVersion": {
-      "type": "object",
-      "required": [
-        "id",
-        "family",
-        "version",
-        "at",
-        "references"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "-v[0-9]+$"
-        },
-        "family": {
-          "type": "string"
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "active": {
-          "description": "Absent when no active list is configured.",
-          "type": "boolean"
-        },
-        "at": {
-          "$ref": "#/$defs/place"
-        },
-        "references": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/place"
-          }
-        }
-      }
-    },
     "coverage": {
       "type": "object",
       "required": [
@@ -403,7 +366,6 @@
             "FA002",
             "FA003",
             "FA004",
-            "FA006",
             "FA007"
           ]
         },

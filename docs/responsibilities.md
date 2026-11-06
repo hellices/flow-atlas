@@ -24,12 +24,11 @@ alone show whether a value came from the code or from a person.
 | routes, calls, edges, operationIds | `scan` | parsed code and the files the configuration names; for a framework atlas cannot parse, the OpenAPI document that framework generates |
 | locations of each component's OpenAPI documents | `scan`, `inventory` | committed files such as `openapi.yaml`, and the paths the code serves a document at (`SwaggerModule.setup`, `@fastify/swagger-ui`, an `/openapi.json` route) |
 | which description is a component's, when there are several | `scan` | paths that show the same document are one; a committed file is compared with the routes the code serves. If the code cannot decide, nothing is chosen and the result is `ambiguous` |
-| producers and consumers of registry entries, references to contract versions | `scan` | names searched in files |
+| producers and consumers of registry entries | `scan` | names searched in files |
 | routes and calls by path or component | `query` | the graph |
 | what leads to a route and what it leads to | `trace` | graph edges |
 | chains: each request, everything it reaches in that request, who makes it, what may follow it | `chains` | graph edges; a page's template links and forms are what may follow, not part of the request |
 | a flow draft per chain: name, step, chain and entry | `draft flows` | the chains |
-| an older flow draft from one surface: name, steps and entry component | `draft flow <surface>` | the trace path; where it branches, only the candidates |
 | whether a flow holds in the code | `flows` | steps resolved, paths between steps (between chains, a `next` the code offers), the entry's call, registry lists |
 | whether the author's fields are written | `flows` (`Documented`) | a title and each step's role present |
 | findings FA001 to FA007 | `check` | the facts above |
@@ -52,7 +51,7 @@ The tool does not decide how to fix anything. `explain` shows only the locations
 | when to review again (`stale_after`) | how long the intent holds is the author's call | `Fresh` |
 | a flow's state (`lifecycle`) | whether a missing step is planned or a defect is intent | planned steps are counted apart in `Resolved` |
 | a journey: which chains, in which order | which requests a person makes one after another is intent; take each from atlas output | `Resolved`; `Connected` from a chain's `next`, otherwise Unknown (`OrderNotInCode`) |
-| on a surface-step flow only: the entry component when several call the first step, the next step where a handler branches | the older step-by-step form leaves these choices; a chain step does not | `EntryCalled`, `Resolved`, `Connected` |
+| on a surface-step flow only: the entry component when several call the first step, the next step where a handler branches | a surface-step flow leaves these choices; a chain step does not | `EntryCalled`, `Resolved`, `Connected` |
 | registry entries a flow issues (`produces`) | which artifact is this flow's result is intent | `ProducesListed` |
 | an exception's reason, the decision behind it and a date to review | why something is fine for now is a decision | when the date passes, the finding returns |
 | false-positive marks and why | whether extraction went wrong takes reading the code | false-positive rate in `stats` |

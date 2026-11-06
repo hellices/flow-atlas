@@ -1,6 +1,6 @@
 ---
 name: flow-atlas
-description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event) or a contract version, checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
+description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event), checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
 license: MIT
 compatibility: Requires Node.js 20+ and the atlas CLI from this repository (npx github:hellices/flow-atlas, or npm install -g github:hellices/flow-atlas). Reads git; writes only to --out.
 metadata:
@@ -48,12 +48,11 @@ agent see it.
 
 | Fact | Command |
 |---|---|
-| surfaces, calls, edges, operationIds, registries, contract versions | `scan` |
+| surfaces, calls, edges, operationIds, registries | `scan` |
 | surfaces and calls by path, method or component | `query` |
 | a surface's callers upstream and the services it reaches downstream | `trace` |
 | chains: each request, everything it reaches, who makes it, what may follow it, and whether any edge is joined only by name | `chains` |
 | a Flow draft per chain no flow names, with its chain, entry and the requests that may follow | `draft flows` |
-| an older step-by-step draft from one surface | `draft flow <surface>` |
 | whether a Flow holds in code, and whether its author fields are written | `flows` (conditions) |
 | findings with locations and nearby paths | `check`, `explain` |
 | what changed between revisions, including chains that appear, disappear or reach other surfaces | `diff` |
@@ -70,7 +69,7 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 | a journey: which chains, in which order, picked from atlas output | `Resolved`; `Connected` from `next`, else Unknown |
 | `owner`, `labels`, `sources`, `lifecycle` (planned when a step is not built) | schema; `Resolved` counts planned steps apart |
 | `generated: { by: <tool>/<model>, at }` once you have written a flow's intent; `stale_after` when it should be reviewed (OKF) | schema; `Fresh` |
-| on an older surface-step flow only: the entry component when several call the first step | `EntryCalled`, `Connected` |
+| on a surface-step flow only: the entry component when several call the first step | `EntryCalled`, `Connected` |
 | `produces` | `ProducesListed` |
 | exceptions: reason, `decidedBy`, `reviewBy` | expiry brings the finding back |
 | false positives, with why | `stats` |
@@ -135,8 +134,8 @@ the document in the same change. A client call alone does not change it.
    `Documented` means an author field is empty.
 
 A file may hold several flows separated by `---`. Do not copy locations, edges, surfaces a chain reaches, or
-conditions into the file; atlas computes them each run. A surface or call step (`atlas draft flow <surface>`) is still
-accepted for a plan that names a route not called yet. The format is `schema/flow.schema.json` in the flow-atlas
+conditions into the file; atlas computes them each run. A surface or call step, with the surface id copied from
+`atlas query`, is still accepted for a plan that names a route not called yet. The format is `schema/flow.schema.json` in the flow-atlas
 package, whose `docs/schema.md` and `docs/responsibilities.md` explain it.
 
 ## Before finishing

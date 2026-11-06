@@ -9,13 +9,12 @@ import { evaluate } from "../src/rules.js";
 import { scan } from "../src/scan.js";
 import { WorktreeSource } from "../src/source.js";
 import { seedsFor, trace, traceText } from "../src/flow.js";
-import { flowFindings, loadFlows, resolveFlows, type FlowObject, type FlowReport } from "../src/flows.js";
+import { flowFindings, loadFlows, resolveFlows, type FlowReport } from "../src/flows.js";
 import { schemaForKind, validate } from "../src/schema.js";
 import { arazzoErrors, sarifErrors } from "./standards.js";
 import { query } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { toArazzo } from "../src/arazzo.js";
-import { draftFlow } from "../src/draft.js";
 import { parse as parseYaml } from "yaml";
 import type { Subgraph } from "../src/model.js";
 import { inventory } from "../src/inventory.js";
@@ -34,7 +33,6 @@ const EXPECTED = [
   "FA003|undeclared|web->orders",
   "FA004|document|coupon|no-consumer",
   "FA004|document|invoice|no-producer",
-  "FA006|invoice-v1",
 ];
 
 describe("shop fixture", () => {
@@ -135,8 +133,8 @@ describe("check, baseline and exceptions", () => {
         "- rule: FA001",
         '  key: "bff|PUT /preferences"',
         "  reason: provider first, client follows",
-        "- rule: FA006",
-        '  key: "invoice-v1"',
+        "- rule: FA004",
+        '  key: "document|coupon|no-consumer"',
         "  reason: kept for one release",
         "  reviewBy: 2000-01-01",
       ].join("\n"),
@@ -144,7 +142,7 @@ describe("check, baseline and exceptions", () => {
     run("check");
     const byKey = new Map(lastItems().map((i) => [i.finding.key, i.status]));
     expect(byKey.get("FA001|bff|PUT /preferences")).toBe("excepted");
-    expect(byKey.get("FA006|invoice-v1")).toBe("expired-exception");
+    expect(byKey.get("FA004|document|coupon|no-consumer")).toBe("expired-exception");
   });
 
   it("records feedback for stats", () => {
@@ -297,45 +295,6 @@ describe("flows", () => {
   });
 });
 
-describe("draft flow", () => {
-  const source = new WorktreeSource(root);
-  const graph = scan(source, config);
-  const one = (text: string) => seedsFor(graph, text)[0]!;
-
-  it("writes what the code settles and marks what the author must write", () => {
-    const { yaml, open } = draftFlow(graph, one("bff|GET /screens/order/{orderId}"));
-    const flow = parseYaml(yaml) as FlowObject;
-    expect(validate("flow", flow)).toEqual([]);
-    expect(flow.metadata).toEqual({ name: "bff-get-screens-order" });
-    expect(flow.spec.entry).toEqual({ component: "web" });
-    expect(flow.spec.steps.map((s) => s.surface)).toEqual(["bff|GET /screens/order/{orderId}", "orders|GET /orders/{id}"]);
-    expect(open).toEqual(["metadata.title", "spec.owner", "spec.lifecycle", "spec.produces", "spec.steps[0].role", "spec.steps[1].role"]);
-    expect(yaml).toContain("# agent: role:");
-  });
-
-  it("is checked like any flow: the code holds, the author's part is missing until written", () => {
-    const out = mkdtempSync(join(tmpdir(), "atlas-draft-"));
-    mkdirSync(join(out, "flows"));
-    writeFileSync(join(out, "flows", "draft.flow.yaml"), draftFlow(graph, one("bff|POST /orders")).yaml);
-    const doc = resolveFlows(graph, loadFlows(source, { ...config, flows: [] }, out), AS_OF);
-    expect(Object.fromEntries(doc.items[0]!.status.conditions.map((c) => [c.type, c.status]))).toEqual({
-      Ready: "False",
-      Resolved: "True",
-      Connected: "True",
-      EntryCalled: "True",
-      ProducesListed: "Unknown",
-      Documented: "False",
-      Fresh: "Unknown",
-    });
-  });
-
-  it("follows the code to a given surface", () => {
-    const { yaml } = draftFlow(graph, one("bff|POST /orders"), one("orders|POST /orders"));
-    expect((parseYaml(yaml) as FlowObject).spec.steps.map((s) => s.surface)).toEqual(["bff|POST /orders", "orders|POST /orders"]);
-    expect(() => draftFlow(graph, one("bff|GET /screens/home"), one("orders|POST /orders"))).toThrow(/nothing in the code leads/);
-  });
-});
-
 describe("schemas", () => {
   const source = new WorktreeSource(root);
   const graph = scan(source, config, { root, requested: "WORKTREE" });
@@ -391,7 +350,7 @@ describe("schemas", () => {
 
   it("exports findings as SARIF 2.1.0 that the official schema accepts", () => {
     const out = mkdtempSync(join(tmpdir(), "atlas-sarif-"));
-    writeFileSync(join(out, "exceptions.yaml"), '- rule: FA006\n  key: "FA006|invoice-v1"\n  reason: kept for audit\n');
+    writeFileSync(join(out, "exceptions.yaml"), '- rule: FA004\n  key: "FA004|document|coupon|no-consumer"\n  reason: kept for audit\n');
     let text = "";
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
       text += String(chunk);
@@ -406,12 +365,12 @@ describe("schemas", () => {
     const sarif = JSON.parse(text) as { runs: Array<{ results: Result[]; tool: { driver: { rules: Array<{ id: string }> } } }> };
     expect(sarifErrors(sarif)).toEqual([]);
     const results = sarif.runs[0]!.results;
-    expect(results).toHaveLength(9);
-    const invoice = results.find((r) => r.partialFingerprints["flowAtlasKey/v1"] === "FA006|invoice-v1")!;
-    expect(invoice.suppressions).toEqual([{ kind: "external", status: "accepted", justification: "kept for audit" }]);
+    expect(results).toHaveLength(8);
+    const coupon = results.find((r) => r.partialFingerprints["flowAtlasKey/v1"] === "FA004|document|coupon|no-consumer")!;
+    expect(coupon.suppressions).toEqual([{ kind: "external", status: "accepted", justification: "kept for audit" }]);
     const refund = results.find((r) => r.ruleId === "FA002")!;
     expect(refund).toMatchObject({ level: "error", baselineState: "new", locations: [{ physicalLocation: { artifactLocation: { uri: "services/bff/src/clients/orders.ts" } } }] });
-    expect(sarif.runs[0]!.tool.driver.rules.map((r) => r.id)).toEqual(["FA001", "FA002", "FA003", "FA004", "FA006", "FA007"]);
+    expect(sarif.runs[0]!.tool.driver.rules.map((r) => r.id)).toEqual(["FA001", "FA002", "FA003", "FA004", "FA007"]);
   });
 
   it("exports flows as Arazzo 1.0 that the official schema accepts", () => {
@@ -486,11 +445,9 @@ describe("schemas", () => {
 describe("inventory", () => {
   const inv = inventory(new WorktreeSource(root), DEFAULT_EXCLUDE);
 
-  it("lists components, route styles, client call files and versioned files without deciding anything", () => {
+  it("lists components, route styles, and client call files without deciding anything", () => {
     expect(inv.components.map((c) => c.name).sort()).toEqual(["android", "bff", "orders", "pricing", "web"]);
     expect(new Set(inv.routes.map((r) => r.style))).toEqual(new Set(["nest", "express", "registration registerRoute", "fastapi"]));
     expect(inv.calls.map((c) => c.component)).toContain("android");
-    expect(inv.versions).toEqual([{ dir: "catalog/schemas", pattern: "(.+)-v(\\d+)\\.schema\\.json", families: 3, files: 4 }]);
-    expect(inv.activeLists.map((a) => a.file)).toEqual(["catalog/active.json"]);
   });
 });

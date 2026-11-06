@@ -69,17 +69,6 @@ export interface RegistrySource {
   consumers: string[];
 }
 
-export interface VersionSource {
-  name: string;
-  files: string;
-  /** The first group is the family, the second the version number. */
-  pattern: string;
-  active?: ActiveList;
-  /** A family matching this regex is a companion; its first group names the owning family, whose activity it shares. */
-  companionOf?: string;
-  references: string[];
-}
-
 export interface Config {
   components: Array<{ name: string; path: string }>;
   /** Component manifests: JSON files with `name`, and the interfaces it `provides` and `consumes`. */
@@ -87,7 +76,6 @@ export interface Config {
   routes: RouteSource[];
   calls: CallSource[];
   registries: RegistrySource[];
-  versions: VersionSource[];
   publicSurfaces: string[];
   exclude: string[];
   /** Globs of flow descriptions, relative to the repository root. */
@@ -121,6 +109,7 @@ export function loadConfig(path: string): Config {
 }
 
 export function normalizeConfig(raw: Record<string, unknown>): Config {
+  if (raw.versions !== undefined) throw new Error("versions: contract-version checks (FA006) were removed; delete the versions section");
   const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
   return {
     components: list(raw.components),
@@ -128,7 +117,6 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
     routes: list<RouteSource>(raw.routes).map(checkRoute),
     calls: list(raw.calls),
     registries: list(raw.registries),
-    versions: list(raw.versions),
     publicSurfaces: list(raw.publicSurfaces),
     exclude: [...DEFAULT_EXCLUDE, ...list<string>(raw.exclude)],
     flows: raw.flows === undefined ? ["flows/**/*.flow.yaml"] : list(raw.flows),

@@ -3,7 +3,7 @@ import { extractApiDocuments, resolveApiDescriptions } from "./extract/apidocs.j
 import { extractCalls } from "./extract/calls.js";
 import { extractComponents } from "./extract/components.js";
 import { Reach } from "./extract/reach.js";
-import { extractRegistries, extractVersions } from "./extract/registries.js";
+import { extractRegistries } from "./extract/registries.js";
 import { extractRoutes } from "./extract/routes.js";
 import { Spans } from "./extract/spans.js";
 import { matchCalls, rankedComponents, type Ranking } from "./match.js";
@@ -85,7 +85,6 @@ export function scan(source: Source, config: Config, context: { root?: string; r
     edges,
     declared,
     registries: extractRegistries(source, config),
-    versions: extractVersions(source, config),
     apiDocuments,
     apiDescriptions: resolveApiDescriptions(apiDocuments, surfaces, config),
     coverage,
