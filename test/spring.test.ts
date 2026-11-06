@@ -111,6 +111,83 @@ describe("Spring routes", () => {
     expect(routes("class C { void out(HttpServletRequest request) { request.logout(); } }")).toEqual([]);
   });
 
+  it("reads a path from a string constant the file declares, and says when it cannot", () => {
+    const read = (text: string, file = "S.java") => {
+      const limits: string[] = [];
+      const routes = routesFromSpring(file, text, spec, undefined, undefined, limits).map((r) => `${r.method} ${r.path} ${r.at.line}`);
+      return { routes, limits: limits.map((l) => l.replace(/^routes server: /, "")) };
+    };
+    // The shape of a real controller: its paths are constants, one built from the other, declared together.
+    const java = [
+      "@RestController",
+      "class SubscriptionController {",
+      '  static final String PATH = "/v1/internal/subscription", BULK = PATH + "s";',
+      "  @GetMapping(PATH) Sub find() { return null; }",
+      "  @PostMapping(SubscriptionController.BULK) void replace() {}",
+      '  @DeleteMapping({PATH, "/v1/legacy"}) void remove() {}',
+      "  @PutMapping(Paths.ELSEWHERE) void elsewhere() {}",
+      "}",
+    ].join("\n");
+    expect(read(java)).toEqual({
+      routes: ["GET /v1/internal/subscription 4", "POST /v1/internal/subscriptions 5", "DELETE /v1/internal/subscription 6", "DELETE /v1/legacy 6"],
+      limits: ["S.java:7 maps a path the file does not spell out (Paths.ELSEWHERE); its routes are not read"],
+    });
+    const rows: Array<[string, string, { routes: string[]; limits: string[] }]> = [
+      // `Paths.P` means the imported Paths, or a type in scope; never one nested in another type.
+      [
+        "S.java",
+        'import external.Paths;\nclass Holder { static class Paths { static final String P = "/wrong"; } }\n@RestController class A {\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: [], limits: ["S.java:4 maps a path the file does not spell out (Paths.P); its routes are not read"] },
+      ],
+      [
+        "S.java",
+        'class Holder { static class Paths { static final String P = "/wrong"; } }\n@RestController class A {\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: [], limits: ["S.java:3 maps a path the file does not spell out (Paths.P); its routes are not read"] },
+      ],
+      [
+        "S.java",
+        '@RestController class A {\n  static class Paths { static final String P = "/right"; }\n  @GetMapping(Paths.P) void a() {}\n}',
+        { routes: ["GET /right 3"], limits: [] },
+      ],
+      // Imported by name, or possibly inherited: another type's constant of that name is not the one meant.
+      [
+        "S.java",
+        'import static remote.Paths.REMOTE;\n@RestController class A {\n  @GetMapping(REMOTE) void a() {}\n}\nclass Other { static final String REMOTE = "/wrong"; }',
+        { routes: [], limits: ["S.java:3 maps a path the file does not spell out (REMOTE); its routes are not read"] },
+      ],
+      [
+        "S.java",
+        '@RestController class B extends Base {\n  @GetMapping(PATH) void b() {}\n}\nclass Other { static final String PATH = "/wrong"; }',
+        { routes: [], limits: ["S.java:2 maps a path the file does not spell out (PATH); its routes are not read"] },
+      ],
+      // A type mapping not read is named once, where it is written.
+      [
+        "S.java",
+        '@RestController\n@RequestMapping(Paths.BASE)\nclass C {\n  @GetMapping("/x") void x() {}\n  @GetMapping("/y") void y() {}\n}',
+        { routes: [], limits: ["S.java:2 maps a path the file does not spell out (Paths.BASE); its routes are not read"] },
+      ],
+      // Both levels unread: each is named where it is written.
+      [
+        "S.java",
+        "@RestController\n@RequestMapping(Paths.BASE)\nclass D {\n  @GetMapping(Paths.ONE) void one() {}\n}",
+        {
+          routes: [],
+          limits: [
+            "S.java:2 maps a path the file does not spell out (Paths.BASE); its routes are not read",
+            "S.java:4 maps a path the file does not spell out (Paths.ONE); its routes are not read",
+          ],
+        },
+      ],
+      // Kotlin: a const ending in `;`, a companion's constants, and a class annotation that names its type.
+      [
+        "K.kt",
+        ["@RestController", "@RequestMapping(K.BASE)", "class K {", "  @GetMapping(arrayOf(ONE)) fun one() = 1", "  companion object {", '    const val BASE = "/k";', '    const val ONE = "/one"', "  }", "}"].join("\n"),
+        { routes: ["GET /k/one 4"], limits: [] },
+      ],
+    ];
+    for (const [file, text, expected] of rows) expect(read(text, file), text).toEqual(expected);
+  });
+
   it("takes a type's mapping only for the type whose body holds the handler", () => {
     const text = [
       '@RestController @RequestMapping("/api")',
