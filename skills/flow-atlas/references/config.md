@@ -94,7 +94,7 @@ by the scopes around the use; a constant used only that way is a base, not a req
 (`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
 handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
 `split`, `replace` with two arguments). fetch, axios, ky, got and project wrappers take their URL first, so a path
-handed to a function after its first argument (`requireMedia(media, id, "/devices")`) is not read unless a literal
+handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
 method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)`, Angular's
 `request(method, url)` or a `redirect(status, url)`; a limit names the functions such paths went to. A `path` option is
 read as Node's `http.request` defines it, from the root: one joined to another value (`` path: `${dir}/raw` ``) is no

@@ -207,7 +207,7 @@ function comparedOrTested(node: ts.Node): boolean {
 }
 
 /**
- * The function a string is handed to after its first argument, as in `requireMedia(media, id, "/devices")`: fetch,
+ * The function a string is handed to after its first argument, as in `requireAsset(assets, id, "/devices")`: fetch,
  * axios, ky, got, Node's http and project wrappers take their URL first, so a later argument is no request. It still
  * is where a literal method comes before it (`request("POST", "/x")`) and in the APIs documented to take it there:
  * XMLHttpRequest's `open(method, url)`, Angular's `request(method, url)`, and `redirect(status, url)` as Express and

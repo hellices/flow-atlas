@@ -1,35 +1,35 @@
 import type { BffClient } from "./http";
 
-interface Media {
+interface Asset {
   url: string;
 }
 
 interface Card {
-  mediaId: string;
+  assetId: string;
 }
 
 interface Device {
   id: string;
-  mediaId: string;
+  assetId: string;
 }
 
-/** The media a response refers to; the endpoint that answered names the response in the error. */
-function requireMedia(media: ReadonlyMap<string, Media>, assetId: string, endpoint: string): Media {
-  const value = media.get(assetId);
-  if (value === undefined) throw new Error(`${endpoint} refers to missing media ${assetId}`);
+/** The asset a response refers to; the endpoint that answered names the response in the error. */
+function requireAsset(assets: ReadonlyMap<string, Asset>, assetId: string, endpoint: string): Asset {
+  const value = assets.get(assetId);
+  if (value === undefined) throw new Error(`${endpoint} refers to missing asset ${assetId}`);
   return value;
 }
 
 export class HomeAdapter {
   constructor(private readonly client: BffClient) {}
 
-  async feed(media: ReadonlyMap<string, Media>): Promise<Media[]> {
+  async feed(assets: ReadonlyMap<string, Asset>): Promise<Asset[]> {
     const page = await this.client.request<{ cards: Card[] }>({ path: "/feed" });
-    return page.cards.map((card) => requireMedia(media, card.mediaId, "/feed"));
+    return page.cards.map((card) => requireAsset(assets, card.assetId, "/feed"));
   }
 
-  devices(media: ReadonlyMap<string, Media>, devices: Device[]): Media[] {
-    return devices.map((device) => requireMedia(media, device.mediaId, "/devices"));
+  devices(assets: ReadonlyMap<string, Asset>, devices: Device[]): Asset[] {
+    return devices.map((device) => requireAsset(assets, device.assetId, "/devices"));
   }
 
   status(deviceId: string): Promise<{ online: boolean }> {

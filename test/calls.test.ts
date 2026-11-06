@@ -16,8 +16,8 @@ describe("strings that are no requests", () => {
   it("leaves out a path handed to a function after its first argument, unless a method stated beside it makes it a request", () => {
     const rows: Array<[string, string[]]> = [
       // A label in an error or lookup helper.
-      ['requireMedia(media, id, "/devices");', []],
-      ["requireMedia(media, id, `/devices/${id}`);", []],
+      ['requireAsset(assets, id, "/devices");', []],
+      ["requireAsset(assets, id, `/devices/${id}`);", []],
       ['throw new MissingAsset(id, "/devices");', []],
       // The URL first, as fetch, axios, ky, got and project wrappers take it.
       ['authFetch("/devices");', ["* /devices"]],
@@ -97,8 +97,8 @@ describe("what a call source leaves unread", () => {
   });
 
   it("names the functions paths were handed to after their first argument", () => {
-    expect(calls('requireMedia(media, a, "/devices");\nrequireMedia(media, b, "/devices");\nnew MissingAsset(id, `/feed/${id}`);')).toEqual([]);
-    expect(limits).toEqual(["calls app->api: paths handed to a function after its first argument are not read as requests: requireMedia (2, first at a.ts:1), MissingAsset (1, first at a.ts:3)"]);
+    expect(calls('requireAsset(assets, a, "/devices");\nrequireAsset(assets, b, "/devices");\nnew MissingAsset(id, `/feed/${id}`);')).toEqual([]);
+    expect(limits).toEqual(["calls app->api: paths handed to a function after its first argument are not read as requests: requireAsset (2, first at a.ts:1), MissingAsset (1, first at a.ts:3)"]);
   });
 
   it("leaves out a URL to another host: it is not a request to the configured target", () => {
