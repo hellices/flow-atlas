@@ -310,6 +310,9 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
     const own = declared.filter((d) => d.name === name && d.owner === named[0]);
     return own.length ? only(own) : undefined;
   };
+  // A declaration's value depends only on the declaration, so each is evaluated once. One that fails through a cycle is
+  // itself on or behind that cycle, so its failure holds wherever the evaluation started.
+  const values = new Map<number, string | undefined>();
   const evaluate = (expression: string, at: number, seen: Set<number>): string | undefined => {
     let out = "";
     for (const term of splitTop(expression, "+")) {
@@ -321,7 +324,8 @@ function stringConstants(code: string, masked: string, kotlin: boolean): Constan
       const name = /^(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)$/.exec(term);
       const found = name ? (name[1] ? qualified(name[1], name[2]!, at) : lookup(name[2]!, at)) : undefined;
       if (!found || seen.has(found.at)) return undefined;
-      const resolved = evaluate(found.expression, found.at, new Set([...seen, found.at]));
+      if (!values.has(found.at)) values.set(found.at, evaluate(found.expression, found.at, new Set([...seen, found.at])));
+      const resolved = values.get(found.at);
       if (resolved === undefined) return undefined;
       out += resolved;
     }

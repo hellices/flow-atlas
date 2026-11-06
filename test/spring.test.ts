@@ -111,6 +111,14 @@ describe("Spring routes", () => {
     expect(routes("class C { void out(HttpServletRequest request) { request.logout(); } }")).toEqual([]);
   });
 
+  it("evaluates each constant once, however often other constants repeat it", () => {
+    const chain = Array.from({ length: 40 }, (_, i) => `  static final String C${i + 1} = C${i} + C${i};`);
+    const text = ["@RestController", "class A {", '  static final String C0 = "";', ...chain, '  @GetMapping(C40 + "/x") void a() {}', "}"].join("\n");
+    const started = Date.now();
+    expect(routesFromSpring("S.java", text, spec).map((r) => `${r.method} ${r.path}`)).toEqual(["GET /x"]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("reads a path from a string constant the file declares, and says when it cannot", () => {
     const read = (text: string, file = "S.java") => {
       const limits: string[] = [];
