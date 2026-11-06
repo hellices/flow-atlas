@@ -345,22 +345,29 @@ describe("matching", () => {
     const surface = (method: string, path: string): Surface => ({ id: `s|${method} ${path}`, component: "s", method, path, at: { file: "a", line: 1 }, evidence: "text" });
     const call = (method: string, path: string): Call => ({ id: `c|${method} ${path}`, from: "w", to: "s", method, path, at: { file: "b", line: 1 }, evidence: "text", based: false });
     const surfaces = [surface("GET", "/api/movies/search"), surface("GET", "/api/movies/{tmdbId}"), surface("POST", "/api/movies/{tmdbId}")];
-    const calls = [call("*", "/api/movies/search"), call("GET", "/api/movies/{}")];
-    const ranked = matchCalls({ surfaces, calls }, new Map([["s", "spring"]])).targetsOf;
-    expect(ranked.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|POST /api/movies/{tmdbId}"]);
-    expect(ranked.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    const calls = [call("GET", "/api/movies/search"), call("GET", "/api/movies/{}"), call("*", "/api/movies/search")];
+    const ranked = matchCalls({ surfaces, calls }, new Map([["s", "spring"]]));
+    expect(ranked.targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search"]);
+    expect(ranked.targetsOf.get(1)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    // An unknown method picks its route per method, GET the search and POST the variable: which it is, is not read.
+    expect(ranked.targetsOf.has(2)).toBe(false);
+    expect(ranked.unsettled.get(2)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|POST /api/movies/{tmdbId}"]);
     // Express and the like follow registration order, which is not read: every route the request fits stays.
-    expect(matchCalls({ surfaces, calls }).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
+    const ordered = matchCalls({ surfaces, calls });
+    expect(ordered.targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}"]);
+    expect(ordered.unsettled.get(2)!.map((s) => s.id)).toEqual(["s|GET /api/movies/search", "s|GET /api/movies/{tmdbId}", "s|POST /api/movies/{tmdbId}"]);
     // Spring scores a variable 1 and a wildcard 100: /a/{x}/{y} over /a/*/*.
     const scored = [surface("GET", "/a/*/*"), surface("GET", "/a/{x}/{y}")];
     expect(matchCalls({ surfaces: scored, calls: [call("GET", "/a/p/q")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/{y}"]);
+    // Where every route it fits takes one method, an unknown method does not change which it reaches.
+    expect(matchCalls({ surfaces: scored, calls: [call("*", "/a/p/q")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/{y}"]);
     // Spring prefers fewer variables: /a/{x}/c/d over /a/b/{x}/{y}.
     const spring = [surface("GET", "/a/b/{x}/{y}"), surface("GET", "/a/{x}/c/d")];
     expect(matchCalls({ surfaces: spring, calls: [call("GET", "/a/b/c/d")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /a/{x}/c/d"]);
     // A mapping that names the method wins a tie with one that accepts any; an unknown method may reach either.
     const methods = [surface("*", "/m/{x}"), surface("GET", "/m/{x}")];
     expect(matchCalls({ surfaces: methods, calls: [call("GET", "/m/1")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|GET /m/{x}"]);
-    expect(matchCalls({ surfaces: methods, calls: [call("*", "/m/1")] }, new Map([["s", "spring"]])).targetsOf.get(0)!.map((s) => s.id)).toEqual(["s|* /m/{x}", "s|GET /m/{x}"]);
+    expect(matchCalls({ surfaces: methods, calls: [call("*", "/m/1")] }, new Map([["s", "spring"]])).unsettled.get(0)!.map((s) => s.id)).toEqual(["s|* /m/{x}", "s|GET /m/{x}"]);
   });
 
   it("matches a catch-all against the rest of the path", () => {

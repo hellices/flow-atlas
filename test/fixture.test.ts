@@ -102,6 +102,14 @@ describe("shop fixture", () => {
     expect(evaluate(none, unmanaged).some((f) => f.key.startsWith("FA003|undeclared"))).toBe(false);
   });
 
+  it("takes a call of unread method to reach none of routes that take different methods, and its component still", () => {
+    const get = graph.surfaces.find((s) => s.id === "orders|GET /orders/{id}")!;
+    const put = { ...get, id: "orders|PUT /orders/{id}", method: "PUT" };
+    const calls = graph.calls.map((c) => (c.from === "web" && c.to === "orders" ? { ...c, method: "*" } : c));
+    const keys = evaluate({ ...graph, surfaces: [...graph.surfaces, put], calls }, config).map((f) => f.key);
+    expect(keys).toEqual(EXPECTED);
+  });
+
   it("treats a declared public surface as called", () => {
     const open = { ...config, publicSurfaces: ["pricing|POST /discounts"] };
     expect(evaluate(graph, open).map((f) => f.key)).not.toContain("FA001|pricing|POST /discounts");

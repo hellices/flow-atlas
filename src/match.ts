@@ -83,11 +83,17 @@ export interface Matches {
   callersOf: Map<number, Call[]>;
   /** Surfaces each call reaches, keyed by the call's index. */
   targetsOf: Map<number, Surface[]>;
+  /**
+   * Calls whose method is not read and whose routes take different methods, keyed by the call's index, with the
+   * surfaces they fit: which of them a call reaches depends on its method, so it is taken to reach none.
+   */
+  unsettled: Map<number, Surface[]>;
 }
 
 export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map<string, Ranking> = new Map()): Matches {
   const callersOf = new Map<number, Call[]>();
   const targetsOf = new Map<number, Surface[]>();
+  const unsettled = new Map<number, Surface[]>();
   graph.calls.forEach((call, ci) => {
     const candidates: Array<{ surface: Surface; index: number }> = [];
     // Next.js settles the route by the path first; the method is checked on that route only.
@@ -103,12 +109,28 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
       if (pathsMatch(surface.path, call.path) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
     });
-    for (const { surface, index: si } of reached(call, candidates, ranked)) {
+    const reach = reached(call, candidates, ranked);
+    // A method that is not read would pick among routes that take different ones; which it picks is not read either.
+    if (call.method === "*" && new Set(reach.map((c) => c.surface.method)).size > 1) {
+      unsettled.set(ci, reach.map((c) => c.surface));
+      return;
+    }
+    for (const { surface, index: si } of reach) {
       (callersOf.get(si) ?? callersOf.set(si, []).get(si)!).push(call);
       (targetsOf.get(ci) ?? targetsOf.set(ci, []).get(ci)!).push(surface);
     }
   });
-  return { callersOf, targetsOf };
+  return { callersOf, targetsOf, unsettled };
+}
+
+/** What `unsettled` holds, as limits: the call, where it is, and the methods of the routes it fits. */
+export function unsettledLimits(graph: Pick<Graph, "calls">, unsettled: Matches["unsettled"]): string[] {
+  return [...unsettled].map(([ci, fits]) => {
+    const c = graph.calls[ci]!;
+    const methods = [...new Set(fits.map((s) => (s.method === "*" ? "any method" : s.method)))].sort();
+    const list = methods.length > 1 ? `${methods.slice(0, -1).join(", ")} and ${methods[methods.length - 1]}` : methods[0];
+    return `calls ${c.from}->${c.to}: * ${c.path} at ${c.at.file}:${c.at.line} fits routes of ${list}; its method is not read, so it reaches none of them`;
+  });
 }
 
 /**

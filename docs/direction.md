@@ -103,14 +103,16 @@ is ts-rest. Keeping such tools alive is costly, which argues for a narrow scope.
 | Area | Read for certain | Not read (reported, never guessed) |
 |---|---|---|
 | routes | OpenAPI 2.0 and 3.x documents; NestJS, Express, Fastify and FastAPI registrations with literal paths, Express routers under literal or declared mount paths, Next.js route handlers and API routes by their file paths, with the HEAD and OPTIONS Next.js answers itself; Starlette path converters and StaticFiles mounts; configured registration helpers, with the method as an argument or fixed; Spring MVC mapping annotations with literal paths in Java and Kotlin, a type's mapping joined to its methods' and the methods united as Spring does; the login and logout POST endpoints of Spring Security's `formLogin` and `logout`, from their defaults and literal setters on the configurer | paths in constants or expressions, Kotlin string templates, functional or programmatic routes, composed annotations, a Security customizer defined elsewhere |
-| client calls in code | TypeScript and JavaScript parsed: string literals, template strings and concatenations, a part that is not a literal standing for unknown text; a leading `const` of the same file joined to the URL; methods stated at the call. Python f-strings with any replacement field as unknown text | paths assembled across functions or files, a client's base URL held outside a `const` or interceptors, other Kotlin and Python constructs, and other languages, beyond strings that look like paths |
+| client calls in code | TypeScript and JavaScript parsed: string literals, template strings and concatenations, a part that is not a literal standing for unknown text; a leading `const` of the same file joined to the URL; methods stated at the call. Python f-strings with any replacement field as unknown text | paths assembled across functions or files, a client's base URL held outside a `const` or interceptors, the method a project's own wrapper sends when the call states none, other Kotlin and Python constructs, and other languages, beyond strings that look like paths |
 | client calls in HTML | start-tag attributes `href`, `src`, `action`, `formaction` with root-relative literal values, methods as the HTML standard defines them; Thymeleaf link expressions with literal paths in `th:*` URL attributes, `th:attr` items and `[[...]]` in JavaScript-inlined scripts; inline scripts as JavaScript; the `data-*` attributes the configuration names as URLs a script requests, of unknown method | URLs from model variables or built inside expressions, fragment parameters, other template engines, htmx, Alpine or Vue attributes, a `th:method` other than GET or POST (its method depends on whether Spring's hidden-method filter is on, so it is `*`) |
 | handler reach | TypeScript and JavaScript; a Spring page handler's literal view name, at Spring Boot's default template location | other view resolvers, view names built at run time |
 
 The configuration reference (`skills/flow-atlas/references/config.md`) gives the exact reading of each style.
 
 A finding about absence is limited by this scope. "No caller" and "no route serves this call" mean none among the
-configured and readable call sites. Declare surfaces served outside the repository in `publicSurfaces`, and record a
+configured and readable call sites. A call whose method is not read reaches the routes its path fits only when they
+all take one method. Where they take several, which one it calls is not read: it reaches none of them, a limit names
+it, and none of those routes is reported as having no caller. Declare surfaces served outside the repository in `publicSurfaces`, and record a
 decision as an exception.
 
 Rules that keep the scope:
