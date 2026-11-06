@@ -94,7 +94,9 @@ starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is 
 by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
 (`path: "/m" | "/r"`) names a value and is no request. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
-(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
+(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
+is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
+names its file, line and expression; a `const` named in `constants` is read as a GET route instead. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
 those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
 registration call itself; an

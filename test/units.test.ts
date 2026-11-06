@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { callPath, joinRoute, methodsMatch, pathsMatch, routeTemplate } from "../src/paths.js";
 import { cycleSearch, cycles, surfacePattern } from "../src/rules.js";
-import { routesFromTypeScript } from "../src/extract/routes.js";
+import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { documentStart } from "../src/extract/apidocs.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
@@ -99,6 +99,45 @@ describe("routesFromTypeScript", () => {
   it("registers nothing for a path the file does not spell out", () => {
     expect(ids("@Controller(API_PREFIX)\nclass C {\n  @Get() a() {}\n}")).toEqual([]);
     expect(ids('@Controller("x")\nclass C {\n  @Get(DETAIL_PATH) a() {}\n  @Get() b() {}\n}')).toEqual(["GET /x"]);
+  });
+  it("says where a registration's path is one the file does not spell out", () => {
+    const unread = (text: string, spec: Parameters<typeof routesFromTypeScript>[2] = nest) => {
+      const limits: string[] = [];
+      const routes = routesFromTypeScript("a.ts", text, spec, { limits }).map((s) => `${s.method} ${s.path}`);
+      return { routes, limits };
+    };
+    const not = (line: number, expr: string) => `routes svc: a.ts:${line} registers a path the file does not spell out (${expr}); its routes are not read`;
+    expect(unread("@Controller(API_PREFIX)\nclass C {\n  @Get() a() {}\n}")).toEqual({ routes: [], limits: [not(1, "API_PREFIX")] });
+    expect(unread('@Controller("x")\nclass C {\n  @Get(Paths.DETAIL) a() {}\n  @Get() b() {}\n}')).toEqual({ routes: ["GET /x"], limits: [not(3, "Paths.DETAIL")] });
+    const fastify = { component: "svc", files: [], styles: ["express" as const], receivers: ["fastify"] };
+    const sse = 'const outputPath = "/outputs";\nconst snapshotPath = "/outputs/snapshot";\nfastify.get(outputPath, h);\nfastify.get(\n  `${snapshotPath}`,\n  h,\n);\nfastify.post("/outputs", h);';
+    expect(unread(sse, fastify)).toEqual({ routes: ["POST /outputs"], limits: [not(3, "outputPath"), not(5, "`${snapshotPath}`")] });
+    // Named in `constants`, the path is read as a GET route, so nothing is left unread.
+    expect(unread(sse, { ...fastify, constants: "^(outputPath|snapshotPath)$" })).toEqual({ routes: ["GET /outputs", "GET /outputs/snapshot", "POST /outputs"], limits: [] });
+    // A setting read with one argument, a receiver atlas does not know, or a literal that is no path register nothing.
+    expect(unread('app.get(SETTING);\ncache.get(key, h);\napp.get("*", h);', { ...fastify, receivers: ["app"] })).toEqual({ routes: [], limits: [] });
+    const helper = { component: "svc", files: [], calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
+    expect(unread('registerRoute(app, "GET", "/a", h);\nregisterRoute(app, "POST", ROUTES.b, h);', helper)).toEqual({ routes: ["GET /a"], limits: [not(2, "ROUTES.b")] });
+  });
+  it("says where a FastAPI route or a registration helper's path is one the file does not spell out", () => {
+    const limits: string[] = [];
+    const text = [
+      "ITEMS = '/items'",
+      "@app.get(ITEMS)",
+      "def items(): ...",
+      '@app.get(f"/items/{KIND}")',
+      "def kind(): ...",
+      '@app.get(path="/ok")',
+      "def ok(): ...",
+      "def add_endpoint(app, path):",
+      "    add_endpoint(app, '/agent')",
+      "add_endpoint(app, AGENT_PATH)",
+    ].join("\n");
+    const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
+    const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);
+    expect(routes).toEqual(["GET /ok", "POST /agent"]);
+    const not = (line: number, expr: string) => `routes svc: a.py:${line} registers a path the file does not spell out (${expr}); its routes are not read`;
+    expect(limits).toEqual([not(2, "ITEMS"), not(4, 'f"/items/{KIND}"'), not(10, "AGENT_PATH")]);
   });
   it("reads paths given as a list or as { path }", () => {
     expect(ids('@Controller({ path: "x", version: "1" })\nclass C {\n  @Get(["a", "b"]) a() {}\n}')).toEqual(["GET /x/a", "GET /x/b"]);

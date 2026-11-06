@@ -208,6 +208,12 @@ export function routesFromTypeScript(
   const constPattern = spec.constants ? new RegExp(spec.constants) : undefined;
   const out: Surface[] = [];
   const at = (node: ts.Node) => ({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 });
+  /** A registration whose path is not a literal: said in `limits`, unless `constants` names the constant it is. */
+  const unread = (arg: ts.Expression) => {
+    const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
+    if (constPattern && ts.isIdentifier(inner) && constPattern.test(inner.text)) return;
+    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+  };
   const add = (
     method: string,
     path: string,
@@ -324,6 +330,7 @@ export function routesFromTypeScript(
         const call = decoratorCall(d);
         if (call?.name === "Controller") {
           bases = decoratorPaths(call.args);
+          if (!bases) unread(call.args[0]!);
           for (const a of call.args) span(a);
         }
       }
@@ -341,6 +348,7 @@ export function routesFromTypeScript(
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
             const paths = call && method ? decoratorPaths(call.args) : undefined;
+            if (call && method && !paths) unread(call.args[0]!);
             if (!paths) continue;
             for (const a of call!.args) span(a);
             for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
@@ -352,8 +360,11 @@ export function routesFromTypeScript(
       const name = calleeName(node.expression);
       if (styles.has("express") && ts.isPropertyAccessExpression(node.expression) && name && HTTP_VERBS.has(name)) {
         const receiver = node.expression.expression;
-        const path = stringValue(node.arguments[0]);
+        const arg = node.arguments[0];
+        const path = stringValue(arg);
         const router = ts.isIdentifier(receiver) ? mounts?.routerOf(file, receiver) : undefined;
+        // With one argument, `app.get(name)` reads a setting; a route takes a path and a handler.
+        if (ts.isIdentifier(receiver) && (router || receivers.has(receiver.text)) && arg && node.arguments.length > 1 && path === undefined) unread(arg);
         if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
           span(node.arguments[0]);
           const method = name === "all" ? "*" : name;
@@ -367,7 +378,9 @@ export function routesFromTypeScript(
       for (const c of spec.calls ?? []) {
         if (name !== c.name) continue;
         const method = c.method ?? stringValue(node.arguments[c.methodArg]);
-        const path = stringValue(node.arguments[c.pathArg]);
+        const arg = node.arguments[c.pathArg];
+        const path = stringValue(arg);
+        if (arg && path === undefined) unread(arg);
         if (method && path?.startsWith("/")) {
           span(node.arguments[c.pathArg]);
           add(method, path, node, node, operationIdIn(node.arguments));
@@ -547,10 +560,30 @@ function pythonArgStarts(code: string, from: number): number[] {
   return starts.map((s) => s + (/^\s*/.exec(code.slice(s))?.[0].length ?? 0));
 }
 
+/** The text of the argument starting at `at`, up to the comma or bracket that ends it, in blanked code. */
+function pythonArg(text: string, code: string, at: number): string {
+  let depth = 0;
+  let end = at;
+  for (; end < code.length; end++) {
+    const c = code[end]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c) && depth-- === 0) break;
+    else if (c === "," && depth === 0) break;
+  }
+  return text.slice(at, end).trim();
+}
+
 export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans): Surface[] {
   const out: Surface[] = [];
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
   const code = pythonCode(text);
+  /** A registration whose path argument is a name, an f-string or an expression: said in `limits`. */
+  const unread = (at: number) => {
+    const arg = pythonArg(text, code, at);
+    if (arg && pythonStrings(text.slice(at)) === undefined) {
+      limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} registers a path the file does not spell out (${arg.replace(/\s+/g, " ")}); its routes are not read`);
+    }
+  };
   const add = (verb: string, raw: string, at: number, implicit = false) => {
     // A `path` converter takes the rest of the path only at its end; one before a suffix is a match atlas does not do.
     if (/\{\w+:path\}./.test(raw)) {
@@ -580,6 +613,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       .map((at) => ({ at, m: /^path\s*=\s*/.exec(code.slice(at)) }))
       .find((a) => a.m);
     const pathAt = named ? named.at + named.m![0].length : first;
+    if (pathAt !== undefined) unread(pathAt);
     const path = pathAt === undefined ? undefined : pythonLiteral(text.slice(pathAt));
     if (!path) continue;
     spans?.add(file, argsStart, closingParen(code, argsStart));
@@ -612,7 +646,10 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   }
   for (const c of spec.calls ?? []) {
     for (const m of code.matchAll(new RegExp(`(?<![\\w.])(?:\\w+\\.)?${escapeRegExp(c.name)}\\(`, "g"))) {
+      // The helper's own definition takes its path as a parameter; it registers nothing.
+      if (/\bdef\s+$/.test(code.slice(Math.max(0, (m.index ?? 0) - 16), m.index ?? 0))) continue;
       const args = pythonArgStarts(code, (m.index ?? 0) + m[0].length);
+      if (args[c.pathArg] !== undefined) unread(args[c.pathArg]!);
       const path = args[c.pathArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.pathArg]));
       const method = c.method ?? (args[c.methodArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.methodArg]))?.toUpperCase());
       if (path?.startsWith("/") && method) {
