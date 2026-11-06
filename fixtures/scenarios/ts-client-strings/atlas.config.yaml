@@ -13,5 +13,5 @@ calls:
   - { from: mobile, to: bff, files: ["mobile/src/bff/**/*.ts"] }
   # The desktop app talks to its local companion server on the loopback address.
   - { from: desktop, to: companion, files: ["desktop/src/**/*.ts"] }
-  # The client's base URL ends in /api/v1 (tools/src/api-client.ts).
+  # The client puts /api/v1 before each path (apiPath in tools/src/api-client.ts).
   - { from: tools, to: api, files: ["tools/src/**/*.ts"], prefix: /api/v1 }

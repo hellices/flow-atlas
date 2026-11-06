@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
-import { callsFromTypeScript, extractCalls } from "../src/extract/calls.js";
+import { callsFromText, callsFromTypeScript, extractCalls } from "../src/extract/calls.js";
 import { isLoopback } from "../src/paths.js";
 import type { Source } from "../src/source.js";
 
@@ -223,5 +223,97 @@ describe("what a call source leaves unread", () => {
     const kotlin = normalizeConfig({ components: [{ name: "app", path: "" }, { name: "api", path: "" }], calls: [{ from: "app", to: "api", files: ["A.kt"] }] });
     const text = 'val a = http.get("https://api.example.com/orders")\nval b = http.get("http://localhost:8080/orders")';
     expect(extractCalls(memory({ "A.kt": text }), kotlin).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual(["GET /orders 2"]);
+  });
+});
+
+describe("a client's own prefixing helper", () => {
+  const limits: string[] = [];
+  const calls = (code: string, prefix = "/api/v1") => {
+    const config = normalizeConfig({ components: [{ name: "app", path: "" }, { name: "api", path: "" }], calls: [{ from: "app", to: "api", files: ["a.ts"], ...(prefix ? { prefix } : {}) }] });
+    limits.length = 0;
+    return extractCalls(memory({ "a.ts": code }), config, [], undefined, limits).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+  };
+  const callers = '\nexport const list = () => request(apiPath("/notebooks"));\nexport const search = (id: string) => request(apiPath(`/notebooks/${id}/search`), { method: "POST" });';
+
+  it("does not read the configured prefix put before a path parameter as a request: the paths passed to it are", () => {
+    const rows: Array<[string, string[]]> = [
+      ["function apiPath(path: string) { return `/api/v1${path}`; }", ["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]],
+      ['const apiPath = (path: string) => "/api/v1" + path;', ["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]],
+      // The value put after the prefix may be built from the parameter alone.
+      ['function apiPath(path: string) { return path.startsWith("/api/v1") ? path : `/api/v1${path.startsWith("/") ? path : `/${path}`}`; }', ["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]],
+    ];
+    for (const [helper, expected] of rows) {
+      expect(calls(helper + callers)).toEqual(expected);
+      expect(limits).toEqual(["calls app->api: the configured prefix /api/v1 put before a function's path parameter (a.ts:1) is not read as a request; the paths passed to that function are"]);
+    }
+    // The prefix as the configuration may write it.
+    expect(calls("function apiPath(path: string) { return `/api/v1${path}`; }" + callers, "api/v1/")).toEqual(["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]);
+  });
+
+  it("still reads a path with a hole, a prefix put before anything but a parameter, and a base other than the prefix", () => {
+    const rows: Array<[string, string, string[]]> = [
+      // A segment under a path the code names is a request of its own, whatever fills it.
+      ["const order = (id: string) => fetch(`/orders/${id}`);", "/api/v1", ["GET /api/v1/orders/{}"]],
+      ["const item = (id: string) => fetch(`/api/v1/${id}`);", "/api/v1", ["GET /api/v1/api/v1/{}"]],
+      // Another base, or text after the parameter.
+      ["const list = (query: string) => fetch(`/orders${query}`);", "/api/v1", ["GET /api/v1/orders{}"]],
+      ["const v2 = (path: string) => fetch(`/api/v2${path}`);", "/api/v1", ["GET /api/v1/api/v2{}"]],
+      ["const sub = (path: string) => fetch(`/api/v1${path}/items`);", "/api/v1", ["GET /api/v1/api/v1{}/items"]],
+      // A value that is not the function's parameter, or is more than it.
+      ["const PATH = route();\nfetch(`/api/v1${PATH}`);", "/api/v1", ["GET /api/v1/api/v1{}"]],
+      ["const get = (path: string) => fetch(`/api/v1${normalize(path)}`);", "/api/v1", ["GET /api/v1/api/v1{}"]],
+      // No prefix configured: the helper's base is all the code says.
+      ["const get = (path: string) => fetch(`/api/v1${path}`);", "", ["GET /api/v1{}"]],
+    ];
+    expect(rows.map(([code, prefix]) => calls(code, prefix))).toEqual(rows.map(([, , expected]) => expected));
+  });
+});
+
+describe("a label given to an exception in code read as text", () => {
+  const read = (file: string, code: string) => callsFromText(file, code, { from: "a", to: "b", files: [] }).map((c) => `${c.method} ${c.path}`);
+
+  it("does not read a path passed to an exception, thrown or built, or to Kotlin's throwing functions", () => {
+    const rows: Array<[string, string]> = [
+      ["A.kt", 'if (failed) throw BffUnavailable("/my")'],
+      ["A.kt", 'throw ApiFailure(status = 503, path = "/my")'],
+      ["A.kt", 'return Result.failure(IllegalStateException("/my"))'],
+      ["A.kt", 'val e = SomeError("/my/$id")'],
+      ["A.kt", 'val e = errors.NotFoundError("/my")'],
+      ["A.kt", 'error("/my")'],
+      ["A.kt", 'TODO("/my")'],
+      ["A.kt", 'require(path != "/my")'],
+      ["A.kt", 'check(path == "/my")'],
+      ["A.java", 'throw new IllegalArgumentException("/my");'],
+      ["A.java", 'throw new MissingPage(\n    "/my");'],
+      ["a.py", 'raise ValueError(f"/my/{item_id}")'],
+      ["a.dart", "throw StateError('/my');"],
+      ["A.swift", 'throw ApiFailure.missing(path: "/my")'],
+    ];
+    expect(rows.map(([file, code]) => read(file, code))).toEqual(rows.map(() => []));
+  });
+
+  it("still reads a request made inside one, and a path passed to anything else", () => {
+    const rows: Array<[string, string, string[]]> = [
+      ["A.kt", 'val r = http.get("/my")', ["GET /my"]],
+      ["A.kt", 'throw ApiFailure(http.get("/my").status)', ["GET /my"]],
+      ["A.kt", 'val e = SomeError("x")\nval r = http.get("/my")', ["GET /my"]],
+      // A member named like the standard function is the class's own, and lower-case names are functions.
+      ["A.kt", 'val r = health.check("/my")', ["* /my"]],
+      ["A.kt", 'reportError("/my")', ["* /my"]],
+      ["A.kt", 'val h = ErrorHandler("/my")', ["* /my"]],
+      // `error` and `TODO` throw in Kotlin only.
+      ["a.py", 'error("/my")', ["* /my"]],
+      // An exception's parentheses end where they close.
+      ["A.kt", 'val e = SomeError(code)\nhttp.get("/my")', ["GET /my"]],
+    ];
+    expect(rows.map(([file, code]) => read(file, code))).toEqual(rows.map(([, , expected]) => expected));
+  });
+
+  it("names what it leaves unread in a limit", () => {
+    const config = normalizeConfig({ components: [{ name: "app", path: "" }, { name: "api", path: "" }], calls: [{ from: "app", to: "api", files: ["A.kt"] }] });
+    const limits: string[] = [];
+    const text = 'val r = http.get("/my")\nif (r.failed) throw BffUnavailable("/my")\nerror("/my")\nerror("/other")';
+    expect(extractCalls(memory({ "A.kt": text }), config, [], undefined, limits).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual(["GET /my 1"]);
+    expect(limits).toEqual(["calls app->api: paths given to an exception or to a function that throws are not read as requests: BffUnavailable (1, first at A.kt:2), error (2, first at A.kt:3)"]);
   });
 });

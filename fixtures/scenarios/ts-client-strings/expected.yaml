@@ -1,6 +1,6 @@
 case: |
   TypeScript clients whose call files hold paths that are not requests: a mobile app's BFF adapter, a desktop app
-  talking to its local companion server, and a tool calling an API under a base URL that ends in /api/v1.
+  talking to its local companion server, and a tool whose helper puts /api/v1 before each path it calls the API with.
   Seen in real runs: every string that looked like a path was read as a call. A path an adapter passes to its own
   lookup helper as a label (`requireAsset(assets, id, "/devices")`) matched the BFF's device list, so a chain appeared
   that the code does not make and the route nothing calls was not reported; a path compared with `===` or tested with
@@ -9,8 +9,11 @@ case: |
   blamed on the companion server. Now a string after a call's first argument is no request unless a method stated before
   it makes it one, and a limit names the function it was handed to; a compared or tested string is no request; a
   `path` option is read from the root as Node's http.request defines it; and an absolute URL is read only for the
-  loopback address or the target's configured origin, with a limit naming the other host. The one finding is the
-  device list no client asks for.
+  loopback address or the target's configured origin, with a limit naming the other host. The tool's own helper,
+  `` `/api/v1${path}` ``, was still read as a call and the configured prefix put before it again (an FA002 for
+  /api/v1/api/v1{}); now the configured prefix put before a function's path parameter is no request of its own, the
+  paths passed to the function are, and a limit says where it was left out. The one finding is the device list no
+  client asks for.
 surfaces:
   - bff|GET /feed
   - bff|GET /devices
@@ -25,6 +28,7 @@ findings:
 limits:
   - "calls mobile->bff: paths handed to a function after its first argument are not read as requests: requireAsset (2, first at mobile/src/bff/home.ts:28)"
   - "calls desktop->companion: URLs to example.com (desktop/src/workspace.ts:14) are not read as requests to companion"
+  - "calls tools->api: the configured prefix /api/v1 put before a function's path parameter (tools/src/api-client.ts:3) is not read as a request; the paths passed to that function are"
 chains:
   - mobile->bff|GET /feed
   - mobile->bff|GET /devices/{deviceId}/status
@@ -39,8 +43,8 @@ calls:
   - mobile->bff|POST /interactions @ mobile/src/bff/home.ts:40
   - desktop->companion|POST /workspace based @ desktop/src/workspace.ts:23
   - desktop->companion|GET /inbox/items based @ desktop/src/inbox-watcher.ts:2
-  - tools->api|* /api/v1/notebooks @ tools/src/api-client.ts:12
-  - tools->api|POST /api/v1/notebooks/{}/search @ tools/src/api-client.ts:16
+  - tools->api|* /api/v1/notebooks @ tools/src/api-client.ts:16
+  - tools->api|POST /api/v1/notebooks/{}/search @ tools/src/api-client.ts:20
 descriptions:
   - api none - NoneFound
   - bff none - NoneFound

@@ -167,7 +167,8 @@ git config filter.public-registry.smudge cat
 Routes and calls are read from string literals. A path assembled across several functions, or a URL taken from a
 server response, is not seen and shows up as FA001. A path handed to a function after its first argument, and an
 absolute URL to a host that is neither a loopback address nor the target's `origins` entry, are not read as calls; a
-`limit:` line names them. Only configured files are read, so no finding does not prove a flow complete. Field-level contract checks are not implemented yet.
+`limit:` line names them, as it names a path given to an exception in code read as text and a client helper that puts
+the configured `prefix` before the path it is given. Only configured files are read, so no finding does not prove a flow complete. Field-level contract checks are not implemented yet.
 
 ## License
 
