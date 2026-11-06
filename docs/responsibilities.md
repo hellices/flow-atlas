@@ -22,7 +22,7 @@ alone show whether a value came from the code or from a person.
 | Output | Command | From |
 |---|---|---|
 | routes, calls, edges, operationIds | `scan` | parsed code and the files the configuration names; for a framework atlas cannot parse, the OpenAPI document that framework generates |
-| locations of each component's OpenAPI documents | `scan`, `inventory` | committed files such as `openapi.yaml`, and the paths the code serves a document at (`SwaggerModule.setup`, `@fastify/swagger-ui`, an `/openapi.json` route) |
+| locations of each component's OpenAPI documents | `scan`, `inventory` | committed files such as `openapi.yaml`, and the paths the code serves a document at (`SwaggerModule.setup`, `@fastify/swagger-ui`, an `/openapi.json` route, springdoc's `/v3/api-docs` and its groups) |
 | which description is a component's, when there are several | `scan` | paths that show the same document are one; a committed file is compared with the routes the code serves. If the code cannot decide, nothing is chosen and the result is `ambiguous` |
 | producers and consumers of registry entries | `scan` | names searched in files |
 | routes and calls by path or component | `query` | the graph |

@@ -10,6 +10,7 @@ import { extractRoutes } from "../src/extract/routes.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { WorktreeSource, type Source } from "../src/source.js";
 import { scan } from "../src/scan.js";
+import { inventory } from "../src/inventory.js";
 import { Reach } from "../src/extract/reach.js";
 import type { Coverage } from "../src/model.js";
 import { toArazzo } from "../src/arazzo.js";
@@ -455,6 +456,266 @@ describe("routes from an OpenAPI document", () => {
     expect(limits).toEqual([
       "routes svc: the OpenAPI document svc/openapi.yaml is not there at this revision",
       "routes svc: svc/notes.yaml is not a Swagger 2.0 or OpenAPI 3 document",
+    ]);
+  });
+});
+
+describe("documents springdoc serves", () => {
+  const files = (entries: Record<string, string>): Source => ({
+    ref: "WORKTREE",
+    list: () => Object.keys(entries),
+    read: (p) => entries[p],
+    asOf: () => "2026-01-01T00:00:00Z",
+  });
+  const controller = {
+    "svc/src/main/java/lab/ItemsController.java": '@RestController\nclass ItemsController {\n  @GetMapping("/items")\n  List<String> list() { return List.of(); }\n}\n',
+  };
+  const POM = [
+    "<project>",
+    "  <dependencies>",
+    "    <dependency>",
+    "      <groupId>org.springdoc</groupId>",
+    "      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>",
+    "    </dependency>",
+    "  </dependencies>",
+    "</project>",
+  ].join("\n");
+  const RESOURCES = "svc/src/main/resources";
+  const run = (entries: Record<string, string>, extra: Record<string, unknown> = {}, styles = ["spring"]) => {
+    const config = normalizeConfig({
+      components: [{ name: "svc", path: "svc" }],
+      routes: [{ component: "svc", files: ["svc/src/main/**/*.{java,kt}"], styles }],
+      ...extra,
+    });
+    const graph = scan(files({ ...controller, ...entries }), config);
+    const d = graph.apiDescriptions.find((x) => x.component === "svc");
+    return {
+      documents: graph.apiDocuments.map((x) => `${x.location} ${x.convention} ${x.at.file}:${x.at.line}`),
+      description: d ? `${d.status} ${d.location ?? "-"} ${d.reason}` : "-",
+      limits: graph.limits,
+    };
+  };
+
+  it("finds the documents a real springdoc application serves, as its own test shows", () => {
+    const app = "apps/spring-springdoc-groups";
+    const config = (openapi?: Record<string, string>) =>
+      normalizeConfig({
+        components: [{ name: "catalog", path: app }],
+        routes: [{ component: "catalog", files: [`${app}/src/main/**/*.java`], styles: ["spring"] }],
+        ...(openapi ? { openapi } : {}),
+      });
+    const graph = scan(new WorktreeSource(root), config());
+    expect(graph.apiDocuments.map((d) => `${d.component} ${d.kind} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`)).toEqual([
+      `catalog served /api-docs springdoc api-docs.path ${app}/src/main/resources/application.yml:6`,
+      `catalog served /api-docs/internal springdoc group-configs ${app}/src/main/resources/application.yml:8`,
+      `catalog served /api-docs/public springdoc group ${app}/src/main/java/lab/CatalogApplication.java:23`,
+    ]);
+    expect(graph.apiDescriptions).toEqual([
+      {
+        component: "catalog",
+        status: "ambiguous",
+        reason: "SeveralServedDocuments",
+        message: "candidates: /api-docs, /api-docs/internal, /api-docs/public",
+        candidates: ["/api-docs", "/api-docs/internal", "/api-docs/public"],
+      },
+    ]);
+    expect(graph.limits).toEqual([
+      `openapi catalog: ${app}/src/main/resources/application-dev.yml:3 sets springdoc.api-docs.path for the profile dev, which is chosen at launch; it is not read`,
+    ]);
+    expect(validate("graph", graph)).toEqual([]);
+    expect(scan(new WorktreeSource(root), config({ catalog: "/api-docs/public" })).apiDescriptions[0]).toMatchObject({
+      status: "chosen",
+      location: "/api-docs/public",
+      reason: "AuthorOverride",
+    });
+  });
+
+  it("lists in the inventory what each Maven or Gradle project's springdoc serves", () => {
+    const served = inventory(new WorktreeSource(root), []).apiDocuments.filter((d) => d.kind === "served");
+    expect(served.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`)).toEqual([
+      "spring-springdoc /v3/api-docs springdoc default apps/spring-springdoc/pom.xml:23",
+      "spring-springdoc-groups /api-docs springdoc api-docs.path apps/spring-springdoc-groups/src/main/resources/application.yml:6",
+      "spring-springdoc-groups /api-docs/internal springdoc group-configs apps/spring-springdoc-groups/src/main/resources/application.yml:8",
+      "spring-springdoc-groups /api-docs/public springdoc group apps/spring-springdoc-groups/src/main/java/lab/CatalogApplication.java:23",
+    ]);
+  });
+
+  it("serves /v3/api-docs where the build names springdoc and nothing moves it", () => {
+    expect(run({ "svc/pom.xml": POM })).toEqual({
+      documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+      description: "chosen /v3/api-docs ServedByCode",
+      limits: [],
+    });
+    expect(run({ "svc/build.gradle.kts": 'dependencies {\n  implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13")\n}\n' }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/build.gradle.kts:2",
+    ]);
+    expect(run({ "svc/build.gradle": "dependencies {\n  implementation libs.springdoc.openapi.starter.webmvc.ui\n}\n" }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/build.gradle:2",
+    ]);
+  });
+
+  it("finds none without springdoc, or where the configuration does not read Spring", () => {
+    const yml = { [`${RESOURCES}/application.yml`]: "springdoc:\n  api-docs:\n    path: /docs\n" };
+    expect(run({ "svc/pom.xml": "<project/>\n", ...yml })).toEqual({ documents: [], description: "none - NoneFound", limits: [] });
+    expect(run({ "svc/build.gradle": "dependencies {\n  // implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'\n}\n" }).documents).toEqual([]);
+    expect(run({ "svc/pom.xml": "<project>\n<!-- <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId> -->\n</project>\n" }).documents).toEqual([]);
+    expect(run({ "svc/pom.xml": POM }, {}, []).documents).toEqual([]);
+  });
+
+  it("reads the path, groups and context path from application.yml and application.properties", () => {
+    const yml = [
+      "server:",
+      "  servlet:",
+      "    context-path: /shop",
+      "springdoc:",
+      "  api-docs:",
+      "    path: /docs",
+      "  swagger-ui:",
+      "    path: /ui.html",
+      "  group-configs:",
+      "    - group: admin",
+      "      paths-to-match: /admin/**",
+    ].join("\n");
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: yml }).documents).toEqual([
+      `/shop/docs springdoc api-docs.path ${RESOURCES}/application.yml:6`,
+      `/shop/docs/admin springdoc group-configs ${RESOURCES}/application.yml:10`,
+    ]);
+    const properties = ["# documents", "springdoc.apiDocs.path=/docs", "springdoc.group-configs[0].group = admin", "springdoc.group-configs[1].group: ops"].join("\n");
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: properties }).documents).toEqual([
+      `/docs springdoc api-docs.path ${RESOURCES}/application.properties:2`,
+      `/docs/admin springdoc group-configs ${RESOURCES}/application.properties:3`,
+      `/docs/ops springdoc group-configs ${RESOURCES}/application.properties:4`,
+    ]);
+  });
+
+  it("lets application.properties over application.yml, and config/ over both, decide the path", () => {
+    const docs = (path: string) => `springdoc:\n  api-docs:\n    path: ${path}\n`;
+    expect(
+      run({
+        "svc/pom.xml": POM,
+        [`${RESOURCES}/application.yml`]: docs("/a"),
+        [`${RESOURCES}/application.properties`]: "springdoc.api-docs.path=/b\n",
+      }).documents,
+    ).toEqual([`/b springdoc api-docs.path ${RESOURCES}/application.properties:1`]);
+    expect(
+      run({
+        "svc/pom.xml": POM,
+        [`${RESOURCES}/application.properties`]: "springdoc.api-docs.path=/b\n",
+        [`${RESOURCES}/config/application.yml`]: docs("/c"),
+      }).documents,
+    ).toEqual([`/c springdoc api-docs.path ${RESOURCES}/config/application.yml:3`]);
+  });
+
+  it("reads GroupedOpenApi beans whose group is a literal or a constant of the file, in Java and Kotlin", () => {
+    const java = [
+      "@Configuration",
+      "class Docs {",
+      '  static final String ADMIN = "admin";',
+      "  @Bean GroupedOpenApi publicApi() {",
+      '    return GroupedOpenApi.builder().group("public").pathsToMatch("/api/**").build();',
+      "  }",
+      "  @Bean GroupedOpenApi adminApi() {",
+      "    return GroupedOpenApi.builder().pathsToMatch(\"/admin/**\").group(ADMIN).build();",
+      "  }",
+      "  // @Bean GroupedOpenApi oldApi() { return GroupedOpenApi.builder().group(\"old\").build(); }",
+      "}",
+    ].join("\n");
+    const kotlin = ["@Bean", "fun internalApi(): GroupedOpenApi = GroupedOpenApi.builder()", '    .group("internal")', '    .pathsToMatch("/internal/**")', "    .build()"].join("\n");
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": java, "svc/src/main/kotlin/lab/Docs.kt": kotlin })).toEqual({
+      documents: [
+        "/v3/api-docs springdoc default svc/pom.xml:5",
+        "/v3/api-docs/admin springdoc group svc/src/main/java/lab/Docs.java:8",
+        "/v3/api-docs/internal springdoc group svc/src/main/kotlin/lab/Docs.kt:3",
+        "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:5",
+      ],
+      description: "ambiguous - SeveralServedDocuments",
+      limits: [],
+    });
+  });
+
+  it("takes springdoc as present when the code builds a group, though the build does not name it", () => {
+    const java = 'class Docs {\n  @Bean GroupedOpenApi api() { return GroupedOpenApi.builder().group("public").build(); }\n}\n';
+    expect(run({ "svc/pom.xml": "<project/>\n", "svc/src/main/java/lab/Docs.java": java }).documents).toEqual([
+      "/v3/api-docs springdoc default svc/src/main/java/lab/Docs.java:2",
+      "/v3/api-docs/public springdoc group svc/src/main/java/lab/Docs.java:2",
+    ]);
+  });
+
+  it("serves no document where springdoc is turned off, and only the groups without the default one", () => {
+    const off = { "svc/pom.xml": POM, [`${RESOURCES}/application.properties`]: "springdoc.api-docs.enabled=false\nspringdoc.group-configs[0].group=admin\n" };
+    expect(run(off)).toEqual({ documents: [], description: "none - NoneFound", limits: [] });
+    const groupsOnly = { "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: "springdoc:\n  enable-default-api-docs: false\n  group-configs:\n    - group: admin\n" };
+    expect(run(groupsOnly).documents).toEqual([`/v3/api-docs/admin springdoc group-configs ${RESOURCES}/application.yml:4`]);
+  });
+
+  it("says what it does not read instead of guessing", () => {
+    const yml = (body: string) => ({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: body });
+    expect(run(yml("springdoc:\n  api-docs:\n    path: ${DOCS_PATH:/docs}\n"))).toEqual({
+      documents: [],
+      description: "none - NoneFound",
+      limits: [`openapi svc: ${RESOURCES}/application.yml:3 sets springdoc.api-docs.path to \${DOCS_PATH:/docs}, resolved at run time; the documents springdoc serves are not read`],
+    });
+    expect(run(yml("springdoc:\n  api-docs:\n    enabled: ${DOCS_ENABLED:true}\n")).limits).toEqual([
+      `openapi svc: ${RESOURCES}/application.yml:3 sets springdoc.api-docs.enabled to \${DOCS_ENABLED:true}, resolved at run time; the documents springdoc serves are not read`,
+    ]);
+    expect(run(yml("server:\n  servlet:\n    context-path: ${BASE}\n")).limits).toEqual([
+      `openapi svc: ${RESOURCES}/application.yml:3 sets server.servlet.context-path to \${BASE}, resolved at run time; the documents springdoc serves are not read`,
+    ]);
+    expect(run(yml("springdoc:\n  use-management-port: true\n"))).toEqual({
+      documents: [],
+      description: "none - NoneFound",
+      limits: [`openapi svc: ${RESOURCES}/application.yml:2 serves springdoc's documents on the management port (springdoc.use-management-port); they are not read`],
+    });
+    expect(run(yml("springdoc:\n  group-configs:\n    - group: ${GROUP}\n"))).toEqual({
+      documents: ["/v3/api-docs springdoc default svc/pom.xml:5"],
+      description: "chosen /v3/api-docs ServedByCode",
+      limits: [`openapi svc: ${RESOURCES}/application.yml:3 sets springdoc.group-configs[0].group to \${GROUP}, resolved at run time; that group's document is not read`],
+    });
+    const built = 'class Docs {\n  @Bean GroupedOpenApi api(@Value("${group}") String name) {\n    return GroupedOpenApi.builder().group(name).build();\n  }\n}\n';
+    expect(run({ "svc/pom.xml": POM, "svc/src/main/java/lab/Docs.java": built }).limits).toEqual([
+      "openapi svc: svc/src/main/java/lab/Docs.java:3 builds a GroupedOpenApi whose group the file does not spell out (name); that group's document is not read",
+    ]);
+  });
+
+  it("leaves out what applies only under a profile, and says so", () => {
+    const yml = ["springdoc:", "  api-docs:", "    path: /docs", "---", "spring:", "  config:", "    activate:", "      on-profile: prod", "springdoc:", "  api-docs:", "    enabled: false"].join("\n");
+    expect(run({ "svc/pom.xml": POM, [`${RESOURCES}/application.yml`]: yml, [`${RESOURCES}/application-dev.properties`]: "springdoc.group-configs[0].group=debug\nlogging.level.root=DEBUG\n" })).toEqual({
+      documents: [`/docs springdoc api-docs.path ${RESOURCES}/application.yml:3`],
+      description: "chosen /docs ServedByCode",
+      limits: [
+        `openapi svc: ${RESOURCES}/application-dev.properties:1 sets springdoc.group-configs[0].group for the profile dev, which is chosen at launch; it is not read`,
+        `openapi svc: ${RESOURCES}/application.yml:11 sets springdoc.api-docs.enabled for the profile prod, which is chosen at launch; it is not read`,
+      ],
+    });
+  });
+
+  it("gives every component of one application its documents, and says a limit once", () => {
+    const config = normalizeConfig({
+      components: [
+        { name: "orders", path: "src/main/java/lab/orders" },
+        { name: "billing", path: "src/main/java/lab/billing" },
+      ],
+      routes: [
+        { component: "orders", files: ["src/main/java/lab/orders/**/*.java"], styles: ["spring"] },
+        { component: "billing", files: ["src/main/java/lab/billing/**/*.java"], styles: ["spring"] },
+      ],
+    });
+    const source = files({
+      "build.gradle.kts": 'dependencies {\n  implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13")\n}\n',
+      "src/main/resources/application-local.yml": "springdoc:\n  api-docs:\n    path: /local-docs\n",
+      "src/main/java/lab/support/Docs.java": 'class Docs {\n  @Bean GroupedOpenApi publicApi() { return GroupedOpenApi.builder().group("public").build(); }\n}\n',
+      "src/main/java/lab/orders/OrdersController.java": '@RestController\nclass OrdersController {\n  @GetMapping("/api/orders")\n  List<String> list() { return List.of(); }\n}\n',
+      "src/main/java/lab/billing/BillingController.java": '@RestController\nclass BillingController {\n  @GetMapping("/api/bills")\n  List<String> list() { return List.of(); }\n}\n',
+    });
+    const graph = scan(source, config);
+    expect(graph.apiDocuments.map((d) => `${d.component} ${d.location}`)).toEqual([
+      "billing /v3/api-docs",
+      "billing /v3/api-docs/public",
+      "orders /v3/api-docs",
+      "orders /v3/api-docs/public",
+    ]);
+    expect(graph.limits).toEqual([
+      "openapi orders, billing: src/main/resources/application-local.yml:3 sets springdoc.api-docs.path for the profile local, which is chosen at launch; it is not read",
     ]);
   });
 });

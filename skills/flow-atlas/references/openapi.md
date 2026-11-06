@@ -40,6 +40,31 @@ routes:
 
 It does not take request or response schemas, security, or callers: the document says none of that about the code.
 
+## Documents springdoc serves
+
+For a component whose routes are read with `styles: [spring]`, atlas lists what springdoc-openapi serves for the
+Maven or Gradle project the component is part of (the nearest directory at or above its path with a `pom.xml` or
+`build.gradle(.kts)`), as served documents; every module of a Spring Modulith application shares them. They are
+candidates for the component's description (`references/boundaries.md`), not route sources: give `routes[].openapi`
+a generated file for that.
+
+| springdoc.org | What atlas reads |
+|---|---|
+| "Getting Started": the dependency alone serves the document at `/v3/api-docs` | when the project's own build file names a `springdoc-openapi` artifact (or a `libs.springdoc.openapi...` catalog entry), or its main code builds a `GroupedOpenApi`, `/v3/api-docs` |
+| core properties: `springdoc.api-docs.path`, `springdoc.api-docs.enabled`, `springdoc.enable-default-api-docs` | the literal path instead; nothing when disabled; only the groups without the default document |
+| FAQ 13.48: everything behind `server.servlet.context-path` | a literal context path (or WebFlux `spring.webflux.base-path`) in front |
+| FAQ 13.1: `GroupedOpenApi.builder().group("public")` serves `<api-docs path>/public` | one document per group named by a literal or a string constant of the file, in the builder's chain |
+| FAQ 13.61: `springdoc.group-configs[0].group=users` | the same, per literal group |
+
+Settings come from `src/main/resources/application.properties` and `application.yml` (`.yaml`) and their `config/`
+copies, with Spring Boot's precedence (properties over YAML, `config/` over both). Not read, each reported as a
+`limit:` in `atlas scan`: a profile's file (`application-dev.yml`) or a YAML document under
+`spring.config.activate.on-profile`, since which profile runs is decided at launch; a value with a placeholder
+(`${DOCS_PATH:/docs}`), resolved at run time; a group name built in code; `springdoc.use-management-port`, which moves
+the documents to the actuator port. An environment variable such as `SPRINGDOC_API_DOCS_PATH` can still override what
+atlas read; that is not visible in the repository. The `.yaml` twin of each document (`/v3/api-docs.yaml`) and the
+swagger-ui page are the same documents and are not listed.
+
 ## Generating it
 
 Use what the repository already does (a CI step, a `make` target, a committed file) before adding a command. Each
@@ -53,7 +78,7 @@ recipe below was run against the framework versions listed in the flow-atlas `fi
 | Django REST framework + drf-spectacular | OpenAPI 3.0 | `python manage.py spectacular --format openapi-json --file openapi.json` |
 | NestJS + @nestjs/swagger | OpenAPI 3.0 | in a script: `NestFactory.create`, the same global prefix as `main.ts`, `SwaggerModule.createDocument(app, config)`, write it, `app.close()` |
 | Fastify + @fastify/swagger | Swagger 2.0 or OpenAPI 3.0 (by `openapi` option) | build the app, `await app.ready()`, write `app.swagger()` |
-| Spring Boot + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | a `@SpringBootTest` with `MockMvc` that GETs `/v3/api-docs` and writes the body; set `springdoc.writer-with-default-pretty-printer=true` so `described` lines mean something |
+| Spring Boot + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | a `@SpringBootTest` with `MockMvc` that GETs `/v3/api-docs` (or the path and group `atlas inventory` lists) and writes the body; set `springdoc.writer-with-default-pretty-printer=true` so `described` lines mean something |
 
 Notes:
 

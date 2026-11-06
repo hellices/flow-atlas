@@ -25,8 +25,12 @@ interface Expected {
   limits?: string[];
   /** Each flow's Ready; none when the scenario has no flow descriptions. */
   flows?: Record<string, string>;
-  /** What `atlas inventory` offers: route files with their style and count, client-call files with their count. */
-  inventory: { routes: string[]; calls: string[] };
+  /** The OpenAPI documents found, as `component location convention file:line`; none when the scenario has none. */
+  documents?: string[];
+  /** Each component's decided description, as `component status location reason`, where the scenario is about it. */
+  descriptions?: string[];
+  /** What `atlas inventory` offers: route files with their style and count, client-call files with their count, documents. */
+  inventory: { routes: string[]; calls: string[]; documents?: string[] };
 }
 
 const root = fileURLToPath(new URL("../fixtures/scenarios", import.meta.url));
@@ -47,9 +51,12 @@ function run(dir: string) {
     // A chain by its id, then every other surface it reaches.
     chains: chains.chains.map((c) => [c.id, ...c.surfaces.filter((s) => s !== c.root).sort()].join(" + ")).sort(),
     limits: graph.limits,
+    documents: graph.apiDocuments.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`),
+    descriptions: graph.apiDescriptions.map((d) => `${d.component} ${d.status} ${d.location ?? "-"} ${d.reason}`),
     inventory: {
       routes: offered.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort(),
       calls: offered.calls.map((c) => `${c.file} ${c.count}`).sort(),
+      documents: offered.apiDocuments.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`),
     },
     flows: Object.fromEntries(flows.items.map((i) => [i.metadata.name, i.status.conditions.map((c) => `${c.type}=${c.status}`).find((c) => c.startsWith("Ready="))!])),
   };
@@ -68,7 +75,13 @@ describe("scenarios from real repositories", () => {
       expect(actual.limits.length).toBe((expected.limits ?? []).length);
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));
       expect(actual.flows).toEqual(expected.flows ?? {});
-      expect(actual.inventory).toEqual({ routes: [...expected.inventory.routes].sort(), calls: [...expected.inventory.calls].sort() });
+      expect(actual.documents).toEqual(expected.documents ?? []);
+      if (expected.descriptions) expect(actual.descriptions).toEqual(expected.descriptions);
+      expect(actual.inventory).toEqual({
+        routes: [...expected.inventory.routes].sort(),
+        calls: [...expected.inventory.calls].sort(),
+        documents: expected.inventory.documents ?? [],
+      });
     });
   }
 });

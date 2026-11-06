@@ -179,7 +179,8 @@ functions, read from a response) is not seen. Such routes show up as FA001; list
 atlas finds each component's OpenAPI description itself: a committed `openapi.(json|yaml)`, `swagger.*` or
 `*.openapi.*` under the component, else the path its code serves the document at (`SwaggerModule.setup` with
 `jsonDocumentUrl` or `<path>-json`, `@fastify/swagger-ui` `routePrefix` + `/json`, a route at `/openapi.json` and the
-like). `atlas inventory` lists them. Only the server's base URL is yours to give, per environment, in `origins`;
+like; for a component read with `styles: [spring]`, what springdoc serves for its Maven or Gradle project, see
+`references/openapi.md`). `atlas inventory` lists them. Only the server's base URL is yours to give, per environment, in `origins`;
 read it from the repository's deployment files.
 
 Flow descriptions are also read from `<out>/flows/`, so a repository atlas must not write to can still be described.

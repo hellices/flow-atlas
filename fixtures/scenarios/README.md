@@ -13,6 +13,7 @@ result shows as a difference in a case someone met.
 | `nextjs-app` | a Next.js app whose browser code calls its own route handlers | route handlers as surfaces, the HEAD and OPTIONS Next.js answers itself, no cycle for a component calling itself |
 | `nextjs-pages` | a Next.js app whose pages link to each other, and a client of one route handler | pages as GET surfaces, links and share-link helpers reaching them, a literal type that is no request |
 | `flutter-spring` | a Flutter app on Dio, a Spring backend under `/api/v1` | verbs with type arguments and paths on the next line, a declared client prefix, call files narrowed to the code that calls Dio |
+| `spring-modulith-groups` | one Spring Boot application whose Spring Modulith modules are the components, springdoc with two groups | the default document and one per `GroupedOpenApi` group, found from the build file and beans outside the modules, shared by every module, left ambiguous |
 | `ts-monorepo-bases` | Kotlin app → BFF → core service → file service, and a Python agent | URLs built on a `const` base, f-string URLs, route registrations that are no requests, `res.send()` that names no port, a journey whose order only the flow states |
 
 To add one: reproduce the shape in a new directory with an `atlas.config.yaml` (and `flows/` if the case is about

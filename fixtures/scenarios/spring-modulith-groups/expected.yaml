@@ -1,0 +1,55 @@
+case: |
+  A Spring Modulith service: one Spring Boot application whose modules (packages) are the components, with springdoc
+  serving a public and an internal group from two GroupedOpenApi beans.
+  Seen in a real run: atlas found no OpenAPI document for any module, so every component's description was NoneFound
+  and export arazzo refused until openapi.<component> was written by hand. Now the build's springdoc dependency
+  gives the default /v3/api-docs, and each GroupedOpenApi bean of the application (one in a module, one in a shared
+  support package) a document under it, for every module of the application. Which group describes which module is
+  not something the code settles, so each stays ambiguous (SeveralServedDocuments) until openapi.<component> is set.
+surfaces:
+  - enrollment|POST /api/enrollment
+  - enrollment|GET /v1/enrollment/status
+  - enrollment|POST /v1/enrollment/status
+  - ingest|POST /api/collections/{name}/events
+  - reports|GET /api/collections/{collection}
+  - internal|POST /v1/internal/collection/{collectionName}
+  - internal|GET /v1/internal/update-status
+findings: []
+chains:
+  - outside->enrollment|POST /api/enrollment
+  - outside->enrollment|GET /v1/enrollment/status
+  - outside->enrollment|POST /v1/enrollment/status
+  - outside->ingest|POST /api/collections/{name}/events
+  - outside->reports|GET /api/collections/{collection}
+  - outside->internal|POST /v1/internal/collection/{collectionName}
+  - outside->internal|GET /v1/internal/update-status
+documents:
+  - enrollment /v3/api-docs springdoc default build.gradle.kts:10
+  - enrollment /v3/api-docs/internal springdoc group src/main/java/com/example/platform/internal/config/openapi/InternalOpenApiConfiguration.java:11
+  - enrollment /v3/api-docs/public springdoc group src/main/java/com/example/platform/support/web/openapi/PublicOpenApiConfiguration.java:18
+  - ingest /v3/api-docs springdoc default build.gradle.kts:10
+  - ingest /v3/api-docs/internal springdoc group src/main/java/com/example/platform/internal/config/openapi/InternalOpenApiConfiguration.java:11
+  - ingest /v3/api-docs/public springdoc group src/main/java/com/example/platform/support/web/openapi/PublicOpenApiConfiguration.java:18
+  - internal /v3/api-docs springdoc default build.gradle.kts:10
+  - internal /v3/api-docs/internal springdoc group src/main/java/com/example/platform/internal/config/openapi/InternalOpenApiConfiguration.java:11
+  - internal /v3/api-docs/public springdoc group src/main/java/com/example/platform/support/web/openapi/PublicOpenApiConfiguration.java:18
+  - reports /v3/api-docs springdoc default build.gradle.kts:10
+  - reports /v3/api-docs/internal springdoc group src/main/java/com/example/platform/internal/config/openapi/InternalOpenApiConfiguration.java:11
+  - reports /v3/api-docs/public springdoc group src/main/java/com/example/platform/support/web/openapi/PublicOpenApiConfiguration.java:18
+descriptions:
+  - enrollment ambiguous - SeveralServedDocuments
+  - ingest ambiguous - SeveralServedDocuments
+  - internal ambiguous - SeveralServedDocuments
+  - reports ambiguous - SeveralServedDocuments
+inventory:
+  routes:
+    - src/main/java/com/example/platform/enrollment/controller/EnrollmentController.java spring 1
+    - src/main/java/com/example/platform/enrollment/controller/EnrollmentStatusController.java spring 2
+    - src/main/java/com/example/platform/ingest/controller/IngestController.java spring 1
+    - src/main/java/com/example/platform/internal/controller/InternalController.java spring 3
+    - src/main/java/com/example/platform/reports/controller/ReportController.java spring 1
+  calls: []
+  documents:
+    - root /v3/api-docs springdoc default build.gradle.kts:10
+    - root /v3/api-docs/internal springdoc group src/main/java/com/example/platform/internal/config/openapi/InternalOpenApiConfiguration.java:11
+    - root /v3/api-docs/public springdoc group src/main/java/com/example/platform/support/web/openapi/PublicOpenApiConfiguration.java:18

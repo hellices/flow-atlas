@@ -1,0 +1,9 @@
+spring:
+  main:
+    banner-mode: "off"
+springdoc:
+  api-docs:
+    path: /api-docs
+  group-configs:
+    - group: internal
+      paths-to-match: /internal/**

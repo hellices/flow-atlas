@@ -748,3 +748,35 @@ function securityRoutes(file: string, text: string, code: string, masked: string
   }
   return out;
 }
+
+/**
+ * The groups springdoc `GroupedOpenApi` builders name: `GroupedOpenApi.builder().group("public")...build()`, the
+ * `group(...)` read from the chain that starts at the builder, as a literal or a string constant the file declares.
+ * `group` is undefined when the chain names one the file does not spell out, or none (the builder is kept and set
+ * elsewhere); `expression` is then what it passes.
+ */
+export function groupedOpenApis(file: string, text: string): Array<{ group?: string; expression: string; line: number }> {
+  const code = withoutComments(file, text);
+  const masked = maskStrings(file, code);
+  const constant = stringConstants(code, masked, /\.kts?$/.test(file));
+  const out: Array<{ group?: string; expression: string; line: number }> = [];
+  for (const m of masked.matchAll(/\bGroupedOpenApi\s*\.\s*builder\s*\(\s*\)/g)) {
+    let i = (m.index ?? 0) + m[0].length;
+    let found: { group?: string; expression: string; line: number } | undefined;
+    // Each `.name(...)` of the chain in turn, across lines; the chain ends at anything else.
+    for (;;) {
+      const call = /^\s*\.\s*([A-Za-z_]\w*)\s*\(/.exec(masked.slice(i));
+      if (!call) break;
+      const open = i + call[0].length - 1;
+      const close = closing(masked, open);
+      if (close === undefined) break;
+      if (call[1] === "group" && !found) {
+        const expression = code.slice(open + 1, close).trim();
+        found = { group: constant(expression, open), expression, line: lineOf(text, open) };
+      }
+      i = close + 1;
+    }
+    out.push(found ?? { expression: "", line: lineOf(text, m.index ?? 0) });
+  }
+  return out;
+}

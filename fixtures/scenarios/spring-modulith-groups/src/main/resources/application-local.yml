@@ -1,0 +1,3 @@
+auth:
+  mock-enabled: true
+  mock-user-id: local-user
