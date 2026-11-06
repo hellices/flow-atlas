@@ -231,16 +231,23 @@ describe("framework rules", () => {
       "app/aliased/route.ts": 'export function POST() {}\nexport * from "./types";',
       "app/aliased/types.ts": 'import { run } from "../local/handlers";\nexport type { run as GET };\nexport { type run as PUT };',
       "app/local/handlers.ts": "export function run() {}",
+      // A star re-export carries only what the module exports as a value: not a name it imports and exports as a type,
+      // nor a function it keeps to itself.
+      "app/hidden/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/hidden/types.ts": 'import { GET } from "./handlers";\nexport type { GET };\nfunction PUT() {}\nexport const version = 1;',
+      "app/hidden/handlers.ts": "export function GET() {}",
       "app/stars/handlers.ts": "export function GET() {}\nexport function PUT() {}",
       "app/named/handlers.ts": "export function GET() {}\nexport function PUT() {}",
     };
     expect(scanned(files)).toEqual([
       "api|OPTIONS /aliased (implicit)",
+      "api|OPTIONS /hidden (implicit)",
       "api|OPTIONS /local (implicit)",
       "api|OPTIONS /named (implicit)",
       "api|OPTIONS /stars (implicit)",
       "api|OPTIONS /through (implicit)",
       "api|POST /aliased",
+      "api|POST /hidden",
       "api|POST /local",
       "api|POST /named",
       "api|POST /stars",
@@ -363,6 +370,10 @@ describe("framework rules", () => {
       "app/three/page.tsx": 'export default function Three({ slug }) {\n  const href = "/next/" + encodeURIComponent(slug);\n  return <Link href={href}>Next</Link>;\n}',
       // Either branch of a URL handed to a request is the request's.
       "app/four/page.tsx": 'export default async function Four({ ok }) {\n  const d = await fetch(ok ? "/api/a" : "/api/b");\n  return <p>{d}</p>;\n}',
+      // A URL handed to a constructor whose result the request gets is the request's.
+      "app/wrapped/route.ts": 'export async function GET() {\n  await fetch(new Request("https://api.example.com/data"));\n}',
+      // A link inside an element a call is handed while rendering is still the browser's.
+      "app/five/page.tsx": 'export default function Five() {\n  return Promise.resolve(<a href="/next">x</a>);\n}',
       // A URL with no literal of its own at the call: the request still runs in the handler.
       "app/items/route.ts": 'const BASE = "/api/";\nexport async function GET() {\n  const id = 1;\n  await fetch(BASE + id, { method: "POST" });\n}',
     };
@@ -374,9 +385,17 @@ describe("framework rules", () => {
     const graph = scan(memory(files), config);
     const reached = (id: string) =>
       graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!).map((c) => `${c.method} ${c.path}`);
+    // The links are calls of their own; only the requests made while rendering join the page.
+    const callsIn = (file: string) => graph.calls.filter((c) => c.at.file === file).map((c) => `${c.method} ${c.path}`).sort();
+    expect(callsIn("app/two/page.tsx")).toEqual(["* /next/{}", "GET /api/data"]);
+    expect(callsIn("app/three/page.tsx")).toEqual(["* /next/{}"]);
+    expect(callsIn("app/five/page.tsx")).toEqual(["GET /next"]);
+    expect(callsIn("app/wrapped/route.ts")).toEqual(["GET /data"]);
     expect(reached("web|GET /two")).toEqual(["GET /api/data"]);
     expect(reached("web|GET /items")).toEqual(["POST /api/{}"]);
     expect(reached("web|GET /three")).toEqual([]);
+    expect(reached("web|GET /five")).toEqual([]);
+    expect(reached("web|GET /wrapped")).toEqual(["GET /data"]);
     expect(reached("web|GET /four").sort()).toEqual(["GET /api/a", "GET /api/b"]);
   });
 
