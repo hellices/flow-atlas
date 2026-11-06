@@ -163,7 +163,8 @@ describe("routesFromTypeScript", () => {
       "def kind(): ...",
       '@app.get(path="/ok")',
       "def ok(): ...",
-      "def add_endpoint(app, path):",
+      "def                    add_endpoint(app, path):",
+      "async def add_endpoint(app, path):",
       "    add_endpoint(app, '/agent')",
       "add_endpoint(app, AGENT_PATH)",
     ].join("\n");
@@ -171,7 +172,7 @@ describe("routesFromTypeScript", () => {
     const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);
     expect(routes).toEqual(["GET /ok", "POST /agent"]);
     const not = (line: number, expr: string) => `routes svc: a.py:${line} registers a path the file does not spell out (${expr}); its routes are not read`;
-    expect(limits).toEqual([not(2, "ITEMS"), not(4, 'f"/items/{KIND}"'), not(10, "AGENT_PATH")]);
+    expect(limits).toEqual([not(2, "ITEMS"), not(4, 'f"/items/{KIND}"'), not(11, "AGENT_PATH")]);
   });
   it("reads paths given as a list or as { path }", () => {
     expect(ids('@Controller({ path: "x", version: "1" })\nclass C {\n  @Get(["a", "b"]) a() {}\n}')).toEqual(["GET /x/a", "GET /x/b"]);

@@ -575,6 +575,13 @@ function pythonArgStarts(code: string, from: number): number[] {
   return starts.map((s) => s + (/^\s*/.exec(code.slice(s))?.[0].length ?? 0));
 }
 
+/** Whether the name at `at` follows `def`, across any spaces and line continuations: a function's definition. */
+function definesName(code: string, at: number): boolean {
+  let i = at;
+  while (i > 0 && /[\s\\]/.test(code[i - 1]!)) i--;
+  return i < at && i >= 3 && code.slice(i - 3, i) === "def" && !/\w/.test(code[i - 4] ?? "");
+}
+
 /** The text of the argument starting at `at`, up to the comma or bracket that ends it, in blanked code. */
 function pythonArg(text: string, code: string, at: number): string {
   let depth = 0;
@@ -662,7 +669,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   for (const c of spec.calls ?? []) {
     for (const m of code.matchAll(new RegExp(`(?<![\\w.])(?:\\w+\\.)?${escapeRegExp(c.name)}\\(`, "g"))) {
       // The helper's own definition takes its path as a parameter; it registers nothing.
-      if (/\bdef\s+$/.test(code.slice(Math.max(0, (m.index ?? 0) - 16), m.index ?? 0))) continue;
+      if (definesName(code, m.index ?? 0)) continue;
       const args = pythonArgStarts(code, (m.index ?? 0) + m[0].length);
       if (args[c.pathArg] !== undefined) unread(args[c.pathArg]!);
       const path = args[c.pathArg] === undefined ? undefined : pythonLiteral(text.slice(args[c.pathArg]));
