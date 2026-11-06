@@ -125,7 +125,29 @@ function operands(e: ts.Expression): ts.Expression[] {
  */
 function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
   if (raw.replace(/[?#].*$/, "") !== "/") return undefined;
-  // Parentheses, `as`, `satisfies` and `!` leave the value as it is: `push(("/" as const))` still goes to `/`.
+  const value = outermost(node);
+  const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
+  if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
+  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression))) return { path: "/", based: false };
+  return undefined;
+}
+
+/**
+ * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
+ * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address `push`, `replace` or `redirect` navigates to.
+ */
+function navigatesWithGet(node: ts.Node): boolean {
+  const value = outermost(node);
+  const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
+  if (ts.isJsxAttribute(holder) && holder.name.getText() === "href") {
+    const tag = holder.parent.parent.tagName;
+    return /^(?:a|area)$/.test(tag.getText()) || (ts.isIdentifier(tag) && importedFrom(tag, ["next/link"]) === "default");
+  }
+  return ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression));
+}
+
+/** The outermost expression a string stands for: parentheses, `as`, `satisfies` and `!` leave the value as it is. */
+function outermost(node: ts.Node): ts.Node {
   let value = node;
   while (
     ts.isParenthesizedExpression(value.parent) ||
@@ -135,10 +157,7 @@ function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
     ts.isTypeAssertionExpression(value.parent)
   )
     value = value.parent;
-  const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
-  if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
-  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression))) return { path: "/", based: false };
-  return undefined;
+  return value;
 }
 
 const NEXT_ROUTERS = ["next/navigation", "next/router"];
@@ -154,6 +173,8 @@ function importedFrom(id: ts.Identifier, modules: string[]): string | undefined 
 
 /** Whether an expression is Next.js's router: what `useRouter()` returns, or the `Router` `next/router` exports. */
 function isNextRouter(e: ts.Expression): boolean {
+  // `useRouter().push("/")` on the spot.
+  if (ts.isCallExpression(e)) return ts.isIdentifier(e.expression) && importedFrom(e.expression, NEXT_ROUTERS) === "useRouter";
   if (!ts.isIdentifier(e)) return false;
   const imported = importedFrom(e, ["next/router"]);
   if (imported === "default" || imported === "Router") return true;
@@ -228,7 +249,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
         found.push({ node, call: {
           from: spec.from,
           to: spec.to,
-          method: methodNear(node),
+          method: navigatesWithGet(node) ? "GET" : methodNear(node),
           path: parsed.path,
           based: parsed.based,
           at: { file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 },
@@ -701,10 +722,17 @@ function surelyWritten(value: string | undefined): boolean {
   const v = value?.trim() ?? "";
   if (/^'[^']*'$|^\|[^|]*\|$/.test(v)) return true;
   if (!v.startsWith("@{")) return false;
+  // Braces inside quoted text (`p='}'`) are text.
   let depth = 0;
+  let quoted = false;
   for (let i = 1; i < v.length; i++) {
-    if (v[i] === "{") depth++;
-    else if (v[i] === "}" && --depth === 0) return i === v.length - 1;
+    const c = v[i]!;
+    if (quoted) {
+      if (c === "\\") i++;
+      else if (c === "'") quoted = false;
+    } else if (c === "'") quoted = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i === v.length - 1;
   }
   return false;
 }

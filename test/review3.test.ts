@@ -80,17 +80,28 @@ describe("fetch", () => {
   });
 });
 
-describe("navigation to the root", () => {
-  const paths = (code: string) => callsFromTypeScript("a.tsx", code, { from: "a", to: "a", files: [] }).map((c) => c.path);
-  it("is read through wrappers that leave the value as it is", () => {
-    const next = 'import { useRouter, redirect } from "next/navigation";\nconst router = useRouter();\n';
-    const rows = ['router.push("/");', 'router.push(("/"));', 'redirect("/" as const);', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;'];
-    expect(rows.map((r) => paths(next + r))).toEqual(rows.map(() => ["/"]));
+describe("navigation", () => {
+  const calls = (code: string) => callsFromTypeScript("a.tsx", code, { from: "a", to: "a", files: [] }).map((c) => `${c.method} ${c.path}`);
+  const next = 'import { useRouter, redirect } from "next/navigation";\nimport Link from "next/link";\nconst router = useRouter();\n';
+  it("goes to the root through wrappers that leave the value as it is", () => {
+    const rows = ['router.push("/");', 'router.push(("/"));', 'redirect("/" as const);', 'router.replace("/" satisfies string);', 'const a = <a href={("/")}>home</a>;', 'useRouter().push("/");'];
+    expect(rows.map((r) => calls(next + r))).toEqual(rows.map(() => ["GET /"]));
     // Taken apart, or the Router next/router exports.
-    expect(paths('import { useRouter } from "next/navigation";\nconst { push } = useRouter();\npush("/");')).toEqual(["/"]);
-    expect(paths('import Router from "next/router";\nRouter.replace("/");')).toEqual(["/"]);
+    expect(calls('import { useRouter } from "next/navigation";\nconst { push } = useRouter();\npush("/");')).toEqual(["GET /"]);
+    expect(calls('import Router from "next/router";\nRouter.replace("/");')).toEqual(["GET /"]);
     // A push or a redirect that is not Next.js's navigates nowhere.
-    expect([paths('log("/");'), paths('const parts = [];\nparts.push("/");'), paths('router.push("/");'), paths('import { redirect } from "./mine";\nredirect("/");')]).toEqual([[], [], [], []]);
+    expect([calls('log("/");'), calls('const parts = [];\nparts.push("/");'), calls('router.push("/");'), calls('import { redirect } from "./mine";\nredirect("/");')]).toEqual([[], [], [], []]);
+  });
+
+  it("goes with GET, as HTML and Next.js do; another component's href says nothing of its method", () => {
+    const rows: Array<[string, string]> = [
+      ['router.push("/notes");', "GET /notes"],
+      ['redirect("/notes");', "GET /notes"],
+      ['const a = <a href="/notes">n</a>;', "GET /notes"],
+      ['const a = <Link href="/notes">n</Link>;', "GET /notes"],
+      ['const a = <Card href="/notes" />;', "* /notes"],
+    ];
+    expect(rows.map(([code]) => calls(next + code))).toEqual(rows.map(([, out]) => [out]));
   });
 });
 
@@ -226,6 +237,8 @@ describe("framework rules", () => {
         '  ((() => fetch("/api/spot")) as () => void)();',
         '  const built = <a href={build(fetch("/api/built"))} />;',
         '  const direct = <a href={fetch("/api/direct")} />;',
+        '  const field = <a href={fetch("/api/field").url} />;',
+        '  const helper = <a href={get("/api/later")} />;',
         '  return <Card note={note}><Link href="/create">new</Link><ServerCard data={stats()} render={renderRow} /><button onClick={makeHandler()} /><a href={address("/later")} /><a href={(track(), "/next")} /></Card>;',
         "}",
       ].join("\n"),
@@ -245,7 +258,8 @@ describe("framework rules", () => {
     const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     // makeHandler, track and the function called on the spot run while rendering; the handler makeHandler returns, the
     // address a link holds and the client module do not.
-    expect(reach.sort()).toEqual(["/api/built", "/api/direct", "/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
+    // A get that may only build a string is no request: its address is the browser's.
+    expect(reach.sort()).toEqual(["/api/built", "/api/direct", "/api/field", "/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
   });
 
   it("renders a Pages Router page through whatever its default export names", () => {

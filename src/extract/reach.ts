@@ -5,9 +5,14 @@ import type { Source } from "../source.js";
 const MAX_FUNCTIONS = 400;
 /** Response methods that return the response itself, in Express (`res.status(500)`) and Fastify (`reply.code(201)`). */
 const CHAINABLE = new Set(["status", "set", "header", "headers", "type", "cookie", "clearCookie", "location", "links", "vary", "append", "attachment", "code", "removeHeader", "serializer"]);
-/** Callees that make a request when called: `fetch` and the verb methods of HTTP clients. */
-const REQUEST_CALLEES = /^(?:fetch|get|post|put|patch|delete|head|options|request)$/i;
-const calleeName = (e: ts.Expression): string => (ts.isPropertyAccessExpression(e) ? e.name.text : ts.isIdentifier(e) ? e.text : "");
+/**
+ * Whether a callee surely makes a request: the global `fetch`, also as `window.fetch` or `globalThis.fetch`. A `get`
+ * of some object may as well build a string, so it is not taken for one.
+ */
+function requestCallee(e: ts.Expression): boolean {
+  if (ts.isIdentifier(e)) return e.text === "fetch" && declarationOf(e) === undefined;
+  return ts.isPropertyAccessExpression(e) && e.name.text === "fetch" && ts.isIdentifier(e.expression) && /^(?:window|globalThis|self)$/.test(e.expression.text) && declarationOf(e.expression) === undefined;
+}
 
 /** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
 const LATER_PROPS = /^(?:href|src|action|formAction|on[A-Z]\w*)$/;
@@ -271,12 +276,14 @@ export class Reach {
               prop(v.whenTrue);
               return prop(v.whenFalse);
             }
-            if (isFunctionValue(v) || ts.isIdentifier(v) || ts.isPropertyAccessExpression(v)) return;
+            if (isFunctionValue(v) || ts.isIdentifier(v)) return;
+            // `fetch("/api").url`, `load().result`: what the receiver computes runs now; a name (`this.onClick`) runs nothing.
+            if (ts.isPropertyAccessExpression(v)) return prop(v.expression);
             // A call that builds the value runs now; only the text it is given is the address or handler's
             // (`address("/later")`), while a call among its arguments makes its own requests (`build(fetch("/api"))`).
             // A request call itself (`href={fetch("/api")}`) makes its request now; any other call only builds the value.
             if (later && ts.isCallExpression(v)) {
-              const request = REQUEST_CALLEES.test(calleeName(unwrap(v.expression)));
+              const request = requestCallee(unwrap(v.expression));
               visit(v.expression, false, true);
               for (const arg of v.arguments) {
                 if (request || !(ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) || ts.isTemplateExpression(arg))) visit(arg, true, true);

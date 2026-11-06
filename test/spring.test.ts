@@ -561,6 +561,8 @@ describe("review fixes, continued", () => {
       // A link expression with path variables surely writes a src: the script is that file, and its body does not run.
       ["<script th:attr=\"src=@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
       ["<script th:src=\"@{/assets/{id}(id=${v})}\">fetch('/api')</script>", ["GET /assets/{} 1"]],
+      // A brace in quoted text of the expression is text.
+      ["<script th:src=\"@{/app(p='}')}\">fetch('/api')</script>", ["GET /app 1"]],
       ['<div data-url="/preview"></div>', []],
     ];
     expect(rows.map(([html]) => calls(html))).toEqual(rows.map(([, out]) => out));
