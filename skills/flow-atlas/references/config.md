@@ -3,7 +3,10 @@
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
 material: components from manifests, files that register routes (and in which style), files whose strings look like
 client requests and OpenAPI documents. It does not choose; many candidates are tests
-helpers, tools or contracts, not clients. Expect two or three rounds of `atlas scan` and correction before the
+helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
+part of the app beside them (`android/`, `ios/` and the like of a Flutter app, a React Native app or an Expo module) is
+that app's, not a component; components that would share a name are named by their paths (`mobile-app`), or numbered where the paths do not
+tell them apart, with a note. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
 ```yaml
@@ -79,7 +82,8 @@ rules:
    back as FA004 with nothing to fix.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
-   continue through.
+   continue through. A registry's line counts the active files read and the entries they list; one that reads no file
+   or lists nothing also gives a `limit:` line, usually a moved file or a `pattern` or `field` that no longer fits.
 6. Run `atlas baseline update` once, with the person who owns the repository. The baseline also records what each
    source yielded; a later check warns when a source falls below half of that, which usually means code moved and
    the configuration did not.
@@ -93,7 +97,10 @@ starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is 
 by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
 (`path: "/m" | "/r"`) names a value and is no request. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
-(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
+(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
+is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
+names its file, line and expression. A `const` of the file named in `constants` is read as a GET route at its value,
+so a GET registered on it at that path gives no limit; another method or a prefix does. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
 those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
 registration call itself; an

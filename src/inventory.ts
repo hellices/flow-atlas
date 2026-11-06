@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments } from "./extract/apidocs.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -8,7 +9,8 @@ import { lineOf, matcher, select, type Source } from "./source.js";
  * It decides nothing; whoever writes the configuration chooses what to keep.
  */
 export interface Inventory {
-  components: Array<{ name: string; path: string; manifest: string }>;
+  /** `note` says why a component is named by its path rather than by its manifest or directory. */
+  components: Array<{ name: string; path: string; manifest: string; note?: string }>;
   routes: Array<{ component: string; file: string; style: string; count: number; example: string }>;
   calls: Array<{ component: string; file: string; count: number; example: string }>;
   /** OpenAPI descriptions committed or served by code, by owning component. */
@@ -96,6 +98,90 @@ function nameFrom(manifest: string, text: string | undefined, dir: string): stri
   return dir.split("/").pop() || "root";
 }
 
+const dependsOn = (text: string | undefined, name: string): boolean => {
+  try {
+    const m = JSON.parse(text ?? "{}") as Record<string, unknown>;
+    return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some((k) => {
+      const deps = m[k];
+      return !!deps && typeof deps === "object" && Object.hasOwn(deps, name);
+    });
+  } catch {
+    return false;
+  }
+};
+
+/** A pubspec whose dependencies take `flutter` from the SDK: `dependencies: { flutter: { sdk: flutter } }`. */
+const onFlutter = (text: string | undefined): boolean => {
+  try {
+    const pubspec = parse(text ?? "") as { dependencies?: { flutter?: { sdk?: unknown } } } | null;
+    return pubspec?.dependencies?.flutter?.sdk === "flutter";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The platform folders a cross-platform framework keeps beside an app and builds as part of it, each with a trailing
+ * `/`: the host projects of a Flutter app or plugin (a pubspec.yaml on the Flutter SDK), the native projects of a React
+ * Native app or library (a package.json depending on react-native) and of an Expo module (expo-module.config.json).
+ * A manifest inside one belongs to that app's build, so it is not a component of its own.
+ */
+function platformFolders(source: Source, all: string[]): string[] {
+  const out: string[] = [];
+  for (const file of all) {
+    const dir = dirname(file) === "." ? "" : `${dirname(file)}/`;
+    const name = file.slice(dir.length);
+    const folders =
+      name === "pubspec.yaml" && onFlutter(source.read(file))
+        ? ["android", "ios", "macos", "linux", "windows", "web"]
+        : (name === "package.json" && dependsOn(source.read(file), "react-native")) || name === "expo-module.config.json"
+          ? ["android", "ios"]
+          : [];
+    out.push(...folders.map((f) => `${dir}${f}/`));
+  }
+  return out;
+}
+
+/**
+ * Components that would share a name, taken from the directory or the manifest, are named by as much of their path
+ * above it as tells them apart from each other and from every other component (`mobile-app`, `catalog-app`), and say
+ * so.
+ */
+function uniqueNames(components: Inventory["components"]): void {
+  const groups = new Map<string, Inventory["components"]>();
+  for (const c of components) (groups.get(c.name) ?? groups.set(c.name, []).get(c.name)!).push(c);
+  for (const [name, group] of groups) {
+    if (group.length < 2) continue;
+    const others = new Set(components.filter((c) => c.name !== name).map((c) => c.name));
+    const above = group.map((c) => {
+      const segments = c.path.split("/").filter(Boolean);
+      return segments[segments.length - 1] === name ? segments.slice(0, -1) : segments;
+    });
+    const longest = Math.max(...above.map((a) => a.length));
+    const distinct = (names: string[]) => new Set(names).size === names.length && !names.some((n) => others.has(n));
+    let names: string[] = [];
+    for (let k = 1; k <= Math.max(longest, 1); k++) {
+      names = above.map((a) => [...a.slice(Math.max(0, a.length - k)), name].join("-"));
+      if (distinct(names)) break;
+    }
+    // Where the paths run out first (a root package named as a directory below it), a number tells them apart.
+    const numbered = !distinct(names);
+    if (numbered) {
+      const used = new Set(others);
+      names = names.map((n) => {
+        let candidate = n;
+        for (let i = 2; used.has(candidate); i++) candidate = `${n}-${i}`;
+        used.add(candidate);
+        return candidate;
+      });
+    }
+    group.forEach((c, i) => {
+      c.name = names[i]!;
+      c.note = `named by its path: ${group.length} components would be named ${name}${numbered ? ", and their paths do not tell them apart, so they are numbered" : ""}`;
+    });
+  }
+}
+
 /** A root manifest that only lists workspaces is the monorepo's tooling, not a component. */
 function workspaceRoot(source: Source, manifest: string, all: string[]): boolean {
   if (manifest !== "package.json") return false;
@@ -113,9 +199,11 @@ export function inventory(source: Source, exclude: string[]): Inventory {
 
   const manifestFiles = all.filter((f) => MANIFESTS.test(f));
   if (manifestFiles.length) select(source, manifestFiles, []);
-  const byDir = new Map<string, { name: string; path: string; manifest: string }>();
+  const platforms = platformFolders(source, all);
+  const byDir = new Map<string, Inventory["components"][number]>();
   for (const m of manifestFiles) {
     if (!m.includes("/") && workspaceRoot(source, m, all)) continue;
+    if (platforms.some((p) => m.startsWith(p))) continue;
     // A manifest at the root makes the repository itself a component, at path "".
     const dir = dirname(m) === "." ? "" : dirname(m);
     const prefer = /component\.json/.test(m);
@@ -123,6 +211,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     byDir.set(dir, { name: nameFrom(m, source.read(m), dir), path: dir, manifest: m });
   }
   const components = [...byDir.values()].sort((a, b) => a.path.localeCompare(b.path));
+  uniqueNames(components);
 
   const code = select(source, [CODE], exclude);
   const routes: Inventory["routes"] = [];
@@ -167,7 +256,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
 export function inventoryText(inv: Inventory): string {
   const lines: string[] = [];
   lines.push(`components (${inv.components.length}, from manifests)`);
-  for (const c of inv.components) lines.push(`  ${c.name}  ${c.path}  ${c.manifest.split("/").pop()}`);
+  for (const c of inv.components) lines.push(`  ${c.name}  ${c.path}  ${c.manifest.split("/").pop()}${c.note ? `  (${c.note})` : ""}`);
   lines.push("", "route candidates (file, style, count, first)");
   for (const r of inv.routes) lines.push(`  ${r.component}  ${r.style}  ${r.count}  ${r.example}`);
   const byComponent = new Map<string, Inventory["calls"]>();
