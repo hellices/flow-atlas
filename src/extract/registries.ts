@@ -48,8 +48,9 @@ function keysFrom(source: Source, file: string, pattern: string | undefined, fie
     }
   } catch {
     if (!re) return out;
-    const global = new RegExp(re.source, "g");
-    for (const m of text.matchAll(global)) if (m[1]) out.push({ key: m[1], at: { file, line: lineOf(text, m.index ?? 0) } });
+    // The key's own line: a pattern that starts with the line break before it would otherwise place it a line early.
+    const global = new RegExp(re.source, "gd");
+    for (const m of text.matchAll(global)) if (m[1]) out.push({ key: m[1], at: { file, line: lineOf(text, m.indices?.[1]?.[0] ?? m.index ?? 0) } });
   }
   return out;
 }

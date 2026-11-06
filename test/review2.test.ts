@@ -102,6 +102,12 @@ describe("registry locations", () => {
     const entries = extractRegistries(memory({ "active.json": active }), config);
     expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["mentions invoice:2", "invoice:4", "a/b:5"]);
   });
+  it("places a key read by a pattern from a text file on the line of the key, not where the match starts", () => {
+    const enumFile = "public enum Kind {\n    ALPHA,\n    BETA\n}\n";
+    const config = normalizeConfig({ registries: [{ name: "kind", active: { file: "Kind.java", pattern: "\\n    ([A-Z_]+)[,\\n]" }, producers: [], consumers: [] }] });
+    const entries = extractRegistries(memory({ "Kind.java": enumFile }), config);
+    expect(entries.map((e) => `${e.key}:${e.at.line}`)).toEqual(["ALPHA:2", "BETA:3"]);
+  });
 });
 
 describe("routes", () => {
