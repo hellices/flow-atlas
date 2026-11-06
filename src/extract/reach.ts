@@ -139,12 +139,15 @@ export class Reach {
           const local = (el.propertyName ?? el.name).text;
           if (local !== el.name.text) parsed.reexports.set(el.name.text, { file, name: local });
         }
-      } else if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+      } else if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+        // A type-only re-export carries no value, so nothing is followed through it.
         const target = this.resolve(file, st.moduleSpecifier.text);
         if (!target) continue;
         if (!st.exportClause) parsed.stars.push(target);
         else if (ts.isNamedExports(st.exportClause)) {
-          for (const el of st.exportClause.elements) parsed.reexports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
+          for (const el of st.exportClause.elements) {
+            if (!el.isTypeOnly) parsed.reexports.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text });
+          }
         }
       }
     }
@@ -182,7 +185,7 @@ export class Reach {
   }
 
   /**
-   * Member method names called under `start` in `file`, sorted; `executed` collects `file:line` of each string the code
+   * Member method names called under `start` in `file`, sorted; `executed` collects `file@offset` of each string the code
    * passes to a call it runs, so a request written directly in it is known even when it sits in no method of its own. A function declared inside the code, or bound to a
    * local name, is followed only where it is used; a function written inline counts as run when it is a callback
    * argument or called on the spot, and not when it is returned or stored.
@@ -300,7 +303,7 @@ export class Reach {
         // spot; one returned or stored is run by whoever receives it, which is not known here.
         if (n !== node && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && !handedToCall(n)) return;
         if (executed && inCall && notes && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n))) {
-          executed.add(`${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
+          executed.add(`${f}@${n.getStart(parsed.sf)}`);
         }
         // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
         if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {

@@ -181,7 +181,7 @@ function ownRender(cls: ts.ClassDeclaration): ts.Node | undefined {
 
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
-/** `executed` collects, per surface id, the `file:line` of each call its handler runs (see `Reach.from`). */
+/** `executed` collects, per surface id, the `file@offset` of each string its handler passes to a call it runs (see `Reach.from`). */
 export function routesFromTypeScript(
   file: string,
   text: string,
@@ -272,6 +272,8 @@ export function routesFromTypeScript(
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
+      // A type-only export (`export type * from`, `export type { GET } from`) exports no value Next.js could call.
+      if (ts.isExportDeclaration(st) && st.isTypeOnly) continue;
       if (next.kind === "api") {
         // An API route's default export answers every method.
         if (ts.isExportAssignment(st) && !st.isExportEquals) add("*", next.path, st, st.expression);
@@ -279,7 +281,7 @@ export function routesFromTypeScript(
         // `export { default } from "../server/handler"`, `export { handler as default }`.
         if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
           for (const e of st.exportClause.elements) {
-            if (e.name.text !== "default") continue;
+            if (e.name.text !== "default" || e.isTypeOnly) continue;
             const r = reexported(st, e);
             add("*", next.path, e, r.handler, undefined, { handlerFile: r.file });
           }
@@ -295,7 +297,7 @@ export function routesFromTypeScript(
       if (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause)) {
         for (const e of st.exportClause.elements) {
           // `export { GET } from "./handlers"` serves the other module's function; without it the route still stands.
-          if (NEXT_METHODS.has(e.name.text)) handlers.set(e.name.text, { node: e, ...reexported(st, e) });
+          if (NEXT_METHODS.has(e.name.text) && !e.isTypeOnly) handlers.set(e.name.text, { node: e, ...reexported(st, e) });
         }
       }
       // `export * from "./handlers"` serves every method that module exports, followed as far as re-exports go.

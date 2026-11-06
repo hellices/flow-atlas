@@ -218,6 +218,27 @@ describe("framework rules", () => {
     ]);
   });
 
+  it("serves no method a route re-exports only as a type", () => {
+    const files = {
+      // A type-only re-export, of every name or of named ones, exports no runtime value Next.js could call.
+      "app/stars/route.ts": 'export function POST() {}\nexport type * from "./handlers";',
+      "app/named/route.ts": 'export function POST() {}\nexport type { GET } from "./handlers";\nexport { type PUT } from "./handlers";',
+      // Nor does a value re-export that reaches the handler only through a type-only one.
+      "app/through/route.ts": 'export function POST() {}\nexport * from "./types";',
+      "app/through/types.ts": 'export type * from "../stars/handlers";',
+      "app/stars/handlers.ts": "export function GET() {}\nexport function PUT() {}",
+      "app/named/handlers.ts": "export function GET() {}\nexport function PUT() {}",
+    };
+    expect(scanned(files)).toEqual([
+      "api|OPTIONS /named (implicit)",
+      "api|OPTIONS /stars (implicit)",
+      "api|OPTIONS /through (implicit)",
+      "api|POST /named",
+      "api|POST /stars",
+      "api|POST /through",
+    ]);
+  });
+
   it("follows what a server page runs while rendering, and not its links or what the browser runs later", () => {
     const files = {
       "app/notes/[id]/page.tsx": [
@@ -300,6 +321,23 @@ describe("framework rules", () => {
     const reached = (id: string) => graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     const pages = ["notes", "alias", "re", "field", "quoted", "computed", "overload", "inherits", "imported"];
     expect(pages.map((p) => reached(`web|GET /${p}`))).toEqual(pages.map((p) => [`/api/${p}`]));
+  });
+
+  it("joins a page only to the requests it makes while rendering, not to a link on the same line", () => {
+    const files = {
+      "app/one/page.tsx": 'export default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
+      "app/next/page.tsx": "export default function Next() { return null; }",
+      "app/api/data/route.ts": "export function GET() {}",
+    };
+    const config = normalizeConfig({
+      components: [{ name: "web", path: "" }],
+      routes: [{ component: "web", files: ["app/**/*.{ts,tsx}"], styles: ["next"] }],
+      calls: [{ from: "web", to: "web", files: ["app/**/*.tsx"] }],
+    });
+    const graph = scan(memory(files), config);
+    const reached = graph.edges.filter((e) => e.kind === "reach" && e.from === "web|GET /one").map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    expect(graph.calls.map((c) => c.path).sort()).toEqual(["/api/data", "/next"]);
+    expect(reached).toEqual(["/api/data"]);
   });
 
   it("picks a Next.js route by its path, then its method, as Next.js does", () => {
