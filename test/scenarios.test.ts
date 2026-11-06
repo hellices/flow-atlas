@@ -21,6 +21,8 @@ interface Expected {
   surfaces: string[];
   findings: string[];
   chains: string[];
+  /** Every call read, `from->to|METHOD path @ file:line` (`based` after the path when the URL joins a base); compared when given. */
+  calls?: string[];
   /** Fragments of the limits atlas reports, one per limit, in order. */
   limits?: string[];
   /** Each flow's Ready; none when the scenario has no flow descriptions. */
@@ -29,8 +31,11 @@ interface Expected {
   documents?: string[];
   /** Each component's decided description, as `component status location reason`, where the scenario is about it. */
   descriptions?: string[];
-  /** What `atlas inventory` offers: route files with their style and count, client-call files with their count, documents. */
-  inventory: { routes: string[]; calls: string[]; documents?: string[] };
+  /**
+   * What `atlas inventory` offers: components by name and manifest (none when the scenario has no manifests), route
+   * files with their style and count, client-call files with their count, documents.
+   */
+  inventory: { components?: string[]; routes: string[]; calls: string[]; documents?: string[] };
 }
 
 const root = fileURLToPath(new URL("../fixtures/scenarios", import.meta.url));
@@ -50,10 +55,12 @@ function run(dir: string) {
     findings: findings.map((f) => f.key).sort(),
     // A chain by its id, then every other surface it reaches.
     chains: chains.chains.map((c) => [c.id, ...c.surfaces.filter((s) => s !== c.root).sort()].join(" + ")).sort(),
+    calls: graph.calls.map((c) => `${c.from}->${c.to}|${c.method} ${c.path}${c.based ? " based" : ""} @ ${c.at.file}:${c.at.line}`).sort(),
     limits: graph.limits,
     documents: graph.apiDocuments.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`),
     descriptions: graph.apiDescriptions.map((d) => `${d.component} ${d.status} ${d.location ?? "-"} ${d.reason}`),
     inventory: {
+      components: offered.components.map((c) => `${c.name} ${c.manifest}${c.note ? ` (${c.note})` : ""}`),
       routes: offered.routes.map((r) => `${r.file} ${r.style} ${r.count}`).sort(),
       calls: offered.calls.map((c) => `${c.file} ${c.count}`).sort(),
       documents: offered.apiDocuments.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`),
@@ -72,12 +79,14 @@ describe("scenarios from real repositories", () => {
       expect(actual.surfaces).toEqual([...expected.surfaces].sort());
       expect(actual.findings).toEqual([...expected.findings].sort());
       expect(actual.chains).toEqual([...expected.chains].sort());
+      if (expected.calls) expect(actual.calls).toEqual([...expected.calls].sort());
       expect(actual.limits.length).toBe((expected.limits ?? []).length);
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));
       expect(actual.flows).toEqual(expected.flows ?? {});
       expect(actual.documents).toEqual(expected.documents ?? []);
       expect(actual.descriptions).toEqual(expected.descriptions ?? []);
       expect(actual.inventory).toEqual({
+        components: expected.inventory.components ?? [],
         routes: [...expected.inventory.routes].sort(),
         calls: [...expected.inventory.calls].sort(),
         documents: expected.inventory.documents ?? [],

@@ -13,7 +13,8 @@ Key `FA001|<component>|<METHOD> <path>`.
 A route served by a component that some configured client calls, where no configured call site matches the
 route's method and path. Surface paths are OpenAPI templates (a Nest or Express `:id` reads `{id}`); path
 parameters (`{id}`, `*`) match any segment; interpolations in a call
-match any segment.
+match any segment. A route that a call of unread method may reach, among routes of several methods, is not reported;
+a `limit:` line names that call.
 
 Common causes: the provider was built ahead of its client; the client was removed or renamed; the client builds
 the path in a way the extractor cannot read (a URL returned by the server, a path assembled across functions).
@@ -28,6 +29,9 @@ Key `FA002|<from>-><to>|<METHOD> <path>`.
 A configured call site whose request matches no route of its target. Reported only when the target has route
 sources in the configuration (even if none of its routes is left) and the request is clearly a path on that target:
 it starts from a base address, or its first segment is one the target serves.
+
+A call of unread method whose path fits routes of several methods is not reported either: it may reach any of them,
+so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.

@@ -43,6 +43,10 @@
           },
           "manifest": {
             "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "description": "Why the component is named by its path: other manifests would give it the same name."
           }
         }
       }

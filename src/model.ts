@@ -149,7 +149,7 @@ export interface ApiDescription {
 }
 
 export interface Coverage {
-  /** `routes <component>` or `calls <from>-><to>`. */
+  /** `routes <component>`, `calls <from>-><to>` or `registries <name>`. */
   source: string;
   files: number;
   items: number;

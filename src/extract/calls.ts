@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
-import type { Call, Coverage, Draft } from "../model.js";
-import { callPath, HOLE, joinRoute, type CallPath } from "../paths.js";
+import type { Call, Coverage, Draft, Place } from "../model.js";
+import { callPath, HOLE, hostOf, isLoopback, joinRoute, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, unwrap } from "./binding.js";
@@ -162,6 +162,116 @@ function outermost(node: ts.Node): ts.Node {
   return value;
 }
 
+/** The expression a URL is the value of: past what `outermost` passes, and past the branches of a conditional. */
+function valuePlace(node: ts.Node): ts.Node {
+  let value = outermost(node);
+  while (ts.isConditionalExpression(value.parent) && value !== value.parent.condition) value = outermost(value.parent);
+  return value;
+}
+
+const COMPARISONS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
+/** Methods of strings, arrays and regular expressions that test, search or cut text with their arguments. */
+const TEXT_TESTS = new Set(["startsWith", "endsWith", "includes", "indexOf", "lastIndexOf", "match", "matchAll", "search", "test", "split", "replace", "replaceAll"]);
+
+/** A member access by a name the code fixes: `a.b`, `a["b"]` or `` a[`b`] ``. */
+function member(e: ts.Expression): { receiver: ts.Expression; name: string } | undefined {
+  if (ts.isPropertyAccessExpression(e)) return { receiver: e.expression, name: e.name.text };
+  if (!ts.isElementAccessExpression(e)) return undefined;
+  const key = unwrap(e.argumentExpression);
+  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? { receiver: e.expression, name: key.text } : undefined;
+}
+
+/** The call or `new` a value is an argument of, with its position and the name the callee is written with. */
+function argumentPlace(value: ts.Node): { call: ts.CallExpression | ts.NewExpression; args: ts.Expression[]; at: number; callee: ts.Expression; name: string } | undefined {
+  const call = value.parent;
+  if (!(ts.isCallExpression(call) || ts.isNewExpression(call))) return undefined;
+  const args = [...(call.arguments ?? [])];
+  const at = args.indexOf(value as ts.Expression);
+  if (at < 0) return undefined;
+  const callee = unwrap(call.expression);
+  const name = member(callee)?.name ?? (ts.isIdentifier(callee) ? callee.text : "");
+  return { call, args, at, callee, name };
+}
+
+/**
+ * Whether an expression is the window's Location, as the HTML standard names it: the global `location`, or `location`
+ * on a window or the document. A binding the code declares under that name is its own value.
+ */
+function isLocation(e: ts.Expression): boolean {
+  const value = unwrap(e);
+  if (isGlobal(value, new Set(["location"]))) return true;
+  const m = member(value);
+  return m?.name === "location" && isGlobal(unwrap(m.receiver), WINDOWS);
+}
+
+/**
+ * Whether a string is compared (`===`, `!==`, `==`, `!=`, a `case`) or an argument of a method that tests, searches or
+ * cuts text, as `path.startsWith("/api")`: no request either way. A `replace` on the window's Location
+ * (`location.replace(url)`) or on Next.js's router navigates instead.
+ */
+function comparedOrTested(node: ts.Node): boolean {
+  const value = valuePlace(node);
+  const parent = value.parent;
+  if (ts.isBinaryExpression(parent)) return COMPARISONS.has(parent.operatorToken.kind);
+  if (ts.isCaseClause(parent)) return parent.expression === value;
+  const place = argumentPlace(value);
+  if (!place || !ts.isCallExpression(place.call) || !member(place.callee) || !TEXT_TESTS.has(place.name)) return false;
+  return !(place.name === "replace" && (navigates(place.callee) || isLocation(member(place.callee)!.receiver)));
+}
+
+/**
+ * The function a string is handed to after its first argument, as in `requireAsset(assets, id, "/devices")`: fetch,
+ * axios, ky, got, Node's http and project wrappers take their URL first, so a later argument is no request. It still
+ * is where a literal method comes before it (`request("POST", "/x")`) and in the APIs documented to take it there:
+ * XMLHttpRequest's `open(method, url)` and Angular's `request(method, url)`, with a method held in a value first, and
+ * `redirect(status, url)` as Express and SvelteKit write it. The window's `open(url, target)` takes the URL first.
+ * Undefined where the string may be a request.
+ */
+function laterArgument(node: ts.Node): string | undefined {
+  const place = argumentPlace(valuePlace(node));
+  if (!place || place.at === 0) return undefined;
+  if (place.name === "redirect") return undefined;
+  const first = place.args[0]!;
+  const methodFirst = !(ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first) || ts.isTemplateExpression(first));
+  if ((place.name === "open" || place.name === "request") && place.at === 1 && methodFirst && !windowOpen(place.callee)) return undefined;
+  if (place.args.slice(0, place.at).some((a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && METHODS.has(a.text))) return undefined;
+  return place.name || place.callee.getText().replace(/\s+/g, " ");
+}
+
+const WINDOWS = new Set(["window", "self", "globalThis", "top", "parent", "opener", "frames", "document"]);
+
+/** Whether an expression is a global of one of these names: one the code does not declare. */
+const isGlobal = (e: ts.Expression, names: Set<string>): boolean => ts.isIdentifier(e) && names.has(e.text) && declarationOf(e) === undefined;
+
+/**
+ * Whether a callee is the window's `open(url, target)`: the global `open`, or `open` on a global window or document. A
+ * binding the code declares under one of those names is its own value.
+ */
+function windowOpen(callee: ts.Expression): boolean {
+  if (isGlobal(callee, new Set(["open"]))) return true;
+  const m = member(callee);
+  return m?.name === "open" && isGlobal(unwrap(m.receiver), WINDOWS);
+}
+
+/** The key a property is written with, quoted or not. */
+const keyOf = (p: ts.PropertyAssignment): string => (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name) ? p.name.text : "");
+
+/**
+ * Whether a string is a `path` option that does not start at the root. Node's `http.request` takes the request path
+ * alone in `path` (`/index.html?page=12`), as clients modelled on it do; a `path` joined to another value is a file
+ * path, or a path under something else.
+ */
+function pathOffRoot(node: ts.Node, raw: string): boolean {
+  const parent = valuePlace(node).parent;
+  return ts.isPropertyAssignment(parent) && keyOf(parent) === "path" && !raw.trim().startsWith("/");
+}
+
 const NEXT_ROUTERS = ["next/navigation", "next/router"];
 
 /** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
@@ -190,7 +300,8 @@ function isNextRouter(e: ts.Expression): boolean {
  * `replace` on its router, also taken apart (`const { push } = useRouter()`). An array's `push` is no navigation.
  */
 function navigates(callee: ts.Expression): "router" | "redirect" | undefined {
-  if (ts.isPropertyAccessExpression(callee)) return /^(push|replace)$/.test(callee.name.text) && isNextRouter(unwrap(callee.expression)) ? "router" : undefined;
+  const m = member(callee);
+  if (m) return /^(push|replace)$/.test(m.name) && isNextRouter(unwrap(m.receiver)) ? "router" : undefined;
   if (!ts.isIdentifier(callee)) return undefined;
   const imported = importedFrom(callee, ["next/navigation"]);
   if (imported === "redirect" || imported === "permanentRedirect") return "redirect";
@@ -210,10 +321,17 @@ function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
 }
 
 /**
- * A call as read, with the offsets of the expression that holds its URL in a parsed file. The offsets join it to the
- * strings a handler runs (`Reach.from`) and are not part of the graph.
+ * A call as read, with the offsets of the expression that holds its URL in a parsed file and the host an absolute URL
+ * names. The offsets join it to the strings a handler runs (`Reach.from`); the host decides whether the URL is a
+ * request to the configured target (`extractCalls`). Neither is part of the graph.
  */
-export type ReadCall = Draft<Call> & { span?: [number, number] };
+export type ReadCall = Draft<Call> & { span?: [number, number]; host?: string };
+
+/** A path left unread because it is handed to a function after its first argument (`laterArgument`). */
+export interface Passed {
+  callee: string;
+  at: Place;
+}
 
 /** The call as the graph holds it, without the offsets it was read at. */
 export function withoutSpan(c: ReadCall): Draft<Call> {
@@ -222,7 +340,24 @@ export function withoutSpan(c: ReadCall): Draft<Call> {
   return out;
 }
 
-export function callsFromTypeScript(file: string, text: string, spec: CallSource, spans?: Spans): ReadCall[] {
+/** What a reader is told about where it reads, and where it notes what it leaves unread. */
+export interface ReadContext {
+  /** Where route registrations write their paths (see `extractRoutes`); strings there are not requests. */
+  spans?: Spans;
+  /** Collects the paths left unread because they are handed to a function after its first argument. */
+  passed?: Passed[];
+  /** The host of the target's `origins` entry. */
+  origin?: string;
+}
+
+/**
+ * Whether an absolute URL's host (undefined for a relative URL, or a host held in a value) is the call source's
+ * target: a loopback address, where the repository's components run side by side, or the host its origin names.
+ */
+export const reachesTarget = (host: string | undefined, origin: string | undefined): boolean => host === undefined || isLoopback(host) || host === origin;
+
+export function callsFromTypeScript(file: string, text: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
+  const { spans, passed, origin } = context;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
@@ -232,9 +367,11 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       if (depth > 4 || !ts.isIdentifier(expr)) return undefined;
       const decl = constFor(expr);
       const value = decl?.initializer ? urlText(decl.initializer, depth + 1) : undefined;
-      if (value === undefined || !callPath(value)) return undefined;
+      // An origin with no path (`https://api.example.com`) is a base too; its host decides the target.
+      const origin = value !== undefined && !callPath(value) && hostOf(value) !== undefined;
+      if (value === undefined || (!callPath(value) && !origin)) return undefined;
       (leads.get(decl!) ?? leads.set(decl!, new Set()).get(decl!)!).add(expr);
-      return value;
+      return origin ? value.replace(/\/+$/, "") : value;
     };
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
     // A const that names another (`const BASE = API`) has its value.
@@ -244,30 +381,65 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);
     return undefined;
   };
+  const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+  /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
+  const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
+    if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw)) return undefined;
+    const parsed = callPath(raw) ?? rootNavigation(node, raw);
+    const callee = parsed && laterArgument(node);
+    if (callee === undefined) return parsed;
+    if (report) passed?.push({ callee, at: { file, line: lineAt(node) } });
+    return undefined;
+  };
+  const add = (node: ts.Node, parsed: CallPath, host: string | undefined): void => {
+    found.push({ node, call: {
+      from: spec.from,
+      to: spec.to,
+      method: navigatesWithGet(node) ? "GET" : methodNear(node),
+      path: parsed.path,
+      based: parsed.based,
+      at: { file, line: lineAt(node) },
+      evidence: "static",
+      scope: scopeOf(node),
+      span: [node.getStart(sf), node.getEnd()],
+      host,
+    } });
+  };
+  // Branches of a conditional read as one call, at the conditional.
+  const merged = new Set<ts.Node>();
   const visit = (node: ts.Node): void => {
     // A literal type (`path: "/m" | "/r"`) names values; it is no request. `extends make(fetch(x))` runs its expression.
     if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)) return;
+    // `base ? `${base}/chat` : "/chat"` is one request, whichever branch runs: one call, joining a base only when both
+    // branches do. Branches the configured prefix leaves on different paths (it goes before a root-relative path, not
+    // one joined to a base) are two requests, as is a branch to another host: each is read on its own.
+    if (ts.isConditionalExpression(node)) {
+      const branches = [unwrap(node.whenTrue), unwrap(node.whenFalse)];
+      const read = branches.map((b) => {
+        const raw = ts.isStringLiteral(b) || ts.isNoSubstitutionTemplateLiteral(b) || ts.isTemplateExpression(b) || isPlus(b) ? urlText(b, 0) : undefined;
+        const parsed = raw === undefined ? undefined : requested(b, raw, false);
+        return parsed && { raw: raw!, parsed };
+      });
+      const [a, b] = read;
+      const hosts = [a && hostOf(a.raw), b && hostOf(b.raw)];
+      const one = hosts[0] === hosts[1] || hosts.every((h) => reachesTarget(h, origin));
+      const effective = (p: CallPath) => (p.based || !spec.prefix ? p.path : joinRoute(spec.prefix, p.path));
+      if (a && b && effective(a.parsed) === effective(b.parsed) && one) {
+        // The path the prefix completes, where a branch has one, so the prefix is put before it once.
+        const path = (a.parsed.based ? b.parsed : a.parsed).path;
+        add(node, { path, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
+        branches.forEach((branch) => merged.add(branch));
+      }
+    }
     let raw: string | undefined;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) raw = urlText(node, 0);
     // A whole concatenation is one URL; its pieces alone are not requests.
     const whole = isPlus(node) && !isPlus(node.parent) && !(ts.isParenthesizedExpression(node.parent) && isPlus(node.parent.parent));
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
-      const parsed = registered(node) ? undefined : (callPath(raw) ?? rootNavigation(node, raw));
-      if (parsed) {
-        found.push({ node, call: {
-          from: spec.from,
-          to: spec.to,
-          method: navigatesWithGet(node) ? "GET" : methodNear(node),
-          path: parsed.path,
-          based: parsed.based,
-          at: { file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 },
-          evidence: "static",
-          scope: scopeOf(node),
-          span: [node.getStart(sf), node.getEnd()],
-        } });
-      }
+      const parsed = merged.has(node) ? undefined : requested(node, raw, true);
+      if (parsed) add(node, parsed, hostOf(raw));
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
       if (whole) {
         for (const o of operands(node)) {
@@ -301,6 +473,30 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const bases = new Set<ts.Node>();
   // The request list holds the literal itself, inside any parentheses or assertion around it.
   for (const decl of leads.keys()) if (!usedElsewhere.has(decl)) bases.add(unwrap(decl.initializer!));
+  // A URL held in a `const` is requested where the const is used: when every use that requests it states one method,
+  // that is its method. A use that starts or builds another URL is that URL's request.
+  const held = new Map<ts.VariableDeclaration, ReadCall>();
+  for (const f of found) {
+    const decl = valuePlace(f.node).parent;
+    if (f.call.method === "*" && ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const) held.set(decl, f.call);
+  }
+  if (held.size) {
+    const methods = new Map<ts.VariableDeclaration, string[]>();
+    const names = new Set([...held.keys()].map((d) => (d.name as ts.Identifier).text));
+    const find = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && names.has(n.text)) {
+        const decl = declarationOf(n);
+        const place = valuePlace(n).parent;
+        const building = ts.isTemplateSpan(place) || isPlus(place);
+        if (decl && ts.isVariableDeclaration(decl) && held.has(decl) && n !== decl.name && !building && !leads.get(decl)?.has(n)) {
+          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n));
+        }
+      }
+      ts.forEachChild(n, find);
+    };
+    find(sf);
+    for (const [decl, used] of methods) if (used[0] !== "*" && used.every((m) => m === used[0])) held.get(decl)!.method = used[0]!;
+  }
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
 
@@ -449,8 +645,8 @@ export function withoutComments(file: string, text: string): string {
 }
 
 /** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
-export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans): Draft<Call>[] {
-  const out: Draft<Call>[] = [];
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans): ReadCall[] {
+  const out: ReadCall[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
   const python = /\.pyi?$/.test(file);
@@ -491,6 +687,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       at: { file, line: lineOf(text, index) },
       evidence: "text",
       scope: scopeAt(index),
+      host: hostOf(inner),
     });
   };
   read(text, 0);
@@ -784,11 +981,11 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
  * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
  * Text that is not an attribute, commented-out markup and absolute URLs, which name other sites, are not read.
  */
-export function callsFromTemplate(file: string, original: string, spec: CallSource): Draft<Call>[] {
+export function callsFromTemplate(file: string, original: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
   const { text, raw } = scanHtml(original);
   const page = pageOf(text, raw);
   const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
-  const out: Draft<Call>[] = [];
+  const out: ReadCall[] = [];
   const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
     const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
@@ -860,7 +1057,9 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const body = text.slice(script.bodyStart, script.bodyEnd);
     const shift = lineOf(text, script.bodyStart) - 1;
     // Offsets in the script body are not offsets in the template; no handler runs a template's script anyway.
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec)) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    const inScript: Passed[] = [];
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
       for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
@@ -872,24 +1071,54 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   return out.sort((a, b) => a.at.line - b.at.line);
 }
 
-/** `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests. */
-export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans): ReadCall[] {
+/**
+ * `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests.
+ *
+ * An absolute URL is a request to a source's target when its host is a loopback address, where the repository's
+ * components run side by side, or the host of the target's `origins` entry. Any other host is another server's: its
+ * URLs are left out. A limit names those hosts, and the functions paths were handed to after their first argument.
+ */
+export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans, limits: string[] = []): ReadCall[] {
   const out: ReadCall[] = [];
   for (const spec of config.calls) {
     const files = select(source, spec.files, config.exclude);
+    const origin = config.origins[spec.to] === undefined ? undefined : hostOf(config.origins[spec.to]!);
+    const foreign = new Map<string, string>();
+    const passed: Passed[] = [];
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
       const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, spans)
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec)
+          ? callsFromTemplate(file, text, spec, { passed, origin })
           : callsFromText(file, text, spec, spans);
-      // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
-      out.push(...(spec.prefix ? read.map((c) => (c.based ? c : { ...c, path: joinRoute(spec.prefix!, c.path) })) : read));
+      for (const c of read) {
+        const { host, ...call } = c;
+        if (host !== undefined && !reachesTarget(host, origin)) {
+          if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
+          continue;
+        }
+        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
+        out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
+      }
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
+    const edge = `calls ${spec.from}->${spec.to}`;
+    if (foreign.size) {
+      const hosts = [...foreign].map(([host, at]) => `${host} (${at})`).join(", ");
+      limits.push(`${edge}: URLs to ${hosts} are not read as requests to ${spec.to}; set origins.${spec.to} if that is its host`);
+    }
+    if (passed.length) {
+      const callees = new Map<string, { count: number; at: Place }>();
+      for (const p of passed) {
+        const entry = callees.get(p.callee) ?? callees.set(p.callee, { count: 0, at: p.at }).get(p.callee)!;
+        entry.count++;
+      }
+      const list = [...callees].map(([callee, { count, at }]) => `${callee} (${count}, first at ${at.file}:${at.line})`).join(", ");
+      limits.push(`${edge}: paths handed to a function after its first argument are not read as requests: ${list}`);
+    }
   }
   return out;
 }

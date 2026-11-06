@@ -87,12 +87,12 @@ atlas check --root <repo>                     # findings new since the baseline
 atlas check --since main                      # findings the current change introduced
 atlas check --format sarif > atlas.sarif      # findings as SARIF 2.1.0 (code scanning, IDE viewers)
 atlas diff main..WORKTREE --format markdown   # flow changes and new findings for a PR description
-atlas export arazzo                           # flows as Arazzo 1.0 for API workflow and e2e tools
+atlas export arazzo > flows.arazzo.yaml       # flows as Arazzo 1.0 (stdout; keep it at the repository root)
 atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
 ```
 
-`--ref <commit>` reads a commit without checking it out, and every write goes to `--out`, so a repository you must not
+`--ref <commit>` reads a commit without checking it out, and every write goes to `--out` (`export` prints to stdout), so a repository you must not
 change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md);
 expect two or three rounds of `scan` and correction before the findings are worth trusting.
 
@@ -111,7 +111,10 @@ atlas reports and does not block by default. To fail CI on new findings, use `--
 
 ## How traces connect
 
-`trace` joins two kinds of link. A call joins a route when the method and path agree (`=`). Inside a component, a
+`trace` joins two kinds of link. A call joins a route when the method and path agree (`=`). A call whose method atlas
+does not read (a project's wrapper around `fetch` that is given none, a `data-*` URL) joins the routes its path fits
+only when they all take one method; where they take several, which one it calls depends on the method, so it joins
+none of them and a `limit:` line names it. Inside a component, a
 route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
 (`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
 name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls
@@ -162,8 +165,9 @@ git config filter.public-registry.smudge cat
 ## Limits
 
 Routes and calls are read from string literals. A path assembled across several functions, or a URL taken from a
-server response, is not seen and shows up as FA001. Only configured files are read, so no finding does not prove a
-flow complete. Field-level contract checks are not implemented yet.
+server response, is not seen and shows up as FA001. A path handed to a function after its first argument, and an
+absolute URL to a host that is neither a loopback address nor the target's `origins` entry, are not read as calls; a
+`limit:` line names them. Only configured files are read, so no finding does not prove a flow complete. Field-level contract checks are not implemented yet.
 
 ## License
 

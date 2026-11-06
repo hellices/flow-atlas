@@ -9,7 +9,9 @@ case: |
   read, a registration is no request and the handler's own parameters name no port. The adapters' calls start chains
   of their own, since nothing in the code shows which request runs them; the only finding is the route a retired
   client used to call, and its handler's request to the core service belongs to that route, which no chain starts at,
-  so it starts none of its own; a journey whose order only the flow states stays Unknown.
+  so it starts none of its own; a journey whose order only the flow states stays Unknown. The core service's event
+  streams are registered on paths held in consts (`fastify.get(outputPath, ...)`); they were missing with no sign but
+  a lower count in coverage, and now a limit names each registration, line and expression.
 surfaces:
   - bff|GET /legacy/profiles
   - bff|POST /uploads
@@ -30,6 +32,9 @@ chains:
   - core->store|GET /store/internal/object-info/*
   - core->store|POST /store/internal/v2/shares
   - core->store|POST /store/internal/v2/upload-tickets
+limits:
+  - "core/src/events.ts:7 registers a path the file does not spell out (outputPath)"
+  - "core/src/events.ts:11 registers a path the file does not spell out (`${snapshotPath}`)"
 flows:
   ask: Ready=True
   image-question: Ready=Unknown

@@ -324,7 +324,7 @@ function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], ob
     broken.length > 0
       ? condition("Connected", "False", "NoPathBetweenSteps", broken.map(pairName).join(", "))
       : open.length > 0
-        ? condition("Connected", "Unknown", "StepsUnresolved", `not checked: ${open.map((s) => s.stepId).join(", ")}`)
+        ? condition("Connected", "Unknown", "StepsUnresolved", `not checked: ${open.map(pairName).join(", ")}`)
         : planned.length > 0
           ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${planned.map(pairName).join(", ")}`)
           : declared.length > 0

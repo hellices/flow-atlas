@@ -3,7 +3,10 @@
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
 material: components from manifests, files that register routes (and in which style), files whose strings look like
 client requests and OpenAPI documents. It does not choose; many candidates are tests
-helpers, tools or contracts, not clients. Expect two or three rounds of `atlas scan` and correction before the
+helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
+part of the app beside them (`android/`, `ios/` and the like of a Flutter app, a React Native app or an Expo module) is
+that app's, not a component; components that would share a name are named by their paths (`mobile-app`), or numbered where the paths do not
+tell them apart, with a note. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
 ```yaml
@@ -54,10 +57,10 @@ exclude: ["**/legacy/**"]     # added to the defaults: tests, generated, node_mo
 
 flows: ["flows/**/*.flow.yaml"]   # flow descriptions, read at the same revision as the code (this is the default)
 
-origins:                      # environment binding for `atlas export arazzo`: base URL each component is served at
+origins:                      # base URL each component is served at: `atlas export arazzo`, and absolute URLs read as calls
   orders: http://localhost:3001
-openapi:                      # only to override the OpenAPI description atlas finds for a component
-  orders: services/orders/openapi.json
+openapi:                      # to override the OpenAPI description atlas finds for a component, or give one it finds none of
+  orders: services/orders/openapi.json   # a file (in the repository, or absolute), a served path, or a URL
 
 rules:
   FA003: { cycles: false }    # when the repository already checks cycles
@@ -79,7 +82,8 @@ rules:
    back as FA004 with nothing to fix.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
-   continue through.
+   continue through. A registry's line counts the active files read and the entries they list; one that reads no file
+   or lists nothing also gives a `limit:` line, usually a moved file or a `pattern` or `field` that no longer fits.
 6. Run `atlas baseline update` once, with the person who owns the repository. The baseline also records what each
    source yielded; a later check warns when a source falls below half of that, which usually means code moved and
    the configuration did not.
@@ -90,10 +94,29 @@ TypeScript and JavaScript are parsed with the TypeScript compiler: string and te
 call files, the method from `.get(`/`.post(` callees, a method string in the same argument list
 (`request("/x", "POST")`) or a `method:` property nearby, and the function or method that holds the string. A URL that
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
-by the scopes around the use; a constant used only that way is a base, not a request of its own. A string in a type
-(`path: "/m" | "/r"`) names a value and is no request. Routes come
+by the scopes around the use (an origin with no path, `https://api.example.com`, keeps its host for the check below); a
+constant used only that way is a base, not a request of its own. A URL held in a `const` takes the method that every
+use requesting it states (`fetch(url, { method: "POST" })`); uses that differ or state none leave it `*`. A method named in brackets (`path["startsWith"]`) is
+the method named after a dot. A string in a type
+(`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
+handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
+`split`, `replace` other than the window's `location.replace(url)` and Next.js's router's). fetch, axios, ky, got and project wrappers take their URL first, so a path
+handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
+method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)` or Angular's
+`request(method, url)` with the method held in a value, or a `redirect(status, url)`; the window's `open(url, target)`
+(the global `open`, or `open` on a global `window` or `document`, not a binding of that name the code declares) takes its URL first. A limit names the functions such paths went to. A `path` option is
+read as Node's `http.request` defines it, from the root: one joined to another value (`` path: `${dir}/raw` ``) is no
+request. When both branches of a conditional name the same request (`` base ? `${base}/chat` : "/chat" ``) they are
+one call, which joins a base only when both branches do. Branches whose paths differ once the configured `prefix` is
+put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
+absolute URL, in code of any language, is a request to the call source's target when its
+host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
+other host, a link to another site for one, is not read, and a limit names the host. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
-(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. For each TypeScript route the handler is
+(`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
+is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
+names its file, line and expression. A `const` of the file named in `constants` is read as a GET route at its value,
+so a GET registered on it at that path gives no limit; another method or a prefix does. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
 those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
 registration call itself; an
@@ -170,6 +193,13 @@ a `spring` component a request whose path is fully known reaches that route only
 `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
 which atlas does not read, so there a request reaches every route it fits.
 
+A request whose method is not read (`*`: a project's wrapper called without a method, an init built at run time, a
+`data-*` URL) is matched to those routes only when they all take one method, or all take any. Where they take several,
+which one it calls depends on the method, which atlas does not settle: it leaves the call unmatched, a limit names the
+call and the methods, FA002 is not reported for it and FA001 for none of the routes it fits. A wrapper's own code is not read, so `authFetch(url)` is
+such a request even when the wrapper hands its arguments to `fetch`; `authFetch(url, { method: "POST" })` states its
+method.
+
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several
 functions, read from a response) is not seen. Such routes show up as FA001; list them in `publicSurfaces` or add the file that holds the path. A route in `publicSurfaces` that no component calls starts a chain of its own, entered from `outside`, so a flow can name it.
@@ -183,9 +213,18 @@ like; for a component read with `styles: [spring]`, what springdoc serves for it
 `references/openapi.md`). `atlas inventory` lists them. Only the server's base URL is yours to give, per environment, in `origins`;
 read it from the repository's deployment files.
 
+`atlas export arazzo` writes a step only when its component's description is decided. A component with none (a plain
+HTTP server atlas reads from code) has its steps left out with a `limit:`, and the workflows that lose steps say so in
+`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. The export prints to stdout,
+not to `--out`; save it at the repository root (`atlas export arazzo > flows.arazzo.yaml`), because a description
+file in the repository is written relative to the root. A file outside it (a
+committed link to one included) is written by its file name, with a `limit:` to commit it or publish it and set
+`openapi.<component>` to its URL; if it is the document the component serves, set `openapi.<component>` to the served
+path and `origins` to the server's base URL.
+
 Flow descriptions are also read from `<out>/flows/`, so a repository atlas must not write to can still be described.
 
-All writes go to `--out` (default `<root>/.atlas`): `graph.json`, `last-check.json` and `baseline.json` (keys and
+All writes go to `--out` (default `<root>/.atlas`; `export arazzo` prints to stdout instead): `graph.json`, `last-check.json` and `baseline.json` (keys and
 coverage). Exceptions are read from `<root>/flows/atlas-exceptions.yaml`, then `<out>/exceptions.yaml`.
 To analyse a repository you must not change, keep the configuration and all state in `--out` and use
 `--ref <commit>` to read commits without checking them out.
