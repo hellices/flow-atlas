@@ -101,7 +101,7 @@ function nameFrom(manifest: string, text: string | undefined, dir: string): stri
 const dependsOn = (text: string | undefined, name: string): boolean => {
   try {
     const m = JSON.parse(text ?? "{}") as Record<string, unknown>;
-    return ["dependencies", "devDependencies", "peerDependencies"].some((k) => {
+    return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some((k) => {
       const deps = m[k];
       return !!deps && typeof deps === "object" && Object.hasOwn(deps, name);
     });

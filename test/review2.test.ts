@@ -245,6 +245,12 @@ describe("inventory", () => {
     };
     expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`)).toEqual(["app:app", "backend:backend", "mobile:mobile", "tool:tool", "android:tool/android"]);
   });
+  it("takes react-native from any dependency list of a package", () => {
+    for (const list of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      const files = { "mobile/package.json": JSON.stringify({ name: "mobile", [list]: { "react-native": "0.80.0" } }), "mobile/android/build.gradle": "" };
+      expect(inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`), list).toEqual(["mobile:mobile"]);
+    }
+  });
   it("reads the Flutter SDK dependency in any YAML spelling, and only under dependencies", () => {
     const app = (pubspec: string) => ({ "app/pubspec.yaml": pubspec, "app/android/app/build.gradle.kts": "" });
     const names = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name}:${c.path}`);
