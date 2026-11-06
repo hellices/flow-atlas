@@ -276,6 +276,8 @@ describe("flows", () => {
     expect(cond(doc, "detached")).toMatchObject({ Documented: "False TitleMissing" });
     expect(cond(doc, "detached")).toMatchObject({ Ready: "False ConditionsFailed", Connected: "False NoPathBetweenSteps" });
     expect(cond(doc, "broken")).toMatchObject({ Connected: "Unknown StepsUnresolved", ProducesListed: "False NotInRegistry" });
+    // The second step is the unresolved one; the message names the pair it leaves unchecked, as the other Connected ones do.
+    expect(flow(doc, "broken").status.conditions.find((c) => c.type === "Connected")!.message).toBe("not checked: home -> gone");
     expect(validate("flow-report", doc)).toEqual([]);
   });
 });
