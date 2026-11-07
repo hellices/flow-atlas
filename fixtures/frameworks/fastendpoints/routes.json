@@ -1,0 +1,32 @@
+{
+  "framework": "fastendpoints",
+  "version": "8.3.0",
+  "routes": [
+    {"method":"GET","path":"/_test_url_cache_","raw":"_test_url_cache_"},
+    {"method":"POST","path":"/api/admin/login"},
+    {"method":"POST","path":"/api/admin/login/v1"},
+    {"method":"POST","path":"/api/admin/login/v2"},
+    {"method":"GET","path":"/api/admin/sales/invoice/{}","raw":"/api/admin/sales/invoice/{id}"},
+    {"method":"GET","path":"/api/admin/sales/reports/{}","raw":"/api/admin/sales/reports/{year:int}/{month:int?}"},
+    {"method":"GET","path":"/api/admin/sales/reports/{}/{}","raw":"/api/admin/sales/reports/{year:int}/{month:int?}"},
+    {"method":"GET","path":"/api/catalog/products"},
+    {"method":"GET","path":"/api/files","raw":"/api/files/{*path}"},
+    {"method":"GET","path":"/api/files/{**}","raw":"/api/files/{*path}"},
+    {"method":"PATCH","path":"/api/members/{}","raw":"/api/members/{id:int}"},
+    {"method":"PUT","path":"/api/members/{}","raw":"/api/members/{id:int}"},
+    {"method":"GET","path":"/api/orders"},
+    {"method":"POST","path":"/api/orders"},
+    {"method":"GET","path":"/api/orders/{}","raw":"/api/orders/{orderId:guid}"},
+    {"method":"GET","path":"/api/orders/{}/v1","raw":"/api/orders/{orderId:guid}/v1"},
+    {"method":"GET","path":"/api/products"},
+    {"method":"GET","path":"/api/products/{}/reviews","raw":"/api/products/{productId}/reviews"},
+    {"method":"GET","path":"/api/users"},
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/{id:int}"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/{id:int}"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/{id:int}"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/{id:int}"},
+    {"method":"POST","path":"/mobile/user/create"},
+    {"method":"GET","path":"/ping"}
+  ]
+}

@@ -1,0 +1,14 @@
+@page "/catch-all/{*pageRoute}"
+
+<h1>Catch All Parameters Example</h1>
+
+<p>Add some URI segments to the route and request the page again.</p>
+
+<p>
+    PageRoute: @PageRoute
+</p>
+
+@code {
+    [Parameter]
+    public string? PageRoute { get; set; }
+}

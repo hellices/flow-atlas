@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes FastEndpoints serves. Remove this when atlas reads it; the test fails
+# while a listed difference no longer occurs.
+unread: >-
+  atlas has no style for FastEndpoints and reads no C#: endpoint classes' `Get`/`Post`/`Verbs` and `Routes` in
+  `Configure()` or `[HttpGet]` attributes, the global route prefix and its overrides, configuration groups and sub-groups,
+  versions appended to routes, and the `_test_url_cache_` route the framework maps by itself are all left out; the only
+  sign is the limit "routes app: 6 files read, nothing extracted"

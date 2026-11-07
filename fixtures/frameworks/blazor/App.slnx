@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/oracle/">
+    <Project Path="oracle/Oracle.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/BlazorApp/BlazorApp.csproj" />
+    <Project Path="src/Library/Library.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Blazor is part of the shared framework; the oracle's test host is at the release of the shared framework it runs on. -->
+    <AspNetCoreVersion Condition="'$(AspNetCoreVersion)' == ''">10.0.14</AspNetCoreVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

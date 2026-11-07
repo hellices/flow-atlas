@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the routes Carter serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for Carter and reads no C#: modules' minimal API registrations (`MapGet`, `MapMethods`, `Map`,
+  Carter's `MapPost<T>`, `MapPut<T>` and `MapFormPost`), `CarterModule` base paths and the groups modules map are all
+  left out; the only sign is the limit "routes app: 6 files read, nothing extracted"
