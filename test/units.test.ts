@@ -247,6 +247,7 @@ describe("routesFromTypeScript", () => {
       "async def add_endpoint(app, path):",
       "    add_endpoint(app, '/agent')",
       "add_endpoint(app, AGENT_PATH)",
+      "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);

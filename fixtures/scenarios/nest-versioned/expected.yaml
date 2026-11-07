@@ -1,0 +1,75 @@
+case: |
+  A NestJS API in the shape of an Nx monorepo's, served under a global prefix and URI versioning that its bootstrap
+  sets, and an Angular client whose services request /api/v1/... and /api/v2/... . Seen in a real run: neither the
+  prefix nor the version was read, so every route came back at its controller path (`GET /orders/{id}`), none of the
+  client's calls was matched, every route was reported as having no caller and no limit said why; the configuration
+  had no way to state the prefix either. Nest documents both: the global prefix goes before every route but those its
+  `exclude` lists, matched without the version, and URI versioning puts `v<version>` after the prefix, from the
+  method's `@Version`, else the controller's, else `defaultVersion`, none for VERSION_NEUTRAL. atlas finds the calls
+  in the component's code that is not a test, reads their literals and serves each route at its path; an `exclude`
+  entry built at run time is named in a limit, and the routes it might keep out are read under the prefix.
+surfaces:
+  - api|GET /api/v1/orders
+  - api|GET /api/v1/orders/{id}
+  - api|POST /api/v1/orders
+  # The same path in version 1, the default, and in version 2, which the method states.
+  - api|GET /api/v1/portfolio/performance
+  - api|GET /api/v2/portfolio/performance
+  # The controller states two versions.
+  - api|GET /api/v1/reports
+  - api|GET /api/v2/reports
+  - api|POST /api/v1/auth/anonymous
+  # Version-neutral, by the method and by the controller: the prefix and no version.
+  - api|GET /api/auth/oidc/callback
+  - api|GET /api/assets/{languageCode}/site.webmanifest
+  # Excluded from the prefix by literal entries; neutral, so no version either.
+  - api|GET /sitemap.xml
+  - api|GET /.well-known/oauth-authorization-server
+  # Excluded for GET by a RouteInfo entry; an excluded route keeps its version.
+  - api|GET /v1/health
+  - api|GET /api/v1/health/jobs
+  - api|GET /api/v1/info
+findings:
+  - FA001|api|GET /api/v1/portfolio/performance
+  - FA001|api|GET /api/v1/reports
+  - FA001|api|GET /api/auth/oidc/callback
+  - FA001|api|GET /sitemap.xml
+  - FA001|api|GET /.well-known/oauth-authorization-server
+  - FA001|api|GET /api/v1/health/jobs
+limits:
+  - apps/api/src/main.ts:16 excludes from the global prefix a path the file does not spell out
+  - apps/api/src/main.ts:20 excludes from the global prefix a path the file does not spell out
+chains:
+  - client->api|GET /api/v1/info
+  - outside->api|GET /v1/health
+  - ui->api|GET /api/v1/orders
+  - ui->api|GET /api/v1/orders/{id}
+  - ui->api|POST /api/v1/orders
+  - ui->api|GET /api/v2/portfolio/performance
+  - ui->api|GET /api/v2/reports
+  - ui->api|POST /api/v1/auth/anonymous
+  - ui->api|GET /api/assets/{languageCode}/site.webmanifest
+descriptions:
+  - api none - NoneFound
+calls:
+  - client->api|GET /api/v1/info @ apps/client/src/main.ts:6
+  - ui->api|GET /api/v1/orders @ libs/ui/src/lib/services/data.service.ts:9
+  - ui->api|GET /api/v1/orders/{} @ libs/ui/src/lib/services/data.service.ts:13
+  - ui->api|POST /api/v1/orders @ libs/ui/src/lib/services/data.service.ts:17
+  - ui->api|GET /api/v2/portfolio/performance @ libs/ui/src/lib/services/data.service.ts:21
+  - ui->api|GET /api/v2/reports @ libs/ui/src/lib/services/data.service.ts:25
+  - ui->api|POST /api/v1/auth/anonymous @ libs/ui/src/lib/services/data.service.ts:29
+  - ui->api|GET /api/assets/{}/site.webmanifest @ libs/ui/src/lib/services/data.service.ts:33
+inventory:
+  routes:
+    - apps/api/src/app/assets/assets.controller.ts nest 1
+    - apps/api/src/app/auth/auth.controller.ts nest 2
+    - apps/api/src/app/health/health.controller.ts nest 2
+    - apps/api/src/app/info/info.controller.ts nest 1
+    - apps/api/src/app/orders/orders.controller.ts nest 3
+    - apps/api/src/app/portfolio/portfolio.controller.ts nest 2
+    - apps/api/src/app/reports/reports.controller.ts nest 1
+    - apps/api/src/app/sitemap/sitemap.controller.ts nest 1
+    - apps/api/src/app/well-known/well-known.controller.ts nest 1
+  calls:
+    - apps/client/src/main.ts 1
