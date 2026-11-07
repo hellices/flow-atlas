@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs installs Javalin and asks it for the routes the application serves.
+toolchain: java
+docs:
+  - https://javalin.io/documentation#handlers
+  - https://javalin.io/documentation#handler-groups
+  - https://javalin.io/documentation#crudhandler
+  - https://javalin.io/documentation#staticfileconfig
+  - https://javalin.io/documentation#server-sent-events
+  - https://javalin.io/plugins/routeoverview
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Javalin on Maven Central, in place of the pom's javalin.version.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Djavalin.version=$(curl -fsS https://repo1.maven.org/maven2/io/javalin/javalin/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java

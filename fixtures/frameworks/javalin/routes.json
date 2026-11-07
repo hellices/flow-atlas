@@ -1,0 +1,31 @@
+{
+  "framework": "javalin",
+  "version": "7.2.4",
+  "routes": [
+    {"method":"GET","path":"/"},
+    {"method":"GET","path":"/api/v1/articles","raw":"/api/v1/articles/"},
+    {"method":"POST","path":"/api/v1/articles","raw":"/api/v1/articles/"},
+    {"method":"DELETE","path":"/api/v1/articles/{}","raw":"/api/v1/articles/{article-id}"},
+    {"method":"GET","path":"/api/v1/articles/{}","raw":"/api/v1/articles/{article-id}"},
+    {"method":"PATCH","path":"/api/v1/articles/{}","raw":"/api/v1/articles/{article-id}"},
+    {"method":"PUT","path":"/api/v1/settings/{}","raw":"/api/v1/settings/{key}"},
+    {"method":"GET","path":"/assets/{**}","raw":"/assets -> /public"},
+    {"method":"GET","path":"/files/{**}","raw":"/files/<path>"},
+    {"method":"GET","path":"/hello/{}","raw":"/hello/{name}"},
+    {"method":"POST","path":"/input"},
+    {"method":"GET","path":"/output"},
+    {"method":"GET","path":"/path","raw":"/path/*"},
+    {"method":"GET","path":"/path/{**}","raw":"/path/*"},
+    {"method":"GET","path":"/reports/{}-{}.csv","raw":"/reports/{year}-{month}.csv"},
+    {"method":"GET","path":"/routes"},
+    {"method":"QUERY","path":"/search"},
+    {"method":"GET","path":"/sse"},
+    {"method":"GET","path":"/users"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/{id}"},
+    {"method":"GET","path":"/users/{}","raw":"/users/{id}"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/{id}"},
+    {"method":"GET","path":"/users/events"},
+    {"method":"PROPFIND","path":"/webdav/{}","raw":"/webdav/{resource}"}
+  ]
+}

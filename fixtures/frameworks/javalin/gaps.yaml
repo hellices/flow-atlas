@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the routes Javalin serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for Javalin: its handlers (`config.routes.get`, `addHttpHandler`, `sse`), the `ApiBuilder` groups
+  (`path()`, `crud()`), the static files and the route overview the framework serves are all left out; the only sign is
+  the limit "routes app: 3 files read, nothing extracted", which names none of the routes
