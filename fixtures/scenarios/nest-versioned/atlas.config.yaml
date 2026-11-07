@@ -1,0 +1,14 @@
+# The API's bootstrap, apps/api/src/main.ts, sets the global prefix and URI versioning; atlas finds it in the component.
+components:
+  - { name: api, path: apps/api }
+  - { name: client, path: apps/client }
+  - { name: ui, path: libs/ui }
+routes:
+  - component: api
+    files: ["apps/api/src/**/*.controller.ts"]
+    styles: [nest]
+calls:
+  - { from: ui, to: api, files: ["libs/ui/src/lib/services/**/*.ts"] }
+  - { from: client, to: api, files: ["apps/client/src/main.ts"] }
+publicSurfaces:
+  - "api|GET /v1/health"   # the orchestrator's probe

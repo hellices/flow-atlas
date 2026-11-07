@@ -14,6 +14,8 @@ import { expressMounts, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 import { declarationOf } from "./binding.js";
+import { fastapiRouters, type Routers } from "./fastapi.js";
+import { nestApp, nestPaths, versionsOf, type NestApp } from "./nest.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -196,9 +198,14 @@ export function routesFromTypeScript(
     spans?: Spans;
     /** The component's directory, which the Next.js paths are read from. */
     root?: string;
+    /** The global prefix and versioning of the Nest application the controllers belong to. */
+    nest?: NestApp;
   } = {},
 ): Surface[] {
   const { reach, executed, mounts, limits, spans, root } = context;
+  const nest = context.nest ?? { prefix: spec.prefix ?? "", exclude: [] };
+  // A version changes the path only under URI versioning.
+  const versioned = nest.versioning === "unread" || !!nest.versioning?.uri;
   const span = (node: ts.Node | undefined) => {
     if (node) spans?.add(file, node.getStart(sf), node.getEnd());
   };
@@ -216,21 +223,25 @@ export function routesFromTypeScript(
   const readConstants = new Map<ts.Node, string>();
   const unreadPaths: Array<{ arg: ts.Expression; method?: string; prefixes?: string[] }> = [];
   const unread = (arg: ts.Expression, method?: string, prefixes?: string[]) => unreadPaths.push({ arg, method, prefixes });
+  const unreadVersion = (arg: ts.Node) =>
+    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} gives a version the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
   const add = (
     method: string,
     path: string,
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string; render?: boolean } = {},
+    more: { implicit?: boolean; handlerFile?: string; render?: boolean; served?: boolean } = {},
   ) => {
-    const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
+    // A Nest route's path is already the one it is served at; any other is served under the configured prefix.
+    const template = routeTemplate(more.served ? joinRoute(path) : joinRoute(spec.prefix ?? "", path));
+    const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: template });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
     out.push({
       id,
       component: spec.component,
       method: method.toUpperCase(),
-      path: routeTemplate(joinRoute(path)),
+      path: template,
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
@@ -328,12 +339,18 @@ export function routesFromTypeScript(
   const visit = (node: ts.Node): void => {
     if (styles.has("nest") && ts.isClassDeclaration(node)) {
       let bases: string[] | undefined;
+      /** The controller's version: none given, the versions it states, or null where it is not spelled out. */
+      let version: string[] | undefined | null;
       for (const d of decorators(node)) {
         const call = decoratorCall(d);
         if (call?.name === "Controller") {
           bases = decoratorPaths(call.args);
           if (!bases) unread(call.args[0]!);
           for (const a of call.args) span(a);
+          const options = call.args[0] && ts.isObjectLiteralExpression(call.args[0]) ? call.args[0] : undefined;
+          const given = options?.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && propertyName(p) === "version")?.initializer;
+          version = given && versioned ? (versionsOf(given) ?? null) : undefined;
+          if (version === null) unreadVersion(given!);
         }
       }
       if (bases !== undefined) {
@@ -346,6 +363,12 @@ export function routesFromTypeScript(
           const operationId =
             operationIdIn(explicit?.args ?? []) ??
             (spec.operationIds === "nest-swagger" && className && methodName ? `${className}_${methodName}` : undefined);
+          // `@Version()` on the method takes the place of the controller's.
+          const own = decorators(member)
+            .map(decoratorCall)
+            .find((c) => c?.name === "Version");
+          const versions = !versioned ? undefined : own?.args[0] ? (versionsOf(own.args[0]) ?? null) : own ? null : version;
+          if (own && versions === null) unreadVersion(own.args[0] ?? member);
           for (const d of decorators(member)) {
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
@@ -353,7 +376,12 @@ export function routesFromTypeScript(
             if (call && method && !paths) unread(call.args[0]!, method, bases);
             if (!paths) continue;
             for (const a of call!.args) span(a);
-            for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
+            if (versions === null) continue;
+            for (const base of bases) {
+              for (const path of paths) {
+                for (const served of nestPaths(nest, method!, joinRoute(base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true });
+              }
+            }
           }
         }
       }
@@ -536,7 +564,7 @@ function pythonString(text: string): { value: string; length: number } | undefin
  * A string literal and those written next to it, which Python joins into one (`"/api" "/users"`), across lines inside the
  * brackets of a call; undefined when one of them is not a plain literal (an f-string, a name).
  */
-function pythonStrings(text: string): { value: string; length: number } | undefined {
+export function pythonStrings(text: string): { value: string; length: number } | undefined {
   const first = pythonString(text);
   if (!first) return undefined;
   let { value, length } = first;
@@ -563,7 +591,7 @@ const pythonLiteralLength = (text: string): number | undefined => pythonStrings(
 const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):str\}/g, "{$1}"));
 
 /** The start of each top-level argument of the call whose arguments begin at `from`, in blanked code. */
-function pythonArgStarts(code: string, from: number): number[] {
+export function pythonArgStarts(code: string, from: number): number[] {
   const end = closingParen(code, from);
   const starts = [from];
   let depth = 0;
@@ -584,7 +612,7 @@ function definesName(code: string, at: number): boolean {
 }
 
 /** The text of the argument starting at `at`, up to the comma or bracket that ends it, in blanked code. */
-function pythonArg(text: string, code: string, at: number): string {
+export function pythonArg(text: string, code: string, at: number): string {
   let depth = 0;
   let end = at;
   for (; end < code.length; end++) {
@@ -596,8 +624,17 @@ function pythonArg(text: string, code: string, at: number): string {
   return text.slice(at, end).trim();
 }
 
-export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans): Surface[] {
+/**
+ * `routers` tells where the FastAPI routers of the route files are served; without it, only this file's are known, and
+ * why one is not read is said in `limits` here rather than once for every file.
+ */
+export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans, routers?: Routers): Surface[] {
+  // Styles left out, as a direct call does, read FastAPI; the scan always passes the configured ones.
+  const fastapi = !spec.styles || spec.styles.includes("fastapi");
+  const own = routers || !fastapi ? undefined : fastapiRouters(new Map([[file, text]]), spec.mounts);
   const out: Surface[] = [];
+  /** Receivers whose decorators register routes but which no binding of the files read makes an application or router. */
+  const untraced = new Set<string>();
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
   const code = pythonCode(text);
   /** A registration whose path argument is a name, an f-string or an expression: said in `limits`. */
@@ -614,7 +651,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       return;
     }
     const method = verb.toUpperCase();
-    const path = starlettePath(raw);
+    const path = starlettePath(spec.prefix ? joinRoute(spec.prefix, raw) : raw);
     out.push({
       id: surfaceId({ component: spec.component, method, path }),
       component: spec.component,
@@ -625,8 +662,6 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       ...(implicit ? { implicit: true } : {}),
     });
   };
-  // Styles left out, as a direct call does, read FastAPI; the scan always passes the configured ones.
-  const fastapi = !spec.styles || spec.styles.includes("fastapi");
   for (const m of fastapi ? code.matchAll(FASTAPI) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
@@ -637,11 +672,21 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       .find((a) => a.m);
     const pathAt = named ? named.at + named.m![0].length : first;
     if (pathAt !== undefined) unread(pathAt);
-    const path = pathAt === undefined ? undefined : pythonLiteral(text.slice(pathAt));
-    if (!path) continue;
+    const path = pathAt === undefined ? undefined : pythonStrings(text.slice(pathAt))?.value;
+    if (path === undefined) continue;
+    // An application serves at the root; a router under every prefix it is served at, or not at all where one is unknown.
+    const key = (routers ?? own!).receiver(file, m[1]!);
+    const prefixes = key ? (routers ?? own!).served(key) : [""];
+    // An empty path is the router's prefix itself; with no prefix FastAPI refuses it.
+    if (!prefixes || (!path && prefixes.every((p) => joinRoute(p) === "/"))) continue;
     spans?.add(file, argsStart, closingParen(code, argsStart));
     const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
-    for (const method of methods ?? []) add(method, path, m.index ?? 0);
+    const before = out.length;
+    for (const prefix of prefixes) for (const method of methods ?? []) add(method, joinRoute(prefix, path), m.index ?? 0);
+    if (!key && out.length > before) untraced.add(m[1]!);
+  }
+  for (const name of untraced) {
+    limits?.push(`routes ${spec.component}: ${file} registers routes on ${name}, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written`);
   }
   // Starlette's mount hands everything under its path to the mounted application, compiled as the path with
   // `/{path:path}` joined. StaticFiles answers GET and HEAD; what another application serves is not read here.
@@ -663,7 +708,8 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
       add("GET", joinRoute(path, "{path:path}"), m.index ?? 0);
       add("HEAD", joinRoute(path, "{path:path}"), m.index ?? 0, true);
-    } else {
+    } else if (mounted === undefined || !(routers ?? own!).traced(file, pythonArg(text, code, mounted).replace(/^app\s*=\s*/, ""))) {
+      // An application or router of the route files that it mounts is served under the mount with the routes read there.
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} mounts an application at ${path} whose routes are not read`);
     }
   }
@@ -681,6 +727,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       }
     }
   }
+  if (own) limits?.push(...own.limits(spec.component));
   return out;
 }
 
@@ -843,6 +890,24 @@ function buildRoot(file: string, files: Set<string>): string | undefined {
   return undefined;
 }
 
+/**
+ * The global prefix and versioning of a Nest component, from its `bootstrap` file when the entry names one, else from
+ * the calls that set them in the route files and in the component's code (tests and the other excluded files left out).
+ */
+function nestBootstrap(source: Source, config: Config, spec: RouteSource, files: string[], root: string | undefined, limits: string[]): NestApp {
+  const script = (f: string) => /\.(c|m)?[jt]sx?$/.test(f);
+  if (spec.bootstrap !== undefined) {
+    const text = source.read(spec.bootstrap);
+    if (text === undefined) limits.push(`routes ${spec.component}: the bootstrap file ${spec.bootstrap} is not there${source.ref === "WORKTREE" ? "" : " at this revision"}`);
+    return nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix);
+  }
+  const dir = root?.replace(/\/+$/, "");
+  const component = dir === undefined ? [] : select(source, [dir ? `${dir}/**` : "**"], config.exclude);
+  const candidates = [...new Set([...files, ...component])].filter(script);
+  const texts = new Map(candidates.map((f) => [f, source.read(f) ?? ""]));
+  return nestApp(texts, spec.component, limits, spec.prefix);
+}
+
 /** Surfaces with one per component, method and path, the first kept. */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Set<string>();
@@ -875,14 +940,19 @@ export function extractRoutes(
     const before = out.length;
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts) : undefined;
+    const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
+    const routers = (spec.styles ?? []).includes("fastapi")
+      ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
+      : undefined;
     for (const file of files) {
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component) }));
-      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest }));
+      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits));
     }
+    if (routers) limits.push(...routers.limits(spec.component));
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
   // A route two entries both register is one surface, so the document enriches the copy that is kept.
