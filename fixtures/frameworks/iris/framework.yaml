@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs Iris and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://iris-go.gitbook.io/iris/contents/routing
+  - https://iris-go.gitbook.io/iris/contents/routing/routing-path-parameter-types
+  - https://iris-go.gitbook.io/iris/mvc/mvc
+  - https://iris-go.gitbook.io/iris/file-server/introduction
+setup: go mod download
+latest: go get github.com/kataras/iris/v12@latest && go mod tidy
+oracle: go run oracle.go

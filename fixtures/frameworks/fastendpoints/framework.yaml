@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs installs FastEndpoints and asks it for the routes the application serves. FastEndpoints
+# runs on the .NET 10 (LTS) shared framework the SDK in use carries (global.json); the packages are locked in
+# packages.lock.json, and `latest` takes the newest stable FastEndpoints with the newest 10.x test host.
+toolchain: dotnet
+docs:
+  - https://fast-endpoints.com/docs/get-started
+  - https://fast-endpoints.com/docs/misc-conveniences
+  - https://fast-endpoints.com/docs/configuration-settings
+  - https://fast-endpoints.com/docs/api-versioning
+  - https://fast-endpoints.com/docs/model-binding
+  - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/routing?view=aspnetcore-10.0
+setup: dotnet restore --locked-mode
+latest: dotnet restore -p:FastEndpointsVersion=* -p:AspNetCoreVersion=10.* -p:NuGetLockFilePath=obj/latest.packages.lock.json
+oracle: dotnet build oracle --no-restore -nologo -v q 1>&2 && dotnet run --project oracle --no-build

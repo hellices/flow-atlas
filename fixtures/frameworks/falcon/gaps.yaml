@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the routes Falcon serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Falcon style: the URI templates `add_route` registers, the methods each resource has a responder for
+  (`on_get`, suffixed `on_get_collection`), the converters (`{file_path:path}` taking slashes), several fields in one
+  segment, the OPTIONS Falcon answers by itself and the static files `add_static_route` serves are not read; a limit
+  says the route files gave nothing ("3 files read, nothing extracted"), and `atlas inventory` offers no route
+  candidate for them.

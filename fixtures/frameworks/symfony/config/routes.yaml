@@ -1,0 +1,19 @@
+controllers:
+    resource: ../src/Controller/
+    type: attribute
+
+# A route without a controller of the application's: Symfony redirects by itself.
+blog_legacy:
+    path: /old-blog
+    controller: Symfony\Bundle\FrameworkBundle\Controller\RedirectController
+    defaults:
+        route: blog_index
+        permanent: true
+
+docs:
+    path: /docs/{page}
+    controller: Symfony\Bundle\FrameworkBundle\Controller\RedirectController
+    methods: [GET]
+    defaults:
+        path: https://symfony.com/doc/current/
+        page: index

@@ -1,0 +1,10 @@
+# Where atlas's reading differs from the routes Sanic serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Sanic style: the routes `@app.route`, `@app.get` and the like and `add_route` register, the url_prefix
+  and version of blueprints and of the group they are in, versioned routes (`/v3/...`), the methods a class-based view
+  defines and the static files `app.static` serves are not read; a limit says the route files gave nothing ("3 files
+  read, nothing extracted"). `atlas inventory` offers the `fastapi` style for these files, which reads only the
+  application's own decorators, at the paths written (`/tag/<tag>`, `<file_path:path>` as one segment, `/stats`
+  without its version), the blueprints' routes and `add_route` left out, with a limit that the application is not one
+  it traces.

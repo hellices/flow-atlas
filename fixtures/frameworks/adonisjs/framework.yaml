@@ -1,0 +1,8 @@
+# How scripts/frameworks.mjs installs AdonisJS and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://docs.adonisjs.com/guides/basics/routing
+  - https://docs.adonisjs.com/guides/basics/controllers
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund @adonisjs/core@latest
+oracle: node oracle.mjs

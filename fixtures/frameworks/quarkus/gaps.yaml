@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Quarkus serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for Quarkus: Quarkus REST (JAX-RS) resources under their `@ApplicationPath` (`@Path` on classes,
+  methods and interfaces, `{id: regex}` parameters, sub-resource locators, `@HttpMethod` methods of the application's
+  own), and reactive routes (`@Route`, `@RouteBase`) and routes registered on the Vert.x `Router` are all left out; the
+  only sign is the limit "routes app: 11 files read, nothing extracted"

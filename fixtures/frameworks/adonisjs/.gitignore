@@ -1,0 +1,4 @@
+# Types and the route list AdonisJS writes when the application boots.
+.adonisjs/
+# AdonisJS's entry points, not a build output.
+!bin/

@@ -1,0 +1,8 @@
+@page "/docs/{section:nonfile?}"
+
+<h1>Docs: @Section</h1>
+
+@code {
+    [Parameter]
+    public string? Section { get; set; }
+}

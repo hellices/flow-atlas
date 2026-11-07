@@ -1,0 +1,32 @@
+{
+  "framework": "gorilla/mux",
+  "version": "1.8.1",
+  "routes": [
+    {"method":"*","path":"/"},
+    {"method":"GET","path":"/"},
+    {"method":"*","path":"/{**}","raw":"/"},
+    {"method":"GET","path":"/api/health"},
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/{id:[0-9]+}"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/{id:[0-9]+}"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/{id:[0-9]+}"},
+    {"method":"GET","path":"/api/v1/users/{}/posts/{}","raw":"/api/v1/users/{id:[0-9]+}/posts/{slug:[a-z-]+}"},
+    {"method":"GET","path":"/articles"},
+    {"method":"*","path":"/articles/{}","raw":"/articles/{category}/"},
+    {"method":"*","path":"/articles/{}/{}","raw":"/articles/{category}/{id:[0-9]+}"},
+    {"method":"GET","path":"/articles/{}/{}","raw":"/articles/{category}/{sort:(?:asc|desc|new)}"},
+    {"method":"POST","path":"/forms/contact"},
+    {"method":"POST","path":"/forms/feedback/{}","raw":"/forms/feedback/{topic}"},
+    {"method":"*","path":"/products"},
+    {"method":"GET","path":"/products/{}","raw":"/products/{key}"},
+    {"method":"PUT","path":"/products/{}","raw":"/products/{key}"},
+    {"method":"GET","path":"/search"},
+    {"method":"*","path":"/shop","raw":"/shop/"},
+    {"method":"*","path":"/shop/{}","raw":"/shop/{key}/"},
+    {"method":"*","path":"/shop/{}/details","raw":"/shop/{key}/details"},
+    {"method":"*","path":"/specific"},
+    {"method":"*","path":"/static","raw":"/static/"},
+    {"method":"*","path":"/static/{**}","raw":"/static/"}
+  ]
+}

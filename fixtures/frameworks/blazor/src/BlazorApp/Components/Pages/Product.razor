@@ -1,0 +1,11 @@
+@attribute [Route(RouteTemplates.Product)]
+
+<h1>Product @Id in @Category</h1>
+
+@code {
+    [Parameter]
+    public string? Category { get; set; }
+
+    [Parameter]
+    public Guid Id { get; set; }
+}

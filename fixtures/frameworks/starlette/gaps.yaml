@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the routes Starlette serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Starlette style: the routing tables (`Route`, `Mount` of route lists, a `Router` or an application,
+  `app.add_route`), the methods HTTPEndpoint classes answer and the StaticFiles mount are not read; a limit says the
+  route files gave nothing ("5 files read, nothing extracted"), and `atlas inventory` offers no route candidate for
+  them. The `fastapi` style, which reads Starlette's convertors and `app.mount("/x", StaticFiles(...))`, reads nothing
+  here either: it reads decorators and `mount` calls, not `Route`/`Mount` lists.

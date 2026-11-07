@@ -1,0 +1,3 @@
+# What astro build writes.
+dist/
+.astro/

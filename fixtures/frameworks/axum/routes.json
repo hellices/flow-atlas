@@ -1,0 +1,31 @@
+{
+  "framework": "axum",
+  "version": "0.8.9",
+  "routes": [
+    {"method":"DELETE","path":"/"},
+    {"method":"GET","path":"/"},
+    {"method":"POST","path":"/"},
+    {"method":"GET","path":"/{}/reports/{}","raw":"/{version}/reports/{id}"},
+    {"method":"GET","path":"/api"},
+    {"method":"POST","path":"/api/v1/sessions"},
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/{id}"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/{id}"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/{id}"},
+    {"method":"GET","path":"/api/v1/users/{}/posts/{}","raw":"/api/v1/users/{id}/posts/{post_id}"},
+    {"method":"GET","path":"/api/v2/users/{}","raw":"/api/v2/users/{id}"},
+    {"method":"GET","path":"/assets/{**}","raw":"/assets/{*path}"},
+    {"method":"PATCH","path":"/items/{}","raw":"/items/{id}"},
+    {"method":"PUT","path":"/items/{}","raw":"/items/{id}"},
+    {"method":"*","path":"/ping"},
+    {"method":"GET","path":"/robots.txt"},
+    {"method":"GET","path":"/static","raw":"/static/"},
+    {"method":"GET","path":"/static/{**}","raw":"/static/{*rest}"},
+    {"method":"GET","path":"/teams"},
+    {"method":"POST","path":"/teams"},
+    {"method":"GET","path":"/users"},
+    {"method":"GET","path":"/users/{}","raw":"/users/{id}"},
+    {"method":"*","path":"/webhook"}
+  ]
+}

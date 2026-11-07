@@ -1,0 +1,106 @@
+# Asks Rails which routes the application serves. The router dispatches each request through
+# `Rails.application.routes.routes` (the table `bin/rails routes` prints): each route's verb, and its path as the Journey
+# AST Rails parsed it into, optional groups such as `(.:format)` and `(/:page)` included. Each path the AST spells out
+# with or without each optional group is requested through the application, and the route is kept only when the
+# router dispatches that request to it (`request.route`). A mounted engine's routes are its own router's table, under
+# the mount's path; a mounted Rack application takes its path and everything below it. A glob also takes its parent
+# path where the router dispatches `parent/` to it.
+#
+# Rails' own routes (`rails/*`, `active_storage/*`, `action_mailbox/*`) are left out: the application loads none of
+# those frameworks and runs in production, where Rails adds no `rails/info` routes; should a release add one, it is
+# dropped here all the same.
+ENV["RAILS_ENV"] = "production"
+require_relative "config/environment"
+require "json"
+require "rack/mock"
+
+INTERNAL = %r{\A(?:rails|active_storage|action_mailbox)/}
+
+# Values a parameter is filled with to request a path, the first its constraint takes.
+SAMPLES = %w[1 a1 en A12345 2024 01].freeze
+
+def sample(name, regexp)
+  candidates = name == "format" ? ["json", *SAMPLES] : SAMPLES
+  candidates.find { |value| value.match?(/\A(?:#{regexp})\z/) } or raise "no sample value for :#{name} (#{regexp.inspect})"
+end
+
+# Every path the AST spells out, each as [canonical form, a path to request].
+def spell(node)
+  case node.type
+  when :CAT
+    spell(node.left).product(spell(node.right)).map { |(a, b), (c, d)| [a + c, b + d] }
+  when :GROUP
+    [["", ""], *spell(node.left)]
+  when :OR
+    node.children.flat_map { |child| spell(child) }
+  when :SYMBOL
+    [["{}", sample(node.name, node.regexp)]]
+  when :STAR
+    [["{**}", "a/b"]]
+  when :LITERAL, :SLASH, :DOT
+    [[node.left, node.left]]
+  else
+    raise "unexpected #{node.type} in a route's path"
+  end
+end
+
+def canonical(path)
+  raise "a wildcard before the end of #{path}" if path.include?("{**}") && !path.end_with?("/{**}")
+
+  path = path.squeeze("/").chomp("/")
+  path.empty? ? "/" : path
+end
+
+def verbs(route)
+  route.verb.empty? ? ["*"] : route.verb.split("|")
+end
+
+def dispatched(method, path)
+  env = Rack::MockRequest.env_for(path, method: method == "*" ? "GET" : method)
+  _, headers, = Rails.application.call(env)
+  env["action_dispatch.route"] unless (headers["x-cascade"] || headers["X-Cascade"]) == "pass"
+end
+
+def describe(route)
+  route ? "#{route.verb} #{route.path.spec}" : "no route"
+end
+
+def confirm!(route, method, path)
+  got = dispatched(method, path)
+  raise "#{method} #{path} is dispatched to #{describe(got)}, not #{route.path.spec}" unless got.equal?(route)
+end
+
+def internal?(route)
+  INTERNAL.match?(route.defaults[:controller].to_s)
+end
+
+def walk(router_routes, prefixes, raw_prefix, out)
+  router_routes.each do |route|
+    next if internal?(route)
+
+    spelled = spell(route.path.spec)
+    joined = prefixes.product(spelled).map { |(pc, pp), (c, p)| [pc + c, pp + p] }
+    raw = "#{raw_prefix}#{route.path.spec}"
+    if route.app.engine?
+      walk(route.app.rack_app.routes.routes, joined, raw, out)
+      next
+    end
+    # A mounted Rack application: the router hands it the mount's path and every path below it.
+    joined = joined.flat_map { |c, p| [[c, p], ["#{c}/{**}", "#{p}/a/b"]] } unless route.path.anchored
+    joined.each do |c, p|
+      verbs(route).each do |verb|
+        confirm!(route, verb, p)
+        out << { method: verb, path: canonical(c), raw: raw }
+        next unless c.end_with?("/{**}")
+
+        # The parent of a glob, where the router dispatches `parent/` to the same route.
+        parent = p.delete_suffix("a/b")
+        out << { method: verb, path: canonical(c.delete_suffix("/{**}")), raw: raw } if dispatched(verb, parent).equal?(route)
+      end
+    end
+  end
+end
+
+routes = []
+walk(Rails.application.routes.routes, [["", ""]], "", routes)
+puts JSON.generate({ framework: "rails", version: Rails.version, routes: routes })

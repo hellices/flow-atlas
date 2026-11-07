@@ -1,0 +1,8 @@
+{
+  "name": "hapi-routes",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hapi/hapi": "^21.4.12"
+  }
+}

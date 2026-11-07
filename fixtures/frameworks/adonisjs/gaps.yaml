@@ -1,0 +1,56 @@
+# Where atlas's reading differs from the routes AdonisJS serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { route: "GET /posts", reason: "`router.resource(name, controller)` and the routes it makes are not read, and nothing says so" }
+  - { route: "GET /posts/create", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "POST /posts", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "GET /posts/{}", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "GET /posts/{}/edit", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "PUT /posts/{}", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "PATCH /posts/{}", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "DELETE /posts/{}", reason: "`router.resource(name, controller)` is not read, and nothing says so" }
+  - { route: "GET /posts/{}/comments", reason: "a nested resource (`router.resource('posts.comments', ...).apiOnly()`) is not read, and nothing says so" }
+  - { route: "POST /posts/{}/comments", reason: "a nested resource is not read, and nothing says so" }
+  - { route: "GET /posts/{}/comments/{}", reason: "a nested resource is not read, and nothing says so" }
+  - { route: "PUT /posts/{}/comments/{}", reason: "a nested resource is not read, and nothing says so" }
+  - { route: "PATCH /posts/{}/comments/{}", reason: "a nested resource is not read, and nothing says so" }
+  - { route: "DELETE /posts/{}/comments/{}", reason: "a nested resource is not read, and nothing says so" }
+  - { route: "GET /posts/{}/photos", reason: "a shallow nested resource (`router.shallowResource(...).only([...])`) is not read, and nothing says so" }
+  - { route: "POST /posts/{}/photos", reason: "a shallow nested resource is not read, and nothing says so" }
+  - { route: "GET /photos/{}", reason: "a shallow nested resource (its member routes without the parent) is not read, and nothing says so" }
+  - { route: "DELETE /photos/{}", reason: "a shallow nested resource (its member routes without the parent) is not read, and nothing says so" }
+  - { route: "GET /users", reason: "a resource filtered with `except([...])` and its params renamed is not read, and nothing says so" }
+  - { route: "POST /users", reason: "a resource filtered with `except([...])` is not read, and nothing says so" }
+  - { route: "GET /users/{}", reason: "a resource with its params renamed (`params({ users: 'user' })`) is not read, and nothing says so" }
+  - { route: "PUT /users/{}", reason: "a resource with its params renamed is not read, and nothing says so" }
+  - { route: "PATCH /users/{}", reason: "a resource with its params renamed is not read, and nothing says so" }
+  - { route: "DELETE /users/{}", reason: "a resource with its params renamed is not read, and nothing says so" }
+  - { route: "GET /tags", reason: "a resource filtered with `only([...])` is not read, and nothing says so" }
+  - { route: "POST /tags", reason: "a resource filtered with `only([...])` is not read, and nothing says so" }
+  - { route: "DELETE /tags/{}", reason: "a resource filtered with `only([...])` is not read, and nothing says so" }
+  - { route: "GET /api/v1/account/tokens", reason: "a resource in a group (`apiOnly()`) is not read, and nothing says so" }
+  - { route: "POST /api/v1/account/tokens", reason: "a resource in a group is not read, and nothing says so" }
+  - { route: "GET /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
+  - { route: "PUT /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
+  - { route: "PATCH /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
+  - { route: "DELETE /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
+  - { route: "POST /api/v1/auth/signup", reason: "a path without a leading `/` (`router.post('signup', ...)`) is not read, and nothing says so; nor are the prefixes of the groups around it (`auth`, `/api/v1`)" }
+  - { route: "POST /api/v1/auth/login", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
+  - { route: "GET /api/v1/account/profile", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
+  - { route: "GET /drafts", reason: "an optional last param (`:id?`) is read as the path with the param only, not also without it" }
+  - { route: "GET /docs/{}/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is read as one segment" }
+  - { route: "GET /files/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is read as one segment" }
+  - { route: "GET /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
+  - { route: "POST /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
+  - { route: "PUT /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
+  - { route: "PATCH /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
+  - { route: "DELETE /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
+  - { route: "GET /api/data", reason: "`router.route(path, [methods])` is not read, and nothing says so" }
+  - { route: "POST /api/data", reason: "`router.route(path, [methods])` is not read, and nothing says so" }
+  - { route: "PUT /api/data", reason: "`router.route(path, [methods])` is not read, and nothing says so" }
+  - { route: "TRACE /", reason: "`router.route(path, [methods])` (a custom verb) is not read, and nothing says so" }
+  - { route: "GET /old-blog", reason: "`router.on(path).redirectToPath(...)` is not read, and nothing says so" }
+  - { route: "GET /featured", reason: "`router.on(path).redirect(route)` is not read, and nothing says so" }
+extra:
+  - { route: "GET /docs/{}/{}", reason: "the wildcard `*` read as one segment" }
+  - { route: "GET /files/{}", reason: "the wildcard `*` read as one segment" }

@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes SvelteKit serves. Remove this when atlas reads it; the test fails while
+# a listed difference no longer occurs.
+unread: >-
+  atlas has no style for SvelteKit: the `+page` and `+server` files under src/routes (route ids with `[param]`,
+  `[[optional]]`, `[...rest]`, `=matcher` and `(group)` segments, the methods a `+server` module exports, a page's form
+  actions) are read and nothing is extracted; a limit says so (`routes app: N files read, nothing extracted`) but names
+  none of the routes left out, nor the static files, build assets and `/_app/env.js` the server answers by itself

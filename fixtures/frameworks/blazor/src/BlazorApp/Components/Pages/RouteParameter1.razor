@@ -1,0 +1,10 @@
+@page "/route-parameter-1/{text}"
+
+<h1>Route Parameter Example 1</h1>
+
+<p>Blazor is @Text!</p>
+
+@code {
+    [Parameter]
+    public string? Text { get; set; }
+}

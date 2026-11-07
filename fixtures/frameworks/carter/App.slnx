@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/oracle/">
+    <Project Path="oracle/Oracle.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/App/App.csproj" />
+  </Folder>
+</Solution>

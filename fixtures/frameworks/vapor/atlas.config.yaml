@@ -1,0 +1,4 @@
+components:
+  - { name: app, path: hello }
+routes:
+  - { component: app, files: ["hello/Sources/App/**/*.swift"] }

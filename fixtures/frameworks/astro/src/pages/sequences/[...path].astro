@@ -1,0 +1,12 @@
+---
+import Layout from "../../components/Layout.astro";
+
+export const prerender = true;
+
+export function getStaticPaths() {
+  return [{ params: { path: "one/two/three" } }, { params: { path: "four" } }, { params: { path: undefined } }];
+}
+
+const { path } = Astro.params;
+---
+<Layout title="Sequence"><p>{path}</p></Layout>
