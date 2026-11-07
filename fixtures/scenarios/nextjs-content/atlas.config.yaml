@@ -8,6 +8,4 @@ calls:
   # Pages, layouts and components link to the app's pages and call its route handlers; the middleware redirects.
   - { from: site, to: site, files: ["app/**/*.{ts,tsx}", "components/**/*.tsx", "middleware.ts"] }
 publicSurfaces:
-  - "site|GET /"              # the home page, entered by its address
-  - "site|GET /robots.txt"    # read by crawlers
-  - "site|GET /sitemap.xml"   # read by crawlers
+  - "site|GET /"   # the home page, entered by its address

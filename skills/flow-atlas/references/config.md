@@ -153,7 +153,9 @@ OPTIONS; those surfaces are `implicit`,
 reached only by a request that names the method, and no rule expects a caller for them. Metadata routes are read where
 Next.js fixes their paths: `robots.ts` at the root of `app/` serves `GET /robots.txt`, `manifest.ts` there `GET
 /manifest.webmanifest`, and `sitemap.ts` in any segment `GET <segment>/sitemap.xml` (`<segment>/sitemap/{id}.xml` when
-it exports `generateSitemaps`), each with the HEAD and OPTIONS Next.js answers; an `icon`, `apple-icon`,
+it exports `generateSitemaps`), each with the HEAD and OPTIONS Next.js answers. All three are `implicit`: crawlers
+fetch `/robots.txt` by RFC 9309 and the sitemaps it names, browsers the manifest Next.js links from every page's head,
+and no code of the app requests them, so no rule expects a caller; a call that fetches one still reaches it. An `icon`, `apple-icon`,
 `opengraph-image` or `twitter-image` file is served at a path Next.js generates, so it is not read and a limit names it.
 Files Next.js serves with no handler are `implicit` GET and HEAD surfaces, listed whatever the route `files` say (an
 `exclude` leaves them out): every file under `public/` at the component's directory, at its path from the root, and

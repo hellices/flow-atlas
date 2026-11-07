@@ -9,9 +9,9 @@ case: |
   as what can follow it; and the component written as `path: .` read no route at all. Now a call with a value in its
   path reaches every route Next.js may serve it by, down to the first that takes any value there; public files are
   implicit GET surfaces (with HEAD) that rank as static paths; a matcher is no request; both branches of a link are
-  GET; robots.ts serves GET /robots.txt and sitemap.ts GET /sitemap.xml; a page offers the links and forms its server
-  components and layouts render as `next`; and `.` is the repository root. The one finding is the post list nothing
-  requests.
+  GET; robots.ts serves GET /robots.txt and sitemap.ts GET /sitemap.xml, implicit like public files, since crawlers
+  request them by convention and no code of the app does; a page offers the links and forms its server components and
+  layouts render as `next`; and `.` is the repository root. The one finding is the post list nothing requests.
 surfaces:
   - site|GET /
   - site|GET /dashboard
@@ -22,8 +22,8 @@ surfaces:
   - site|GET /{slug}/**
   - site|GET /api/posts
   - site|POST /api/posts
-  - site|GET /robots.txt
-  - site|GET /sitemap.xml
+  - site|GET /robots.txt (implicit)
+  - site|GET /sitemap.xml (implicit)
   - site|GET /favicon.ico (implicit)
   - site|GET /images/icon-192.png (implicit)
   - site|GET /site.webmanifest (implicit)
@@ -61,8 +61,6 @@ calls:
 findings:
   - FA001|site|GET /api/posts
 chains:
-  - outside->site|GET /robots.txt
-  - outside->site|GET /sitemap.xml
   - site->site|GET /
   - site->site|GET /dashboard
   - site->site|GET /editor/{postId}

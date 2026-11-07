@@ -330,7 +330,9 @@ export function routesFromTypeScript(
     limits?.push(`routes ${spec.component}: ${file} is a metadata image route, served at a path Next.js generates; it is not read`);
   } else if (next?.kind === "metadata") {
     // The default export makes the file, and Next.js serves it to GET; as for any route handler, it answers HEAD with
-    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`.
+    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`. Crawlers fetch
+    // robots.txt where RFC 9309 puts it and the sitemaps it names, and browsers the manifest the page's head links to:
+    // none is requested by the app's own code, so each is implicit, as a file in public/ is.
     const statement =
       sf.statements.find(isDefault) ??
       sf.statements.find((st) => ts.isExportDeclaration(st) && !st.isTypeOnly && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === "default" && !e.isTypeOnly));
@@ -339,7 +341,7 @@ export function routesFromTypeScript(
       const handler = found?.node ?? (ts.isExportAssignment(statement) ? statement.expression : statement);
       const split = next.path.endsWith("/sitemap.xml") && exportsValue(sf, "generateSitemaps");
       const path = split ? next.path.replace(/\.xml$/, "/{id}.xml") : next.path;
-      add("GET", path, statement, handler, undefined, { handlerFile: found?.file });
+      add("GET", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file });
       add("HEAD", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file });
       add("OPTIONS", path, statement, undefined, undefined, { implicit: true });
     }

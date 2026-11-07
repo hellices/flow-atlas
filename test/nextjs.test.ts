@@ -54,16 +54,16 @@ describe("Next.js", () => {
       ["app/robots.mjs", undefined, undefined],
     ];
     expect(rows.map(([file]) => [nextRoute(file, "")?.path, nextRoute(file, "")?.kind])).toEqual(rows.map(([, path, kind]) => [path, kind]));
-    const { graph } = app({
+    const { config, graph } = app({
       "app/robots.ts": 'export default function robots() { return { rules: { userAgent: "*", allow: "/" } }; }',
       "app/products/sitemap.ts": "export async function generateSitemaps() { return [{ id: 0 }]; }\nexport default async function sitemap({ id }) { return []; }",
       "app/opengraph-image.tsx": "export default function Image() { return null; }",
       "app/manifest.ts": "const manifest = () => ({ name: \"Notes\" });\nexport default manifest;",
     });
     expect(graph.surfaces.map((s) => `${s.id}${s.implicit ? " (implicit)" : ""}`).sort()).toEqual([
-      "web|GET /manifest.webmanifest",
-      "web|GET /products/sitemap/{id}.xml",
-      "web|GET /robots.txt",
+      "web|GET /manifest.webmanifest (implicit)",
+      "web|GET /products/sitemap/{id}.xml (implicit)",
+      "web|GET /robots.txt (implicit)",
       "web|HEAD /manifest.webmanifest (implicit)",
       "web|HEAD /products/sitemap/{id}.xml (implicit)",
       "web|HEAD /robots.txt (implicit)",
@@ -72,6 +72,14 @@ describe("Next.js", () => {
       "web|OPTIONS /robots.txt (implicit)",
     ]);
     expect(graph.limits.filter((l) => l.startsWith("routes "))).toEqual(["routes web: app/opengraph-image.tsx is a metadata image route, served at a path Next.js generates; it is not read"]);
+    // Crawlers and browsers request them by convention, never the app's own code: no rule expects a caller, and a call
+    // that fetches one still reaches it.
+    expect(evaluate(graph, config).map((f) => f.key)).toEqual([]);
+    const fetched = app({
+      "app/manifest.ts": "export default function manifest() { return {}; }",
+      "lib/pwa.ts": 'export const load = () => fetch("/manifest.webmanifest");\nexport const any = () => request("/manifest.webmanifest");',
+    });
+    expect(targets(fetched.graph, "/manifest.webmanifest")).toEqual(["web|GET /manifest.webmanifest", "web|GET /manifest.webmanifest"]);
   });
 
   it("serves the files of public/ and the metadata files of app/ as GET and HEAD with no handler", () => {
