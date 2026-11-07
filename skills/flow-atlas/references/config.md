@@ -154,7 +154,8 @@ format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacemen
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. A path given to an exception is a label, not a request: an argument
 of a call that is thrown (`throw BffUnavailable("/my")`, `throw new X(...)`, Python's `raise X(...)`), of a class named
-as Java's, Kotlin's, Dart's and Python's own exceptions are (`IllegalStateException("/x")`, `SomeError("/x")`), and in
+as Java's, Kotlin's, Dart's and Python's own exceptions are (`Exception("/x")`, `IllegalStateException("/x")`,
+`SomeError("/x")`), and in
 Kotlin of the standard library's throwing functions `error`, `TODO`, `require` and `check` (not a member of that name);
 a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
 the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the

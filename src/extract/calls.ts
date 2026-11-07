@@ -298,7 +298,9 @@ function fromOneParameter(e: ts.Expression): boolean {
   const parameters = new Set<ts.Node>();
   let other = false;
   const visit = (n: ts.Node): void => {
-    if (ts.isIdentifier(n)) {
+    // `this` and `super` are inputs too, though neither is an identifier.
+    if (n.kind === ts.SyntaxKind.ThisKeyword || n.kind === ts.SyntaxKind.SuperKeyword) other = true;
+    else if (ts.isIdentifier(n)) {
       const d = declarationOf(n);
       if (d && ts.isParameter(d)) parameters.add(d);
       else other = true;
@@ -688,25 +690,44 @@ export function withoutComments(file: string, text: string): string {
 }
 
 /**
- * A callee written before an opening parenthesis: `throw` (or Python's `raise`) before it, a `new`, the receivers it
- * is named on, its name and type arguments.
+ * A callee written before an opening parenthesis, its type arguments taken off (`withoutTypeArguments`): `throw` (or
+ * Python's `raise`) before it, a `new`, the receivers it is named on, and its name.
  */
-const CALLEE_BEFORE = /(?<![\w.$])(?:(throw|raise)\s+)?(?:new\s+)?((?:[A-Za-z_]\w*\s*\??\.\s*)*)([A-Za-z_]\w*)\s*(?:<[^<>()]*>\s*)?$/;
+const CALLEE_BEFORE = /(?<![\w.$])(?:(throw|raise)\s+)?(?:new\s+)?((?:[A-Za-z_]\w*\s*\??\.\s*)*)([A-Za-z_]\w*)\s*$/;
+
+/**
+ * The text before a call's opening parenthesis without the type arguments it ends in (`<Map<String, List<Int>>>`),
+ * nested ones included. Text that ends in anything else, or whose angle brackets do not balance over characters type
+ * arguments are written with, is returned as it is.
+ */
+function withoutTypeArguments(before: string): string {
+  const end = before.trimEnd().length;
+  if (before[end - 1] !== ">") return before;
+  let depth = 0;
+  for (let j = end - 1; j >= 0; j--) {
+    const c = before[j]!;
+    if (c === ">") depth++;
+    else if (c === "<") {
+      if (--depth === 0) return before.slice(0, j);
+    } else if (!/[\w\s.,?*[\]$]/.test(c)) break;
+  }
+  return before;
+}
 
 /** Kotlin's standard functions that throw: `error` and `TODO` with the message given, `require` and `check` when the condition given is false. */
 const KOTLIN_THROWING = new Set(["error", "TODO", "require", "check"]);
 
 /**
- * The strings in code read as text that are arguments of an exception, by the offset of their opening quote, with the
- * name it is called by: the arguments of a call that is thrown (`throw X(...)`, `raise X(...)`) or of a class named
+ * The string literals in code read as text that are arguments of an exception, from their opening quote to just past
+ * their closing one, with the name it is called by: the arguments of a call that is thrown (`throw X(...)`, `raise X(...)`) or of a class named
  * as Java's, Kotlin's, Dart's and Python's own exceptions are (`...Error`, `...Exception`), and in Kotlin of the
  * standard library's throwing functions. A request written inside those parentheses is inside a call of its own, so it
  * is still read.
  */
-function exceptionArguments(file: string, text: string): Map<number, string> {
+function exceptionArguments(file: string, text: string): Array<{ start: number; end: number; exception: string }> {
   const kotlin = /\.kts?$/.test(file);
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
-  const out = new Map<number, string>();
+  const out: Array<{ start: number; end: number; exception: string }> = [];
   const frames: Array<{ open: string; exception?: string }> = [];
   const opener: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
   for (let i = 0; i < text.length; ) {
@@ -714,14 +735,15 @@ function exceptionArguments(file: string, text: string): Map<number, string> {
     const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(c) ? c : undefined;
     if (quote) {
       const exception = frames.at(-1)?.exception;
-      if (exception) out.set(i, exception);
-      i = literalEnd(text, i, quote, file);
+      const end = literalEnd(text, i, quote, file);
+      if (exception) out.push({ start: i, end, exception });
+      i = end;
       continue;
     }
     if (c === "(") {
-      const m = CALLEE_BEFORE.exec(text.slice(Math.max(0, i - 200), i));
+      const m = CALLEE_BEFORE.exec(withoutTypeArguments(text.slice(Math.max(0, i - 200), i)));
       const [, thrown, receivers = "", name = ""] = m ?? [];
-      const exception = !!thrown || /^[A-Z]\w*(?:Error|Exception)$/.test(name) || (kotlin && !receivers && KOTLIN_THROWING.has(name));
+      const exception = !!thrown || /^(?:[A-Z]\w*)?(?:Error|Exception)$/.test(name) || (kotlin && !receivers && KOTLIN_THROWING.has(name));
       frames.push({ open: c, exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined });
     } else if (c === "[" || c === "{") frames.push({ open: c });
     else if (opener[c]) {
@@ -744,7 +766,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const scopeAt = textScopes(text);
   const exceptions = exceptionArguments(file, text);
   const python = /\.pyi?$/.test(file);
-  const read = (segment: string, offset: number): void => {
+  const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
     for (let m = re.exec(segment); m; m = re.exec(segment)) {
       const at = m.index;
@@ -753,21 +775,23 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       const end = fString ? fStringEnd(segment, at) : undefined;
       const body = end !== undefined ? segment.slice(at + 1, end) : (m[1] ?? m[2]!);
       if (end !== undefined) re.lastIndex = end + 1;
-      read1(body, offset + at, body.length + 2, fString);
+      read1(body, offset + at, body.length + 2, fString, field);
     }
   };
-  const read1 = (body: string, index: number, length: number, fString: boolean): void => {
+  const read1 = (body: string, index: number, length: number, fString: boolean, field: boolean): void => {
     // A route's own path is no request; the code in its f-string fields still runs, and is read below.
     const registered = spans?.holds(file, index);
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
     // code in a field runs, so the requests written in it are read too.
     const fields: Array<[number, number]> = [];
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
-    for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start);
+    for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
     if (registered) return;
     const parsed = callPath(inner);
     if (!parsed) return;
-    const exception = exceptions.get(index);
+    // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
+    // the exception's literal the string lies in. A string in an f-string field is in code of its own.
+    const exception = field ? undefined : exceptions.find((e) => e.start <= index && index < e.end)?.exception;
     if (exception) {
       labels?.push({ callee: exception, at: { file, line: lineOf(text, index) } });
       return;

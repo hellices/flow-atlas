@@ -231,7 +231,8 @@ describe("a client's own prefixing helper", () => {
   const calls = (code: string, prefix = "/api/v1") => {
     const config = normalizeConfig({ components: [{ name: "app", path: "" }, { name: "api", path: "" }], calls: [{ from: "app", to: "api", files: ["a.ts"], ...(prefix ? { prefix } : {}) }] });
     limits.length = 0;
-    return extractCalls(memory({ "a.ts": code }), config, [], undefined, limits).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+    const read = extractCalls(memory({ "a.ts": code }), config, [], undefined, limits).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+    return { calls: read, limits: [...limits] };
   };
   const callers = '\nexport const list = () => request(apiPath("/notebooks"));\nexport const search = (id: string) => request(apiPath(`/notebooks/${id}/search`), { method: "POST" });';
 
@@ -242,12 +243,10 @@ describe("a client's own prefixing helper", () => {
       // The value put after the prefix may be built from the parameter alone.
       ['function apiPath(path: string) { return path.startsWith("/api/v1") ? path : `/api/v1${path.startsWith("/") ? path : `/${path}`}`; }', ["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]],
     ];
-    for (const [helper, expected] of rows) {
-      expect(calls(helper + callers)).toEqual(expected);
-      expect(limits).toEqual(["calls app->api: the configured prefix /api/v1 put before a function's path parameter (a.ts:1) is not read as a request; the paths passed to that function are"]);
-    }
+    const limit = "calls app->api: the configured prefix /api/v1 put before a function's path parameter (a.ts:1) is not read as a request; the paths passed to that function are";
+    for (const [helper, expected] of rows) expect(calls(helper + callers)).toEqual({ calls: expected, limits: [limit] });
     // The prefix as the configuration may write it.
-    expect(calls("function apiPath(path: string) { return `/api/v1${path}`; }" + callers, "api/v1/")).toEqual(["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]);
+    expect(calls("function apiPath(path: string) { return `/api/v1${path}`; }" + callers, "api/v1/").calls).toEqual(["* /api/v1/notebooks", "POST /api/v1/notebooks/{}/search"]);
   });
 
   it("still reads a path with a hole, a prefix put before anything but a parameter, and a base other than the prefix", () => {
@@ -262,10 +261,14 @@ describe("a client's own prefixing helper", () => {
       // A value that is not the function's parameter, or is more than it.
       ["const PATH = route();\nfetch(`/api/v1${PATH}`);", "/api/v1", ["GET /api/v1/api/v1{}"]],
       ["const get = (path: string) => fetch(`/api/v1${normalize(path)}`);", "/api/v1", ["GET /api/v1/api/v1{}"]],
+      // `this` and `super` are inputs of their own, as another function is.
+      ["class C { get(path: string) { return fetch(`/api/v1${this.normalize(path)}`); } }", "/api/v1", ["GET /api/v1/api/v1{}"]],
+      ["class C extends B { get(path: string) { return fetch(`/api/v1${super.normalize(path)}`); } }", "/api/v1", ["GET /api/v1/api/v1{}"]],
+      ['class C { get(path: string) { return fetch("/api/v1" + this[path]); } }', "/api/v1", ["GET /api/v1/api/v1{}"]],
       // No prefix configured: the helper's base is all the code says.
       ["const get = (path: string) => fetch(`/api/v1${path}`);", "", ["GET /api/v1{}"]],
     ];
-    expect(rows.map(([code, prefix]) => calls(code, prefix))).toEqual(rows.map(([, , expected]) => expected));
+    expect(rows.map(([code, prefix]) => calls(code, prefix))).toEqual(rows.map(([, , expected]) => ({ calls: expected, limits: [] })));
   });
 });
 
@@ -288,6 +291,17 @@ describe("a label given to an exception in code read as text", () => {
       ["a.py", 'raise ValueError(f"/my/{item_id}")'],
       ["a.dart", "throw StateError('/my');"],
       ["A.swift", 'throw ApiFailure.missing(path: "/my")'],
+      // The languages' own exceptions, named by the suffix alone.
+      ["A.kt", 'return Result.failure(Exception("/my"))'],
+      ["a.py", 'e = Exception("/my")'],
+      ["a.dart", "final e = Error('/my');"],
+      // Triple-quoted strings, which the call reader reads from their third quote.
+      ["A.kt", 'throw BffUnavailable("""/my""")'],
+      ["a.py", 'raise ValueError("""/my""")'],
+      ["a.py", "raise ValueError('''/my''')"],
+      // Type arguments, nested ones too.
+      ["A.kt", 'throw failure<Map<String, List<Int>>>("/my")'],
+      ["A.kt", 'val e = ApiException<Map<String, Int>>("/my")'],
     ];
     expect(rows.map(([file, code]) => read(file, code))).toEqual(rows.map(() => []));
   });
@@ -305,6 +319,10 @@ describe("a label given to an exception in code read as text", () => {
       ["a.py", 'error("/my")', ["* /my"]],
       // An exception's parentheses end where they close.
       ["A.kt", 'val e = SomeError(code)\nhttp.get("/my")', ["GET /my"]],
+      // A request in a field of an exception's f-string runs on its own.
+      ["a.py", "raise ApiError(f\"failed: {requests.get('/my').status_code}\")", ["GET /my"]],
+      // A call after a comparison has no type arguments.
+      ["A.kt", 'if (a < b && c > d) http.get("/my")', ["GET /my"]],
     ];
     expect(rows.map(([file, code]) => read(file, code))).toEqual(rows.map(([, , expected]) => expected));
   });

@@ -1,6 +1,6 @@
 /** Every path of the notes API is under its version; a path given with the version already in it is kept. */
 function apiPath(path: string): string {
-  return path.startsWith("/api/v1") ? path : `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
+  return path === "/api/v1" || path.startsWith("/api/v1/") ? path : `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 /** A client of the notes API. Its base URL is the server's origin; `apiPath` puts the version before each path. */
