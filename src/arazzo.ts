@@ -53,7 +53,8 @@ function parseSurfaceId(id: string): { component: string; method: string; path: 
 
 /**
  * Where a path leads on this disk, links followed as far as anything exists: the nearest existing ancestor's real
- * path with the rest appended, and a dangling link's target in its place. Undefined for links that lead nowhere.
+ * path with the rest appended, and a dangling link's target in its place. Undefined for links that cannot be followed
+ * to an end.
  */
 function settle(path: string, hops = 0): string | undefined {
   const rest: string[] = [];
@@ -91,8 +92,9 @@ const within = (base: string, file: string): string | undefined => {
  *
  * A file on this disk is where its links lead. A committed link to a file outside the repository is outside: git keeps
  * only the link's text, so on any other machine, and at any revision read from git, it names nothing. A file not on
- * this disk (one that exists only at another revision) is placed where the links on its path lead; one behind a link
- * that leads nowhere is not taken as in the repository.
+ * this disk (one that exists only at another revision) is placed where the links on its path lead: a link whose
+ * target does not exist yet stands for that target, as a link to a generated file does before it is generated. Only a
+ * link that cannot be followed to an end (a loop, or more than 32 hops) leaves the file out of the repository.
  */
 export function repositoryPath(path: string, root: string | undefined): string | undefined {
   if (!root) {

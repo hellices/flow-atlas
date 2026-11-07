@@ -196,11 +196,16 @@ tree, `code` has no digest.
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
 | description choice | component | `status` (chosen, ambiguous, none), `location`, `kind`, `reason`, `candidates` |
 
-Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`.
-The same route has the same id whichever framework registered it, and matches an OpenAPI `paths` key as is. Two forms
-are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path
-(`{*rest}`, `**`), which matches the rest of a request's path, and a wildcard within a segment (`*.txt`), which matches
-any text in that segment. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
+Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`,
+Starlette's `{id:str}` becomes `{id}`. The same route has the same id whichever framework registered it, and matches an
+OpenAPI `paths` key as is. Starlette's other converters (`{id:int}`, `{id:float}`, `{id:uuid}`) are kept as written:
+each takes only the segments its regex does. Two forms
+are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path, which
+matches the rest of a request's path, and a wildcard within a segment (`*.txt`), which matches any text in that
+segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written `{*rest}`) match the path without them too;
+Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`), is `.*` after the `/` before it, so a
+request without that segment reaches it only by the redirect to the path with a `/` added, which Starlette's router
+answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
 description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
 tool cannot resolve. Paths that differ only in a trailing `/` are one route. An
 `operationId` is read where the code states it (route options, `@ApiOperation`); with `operationIds: nest-swagger` in
