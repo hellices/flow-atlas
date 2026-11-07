@@ -9,7 +9,12 @@ routes:
       # backend/server.py: the agent framework's helper always registers POST
       - { name: add_agent_framework_fastapi_endpoint, pathArg: 2, method: POST }
 calls:
-  - { from: web, to: backend, files: ["frontend/src/**/*.{ts,tsx}"] }
+  - from: web
+    to: backend
+    files: ["frontend/src/**/*.{ts,tsx}"]
+    wrappers:
+      # frontend/src/lib/auth.ts: authFetch hands its URL and init to fetch, which sends GET when the init states no method
+      - { name: authFetch, defaultMethod: GET }
 publicSurfaces:
   - "backend|GET /api/health"          # the platform's probe
   - "backend|GET /api/auth/callback"   # the identity provider's redirect

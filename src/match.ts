@@ -1,5 +1,5 @@
 import type { Call, Graph, Surface } from "./model.js";
-import { firstLiteral, HOLE, methodsMatch, pathsMatch, segments } from "./paths.js";
+import { firstLiteral, HOLE, methodsMatch, narrowedPath, pathCovers, pathsMatch, segments, slashRedirectPath } from "./paths.js";
 
 import type { Config } from "./config.js";
 
@@ -102,12 +102,22 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       const fits = [...new Set(graph.surfaces.filter((s) => s.component === call.to && pathsMatch(s.path, call.path)).map((s) => s.path))];
       path = fits.sort((a, b) => compare(nextRank(a), nextRank(b)))[0];
     }
+    // Starlette redirects a path no route matches, by any method, to the same path with a `/` added; a route ending in
+    // `{name:path}` takes that with the segment empty. A call with interpolations may name the path the redirect
+    // serves, as the route spells it where the call does not; only a route that surely matches that path keeps it from
+    // being redirected.
+    const redirected = (surface: Surface): boolean => {
+      const bare = slashRedirectPath(surface.path);
+      if (bare === undefined || !pathsMatch(bare, call.path)) return false;
+      const served = narrowedPath(bare, call.path);
+      return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served));
+    };
     graph.surfaces.forEach((surface, si) => {
       if (surface.component !== call.to) return;
       if (path !== undefined && surface.path !== path) return;
       // What the framework answers by itself is reached only by a request that names that method.
       if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
-      if (pathsMatch(surface.path, call.path) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
+      if ((pathsMatch(surface.path, call.path) || redirected(surface)) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
     });
     const reach = reached(call, candidates, ranked);
     // A method that is not read would pick among routes that take different ones; which it picks is not read either.

@@ -52,6 +52,12 @@ export interface CallSource {
    * client's base URL such as `axios.create({ baseURL: "/api" })` or Dio's `baseUrl`.
    */
   prefix?: string;
+  /**
+   * The project's own wrappers around fetch, by the name they are called with (`authFetch`, `api.authFetch`), in
+   * TypeScript and JavaScript: the URL first and a fetch init second. A call whose init states no method sends
+   * `defaultMethod`, as fetch sends GET.
+   */
+  wrappers?: Array<{ name: string; defaultMethod: string }>;
 }
 
 export interface ActiveList {
@@ -115,7 +121,7 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
     components: list(raw.components),
     manifest: raw.manifest as Config["manifest"],
     routes: list<RouteSource>(raw.routes).map(checkRoute),
-    calls: list(raw.calls),
+    calls: list<CallSource>(raw.calls).map(checkCalls),
     registries: list(raw.registries),
     publicSurfaces: list(raw.publicSurfaces),
     exclude: [...DEFAULT_EXCLUDE, ...list<string>(raw.exclude)],
@@ -138,6 +144,22 @@ function checkRoute(route: RouteSource): RouteSource {
     }
   }
   return route;
+}
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+function checkCalls(spec: CallSource): CallSource {
+  if (spec.wrappers === undefined) return spec;
+  // A list of wrappers, each with a name and one of the methods fetch sends.
+  for (const w of Array.isArray(spec.wrappers) ? spec.wrappers : [spec.wrappers]) {
+    const { name, defaultMethod } = (w ?? {}) as Record<string, unknown>;
+    const named = typeof name === "string" && name.trim().length > 0;
+    const method = typeof defaultMethod === "string" && HTTP_METHODS.has(defaultMethod.toUpperCase());
+    if (!Array.isArray(spec.wrappers) || !named || !method) {
+      throw new Error(`calls ${spec.from}->${spec.to}: a client wrapper needs name and a defaultMethod among ${[...HTTP_METHODS].join(", ")} (${JSON.stringify(w)})`);
+    }
+  }
+  return { ...spec, wrappers: spec.wrappers.map((w) => ({ name: w.name, defaultMethod: w.defaultMethod.toUpperCase() })) };
 }
 
 export function ruleEnabled(config: Config, rule: RuleId): boolean {

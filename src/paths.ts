@@ -103,9 +103,83 @@ export function holeMatches(pattern: string, text: string): boolean {
   return true;
 }
 
-/** A route segment `:id`/`{id}` matches anything; a call segment's interpolations match any text, its fixed text must agree. */
 /** A last route segment that takes the rest of the path, none or many segments: Spring's `{*rest}` and `**`. */
 const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
+
+/**
+ * A last route segment Starlette's `path` converter takes: `.*` after the `/` written before it, so any text, none
+ * included, after that `/`. A mount is compiled as its path with `/{path:path}` joined. A route with one before its end
+ * is not read.
+ */
+const isStarletteRest = (seg: string | undefined): boolean => !!seg && /^\{\w+:path\}$/.test(seg);
+
+/** The regex of each of Starlette's one-segment convertors (`starlette/convertors.py`). */
+const CONVERTORS: Record<string, RegExp> = {
+  str: /^[^/]+$/,
+  int: /^[0-9]+$/,
+  float: /^[0-9]+(\.[0-9]+)?$/,
+  uuid: /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/,
+};
+
+/** The convertor a Starlette parameter names (`{id:int}`), or undefined for a parameter that names none. */
+const convertorOf = (seg: string): string | undefined => /^\{\w+:(\w+)\}$/.exec(seg)?.[1];
+
+/** Whether a parameter names a convertor that is not read: one registered elsewhere (`register_url_convertor`). */
+const unreadConvertor = (seg: string): boolean => {
+  const convertor = convertorOf(seg);
+  return convertor !== undefined && convertor !== "path" && !Object.hasOwn(CONVERTORS, convertor);
+};
+
+/**
+ * Whether a route parameter takes a call segment: a fixed one by its convertor's regex; one with interpolations, or
+ * any against a convertor registered elsewhere, which is not read, may be taken.
+ */
+function paramTakes(seg: string, part: string): boolean {
+  const convertor = convertorOf(seg);
+  if (convertor === undefined || isHole(part) || !Object.hasOwn(CONVERTORS, convertor)) return true;
+  return CONVERTORS[convertor]!.test(part);
+}
+
+/** Whether a route segment takes every segment an interpolation may hold. */
+const takesAny = (seg: string): boolean =>
+  isCatchAll(seg) || isStarletteRest(seg) || (isParam(seg) && (convertorOf(seg) === undefined || convertorOf(seg) === "str"));
+
+/**
+ * The path a route ending in Starlette's `{name:path}` serves with that segment left out, with a `/` after it, or
+ * undefined for any other route. Starlette's router redirects a path no route matches to the same path with a `/`
+ * added, when a route matches that (FastAPI's `redirect_slashes`, on by default), so a request without the `/`
+ * reaches it only then.
+ */
+export function slashRedirectPath(routePath: string): string | undefined {
+  const r = segments(routePath);
+  return isStarletteRest(r[r.length - 1]) ? joinRoute(...r.slice(0, -1)) : undefined;
+}
+
+/**
+ * The requests a call stands for that also fit a route path it matches: each segment of the call with interpolations
+ * where the route spells out the segment, as the route spells it.
+ */
+export function narrowedPath(routePath: string, call: string): string {
+  const r = segments(routePath);
+  return joinRoute(...segments(call).map((seg, i) => (isHole(seg) && r[i] !== undefined && isFixed(r[i]) ? r[i] : seg)));
+}
+
+/** A route segment written as plain text: no parameter, wildcard or brace pattern; a colon inside one is text. */
+const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*]/.test(seg);
+
+/**
+ * Whether a route matches every request a call's path stands for, not only some: where the call interpolates a
+ * segment, the route must take any segment there, and a convertor that is not read settles no segment.
+ */
+export function pathCovers(routePath: string, call: string): boolean {
+  if (!pathsMatch(routePath, call)) return false;
+  const c = segments(call);
+  return segments(routePath).every((seg, i) => {
+    const part = c[i];
+    if (part === undefined) return true;
+    return isHole(part) ? takesAny(seg) : !unreadConvertor(seg);
+  });
+}
 
 /** A segment with a wildcard inside it (`*.txt`, `v*`): `*` stands for any text within the segment, `{x}` for some. */
 function segmentPattern(seg: string): RegExp {
@@ -116,6 +190,10 @@ function segmentPattern(seg: string): RegExp {
   return new RegExp(`^${body}$`);
 }
 
+/**
+ * A route segment `:id`/`{id}` matches anything, `{id:int}` what its convertor's regex takes; a call segment's
+ * interpolations match any text, its fixed text must agree.
+ */
 export function pathsMatch(routePath: string, call: string): boolean {
   let r = segments(routePath);
   let c = segments(call);
@@ -123,11 +201,16 @@ export function pathsMatch(routePath: string, call: string): boolean {
     r = r.slice(0, -1);
     if (c.length < r.length) return false;
     c = c.slice(0, r.length);
+  } else if (isStarletteRest(r[r.length - 1])) {
+    r = r.slice(0, -1);
+    if (c.length <= r.length) return false;
+    c = c.slice(0, r.length);
   }
   if (r.length !== c.length) return false;
   return r.every((seg, i) => {
     const part = c[i]!;
-    if (isParam(seg) || seg === part) return true;
+    if (isParam(seg)) return paramTakes(seg, part);
+    if (seg === part) return true;
     if (isHole(part)) return holeMatches(part, seg);
     // A wildcard or a variable inside a segment (`*.txt`, `{name}.txt`) matches the text around it.
     return (seg.includes("*") || /\{[^}]*\}/.test(seg)) && segmentPattern(seg).test(part);

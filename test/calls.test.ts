@@ -335,3 +335,74 @@ describe("a label given to an exception in code read as text", () => {
     expect(limits).toEqual(["calls app->api: paths given to an exception or to a function that throws are not read as requests: BffUnavailable (1, first at A.kt:2), error (2, first at A.kt:3)"]);
   });
 });
+
+describe("client wrappers in the configuration", () => {
+  const wrapped = (code: string, wrappers: Array<{ name: string; defaultMethod: string }> = [{ name: "authFetch", defaultMethod: "GET" }]) =>
+    callsFromTypeScript("a.ts", code, { from: "a", to: "b", files: [], wrappers }).map((c) => `${c.method} ${c.path}`);
+
+  it("reads a call that states no method as the wrapper's default, and keeps a method the call states", () => {
+    const rows: Array<[string, string[]]> = [
+      // fetch's semantics: no init, or an init without a method, sends the default.
+      ['authFetch("/items");', ["GET /items"]],
+      ["authFetch(`/items/${id}`, { headers });", ["GET /items/{}"]],
+      ["authFetch(`/items/${id}`, { method: \"PUT\", body });", ["PUT /items/{}"]],
+      ['authFetch("/items", { ...init, method: "DELETE" });', ["DELETE /items"]],
+      ['authFetch("/items", "POST");', ["POST /items"]],
+      // A known method in any case, as a method stated in the init is read.
+      ['authFetch("/items", "post");', ["POST /items"]],
+      // An init that may carry a method: a value, a spread, a method held in a value.
+      ['authFetch("/items", init);', ["* /items"]],
+      ['authFetch("/items", { ...init, headers });', ["* /items"]],
+      ['authFetch("/items", { method });', ["* /items"]],
+      // A URL held in a const takes the method of the wrapper call that uses it.
+      ["const url = `/items/${id}`;\nauthFetch(url);", ["GET /items/{}"]],
+      // Only the name configured, as it is written.
+      ['otherFetch("/items");', ["* /items"]],
+      ['api.authFetch("/items");', ["* /items"]],
+    ];
+    expect(rows.map(([code]) => wrapped(code))).toEqual(rows.map(([, calls]) => calls));
+    expect(wrapped('api.authFetch("/items");', [{ name: "api.authFetch", defaultMethod: "GET" }])).toEqual(["GET /items"]);
+    expect(wrapped('send("/items");\nsend("/items", { method: "GET" });', [{ name: "send", defaultMethod: "POST" }])).toEqual(["POST /items", "GET /items"]);
+    // Without the configuration nothing is guessed.
+    expect(wrapped('authFetch("/items");', [])).toEqual(["* /items"]);
+  });
+
+  it("leaves the method open while anything in the init may name method, and reads one stated after it", () => {
+    const rows: Array<[string, string[]]> = [
+      // A computed key, a getter, a prototype or a spread may carry a method.
+      ['authFetch("/items", { [key]: verb });', ["* /items"]],
+      ['authFetch("/items", { ["method"]: verb });', ["* /items"]],
+      ['authFetch("/items", { get method() { return verb; } });', ["* /items"]],
+      ['authFetch("/items", { __proto__: init, headers });', ["* /items"]],
+      ['authFetch("/items", { method: "DELETE", ...init });', ["* /items"]],
+      ['authFetch("/items", { method: "POST", [key]: verb });', ["* /items"]],
+      // A method stated after them is the one sent; a computed key that is a literal is that name.
+      ['authFetch("/items", { [key]: verb, method: "PUT" });', ["PUT /items"]],
+      ['authFetch("/items", { ["headers"]: headers });', ["GET /items"]],
+    ];
+    expect(rows.map(([code]) => wrapped(code))).toEqual(rows.map(([, calls]) => calls));
+    // fetch is read by the same rule.
+    expect(read('fetch("/items", { [key]: verb });\nfetch("/items", { __proto__: init });')).toEqual(["* /items", "* /items"]);
+    // fetch reads its init as a wrapper does: a method stated after a spread is the one the object ends with.
+    expect(read('fetch("/items", { ...options, method: "POST" });\nfetch("/items", { method: "POST", ...options });\nfetch("/items", { ...options });')).toEqual(["POST /items", "* /items", "* /items"]);
+  });
+
+  it("reads a configured wrapper before the names a method is read from without one", () => {
+    const post = [{ name: "post", defaultMethod: "POST" }];
+    expect(wrapped('post("/items");\npost("/items", { method: "GET" });\npost("/items", init);', post)).toEqual(["POST /items", "GET /items", "* /items"]);
+    const fetch = [{ name: "fetch", defaultMethod: "POST" }];
+    expect(wrapped('fetch("/items");\nfetch("/items", { headers });\nfetch("/items", { method: "GET" });', fetch)).toEqual(["POST /items", "POST /items", "GET /items"]);
+    // Without the wrapper the name decides.
+    expect(read('post("/items", { method: "GET" });\npost("/items", init);')).toEqual(["POST /items", "POST /items"]);
+  });
+
+  it("takes a name and one of the HTTP methods as the default", () => {
+    const wrappers = (list: unknown) => () => normalizeConfig({ components: [{ name: "a", path: "" }, { name: "b", path: "" }], calls: [{ from: "a", to: "b", files: ["*.ts"], wrappers: list }] });
+    expect(wrappers([{ name: "authFetch", defaultMethod: "GET" }])).not.toThrow();
+    expect(normalizeConfig({ calls: [{ from: "a", to: "b", files: [], wrappers: [{ name: "authFetch", defaultMethod: "post" }] }] }).calls[0]!.wrappers).toEqual([{ name: "authFetch", defaultMethod: "POST" }]);
+    for (const bad of [{ name: "authFetch" }, { name: "authFetch", defaultMethod: "*" }, { name: "authFetch", defaultMethod: "FETCH" }, { name: "", defaultMethod: "GET" }, { defaultMethod: "GET" }, { name: "authFetch", defaultMethod: 1 }]) {
+      expect(wrappers([bad]), JSON.stringify(bad)).toThrow(/client wrapper/);
+    }
+    expect(wrappers({ name: "authFetch", defaultMethod: "GET" })).toThrow(/client wrapper/);
+  });
+});

@@ -165,9 +165,11 @@ through a sample of findings with a person. Only then record the baseline.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
   router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`), the `data-*`
-  attributes a template's scripts request (`calls[].dataUrls`). A `limit:` line
-  tells you when one is missing; never declare one to make a finding go away. A limit on a call whose method is not
-  read has nothing to declare: the call fits routes of several methods, and trace and chains leave it out.
+  attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends
+  when the call states none (`calls[].wrappers`, after reading that it hands its URL and init to fetch). A `limit:`
+  line tells you when one is missing; never declare one to make a finding go away. A limit on a call whose method is
+  not read fits routes of several methods, and trace and chains leave it out: when the call goes through such a
+  wrapper, declare the wrapper; otherwise there is nothing to declare.
 
 ## Handling a finding
 

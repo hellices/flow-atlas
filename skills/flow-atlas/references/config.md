@@ -39,6 +39,11 @@ calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
   - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path (Dio baseUrl, axios baseURL)
   - { from: web, to: api, files: ["src/main/resources/templates/**/*.html"], dataUrls: [data-api-url] }   # data-* a script requests
+  - from: spa
+    to: api
+    files: ["apps/spa/src/**/*.ts"]
+    wrappers:                 # the project's own wrappers around fetch: URL first, init second
+      - { name: authFetch, defaultMethod: GET }   # authFetch(url) sends GET, as fetch does; a method in the init is kept
   - { from: android, to: bff, files: ["apps/android/**/api/**/*.kt"] }
 
 # Registries whose entries one side produces and another consumes.
@@ -96,7 +101,15 @@ call files, the method from `.get(`/`.post(` callees, a method string in the sam
 starts with a `const` of the same file (`${base}/orders`, `API + "/orders"`) is joined to that constant's value, found
 by the scopes around the use (an origin with no path, `https://api.example.com`, keeps its host for the check below); a
 constant used only that way is a base, not a request of its own. A URL held in a `const` takes the method that every
-use requesting it states (`fetch(url, { method: "POST" })`); uses that differ or state none leave it `*`. A method named in brackets (`path["startsWith"]`) is
+use requesting it states (`fetch(url, { method: "POST" })`); uses that differ or state none leave it `*`. A wrapper the call source names in `wrappers` is read as fetch is, with
+its own default: called by the name written there (`authFetch`, or `api.authFetch` for that member call only), with
+the URL as its first argument, it sends `defaultMethod` when there is no second argument or the second is an object
+literal in which nothing may set `method`; a method the call states (`{ method: "PUT" }`, also after a spread,
+or `authFetch(url, "POST")`) is kept; an init held in a value, or one where a spread, a computed key (`[key]: verb`),
+a getter, a `__proto__` or a `method` held in a value comes last among what may set it, leaves it `*`. The wrapper is
+read before what its name says without the entry: a wrapper named `post` or `fetch` sends its own default. A wrapper whose default is not
+fetch's GET (one that always posts, say) says so in `defaultMethod`. Without the entry, a wrapper's call that states no
+method is `*`: atlas does not read into the wrapper. A method named in brackets (`path["startsWith"]`) is
 the method named after a dot. A string in a type
 (`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
 handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
@@ -160,9 +173,14 @@ Kotlin of the standard library's throwing functions `error`, `TODO`, `require` a
 a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
 the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the
 language. FastAPI
-decorators are read from Python, with Starlette's converters (`{name:path}` takes the rest of the path, as `{*name}`;
-`{id:int}` is one segment; a `path` converter before a suffix is not matched, so that route is left out with a limit),
-and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under `/x/**`; another mounted application
+decorators are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
+none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
+that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,
+unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, so a call written `/x/` is read as
+`/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
+`{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
+suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
+(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
 is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
@@ -205,12 +223,12 @@ a `spring` component a request whose path is fully known reaches that route only
 `/movies/{id}`). Express, Fastify, Nest and FastAPI follow registration order,
 which atlas does not read, so there a request reaches every route it fits.
 
-A request whose method is not read (`*`: a project's wrapper called without a method, an init built at run time, a
-`data-*` URL) is matched to those routes only when they all take one method, or all take any. Where they take several,
+A request whose method is not read (`*`: a project's wrapper called without a method and not named in `wrappers`, an
+init built at run time, a `data-*` URL) is matched to those routes only when they all take one method, or all take any. Where they take several,
 which one it calls depends on the method, which atlas does not settle: it leaves the call unmatched, a limit names the
 call and the methods, FA002 is not reported for it and FA001 for none of the routes it fits. A wrapper's own code is not read, so `authFetch(url)` is
-such a request even when the wrapper hands its arguments to `fetch`; `authFetch(url, { method: "POST" })` states its
-method.
+such a request even when the wrapper hands its arguments to `fetch`, until the call source names it in `wrappers` with
+the method it sends by default; `authFetch(url, { method: "POST" })` states its method either way.
 
 An interpolation matches any text within its segment, but fixed text around it must agree: `support-options{}`
 matches `support-options`, not `status`. A request whose path is built far from the call (passed through several

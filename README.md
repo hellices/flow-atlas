@@ -114,7 +114,8 @@ atlas reports and does not block by default. To fail CI on new findings, use `--
 `trace` joins two kinds of link. A call joins a route when the method and path agree (`=`). A call whose method atlas
 does not read (a project's wrapper around `fetch` that is given none, a `data-*` URL) joins the routes its path fits
 only when they all take one method; where they take several, which one it calls depends on the method, so it joins
-none of them and a `limit:` line names it. Inside a component, a
+none of them and a `limit:` line names it. A wrapper the configuration names in `calls[].wrappers`, with the method
+it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Inside a component, a
 route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
 (`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
 name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls

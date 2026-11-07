@@ -556,10 +556,11 @@ const pythonLiteral = (text: string): string | undefined => pythonStrings(text)?
 const pythonLiteralLength = (text: string): number | undefined => pythonStrings(text)?.length;
 
 /**
- * A Starlette path in atlas's form: `{name:path}` takes the rest of the path, as Spring's `{*name}` does; any other
- * converter (`int`, `str`, `float`, `uuid`) is one segment.
+ * A Starlette path in atlas's form: a converter is kept as written, since `{name:path}` takes the rest of the path after
+ * the `/` before it, which neither Spring's `{*name}` nor `**` requires, and `int`, `float` and `uuid` take only the
+ * segments their regex does. `{name:str}` is `{name}`, the convertor Starlette applies when none is named.
  */
-const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):path\}/g, "{*$1}").replace(/\{(\w+):\w+\}/g, "{$1}"));
+const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):str\}/g, "{$1}"));
 
 /** The start of each top-level argument of the call whose arguments begin at `from`, in blanked code. */
 function pythonArgStarts(code: string, from: number): number[] {
@@ -642,8 +643,8 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
     for (const method of methods ?? []) add(method, path, m.index ?? 0);
   }
-  // Starlette's mount hands everything under its path to the mounted application. StaticFiles answers GET and HEAD;
-  // what another application serves is not read here.
+  // Starlette's mount hands everything under its path to the mounted application, compiled as the path with
+  // `/{path:path}` joined. StaticFiles answers GET and HEAD; what another application serves is not read here.
   for (const m of fastapi ? code.matchAll(/\b(\w+)\.mount\(\s*/g) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
@@ -660,8 +661,8 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const app = keyword("app");
     const mounted = app ? app.at : positional.find((a) => a !== pathAt);
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
-      add("GET", joinRoute(path, "**"), m.index ?? 0);
-      add("HEAD", joinRoute(path, "**"), m.index ?? 0, true);
+      add("GET", joinRoute(path, "{path:path}"), m.index ?? 0);
+      add("HEAD", joinRoute(path, "{path:path}"), m.index ?? 0, true);
     } else {
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} mounts an application at ${path} whose routes are not read`);
     }
