@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callPath, joinRoute, methodsMatch, pathsMatch, routeTemplate } from "../src/paths.js";
+import { callPath, joinRoute, methodsMatch, narrowedPath, pathsMatch, routeTemplate } from "../src/paths.js";
 import { cycleSearch, cycles, surfacePattern } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { documentStart } from "../src/extract/apidocs.js";
@@ -288,6 +288,16 @@ describe("surfacePattern", () => {
     // Only `*` and `**` are wildcards; every other character of an entry is itself.
     expect(surfacePattern(["api|GET /a\uE000b"])("api|GET /axxb")).toBe(false);
     expect(surfacePattern(["api|GET /a\uE000b"])("api|GET /a\uE000b")).toBe(true);
+  });
+});
+
+describe("narrowedPath", () => {
+  it("takes the route's fixed segment for a hole, a colon inside it included, and keeps the hole under a parameter", () => {
+    expect(narrowedPath("/v1:status", "/{}")).toBe("/v1:status");
+    expect(narrowedPath("/api/acme/files", "/api/{}/files")).toBe("/api/acme/files");
+    for (const route of ["/{id}", "/:id", "/*", "/{*rest}", "/**", "/{rest:path}", "/file-{id}", "/a*b"]) {
+      expect(narrowedPath(route, "/{}"), route).toBe("/{}");
+    }
   });
 });
 

@@ -161,8 +161,11 @@ export function slashRedirectPath(routePath: string): string | undefined {
  */
 export function narrowedPath(routePath: string, call: string): string {
   const r = segments(routePath);
-  return joinRoute(...segments(call).map((seg, i) => (isHole(seg) && r[i] !== undefined && !/[{}*:]/.test(r[i]) ? r[i] : seg)));
+  return joinRoute(...segments(call).map((seg, i) => (isHole(seg) && r[i] !== undefined && isFixed(r[i]) ? r[i] : seg)));
 }
+
+/** A route segment written as plain text: no parameter, wildcard or brace pattern; a colon inside one is text. */
+const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*]/.test(seg);
 
 /**
  * Whether a route matches every request a call's path stands for, not only some: where the call interpolates a
