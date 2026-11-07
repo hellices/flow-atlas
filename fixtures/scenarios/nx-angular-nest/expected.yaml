@@ -3,7 +3,9 @@ case: |
   HttpClient. One service picks the host in a template hole: `${production ? 'https://remote.example' : ''}/api/v2/...`.
   Seen in a real run: that URL was read as a request to the API with nothing said about the other host, where the same
   branches written as a whole conditional gave a limit naming it. Now a host in a template's leading hole is named in
-  the same limit, and the request the empty branch makes is still read.
+  the same limit, and the request the empty branch makes is still read. `atlas inventory` did not offer the HttpClient
+  calls (`this.http.get<T>('/x')`), since a verb call in a script may register an Express route; it now counts a verb
+  call on a name the file binds to Angular's HttpClient.
 surfaces:
   - api|GET /api/v1/admin
   - api|GET /api/v1/admin/queue/jobs
@@ -35,4 +37,4 @@ inventory:
     - apps/api/src/app/data-providers/status.controller.ts nest 1
   calls:
     - apps/client/src/main.ts 1
-    - libs/ui/src/lib/services/admin.service.ts 1
+    - libs/ui/src/lib/services/admin.service.ts 3

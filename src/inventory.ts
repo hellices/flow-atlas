@@ -64,6 +64,9 @@ const CALL_SHAPES = [
   // fetch and the wrappers named after it: authFetch, fetchJson, useFetch.
   /\b(?:fetch\w*|\w*Fetch\w*)\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
+  // A request given as an object: a generated client's `client.get({ url: "/x" })`, axios's request config; not a
+  // member of a type (`url: "/x";`), which names a value.
+  /\burl\s*:\s*(["'`])\/[A-Za-z][^"'`]*\1(?!\s*;)/g,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
   // A Python f-string that joins a value to a path: f"{base}/orders".
@@ -78,6 +81,35 @@ const CALL_SHAPES = [
 // A receiver that is a router registers a route (`router.get("/x", handler)` in Dart's shelf_router): not a request.
 // A Dart cascade (`router..get(...)`, `Router()..get(...)`) registers on the receiver before the `..`.
 const VERB_CALL = /(?<!@[\w.]*)(?:\b([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\.?)?\.(?:get|post|put|patch|delete)\s*(?:<[^()]*>\s*)?\(\s*["'`]\/[A-Za-z][^"'`]*/g;
+
+/**
+ * The names a script binds to an HTTP client, by the module it comes from: Angular's `HttpClient` from
+ * `@angular/common/http` (`http: HttpClient`, `inject(HttpClient)`), and axios with the instances `create` makes. A
+ * verb call on one of them is a request; on any other receiver in a script it may register a route.
+ */
+function httpClients(text: string): string[] {
+  const names: string[] = [];
+  if (/\bimport\s*(?:type\s+)?\{[^}]*\bHttpClient\b[^}]*\}\s*from\s*["']@angular\/common\/http["']/.test(text)) {
+    for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*[!?]?\s*:\s*HttpClient\b/g)) names.push(m[1]!);
+    for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*inject\(\s*HttpClient\s*\)/g)) names.push(m[1]!);
+  }
+  const axios = [
+    ...[...text.matchAll(/\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\}\s*)?from\s*["']axios["']/g)].map((m) => m[1]!),
+    ...[...text.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*require\(\s*["']axios["']\s*\)/g)].map((m) => m[1]!),
+  ];
+  for (const a of axios) {
+    names.push(a);
+    for (const m of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*${a.replace(/\$/g, "\\$")}\\.create\\(`, "g"))) names.push(m[1]!);
+  }
+  return [...new Set(names)];
+}
+
+/** A verb call, type arguments allowed, on one of `names` (or `this.<name>`), whose first argument is a path. */
+const clientCall = (names: string[]): RegExp =>
+  new RegExp(
+    `(?<![\\w$.])(?:this\\.)?(?:${names.map((n) => n.replace(/\$/g, "\\$")).join("|")})\\s*\\.\\s*(?:get|post|put|patch|delete|head|options|request)\\s*(?:<[^()]*>\\s*)?\\(\\s*["'\`]\\/[A-Za-z]`,
+    "g",
+  );
 
 function ownerOf(file: string, roots: Array<{ name: string; path: string }>): string {
   let best: { name: string; path: string } | undefined;
@@ -241,7 +273,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     let firstAt: number | undefined;
     // The names the file binds to a `Router()`, besides the usual `app` and `router`.
     const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?(?:[A-Za-z_]\w*\.)*Router\s*\(/g)].map((m) => m[1]!)]);
-    for (const re of SCRIPT.test(file) ? CALL_SHAPES : [...CALL_SHAPES, VERB_CALL]) {
+    const clients = SCRIPT.test(file) ? httpClients(text) : [];
+    const shapes = SCRIPT.test(file) ? [...CALL_SHAPES, ...(clients.length ? [clientCall(clients)] : [])] : [...CALL_SHAPES, VERB_CALL];
+    for (const re of shapes) {
       for (const m of text.matchAll(re)) {
         if (re === VERB_CALL && m[1] !== undefined && (routers.has(m[1]) || m[1] === "Router")) continue;
         count++;
@@ -268,7 +302,7 @@ export function inventoryText(inv: Inventory): string {
   for (const r of inv.routes) lines.push(`  ${r.component}  ${r.style}  ${r.count}  ${r.example}`);
   const byComponent = new Map<string, Inventory["calls"]>();
   for (const c of inv.calls) (byComponent.get(c.component) ?? byComponent.set(c.component, []).get(c.component)!).push(c);
-  lines.push("", "client call candidates (paths joined to a base, fetch paths, path: properties, a path then a method)");
+  lines.push("", "client call candidates (paths joined to a base, fetch paths, path: and url: properties, a path then a method, verb calls on Angular's HttpClient and axios)");
   for (const [component, files] of byComponent) {
     const total = files.reduce((n, f) => n + f.count, 0);
     lines.push(`  ${component}: ${total} in ${files.length} files`);

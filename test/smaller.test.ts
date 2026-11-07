@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/commands.js";
 import { normalizeConfig } from "../src/config.js";
 import { extractCalls } from "../src/extract/calls.js";
+import { inventory } from "../src/inventory.js";
 import { scan } from "../src/scan.js";
 import type { Source } from "../src/source.js";
 
@@ -119,5 +120,31 @@ describe("limit lines", () => {
       expect(stdout).not.toContain("limit:");
       expect(stderr.split("\n").filter((l) => l.startsWith(limit))).toHaveLength(1);
     }
+  });
+});
+
+describe("inventory's client call candidates", () => {
+  const offered = (files: Record<string, string>) => inventory(memory(files), []).calls.map((c) => `${c.file} ${c.count}`);
+  const angular = 'import { HttpClient } from "@angular/common/http";\nimport { inject, Injectable } from "@angular/core";\n';
+
+  it("count a request given as an object, a generated client's or axios's config", () => {
+    expect(offered({ "sdk.gen.ts": "export const readItems = (options) => (options?.client ?? client).get({ url: '/api/v1/items/', ...options });" })).toEqual(["sdk.gen.ts 1"]);
+    expect(offered({ "a.js": "import axios from 'axios';\naxios({ method: 'post', url: '/api/items', data });\naxios.request({ url: \"/api/items/1\" });" })).toEqual(["a.js 2"]);
+    // A generated client's types name each operation's URL as a literal type, which requests nothing.
+    expect(offered({ "types.gen.ts": "export type ReadItemsData = {\n    query?: never;\n    url: '/api/v1/items/';\n};" })).toEqual([]);
+  });
+
+  it("count Angular's and axios's verb calls, type arguments allowed, on the names the file binds to the client", () => {
+    const service = `${angular}@Injectable()\nexport class Items {\n  constructor(private http: HttpClient) {}\n  list() { return this.http.get<Item[]>('/api/items'); }\n  add(i: Item) { return this.http.post<Item>(\n    '/api/items', i);\n  }\n}`;
+    expect(offered({ "items.service.ts": service })).toEqual(["items.service.ts 2"]);
+    expect(offered({ "feed.service.ts": `${angular}export class Feed {\n  private readonly http = inject(HttpClient);\n  load() { return this.http.get('/api/feed'); }\n}` })).toEqual(["feed.service.ts 1"]);
+    const instance = "import axios from 'axios';\nconst api = axios.create({ baseURL: '/api' });\nexport const list = () => api.get<Item[]>('/items');\nexport const one = () => axios.get('/items/1');";
+    expect(offered({ "api.ts": instance })).toEqual(["api.ts 2"]);
+  });
+
+  it("still leave out a verb call on any other receiver in a script, which registers a route as often as it requests one", () => {
+    expect(offered({ "server.ts": "import express from 'express';\nconst app = express();\napp.get<Params>('/items', h);\nrouter.post('/items', h);" })).toEqual([]);
+    expect(offered({ "mixed.ts": `${angular}const http: HttpClient = h;\nrouter.get('/items', h);` })).toEqual([]);
+    expect(offered({ "untyped.ts": "class S { constructor(private http) {}\n  list() { return this.http.get('/api/items'); } }" })).toEqual([]);
   });
 });
