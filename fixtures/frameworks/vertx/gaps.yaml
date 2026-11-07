@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Vert.x Web serves. Remove this when atlas reads it; the test fails while
+# a listed difference no longer occurs.
+unread: >-
+  atlas has no style for Vert.x Web: its routes (`router.get`, `route(method, path)`, `route().path().method()`,
+  `:param`, a path ending in `*`), the sub-routers mounted with `subRouter`, and the static files the framework serves
+  are all left out; the only sign is the limit "routes app: 4 files read, nothing extracted", which names none of the
+  routes

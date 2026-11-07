@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs installs Vert.x Web and asks it for the routes the application serves.
+toolchain: java
+docs:
+  - https://vertx.io/docs/vertx-web/java/#_basic_vert_x_web_concepts
+  - https://vertx.io/docs/vertx-web/java/#_routing_by_exact_path
+  - https://vertx.io/docs/vertx-web/java/#_capturing_path_parameters
+  - https://vertx.io/docs/vertx-web/java/#_routing_by_http_method
+  - https://vertx.io/docs/vertx-web/java/#_sub_routers
+  - https://vertx.io/docs/vertx-web/java/#_serving_static_resources
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Vert.x on Maven Central, in place of the pom's vertx.version.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dvertx.version=$(curl -fsS https://repo1.maven.org/maven2/io/vertx/vertx-web/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java
