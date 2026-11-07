@@ -32,6 +32,7 @@ missing:
   - { route: "GET /hello-world", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /memos", reason: "a router function of the Kotlin router DSL (`router { }`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /memos/{}", reason: "a router function of the Kotlin router DSL (`router { }`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /memos/{**}", reason: "a router function of the Kotlin router DSL (`router { }`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /people", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "POST /people", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /people/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
@@ -40,6 +41,8 @@ missing:
   - { route: "DELETE /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "PUT /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /teams/{**}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so; a route with no path of its own in a `path` nest takes the rest of the path" }
+  - { route: "POST /teams/{**}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so; a route with no path of its own in a `path` nest takes the rest of the path" }
   - { route: "GET /user/{}", reason: "a handler method registered with `RequestMappingHandlerMapping.registerMapping` is not read, and nothing says so" }
   - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
   - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }

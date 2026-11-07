@@ -168,9 +168,9 @@ through a BFF handler's port call to a service, and that SARIF and Arazzo output
 on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
 scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
 
-[`fixtures/frameworks`](fixtures/frameworks/README.md) holds an application per framework (Express, Fastify, Koa, Hono,
-NestJS, Next.js, FastAPI, Flask, Django, Spring Boot, ASP.NET Core, Gin, chi, net/http), each with the routes the
-framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
+[`fixtures/frameworks`](fixtures/frameworks/README.md) holds an application for each of 58 frameworks (Node, Bun, Python,
+JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart ones: from Express, Next.js, FastAPI, Django, Spring Boot and
+ASP.NET Core to Phoenix, Rails, Laravel, Axum and Vapor), each with the routes the framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
 The `frameworks` workflow installs each framework and checks those routes again, weekly on its latest release.
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
