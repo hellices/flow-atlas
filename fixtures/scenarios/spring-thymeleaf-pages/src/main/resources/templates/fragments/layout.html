@@ -1,0 +1,19 @@
+<!doctype html>
+<html th:fragment="layout (template, menu)" xmlns:th="https://www.thymeleaf.org">
+<head>
+  <link rel="shortcut icon" type="image/x-icon" th:href="@{/resources/images/favicon.png}">
+  <link rel="stylesheet" th:href="@{/resources/css/clinic.css}" />
+</head>
+<body>
+  <nav>
+    <ul>
+      <li th:fragment="menuItem (link,active,title)" th:class="${active==menu ? 'active' : ''}">
+        <a th:href="@{__${link}__}" th:title="${title}" th:text="${title}">menu</a>
+      </li>
+      <li th:replace="~{::menuItem ('/accounts/find','accounts','find accounts')}"></li>
+      <li th:replace="~{::menuItem ('/catalog.html','catalog','catalog')}"></li>
+    </ul>
+  </nav>
+  <th:block th:insert="${template}" />
+</body>
+</html>

@@ -244,14 +244,30 @@ mapping where it is written. A Security URL held in a constant registers nothing
 lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
 `logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
-looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. A route source's
+looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. The name may be a
+`static final String` (Kotlin `const val`) the file declares, or what a private method of the handler's class returns
+when the handler returns its result and the class declares one method of that name. A name starting with `redirect:`
+is a redirect (Spring MVC's view resolution: the rest is the URL): it leads to a GET of that path, which the client
+that made the request sends next (a chain's `next`, `via redirect`), from a GET or POST route (a HEAD from a HEAD
+route, which a GET mapping serves when no HEAD mapping fits; after another method the client may keep it, so its method
+is `*`); a Kotlin expression body's whole result is read, each branch of an `if` or `when` apart; the current request's URI variables (`{id}`) and any value appended in
+code are values, a relative URL is resolved against the route's path, and one starting with a value is named in a
+limit. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
 (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and
 `th:attr` items, and root-relative URLs in `href`, `action`, `src`, `formaction` and the configured `data-*`; also the
 requests inline scripts without a `src` (written, or rendered by `th:src` or `th:attr`) make,
-and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET. A form action takes the
+and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link's base may be quoted
+(`@{'/owners?page=1'}`) and appended to (`@{'/owners/' + ${id}}`), or a literal substitution (`@{|/owners/${id}|}`),
+as long as it starts with text; a preprocessed value (`@{/owners/__${owner.id}__}`) is a value in the path. A link
+whose URL is a value (`@{${url}}`, a fragment parameter `@{__${link}__}`, a conditional) is not read, and a limit names
+it. A page-relative link (`@{__${owner.id}__/edit}`) and a form with no `action` (or an empty one), which submits to the
+URL of its page, are resolved against the path of each route whose view renders the template: one call per path, which
+only the routes of that path reach (the call's `page`). In a template no route atlas reads renders (a fragment file),
+they are not read, and a limit names them. A path ending in a file extension (`.html`, `.css`) names a file and is
+not read, unless a route of the target serves it with that extension spelled out (`@GetMapping("/vets.html")`). A link is a GET. A form action takes the
 form's method, and a submit button's `formaction` its `formmethod`, else its form's; a submit control with no form
 owner (none around it, or a `form` attribute naming no form) submits nothing. A plain `method` or `formmethod`
 is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
@@ -263,7 +279,7 @@ Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attr
 `dataUrls` (those the project's scripts request, as `data-api-url`) are read: any method, and one ending in `/` is a
 base the script appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
-their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
+their value to the plain one, and a joined URL relative to the page is resolved as a page-relative link is. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
 
 Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without

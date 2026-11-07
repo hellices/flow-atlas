@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'accounts')}">
+<body>
+  <h2>New Ticket</h2>
+  <form th:object="${ticket}" class="form-horizontal" method="post">
+    <input th:replace="~{fragments/inputField :: input ('Description', 'description', 'text')}" />
+    <button type="submit">Add Ticket</button>
+  </form>
+</body>
+</html>

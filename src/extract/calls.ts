@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
-import type { Call, Coverage, Draft, Place } from "../model.js";
-import { callPath, HOLE, hostOf, isLoopback, joinRoute, type CallPath } from "../paths.js";
+import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
+import { callPath, HOLE, hostOf, isLoopback, joinRoute, pathsMatch, resolveReference, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, unwrap } from "./binding.js";
@@ -651,6 +651,14 @@ export interface ReadContext {
   origin?: string;
   /** Collects where the configured prefix is put before a function's path parameter (`prefixing`). */
   prefixed?: Place[];
+  /** Whether a route of the target serves a path; a path with a file extension is read only then. */
+  served?: (path: string) => boolean;
+  /** Per template, the paths of the routes that render it, against which a URL relative to the page is resolved. */
+  pages?: Map<string, string[]>;
+  /** Collects the Thymeleaf links whose URL is a value, not text (`@{${url}}`, `@{__${link}__}`). */
+  unread?: Place[];
+  /** Collects the page-relative URLs and forms with no action of a template no route atlas reads renders. */
+  unpaged?: Place[];
 }
 
 /**
@@ -695,7 +703,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       if (report) prefixed?.push({ file, line: lineAt(node) });
       return undefined;
     }
-    const parsed = callPath(raw) ?? rootRequest(node, raw, spec.wrappers);
+    const parsed = callPath(raw, false, context.served) ?? rootRequest(node, raw, spec.wrappers);
     const callee = parsed && laterArgument(node);
     if (callee === undefined) return parsed;
     if (report) passed?.push({ callee, at: { file, line: lineAt(node) } });
@@ -1025,7 +1033,7 @@ function exceptionArguments(file: string, text: string): Array<{ start: number; 
  * Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or
  * `%s` holes. `labels` collects the paths left unread because they are given to an exception (`exceptionArguments`).
  */
-export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[]): ReadCall[] {
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean): ReadCall[] {
   const out: ReadCall[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
@@ -1054,7 +1062,7 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     if (registered) return;
     const before = text.slice(Math.max(0, index - 200), index);
     // The root path only as a verb call's URL.
-    const parsed = callPath(inner) ?? (VERB_BEFORE.test(before) ? callPath(inner, true) : undefined);
+    const parsed = callPath(inner, false, served) ?? (VERB_BEFORE.test(before) ? callPath(inner, true, served) : undefined);
     if (!parsed) return;
     // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
     // the exception's literal the string lies in. A string in an f-string field is in code of its own.
@@ -1140,29 +1148,97 @@ function scanHtml(original: string): { text: string; raw: RawText[] } {
 }
 
 /**
- * The path of the Thymeleaf link expression starting at `@{`: its `/...` literal with `{name}` placeholders, up to
- * the parameter list or the closing brace. The parameters may hold any expression; they are not read.
+ * An attribute value with Thymeleaf's preprocessing (`__${...}__`, tutorial section 4.15) done as far as it can be
+ * without the model: each preprocessed expression becomes a `{...}` group of the same length, a value written into the
+ * text where it stands, as a path variable is.
  */
-function linkPath(text: string, at: number): string | undefined {
-  let i = at + 2;
-  while (/\s/.test(text[i] ?? "")) i++;
-  if (text[i] === "~") i++;
-  if (text[i] !== "/") return undefined;
-  let path = "";
-  while (i < text.length) {
-    const c = text[i]!;
-    if (c === "{") {
-      const close = text.indexOf("}", i);
-      if (close < 0) return undefined;
-      path += text.slice(i, close + 1);
-      i = close + 1;
-      continue;
-    }
-    if (c === "(" || c === "}" || /\s/.test(c)) break;
-    path += c;
-    i++;
+function preprocessed(value: string): string {
+  return value.replace(/__[\s\S]*?__/g, (m) => `{${m.slice(1, -1).replace(/[^\n]/g, " ")}}`);
+}
+
+/** Where the `{` of a `${...}` (or a `{...}` group) at `open` closes, nested braces counted. */
+function braceEnd(text: string, open: number): number | undefined {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return i;
   }
-  return path;
+  return undefined;
+}
+
+/**
+ * The URL a Thymeleaf link expression starting at `@{` writes, as text with `{...}` groups for the values in it, up to
+ * its parameter list; null when its base is an expression whose value is the URL. Thymeleaf's Standard URL Syntax:
+ * `@{/order/details(...)}` is a shortcut for `@{'/order/details'(...)}`, and the base may be any expression. Read are a
+ * literal token, and text expressions that start with literal text: quoted literals and literal substitutions
+ * (`|/a/${x}|`) appended with `+` (tutorial sections 4.7 and 4.8), any `${...}` in them a value. A base that starts with
+ * a value (`${url}`, `|${base}/x|`) or is any other expression (a conditional) is the URL itself, and is not read.
+ */
+function linkUrl(text: string, at: number): string | null {
+  let i = at + 2;
+  const skip = () => {
+    while (/\s/.test(text[i] ?? "")) i++;
+  };
+  skip();
+  let url = "";
+  if (text[i] === "'" || text[i] === "|") {
+    for (let first = true; ; first = false) {
+      skip();
+      const c = text[i];
+      if (c === "'") {
+        let end = i + 1;
+        while (end < text.length && text[end] !== "'") end += text[end] === "\\" ? 2 : 1;
+        if (end >= text.length) return null;
+        url += text.slice(i + 1, end).replace(/\\(.)/g, "$1");
+        i = end + 1;
+      } else if (c === "|") {
+        const end = text.indexOf("|", i + 1);
+        if (end < 0) return null;
+        const body = text.slice(i + 1, end);
+        if (first && /^[$*#]\{/.test(body)) return null;
+        url += body.replace(/[$*#]\{[^}]*\}/g, HOLE);
+        i = end + 1;
+      } else if (!first && (/^[$*#]\{/.test(text.slice(i, i + 2)) || c === "{")) {
+        const end = braceEnd(text, c === "{" ? i : i + 1);
+        if (end === undefined) return null;
+        url += HOLE;
+        i = end + 1;
+      } else return null;
+      skip();
+      if (text[i] !== "+") break;
+      i++;
+    }
+  } else {
+    if (/^[$*#(]/.test(text[i] ?? "")) return null;
+    while (i < text.length) {
+      const c = text[i]!;
+      if (c === "{") {
+        const close = text.indexOf("}", i);
+        if (close < 0) return null;
+        url += text.slice(i, close + 1);
+        i = close + 1;
+        continue;
+      }
+      if (c === "(" || c === "}" || /\s/.test(c)) break;
+      url += c;
+      i++;
+    }
+  }
+  skip();
+  return text[i] === "(" || text[i] === "}" ? url : null;
+}
+
+/**
+ * What a link's URL requests: a path from the root (context-relative, or server-relative `~/...`), or a path relative
+ * to the page (`edit`, `{id}/edit`, `?page=2`); undefined for a URL that requests nothing here (another site, another
+ * scheme, a fragment of the same page); null for one whose path has no text of its own, only values (`{link}`).
+ */
+function linkTarget(url: string): { path: string; relative: boolean } | null | undefined {
+  const u = url.trim().replace(/^~\//, "/");
+  if (!u || u.startsWith("#") || u.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(u)) return undefined;
+  const path = u.split(/[?#]/)[0]!;
+  if (/\{[^{}]*\}/.test(path) && !/[^/\s]/.test(path.replace(/\{[^{}]*\}/g, ""))) return null;
+  return { path: u, relative: !u.startsWith("/") };
 }
 
 const valueOf = (tag: StartTag, name: string): string | undefined => tag.attributes.find((a) => a.name === name)?.value;
@@ -1364,7 +1440,9 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
  *   the configured `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
  *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
  * - root-relative URLs in `href`, `src`, `action`, `formaction` and the configured `data-*`, unless Thymeleaf replaces the
- *   attribute;
+ *   attribute; a form with no action, or an empty one, submits to its page's URL;
+ * - a link relative to the page, or a form with no action, once for each path in `context.pages` the template is
+ *   rendered at, resolved against it (the call's `page`); with none, `context.unpaged` collects it;
  * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
  *   `[[...]]` or `[(...)]`.
  * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
@@ -1375,10 +1453,11 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   const page = pageOf(text, raw);
   const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
   const out: ReadCall[] = [];
-  const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
+  const at = (index: number): Place => ({ file, line: lineOf(text, index) });
+  const add = (raw: string, index: number, tag: StartTag | undefined, name: string, from?: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
     // The root path in a link, a form target or a source; a script reads a `data-*` URL, which may be a base.
-    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`, tag !== undefined && !name.startsWith("data-"));
+    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`, tag !== undefined && !name.startsWith("data-"), context.served);
     const method = tag ? templateMethod(page, tag, name) : "*";
     if (!parsed || method === null) return;
     out.push({
@@ -1387,9 +1466,26 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       method,
       path: parsed.path,
       based: false,
-      at: { file, line: lineOf(text, index) },
+      at: at(index),
       evidence: "text",
+      ...(from === undefined ? {} : { page: from }),
     });
+  };
+  // A URL relative to the page is resolved against the URL of each page the template is rendered on: the path of each
+  // route whose view it is. A route ending in a catch-all has no one path to resolve against.
+  const pages = (context.pages?.get(file) ?? []).filter((p) => !/\{\*|\*\*/.test(p));
+  const relative = (url: string, index: number, tag: StartTag | undefined, name: string) => {
+    if (tag && templateMethod(page, tag, name) === null) return;
+    if (!pages.length) context.unpaged?.push(at(index));
+    for (const p of pages) add(resolveReference(p, url), index, tag, name, p);
+  };
+  /** A link expression at `index` of `value` (which starts at `start` in the template), in an attribute that requests. */
+  const link = (value: string, index: number, start: number, tag: StartTag | undefined, name: string) => {
+    const url = linkUrl(value, index);
+    const target = url === null ? null : linkTarget(url);
+    if (target === null) context.unread?.push(at(start + index));
+    else if (target?.relative) relative(target.path, start + index, tag, name);
+    else if (target) add(target.path, start + index, tag, name);
   };
 
   for (const tag of page.tags) {
@@ -1400,20 +1496,26 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       const th = /^(?:th:|data-th-)(.+)$/.exec(a.name)?.[1];
       if (!th) continue;
       const family = /^attr(append|prepend)?$/.exec(th);
-      for (let i = a.value.indexOf("@{"); i >= 0; i = a.value.indexOf("@{", i + 2)) {
-        const name = family ? itemName(a.value, i) : th;
-        const path = linkPath(a.value, i);
-        if (!name || !requests(name) || !path) continue;
+      const value = preprocessed(a.value);
+      for (let i = value.indexOf("@{"); i >= 0; i = value.indexOf("@{", i + 2)) {
+        const name = family ? itemName(value, i) : th;
+        if (!name || !requests(name)) continue;
         if (!family || !family[1]) {
           replaced.add(name);
-          add(path, a.at + i, tag, name);
+          link(value, i, a.at, tag, name);
           continue;
         }
         // attrappend / attrprepend: the request is the static value with this added, if the static value is known.
         joined.add(name);
+        const url = linkUrl(value, i);
+        const target = url === null ? null : linkTarget(url);
+        if (target === null) context.unread?.push(at(a.at + i));
         const fixed = plain.get(name);
-        if (!fixed || !fixed.value.startsWith("/")) continue;
-        add(family[1] === "append" ? `${fixed.value}${path}` : `${path}${fixed.value}`, fixed.at, tag, name);
+        if (!target || !fixed) continue;
+        // The joined URL is read as a written one is: from the root, or relative to the page.
+        const joinedTarget = linkTarget(family[1] === "append" ? `${fixed.value}${target.path}` : `${target.path}${fixed.value}`);
+        if (joinedTarget?.relative) relative(joinedTarget.path, fixed.at, tag, name);
+        else if (joinedTarget) add(joinedTarget.path, fixed.at, tag, name);
       }
       if (!family) replaced.add(th);
       else if (!family[1]) for (const item of a.value.split(",")) {
@@ -1426,6 +1528,9 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       if (!a.value.startsWith("/") || a.value.startsWith("//")) continue;
       add(a.value.replace(/[?#].*$/, ""), a.at, tag, a.name);
     }
+    // A form with no action, or an empty one, submits to the URL of its document (HTML's form submission algorithm).
+    const action = plain.get("action");
+    if (tag.name === "form" && !replaced.has("action") && !joined.has("action") && !action?.value.trim()) relative("", action?.at ?? tag.start, tag, "action");
   }
 
   // Inline scripts, without a src: their requests, at their lines in the template.
@@ -1453,11 +1558,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
-      for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
-        const at = (e.index ?? 0) + e[0].length - 2;
-        const path = linkPath(body, at);
-        if (path) add(path, script.bodyStart + at, undefined, "script");
-      }
+      const inlined = preprocessed(body);
+      for (const e of inlined.matchAll(/\[[[(]\s*@\{/g)) link(inlined, (e.index ?? 0) + e[0].length - 2, script.bodyStart, undefined, "script");
     }
   }
   return out.sort((a, b) => a.at.line - b.at.line);
@@ -1474,6 +1576,17 @@ function byCallee(passed: Passed[]): string {
 }
 
 /**
+ * Whether one of the routes serves a path with a file extension: one that matches the path and spells the extension out
+ * (`@GetMapping("/vets.html")`), so the path names a page the application serves, not a file.
+ */
+export const serves =
+  (routes: Array<Pick<Surface, "path">>) =>
+  (path: string): boolean => {
+    const extension = /\.\w+$/.exec(path)?.[0];
+    return !!extension && routes.some((s) => s.path.endsWith(extension) && pathsMatch(s.path, path));
+  };
+
+/**
  * `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests.
  *
  * An absolute URL is a request to a source's target when its host is a loopback address, where the repository's
@@ -1481,7 +1594,14 @@ function byCallee(passed: Passed[]): string {
  * URLs are left out. A limit names those hosts, the functions paths were handed to after their first argument, the
  * exceptions paths were given to in code read as text, and where a helper puts the configured prefix before a path.
  */
-export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans, limits: string[] = []): ReadCall[] {
+export function extractCalls(
+  source: Source,
+  config: Config,
+  coverage: Coverage[] = [],
+  spans?: Spans,
+  limits: string[] = [],
+  read: { surfaces?: Surface[]; pages?: Map<string, string[]> } = {},
+): ReadCall[] {
   const out: ReadCall[] = [];
   for (const spec of config.calls) {
     const files = select(source, spec.files, config.exclude);
@@ -1490,23 +1610,28 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     const passed: Passed[] = [];
     const labels: Passed[] = [];
     const prefixed: Place[] = [];
+    const unread: Place[] = [];
+    const unpaged: Place[] = [];
+    const routes = serves((read.surfaces ?? []).filter((s) => s.component === spec.to));
+    const served = (path: string): boolean => routes(path) || (!!spec.prefix && routes(joinRoute(spec.prefix, path)));
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
-      const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed })
+      const calls = /\.(c|m)?[tj]sx?$/.test(file)
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed })
-          : callsFromText(file, text, spec, spans, labels);
-      for (const c of read) {
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged })
+          : callsFromText(file, text, spec, spans, labels, served);
+      for (const c of calls) {
         const { host, ...call } = c;
         if (host !== undefined && !reachesTarget(host, origin)) {
           if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
           continue;
         }
-        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
-        out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
+        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it, and so
+        // does one resolved against a page, whose route's path is whole.
+        out.push(spec.prefix && !call.based && call.page === undefined ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
       }
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
@@ -1521,6 +1646,9 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const places = prefixed.map((p) => `${p.file}:${p.line}`).join(", ");
       limits.push(`${edge}: the configured prefix ${spec.prefix} put before a function's path parameter (${places}) is not read as a request; the paths passed to that function are`);
     }
+    const places = (list: Place[]) => [...new Set(list.map((p) => `${p.file}:${p.line}`))].join(", ");
+    if (unread.length) limits.push(`${edge}: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: ${places(unread)}`);
+    if (unpaged.length) limits.push(`${edge}: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: ${places(unpaged)}`);
   }
   return out;
 }

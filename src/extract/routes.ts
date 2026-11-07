@@ -1,6 +1,6 @@
 import ts from "typescript";
 import type { Config, RouteSource } from "../config.js";
-import type { Coverage, Surface } from "../model.js";
+import type { Coverage, Place, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { readFileSync } from "node:fs";
@@ -933,6 +933,7 @@ export function extractRoutes(
   limits: string[] = [],
   executed?: Map<string, Set<string>>,
   spans?: Spans,
+  redirects?: Redirects,
 ): Surface[] {
   const out: Surface[] = [];
   const roots = new Map(config.components.map((c) => [c.name, c.path]));
@@ -1002,5 +1003,9 @@ export function extractRoutes(
       }
     }
   }
+  for (const [id, { file, redirects: to }] of views) if (to.length) redirects?.set(id, to.map((r) => ({ path: r.path, at: { file, line: r.line } })));
   return unique(out);
 }
+
+/** The paths a route's replies redirect to (see `routesFromSpring`), by route, each where it is written. */
+export type Redirects = Map<string, Array<{ path: string; at: Place }>>;
