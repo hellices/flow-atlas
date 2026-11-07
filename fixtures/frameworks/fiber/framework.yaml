@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs Fiber and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://docs.gofiber.io/guide/routing
+  - https://docs.gofiber.io/guide/grouping
+  - https://docs.gofiber.io/api/app
+  - https://docs.gofiber.io/middleware/static
+setup: go mod download
+latest: go get github.com/gofiber/fiber/v3@latest && go mod tidy
+oracle: go run oracle.go

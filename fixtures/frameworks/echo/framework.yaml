@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Echo and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://echo.labstack.com/guide/routing/
+  - https://echo.labstack.com/guide/static-files/
+  - https://pkg.go.dev/github.com/labstack/echo/v5
+setup: go mod download
+latest: go get github.com/labstack/echo/v5@latest && go mod tidy
+oracle: go run oracle.go
