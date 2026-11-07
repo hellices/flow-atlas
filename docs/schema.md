@@ -189,8 +189,8 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
-| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based` |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller) |
+| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `page` (the path a URL relative to its page was resolved against), `slash` (the path is written with a trailing `/`) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
@@ -207,7 +207,12 @@ Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`),
 request without that segment reaches it only by the redirect to the path with a `/` added, which Starlette's router
 answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
 description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
-tool cannot resolve. Paths that differ only in a trailing `/` are one route. An
+tool cannot resolve. Paths that differ only in a trailing `/` are one route; where an OpenAPI document writes the
+`/` (a server path or `basePath` before the root key `/` puts one after it), a call that leaves it out is matched to
+the route only by GET or HEAD. Whether another method reaches it depends on the framework (Starlette's redirect keeps
+the method, Django's may lose a POST's body), so such a call is matched to none and a `limit:` names it. A route
+whose document writes the path as the call does comes before one the call reaches only by that redirect
+(`describedPath` and the call's `slash` keep what was written). An
 `operationId` is read where the code states it (route options, `@ApiOperation`); with `operationIds: nest-swagger` in
 the configuration, @nestjs/swagger's default rule (`Class_method`) is applied.
 
@@ -221,7 +226,7 @@ of the first OpenAPI 3 server URL in front, without the host or a trailing `/`. 
 framework derives operationIds by (FastAPI `function_path_method`, Nest `Class_method`, springdoc's method name; a
 numbered id such as springdoc's `get_1` is not traced back to `get`) when
 it finds one definition (`evidence: name`), else where code declares the operationId as a quoted value, once (`text`),
-else at the document (`declared`). A route that any entry of the same component also reads from code (same method and
+else at the document (`declared`), and a limit lists the operations left there. A route that any entry of the same component also reads from code (same method and
 path, parameter names aside) keeps its code location and gains the document's operationId, `described` and
 `describedPath`.
 
@@ -234,7 +239,12 @@ a Spring component, whose router picks the most specific route, a request whose 
 route; elsewhere it matches every route it fits, since registration order is not read. `reach` joins a route to an
 outbound call its handler leads to (route → call): the handler's code makes the request (`evidence: static`), the
 request sits in a method whose name the handler calls (`evidence: name`, `via` the method), or, for a Spring page, the
-request is in the template the handler's view name renders (`evidence: name`, `via view <name>`).
+request is in the template the handler's view name renders (`evidence: name`, `via view <name>`), or its reply
+redirects to the request (`evidence: text`, `via redirect`). A redirect's request is a call from the route's own
+component to itself, a GET of the URL after `redirect:` (a HEAD from a HEAD route); it is the client's that made the
+request, so it is no component calling another (no FA003). A URL relative to its page (a page-relative Thymeleaf link, a form with no
+action) is read once for each path of the routes that render its template, and the call's `page` holds that path:
+only those routes reach it.
 
 `evidence` records how a fact was obtained: `declared`, written in a manifest or a document; `static`, parsed syntax;
 `text`, matched as text; `name`, joined because a name agrees. A renderer can vary line styles by it, and an agent
@@ -247,9 +257,15 @@ same request (the client's call), or at a surface declared in `publicSurfaces` t
 takes in the surface the call reaches and every surface that surface's handler reaches, along reach and match edges,
 fan-out included. Its id is `<entry>-><surface id>`, such as `mobile->bff|POST /orders`.
 
+A reach edge to a call in the template a page renders (`via view <name>`), or in a link or form a Next.js page renders
+(`via view <file>`), is not part of the page's request: the user makes that call later. Those calls start chains of
+their own, and the page's chain lists them as `next`, which is where a journey's following step comes from.
 A reach edge to a call in the template a page renders (`via view <name>`) is not part of the page's request: the user
 makes that call later. Those calls start chains of their own, and the page's chain lists them as `next`, which is where
-a journey's following step comes from.
+a journey's following step comes from. A redirect of the chain's root (`via redirect`) is followed by the entry that
+made the request, so its `next` is a chain of that entry, made when no call of the entry starts it (with no callers).
+A public surface reached only by redirects starts an `outside` chain unless a chain of a component's call redirects to
+it, so public routes that only redirect to each other are chained.
 
 | Field | Meaning |
 |---|---|

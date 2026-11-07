@@ -1,0 +1,137 @@
+openapi: 3.0.3
+info:
+  title: Project API
+  version: 1.0.0
+paths:
+  /api/rest/rest-check/:
+    get:
+      operationId: rest_rest_check_retrieve
+      summary: Check REST API
+      tags:
+      - rest
+      responses:
+        '200':
+          description: No response body
+  /api/users/:
+    get:
+      operationId: users_list
+      parameters:
+      - name: limit
+        required: false
+        in: query
+        schema:
+          type: integer
+      tags:
+      - users
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedUserList'
+          description: ''
+    post:
+      operationId: users_create
+      tags:
+      - users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/users/{id}/:
+    get:
+      operationId: users_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - users
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    put:
+      operationId: users_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - users
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    patch:
+      operationId: users_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - users
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    delete:
+      operationId: users_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - users
+      responses:
+        '204':
+          description: No response body
+components:
+  schemas:
+    PaginatedUserList:
+      type: object
+      properties:
+        count:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        email:
+          type: string
+          format: email
+      required:
+      - email
+      - id

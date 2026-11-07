@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'accounts')}">
+<body>
+  <h2>Find Accounts</h2>
+  <form th:object="${account}" th:action="@{/accounts}" method="get" id="search-account-form">
+    <input th:field="*{name}" size="30" />
+    <button type="submit">Find Account</button>
+  </form>
+  <a th:href="@{/accounts/new}">Add Account</a>
+</body>
+</html>

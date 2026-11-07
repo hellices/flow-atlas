@@ -1,0 +1,55 @@
+case: |
+  A FastAPI backend read from the document it generates, and a React app that calls it through a client
+  @hey-api/openapi-ts generated from that document. Seen in a real run: the client's `GET /api/v1/users/me` reached
+  `/api/v1/users/{user_id}` as well, so a route whose only caller reads the current user looked called, and deleting
+  `readUserMe` would have hidden nothing. OpenAPI 3.x matches a concrete path before its templated counterparts, so
+  between two routes of the document the request reaches `/api/v1/users/me` only; a call with a value in that segment
+  (`deleteUser`'s `{user_id}`) still fits the templated one. Every function of the generated client counted as a
+  caller, whether or not the app calls it, so a route the app never requests was not reported. A function of a file
+  the generator marks as its own is read as a request only when another configured file names it: `testToken`,
+  `createUser` and `readUserById` are named nowhere else, and their routes come back as FA001, with a limit naming
+  them. The app's own `generate_unique_id_function` builds operationIds (`users-read_user_me`) that carry no rule
+  atlas could find a handler by; every route stayed at the document's line with nothing said, and `trace` blamed
+  TypeScript. A limit now says no handler was found.
+surfaces:
+  - backend|POST /api/v1/login/access-token
+  - backend|POST /api/v1/login/test-token
+  - backend|GET /api/v1/users
+  - backend|POST /api/v1/users
+  - backend|GET /api/v1/users/me
+  - backend|PATCH /api/v1/users/me
+  - backend|DELETE /api/v1/users/me
+  - backend|GET /api/v1/users/{user_id}
+  - backend|DELETE /api/v1/users/{user_id}
+findings:
+  - FA001|backend|POST /api/v1/login/test-token
+  - FA001|backend|POST /api/v1/users
+  - FA001|backend|GET /api/v1/users/{user_id}
+limits:
+  - "routes backend: no handler was found in the configured route files for 9 operations of backend/openapi.json"
+  - "calls frontend->backend: 3 functions of frontend/src/client/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: testToken, createUser, readUserById"
+chains:
+  - frontend->backend|POST /api/v1/login/access-token
+  - frontend->backend|GET /api/v1/users
+  - frontend->backend|GET /api/v1/users/me
+  - frontend->backend|PATCH /api/v1/users/me
+  - frontend->backend|DELETE /api/v1/users/me
+  - frontend->backend|DELETE /api/v1/users/{user_id}
+calls:
+  - frontend->backend|POST /api/v1/login/access-token @ frontend/src/client/sdk.gen.ts:17
+  - frontend->backend|GET /api/v1/users @ frontend/src/client/sdk.gen.ts:35
+  - frontend->backend|GET /api/v1/users/me @ frontend/src/client/sdk.gen.ts:51
+  - frontend->backend|DELETE /api/v1/users/me @ frontend/src/client/sdk.gen.ts:59
+  - frontend->backend|PATCH /api/v1/users/me @ frontend/src/client/sdk.gen.ts:67
+  - frontend->backend|DELETE /api/v1/users/{user_id} @ frontend/src/client/sdk.gen.ts:83
+documents:
+  - backend backend/openapi.json committed backend/openapi.json:2
+descriptions:
+  - backend chosen backend/openapi.json ReadForRoutes
+inventory:
+  routes:
+    - backend/app/api/routes/login.py fastapi 2
+    - backend/app/api/routes/users.py fastapi 7
+  calls: []
+  documents:
+    - (none) backend/openapi.json committed backend/openapi.json:2

@@ -9,13 +9,18 @@ const FILE_EXT = /\.(ts|tsx|js|mjs|cjs|json|ya?ml|md|png|jpe?g|svg|gif|webp|css|
 export interface CallPath {
   path: string;
   based: boolean;
+  /** The text ends its path with a `/`, which `path` leaves out. */
+  slash?: true;
 }
 
 /**
  * Turns a string a call site builds into a request path, or rejects it.
  * A leading interpolation followed by `/` is taken as a base address (`${baseUrl}/orders`).
+ * The root path `/` is read only with `root`, where the string's place makes it a request: anywhere else a lone `/` is
+ * a separator far more often than a URL. A path ending in a file extension names a file, unless `served` says a route
+ * of the target serves it (`@GetMapping("/vets.html")`).
  */
-export function callPath(text: string): CallPath | undefined {
+export function callPath(text: string, root = false, served?: (path: string) => boolean): CallPath | undefined {
   let s = text.trim();
   let based = false;
   const lead = s.match(/^(?:\{\})+(?=\/)/);
@@ -30,10 +35,11 @@ export function callPath(text: string): CallPath | undefined {
     based = true;
   }
   s = s.split("?")[0]!.split("#")[0]!;
+  if (root && s === "/") return { path: "/", based };
   if (!s.startsWith("/") || s === "/" || s.startsWith("//")) return undefined;
-  if (!PATHLIKE.test(s) || FILE_EXT.test(s)) return undefined;
+  if (!PATHLIKE.test(s) || (FILE_EXT.test(s) && !served?.(s))) return undefined;
   if (s.split("/").filter(Boolean).every((seg) => seg === HOLE)) return undefined;
-  return { path: s.replace(/\/+$/, ""), based };
+  return { path: s.replace(/\/+$/, ""), based, ...(s.endsWith("/") ? { slash: true as const } : {}) };
 }
 
 /**
@@ -55,6 +61,28 @@ export function hostOf(text: string): string | undefined {
 export function isLoopback(host: string): boolean {
   const name = host.replace(/:\d+$/, "");
   return name === "localhost" || name === "[::1]" || (isIP(name) === 4 && name.startsWith("127."));
+}
+
+/**
+ * A relative reference resolved against the path of the page it is on, as RFC 3986 (section 5.2) resolves one: an empty
+ * path is the page's own, one starting with `/` is the path itself, any other replaces the page path's last segment,
+ * and `.` and `..` segments are removed. A query or fragment after the path is kept.
+ */
+export function resolveReference(page: string, reference: string): string {
+  const end = reference.search(/[?#]/);
+  const path = end < 0 ? reference : reference.slice(0, end);
+  const rest = end < 0 ? "" : reference.slice(end);
+  if (!path) return `${page}${rest}`;
+  const merged = (path.startsWith("/") ? path : `${page.slice(0, page.lastIndexOf("/") + 1)}${path}`).split("/").slice(1);
+  const out: string[] = [];
+  merged.forEach((seg, i) => {
+    const last = i === merged.length - 1;
+    if (seg === "..") out.pop();
+    if (seg === "." || seg === "..") {
+      if (last) out.push("");
+    } else out.push(seg);
+  });
+  return `/${out.join("/")}${rest}`;
 }
 
 export function joinRoute(...parts: string[]): string {

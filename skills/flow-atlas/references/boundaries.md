@@ -60,6 +60,9 @@ Never decide "plan" without a decision you can link.
   where Spring Boot's default Thymeleaf resolver looks (`src/main/resources/templates/<name>.html` of the handler's
   application). An app that uses another template engine or `ViewResolver`, or changed the Thymeleaf prefix or suffix,
   renders something else: check its resolver before trusting the edge.
+- `~` (evidence `text`, `via redirect`): a Spring handler's reply redirects (`redirect:/owners/{id}`), and the client
+  that made the request follows it with a GET; the request is the client's next one, not part of this one. Read as
+  text: check the line when the URL is built in code.
 - `~` (evidence `name`): a handler calls a method with the name of the method holding an outbound call. Check the code
   when the name is generic (`get`, `send`, `request`) or the component has several clients.
 - evidence `text`: read as text in a language atlas does not parse. Check the line.

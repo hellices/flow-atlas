@@ -1,0 +1,48 @@
+case: |
+  A Django REST backend described by the OpenAPI document drf-spectacular writes, and a React single-page app on
+  React Router that calls it through the client hey-api generates from that document.
+  Seen in a real run: the app's own routes were read as requests to the backend, with no method: the `to` of a
+  `NavLink`, the path `navigate()` goes to and the path of a route the router defines. React Router renders them in
+  the browser; no request reaches the server. Now a string in a React Router component's attributes or in the
+  arguments of its functions (known by the import from `react-router`) is no request. Where the navigation loads the
+  document instead, the browser does request it: `redirectDocument()` sends the user to the backend's login page,
+  read as the GET it is, and a plain `<a href="/">` is the GET of the root path it always was. Inventory offered the
+  app's `src/pages/*.tsx` as Next.js pages; the package does not depend on next, so they are not offered. The app
+  calls only `statusRetrieve` and `membersList` of the generated client; the other member routes are FA001, with a
+  limit naming the functions no other file names.
+surfaces:
+  - backend|GET /api/status
+  - backend|GET /api/members
+  - backend|POST /api/members
+  - backend|GET /api/members/{id}
+  - backend|PUT /api/members/{id}
+  - backend|PATCH /api/members/{id}
+  - backend|DELETE /api/members/{id}
+findings:
+  - FA001|backend|POST /api/members
+  - FA001|backend|GET /api/members/{id}
+  - FA001|backend|PUT /api/members/{id}
+  - FA001|backend|PATCH /api/members/{id}
+  - FA001|backend|DELETE /api/members/{id}
+limits:
+  - "routes backend: no handler was found in the configured route files for 7 operations of backend/schema.yml"
+  - "calls frontend->backend: 5 functions of frontend/js/api/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: membersCreate, membersRetrieve, membersUpdate, membersPartialUpdate, membersDestroy"
+chains:
+  - frontend->backend|GET /api/status
+  - frontend->backend|GET /api/members
+calls:
+  - frontend->backend|GET /api/status @ frontend/js/api/sdk.gen.ts:9
+  - frontend->backend|GET /api/members @ frontend/js/api/sdk.gen.ts:17
+  # The brand link loads the root page; the NavLinks beside it (to="/", to="/members") are the router's.
+  - frontend->backend|GET / @ frontend/js/components/TopNav.tsx:7
+  # redirectDocument: a document load of the admin's login page, which Django serves outside the document.
+  - frontend->backend|GET /admin/login @ frontend/js/loaders/members.ts:16
+descriptions:
+  - backend chosen backend/schema.yml ReadForRoutes
+inventory:
+  components:
+    - shop-frontend package.json
+  routes: []
+  calls:
+    # A text shape: inventory offers a `path:` property for whoever writes the configuration to judge.
+    - frontend/js/routes/index.ts 1

@@ -25,9 +25,9 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 
 | Reads | From |
 |---|---|
-| routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers), FastAPI decorators and Starlette StaticFiles mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
-| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and configured `data-*` URLs, Thymeleaf `@{...}` links, inline scripts); Kotlin, Python and other languages as text |
-| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
+| routes | TypeScript and JavaScript code (NestJS decorators under the global prefix and URI version the bootstrap sets, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers, pages, metadata routes and public files), FastAPI decorators under their routers' prefixes and Starlette StaticFiles mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
+| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and configured `data-*` URLs, Thymeleaf `@{...}` links, page-relative links and forms with no action against the pages that show them, inline scripts); Kotlin, Python and other languages as text |
+| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders, and the GET its `redirect:` leads to; for a Next.js page, the links and forms its server components and layouts render |
 
 atlas reads only what a file states for certain: a path written as a literal, with the meaning a standard or the
 framework's documentation gives it. A URL taken from a variable, another template engine, or htmx and Vue attributes
@@ -119,13 +119,20 @@ atlas reports and does not block by default. To fail CI on new findings, use `--
 does not read (a project's wrapper around `fetch` that is given none, a `data-*` URL) joins the routes its path fits
 only when they all take one method; where they take several, which one it calls depends on the method, so it joins
 none of them and a `limit:` line names it. A wrapper the configuration names in `calls[].wrappers`, with the method
-it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Inside a component, a
+it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Routes from an OpenAPI 3
+document are joined as the specification says, a concrete path (`/users/me`) before a templated one (`/users/{id}`);
+a call that leaves out the trailing `/` a document's path ends with joins it only by GET or HEAD, since what a server
+does with another method depends on its framework (a `limit:` names it). A function of a client @hey-api/openapi-ts
+generated is a call only where another configured file's code names it, or names a generated helper that calls it. Inside a component, a
 route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
 (`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
 name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls
 `deps.backend.getOrder()` and the adapter's `getOrder` makes the HTTP request. Because it joins by name, a link
 through a common name such as `get` or `send` is worth opening. For a Spring page, the requests in the template its
-view name renders are its outbound calls (`via view <name>`).
+view name renders are its outbound calls (`via view <name>`); for a Next.js page, the links and forms its server
+components and layouts render (`via view <file>`). Either is a request the page offers next, not part of its own.
+view name renders are its outbound calls (`via view <name>`), and so is the GET its `redirect:` leads to (`via
+redirect`); both are requests the client makes next, not part of the page's own request.
 
 ## Flows and schemas
 

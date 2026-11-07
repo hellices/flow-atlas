@@ -5,7 +5,9 @@ import { normalizeConfig } from "../src/config.js";
 import { flowsText } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { draftChainFlows } from "../src/draft.js";
+import { seedsFor, trace, traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
+import { evaluate } from "../src/rules.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import type { Graph } from "../src/model.js";
@@ -206,6 +208,108 @@ describe("chains of a server-rendered app", () => {
     );
     expect(flows.items[0]!.status.conditions.find((c) => c.type === "Connected")).toEqual({ type: "Connected", status: "True", reason: "AllStepsConnected" });
   });
+
+  it("offers the page a redirect leads to, and a form posting back to the URL of each page that shows it", () => {
+    const pages = {
+      "src/main/java/app/TeamController.java": [
+        "@Controller",
+        "class TeamController {",
+        '  private static final String FORM = "teams/form";',
+        '  @GetMapping("/teams/new") String create() { return FORM; }',
+        "  @PostMapping(\"/teams/new\") String save(Team t) { if (bad) { return FORM; } return \"redirect:/teams/\" + t.getId(); }",
+        '  @GetMapping("/teams/{teamId}") String show() { return "teams/detail"; }',
+        '  @GetMapping("/teams") @ResponseBody List<Team> all() { return null; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/teams/form.html": '<form th:object="${team}" method="post"></form>',
+      "src/main/resources/templates/teams/detail.html": '<a th:href="@{/teams/new}">new</a>',
+    };
+    const graph = scan(memory(pages), spring);
+    const id = (callId: string) => callId.split("@")[0];
+    expect(graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${id(e.to)} ${e.evidence} ${e.via}`)).toEqual([
+      "server|GET /teams/new -> web->server|POST /teams/new name view teams/form",
+      "server|POST /teams/new -> web->server|POST /teams/new name view teams/form",
+      "server|POST /teams/new -> server->server|GET /teams/{} text redirect",
+      "server|GET /teams/{teamId} -> web->server|GET /teams/new name view teams/detail",
+    ]);
+    const report = deriveChains(graph, spring);
+    // The redirect's path has a value where both GET routes have a segment, so it fits both, as a link would.
+    expect(report.chains.map((c) => [c.id, c.entry.callers.length, ...c.next.map((n) => `${n.chain} (${n.via})`)])).toEqual([
+      ["web->server|GET /teams/{teamId}", 0, "web->server|GET /teams/new (view teams/detail)"],
+      ["web->server|GET /teams/new", 1, "web->server|POST /teams/new (view teams/form)"],
+      ["web->server|POST /teams/new", 1, "web->server|GET /teams/{teamId} (redirect)", "web->server|GET /teams/new (redirect)", "web->server|POST /teams/new (view teams/form)"],
+    ]);
+    expect(report.unchained).toEqual(["server|GET /teams"]);
+    expect(evaluate(graph, spring).map((f) => f.key)).toEqual(["FA001|server|GET /teams"]);
+    expect(traceText(trace(graph, seedsFor(graph, "server|GET /teams")))).toContain(
+      "not followed: a Spring handler is followed to the template its view renders and the URL it redirects to; atlas reads neither here",
+    );
+  });
+
+  it("takes public routes that only redirect to each other as served outside, but not one a client's chain redirects to", () => {
+    const pages = {
+      "src/main/java/app/LoopController.java": [
+        "@Controller",
+        "class LoopController {",
+        '  @GetMapping("/loop") String loop() { return "redirect:/loop"; }',
+        '  @GetMapping("/ping") String ping() { return "redirect:/pong"; }',
+        '  @GetMapping("/pong") String pong() { return "redirect:/ping"; }',
+        '  @PostMapping("/save") String save() { return "redirect:/done"; }',
+        '  @GetMapping("/done") String done() { return "done"; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/save.html": '<form action="/save" method="post"></form>',
+    };
+    const open = normalizeConfig({ ...spring, publicSurfaces: ["server|GET /**"] });
+    const report = deriveChains(scan(memory(pages), open), open);
+    expect(report.chains.map((c) => [c.id, ...c.next.map((n) => n.chain)])).toEqual([
+      ["outside->server|GET /loop", "outside->server|GET /loop"],
+      ["outside->server|GET /ping", "outside->server|GET /pong"],
+      ["outside->server|GET /pong", "outside->server|GET /ping"],
+      ["web->server|GET /done"],
+      ["web->server|POST /save", "web->server|GET /done"],
+    ]);
+    expect(report.unchained).toEqual([]);
+  });
+
+  it("puts the configured prefix before a root-relative template URL, not before one resolved against a page's route", () => {
+    const pages = {
+      "src/main/java/app/TeamController.java": [
+        "@Controller",
+        '@RequestMapping("/api")',
+        "class TeamController {",
+        '  @GetMapping("/teams/new") String create() { return "teams/form"; }',
+        '  @PostMapping("/teams/new") String save() { return "teams/form"; }',
+        '  @GetMapping("/teams") String list() { return "teams/list"; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/teams/form.html": '<form method="post"></form><a th:href="@{/teams}">all</a>',
+    };
+    const prefixed = normalizeConfig({ ...spring, calls: [{ ...spring.calls[0]!, prefix: "/api" }] });
+    const graph = scan(memory(pages), prefixed);
+    expect(graph.calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(["GET /api/teams", "POST /api/teams/new"]);
+  });
+
+  it("follows the redirect a HEAD route answers with a HEAD request, which Spring serves with a HEAD mapping or else a GET one", () => {
+    const pages = {
+      "src/main/java/app/Moved.java": [
+        "@Controller",
+        "class Moved {",
+        '  @RequestMapping(value = "/old", method = RequestMethod.HEAD) String old() { return "redirect:/new"; }',
+        '  @RequestMapping(value = "/gone", method = RequestMethod.HEAD) String gone() { return "redirect:/both"; }',
+        '  @GetMapping("/new") String fresh() { return "new"; }',
+        '  @GetMapping("/both") String both() { return "both"; }',
+        '  @RequestMapping(value = "/both", method = RequestMethod.HEAD) String bothHead() { return "both"; }',
+        "}",
+      ].join("\n"),
+    };
+    const graph = scan(memory(pages), spring);
+    const calls = new Map(graph.calls.map((c) => [c.id, c]));
+    expect(graph.edges.filter((e) => e.kind === "match").map((e) => `${calls.get(e.from)!.method} ${calls.get(e.from)!.path} -> ${e.to}`)).toEqual([
+      "HEAD /new -> server|GET /new",
+      "HEAD /both -> server|HEAD /both",
+    ]);
+  });
 });
 
 describe("chains of a synthetic graph", () => {
@@ -236,6 +340,11 @@ describe("chains of a synthetic graph", () => {
     const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
     expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
     expect([backward.weak, backward.digest]).toEqual([forward.weak, forward.digest]);
+  });
+
+  it("keeps the call of a method named redirect in its request; only a reply's redirect, read as text, starts another", () => {
+    const chain = deriveChains(graphOf(1, "redirect"), normalizeConfig({})).chains;
+    expect(chain.map((c) => [c.id, ...c.surfaces])).toEqual([["app->svc|GET /s0", "svc|GET /s0", "svc|GET /s1"]]);
   });
 
   it("names long chains apart however they are drafted", () => {

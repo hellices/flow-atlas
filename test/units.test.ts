@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callPath, joinRoute, methodsMatch, narrowedPath, pathsMatch, routeTemplate } from "../src/paths.js";
+import { callPath, joinRoute, methodsMatch, narrowedPath, pathsMatch, resolveReference, routeTemplate } from "../src/paths.js";
 import { cycleSearch, cycles, surfacePattern } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { documentStart } from "../src/extract/apidocs.js";
@@ -9,7 +9,7 @@ import { similarity } from "../src/nearby.js";
 import ts from "typescript";
 import { resolveApiDescriptions, servedDocuments } from "../src/extract/apidocs.js";
 import type { ApiDocument, Call, Surface } from "../src/model.js";
-import { matchCalls } from "../src/match.js";
+import { matchCalls, type Ranking } from "../src/match.js";
 import { validate } from "../src/schema.js";
 import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
@@ -32,6 +32,25 @@ describe("callPath", () => {
     expect(callPath("/")).toBeUndefined();
     expect(callPath("orders")).toBeUndefined();
     expect(callPath("/{}")).toBeUndefined();
+  });
+});
+
+describe("a path with a file extension", () => {
+  it("is read only where a route serves it", () => {
+    expect(callPath("/board.html?page=2")).toBeUndefined();
+    expect(callPath("/board.html?page=2", false, (p) => p === "/board.html")).toEqual({ path: "/board.html", based: false });
+  });
+});
+
+describe("resolveReference", () => {
+  it("resolves a relative path against a page's path as RFC 3986 does", () => {
+    expect(resolveReference("/teams/{}", "{}/edit")).toBe("/teams/{}/edit");
+    expect(resolveReference("/teams/{}/edit", "")).toBe("/teams/{}/edit");
+    expect(resolveReference("/teams/{}/edit", "?page=2")).toBe("/teams/{}/edit?page=2");
+    expect(resolveReference("/teams/{}/members/", "../board")).toBe("/teams/{}/board");
+    expect(resolveReference("/teams", "./")).toBe("/");
+    expect(resolveReference("/a/b", "/x")).toBe("/x");
+    expect(resolveReference("/a/b", "/x/../y?q")).toBe("/y?q");
   });
 });
 
@@ -128,6 +147,83 @@ describe("Starlette's path converter", () => {
     // Whether `/api/{}/{}` is `/api/acme/files` is not known; a route that takes any tenant serves every such path.
     expect(reached([surface("POST", "/api/acme/{item}"), files], call("GET", "/api/{}/{}"))).toEqual(["s|GET /api/{tenant}/files/{rest:path}"]);
     expect(reached([surface("POST", "/api/{t}/{item}"), files], call("GET", "/api/{}/{}"))).toEqual([]);
+  });
+});
+
+describe("routes an OpenAPI document describes", () => {
+  const surface = (method: string, path: string, key?: string, version = "3.1.0"): Surface => ({
+    id: `s|${method} ${path}`,
+    component: "s",
+    method,
+    path,
+    at: { file: "openapi.json", line: 1 },
+    evidence: "declared",
+    ...(key ? { described: { file: "openapi.json", line: 1 }, describedPath: key, describedVersion: version } : {}),
+  });
+  const call = (method: string, path: string, slash = false): Call => ({ id: "c", from: "w", to: "s", method, path, at: { file: "b.ts", line: 1 }, evidence: "static", based: false, ...(slash ? { slash: true as const } : {}) });
+  const reached = (surfaces: Surface[], c: Call, ranked = new Map<string, Ranking>()) => (matchCalls({ surfaces, calls: [c] }, ranked).targetsOf.get(0) ?? []).map((s) => s.id);
+
+  it("matches a concrete path before its templated counterparts, as OpenAPI 3 does", () => {
+    const me = surface("GET", "/users/me", "/users/me");
+    const byId = surface("GET", "/users/{id}", "/users/{id}");
+    expect(reached([byId, me], call("GET", "/users/me"))).toEqual(["s|GET /users/me"]);
+    expect(reached([byId, me], call("GET", "/users/42"))).toEqual(["s|GET /users/{id}"]);
+    // A value in the segment may be `me` or not.
+    expect(reached([byId, me], call("GET", "/users/{}"))).toEqual(["s|GET /users/{id}", "s|GET /users/me"]);
+    expect(reached([byId, me], call("GET", "/users/{id}"))).toEqual(["s|GET /users/{id}"]);
+    // Each method is matched on its own: a templated DELETE is not the concrete GET's counterpart.
+    expect(reached([surface("DELETE", "/users/{id}", "/users/{id}"), me], call("DELETE", "/users/me"))).toEqual(["s|DELETE /users/{id}"]);
+    // Two templated paths stay ambiguous, as the specification leaves them.
+    expect(reached([surface("GET", "/{entity}/me", "/{entity}/me"), surface("GET", "/books/{id}", "/books/{id}")], call("GET", "/books/me"))).toEqual([
+      "s|GET /{entity}/me",
+      "s|GET /books/{id}",
+    ]);
+  });
+
+  it("keeps registration order where code alone or a Swagger 2.0 document gives the routes", () => {
+    const me = surface("GET", "/users/me", "/users/me");
+    expect(reached([surface("GET", "/users/{id}"), me], call("GET", "/users/me"))).toEqual(["s|GET /users/{id}", "s|GET /users/me"]);
+    const swagger = [surface("GET", "/users/{id}", "/users/{id}", "2.0"), surface("GET", "/users/me", "/users/me", "2.0")];
+    expect(reached(swagger, call("GET", "/users/me"))).toEqual(["s|GET /users/{id}", "s|GET /users/me"]);
+  });
+
+  it("matches a request without the trailing slash its route's document writes only for GET and HEAD", () => {
+    const list = surface("GET", "/api/users", "/api/users/");
+    const create = surface("POST", "/api/users", "/api/users/");
+    const item = surface("DELETE", "/api/users/{id}", "/api/users/{id}/");
+    expect(reached([list, create], call("GET", "/api/users"))).toEqual(["s|GET /api/users"]);
+    expect(reached([list, create], call("POST", "/api/users", true))).toEqual(["s|POST /api/users"]);
+    const post = matchCalls({ surfaces: [list, create], calls: [call("POST", "/api/users")] });
+    expect(post.targetsOf.size).toBe(0);
+    expect(post.slashless.get(0)!.map((s) => s.id)).toEqual(["s|POST /api/users"]);
+    expect(matchCalls({ surfaces: [item], calls: [call("DELETE", "/api/users/{}")] }).slashless.get(0)!.map((s) => s.id)).toEqual(["s|DELETE /api/users/{id}"]);
+    // A call of unread method to the one route it fits is sent with that route's method.
+    expect(matchCalls({ surfaces: [create], calls: [call("*", "/api/users")] }).slashless.size).toBe(1);
+    // A route read only from code, or one whose document writes no slash, is matched as before.
+    expect(reached([surface("POST", "/api/users")], call("POST", "/api/users"))).toEqual(["s|POST /api/users"]);
+    expect(reached([surface("POST", "/api/users", "/api/users")], call("POST", "/api/users", true))).toEqual(["s|POST /api/users"]);
+    // HEAD, as GET, is matched.
+    expect(reached([surface("HEAD", "/api/users", "/api/users/")], call("HEAD", "/api/users"))).toEqual(["s|HEAD /api/users"]);
+    // A server path before the root key `/` puts the slash after it: `/api/` is served, not `/api`.
+    expect(matchCalls({ surfaces: [surface("POST", "/api", "/")], calls: [call("POST", "/api")] }).slashless.get(0)!.map((s) => s.id)).toEqual(["s|POST /api"]);
+    expect(reached([surface("POST", "/", "/")], call("POST", "/"))).toEqual(["s|POST /"]);
+  });
+
+  it("matches a route whose path the request writes exactly before one it reaches only by a slash redirect", () => {
+    // Starlette and Django redirect to the path with a `/` added only when no route matches the path as written.
+    const me = surface("POST", "/users/me", "/users/me/");
+    const byId = surface("POST", "/users/{id}", "/users/{id}");
+    const matched = matchCalls({ surfaces: [me, byId], calls: [call("POST", "/users/me")] });
+    expect((matched.targetsOf.get(0) ?? []).map((s) => s.id)).toEqual(["s|POST /users/{id}"]);
+    expect(matched.slashless.size).toBe(0);
+    expect(reached([surface("GET", "/users/me", "/users/me/"), surface("GET", "/users/{id}", "/users/{id}")], call("GET", "/users/me"))).toEqual(["s|GET /users/{id}"]);
+    expect(reached([me, byId], call("POST", "/users/me", true))).toEqual(["s|POST /users/me"]);
+  });
+
+  it("reads the trailing slash a call writes", () => {
+    expect(callPath("/api/users/")).toEqual({ path: "/api/users", based: false, slash: true });
+    expect(callPath("/api/users/?page=2")).toEqual({ path: "/api/users", based: false, slash: true });
+    expect(callPath("/api/users")).toEqual({ path: "/api/users", based: false });
   });
 });
 
@@ -247,6 +343,7 @@ describe("routesFromTypeScript", () => {
       "async def add_endpoint(app, path):",
       "    add_endpoint(app, '/agent')",
       "add_endpoint(app, AGENT_PATH)",
+      "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);

@@ -15,6 +15,7 @@ import { Reach } from "../src/extract/reach.js";
 import type { Coverage } from "../src/model.js";
 import { toArazzo } from "../src/arazzo.js";
 import type { LoadedFile } from "../src/flows.js";
+import { seedsFor, trace, traceText } from "../src/flow.js";
 
 const root = fileURLToPath(new URL("../fixtures/openapi", import.meta.url));
 const doc = (name: string) => describedOperations(name, readFileSync(join(root, name), "utf8"))!;
@@ -126,15 +127,21 @@ describe("describedOperations", () => {
 describe("handler lookup", () => {
   it("derives the handler names framework conventions put in an operationId", () => {
     expect(handlerNames("read_order_api_v1_orders__order_id__get", "GET", "/api/v1/orders/{order_id}")).toContain("read_order");
-    expect(handlerNames("OrdersController_read", "GET", "/orders/{id}")).toContain("read");
+    expect(handlerNames("OrdersController_read", "GET", "/orders/{id}")).toEqual(["OrdersController_read", "OrdersController.read", "read"]);
     expect(handlerNames("read", "GET", "/orders/{id}")).toEqual(["read"]);
-    expect(handlerNames("Admin_APIController_list", "GET", "/admin")).toEqual(["Admin_APIController_list", "APIController_list", "list"]);
-    expect(handlerNames("Cats_findAll", "GET", "/cats")).toEqual(["Cats_findAll", "findAll"]);
+    expect(handlerNames("Admin_APIController_list", "GET", "/admin")).toEqual([
+      "Admin_APIController_list",
+      "Admin.APIController_list",
+      "Admin_APIController.list",
+      "APIController_list",
+      "list",
+    ]);
+    expect(handlerNames("Cats_findAll", "GET", "/cats")).toEqual(["Cats_findAll", "Cats.findAll", "findAll"]);
     expect(handlerNames("api_v1_orders_retrieve", "GET", "/api/v1/orders/{id}")).toEqual(["api_v1_orders_retrieve"]);
   });
   it("finds definitions in Python, TypeScript and Java but not calls", () => {
     expect(definitionLines("a.py", "x = read()\nasync def read(id):\n", "read")).toEqual([2]);
-    expect(definitionLines("a.ts", "this.read(1);\n  async read(@Param() id: string): Promise<X> {\n", "read")).toEqual([2]);
+    expect(definitionLines("a.ts", "this.read(1);\nclass A {\n  async read(@Param() id: string): Promise<X> {\n  }\n}\n", "read")).toEqual([3]);
     expect(definitionLines("A.java", "return read(id);\n  public ResponseEntity<Map<String, Object>> read(@PathVariable String id) {\n", "read")).toEqual([2]);
   });
   it("finds Java declarations whatever follows their opening parenthesis", () => {
@@ -153,6 +160,35 @@ describe("handler lookup", () => {
     const text = ["export function load<T>(id: string): Promise<T> {", "class A {", "  async read<T extends object>(id: string): Promise<T> {", "  }", "}", "load<Order>(1);"].join("\n");
     expect(definitionLines("a.ts", text, "load")).toEqual([1]);
     expect(definitionLines("a.ts", text, "read")).toEqual([3]);
+  });
+  it("finds a TypeScript method whose signature runs over several lines, as prettier writes it", () => {
+    const text = [
+      "@Controller('order')",
+      "export class OrderController {",
+      "  public constructor(private readonly orderService: OrderService) {}",
+      "",
+      "  @Get(':id')",
+      "  @UseGuards(AuthGuard('jwt'))",
+      "  public async read(",
+      "    @Param('id') id: string,",
+      "    @Query('withDetails') withDetails?: string",
+      "  ): Promise<OrderResponse> {",
+      "    return this.orderService.read(id);",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(definitionLines("order.controller.ts", text, "read")).toEqual([7]);
+    expect(definitionLines("order.controller.js", text.replace(/: \w+(<\w+>)?/g, ""), "read")).toEqual([7]);
+  });
+  it("finds a method of a named class by Class.method, in parsed scripts only", () => {
+    const text = "class PlatformController {\n  getPlatforms() {}\n}\nclass PlatformsController {\n  getPlatforms() {}\n}\n";
+    expect(definitionLines("a.ts", text, "getPlatforms")).toEqual([2, 5]);
+    expect(definitionLines("a.ts", text, "PlatformsController.getPlatforms")).toEqual([5]);
+    expect(definitionLines("A.kt", "fun PlatformsController.getPlatforms() = 1\n", "PlatformsController.getPlatforms")).toEqual([]);
+  });
+  it("finds a TypeScript function by its body, not by its overload signatures or calls", () => {
+    const text = "export function load(id: string): Order;\nexport function load(id: number): Order;\nexport function load(id: unknown): Order {\n  return load(String(id));\n}\n";
+    expect(definitionLines("a.ts", text, "load")).toEqual([3]);
   });
   it("finds a one-line TypeScript method", () => {
     expect(definitionLines("a.ts", "class A {\n  handle() { return 1; }\n}\nhandle();\n", "handle")).toEqual([2]);
@@ -189,7 +225,14 @@ describe("routes from an OpenAPI document", () => {
       location: "java-springdoc.json",
       reason: "ReadForRoutes",
     });
-    expect(graph.limits).toEqual([]);
+    // Documents whose operationIds name no handler, or that write none.
+    expect(graph.limits).toEqual([
+      "routes flask-smorest: 2 operations of py-smorest.json have no operationId to find a handler by (GET /api/v1/orders/{order_id}, POST /api/v1/orders); they stay at their line in the document",
+      "routes flasgger: 2 operations of py-flasgger.json have no operationId to find a handler by (POST /api/v1/orders, GET /api/v1/orders/{order_id}); they stay at their line in the document",
+      "routes django-drf: no handler was found in the configured route files for 4 operations of py-drf.json (api_v1_orders_create, api_v1_orders_retrieve, api_v1_orders_history_retrieve, internal_health_retrieve); they stay at their line in the document",
+      "routes fastify: 2 operations of node-fastify-openapi.json have no operationId to find a handler by (GET /api/v1/orders/{orderId}, POST /api/v1/orders/); they stay at their line in the document",
+      "routes fastify-swagger: 2 operations of node-fastify-swagger.json have no operationId to find a handler by (GET /api/v1/orders/{orderId}, POST /api/v1/orders/); they stay at their line in the document",
+    ]);
   });
 
   const memory = (files: Record<string, string>): Source => ({
@@ -409,6 +452,69 @@ describe("routes from an OpenAPI document", () => {
     expect(surfaces).toHaveLength(4);
     expect(surfaces[0]!.at.file).toBe(outside);
     expect(limits).toEqual([`routes svc: ${outside} is outside the repository and is read as it is now, not at 0123456789ab`]);
+  });
+
+  it("says which documented operations have no handler in the route files, and which have no operationId to find one by", () => {
+    const source = memory({
+      "svc/views.py": "class UserViewSet(viewsets.ModelViewSet):\n    queryset = User.objects.all()\n",
+      "svc/schema.yml": "openapi: 3.0.3\npaths:\n  /api/users/:\n    get: {operationId: users_list}\n    post: {operationId: users_create}\n  /api/health/:\n    get: {}\n",
+    });
+    const limits: string[] = [];
+    const routes = (files: string[]) => normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files, openapi: "svc/schema.yml" }] });
+    extractRoutes(source, routes(["svc/**/*.py"]), undefined, [], limits);
+    expect(limits).toEqual([
+      "routes svc: no handler was found in the configured route files for 2 operations of svc/schema.yml (users_list, users_create); they stay at their line in the document",
+      "routes svc: 1 operation of svc/schema.yml has no operationId to find a handler by (GET /api/health/); it stays at its line in the document",
+    ]);
+    // Where no route files are configured, no handler was looked for.
+    limits.length = 0;
+    extractRoutes(source, routes([]), undefined, [], limits);
+    expect(limits).toEqual([]);
+  });
+
+  it("says a trace stops at a documented operation whose handler was not found", () => {
+    const source = memory({
+      "svc/views.py": "class UserViewSet(viewsets.ModelViewSet):\n    pass\n",
+      "svc/schema.yml": "openapi: 3.0.3\npaths:\n  /api/users/:\n    get: {operationId: users_list}\n",
+    });
+    const graph = scan(source, normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.py"], openapi: "svc/schema.yml" }] }));
+    const text = traceText(trace(graph, seedsFor(graph, "svc|GET /api/users")));
+    expect(text).toContain("not traced: no handler of this operation was found in the configured route files");
+    expect(text).not.toContain("TypeScript");
+  });
+
+  it("follows the method of the class the operationId names, though another class on its line has one of that name", () => {
+    const source = memory({
+      "api/users.ts": "class A { read() { return this.a(); } a() {} } class B { read() { return this.b(); } b() {} }\n",
+      "api/openapi.json": JSON.stringify({ openapi: "3.0.0", paths: { "/users": { get: { operationId: "B_read" } } } }),
+    });
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.ts"], openapi: "api/openapi.json" }] });
+    const [surface] = extractRoutes(source, config, new Reach(source), [], []);
+    expect(surface).toMatchObject({ evidence: "name", at: { file: "api/users.ts", line: 1 }, reaches: ["b"] });
+  });
+
+  it("finds and follows a Nest handler whose signature runs over several lines", () => {
+    const source = memory({
+      "api/order.controller.ts": [
+        "@Controller('order')",
+        "export class OrderController {",
+        "  public constructor(private readonly orderService: OrderService) {}",
+        "",
+        "  @Get(':id')",
+        "  public async read(",
+        "    @Param('id') id: string",
+        "  ): Promise<OrderResponse> {",
+        "    return this.orderService.findOne(id);",
+        "  }",
+        "}",
+      ].join("\n"),
+      "api/openapi.json": JSON.stringify({ openapi: "3.0.0", paths: { "/api/v1/order/{id}": { get: { operationId: "OrderController_read" } } } }, null, 2),
+    });
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.ts"], openapi: "api/openapi.json" }] });
+    const limits: string[] = [];
+    const [surface] = extractRoutes(source, config, new Reach(source), [], limits);
+    expect(surface).toMatchObject({ evidence: "name", at: { file: "api/order.controller.ts", line: 6 }, reaches: ["findOne"] });
+    expect(limits).toEqual([]);
   });
 
   it("reports a document that cannot be read as a limit instead of stopping", () => {

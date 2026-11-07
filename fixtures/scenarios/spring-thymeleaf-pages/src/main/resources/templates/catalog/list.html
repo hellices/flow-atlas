@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'catalog')}">
+<body>
+  <h2>Catalog</h2>
+  <table>
+    <tr th:each="item : ${listItems}"><td th:text="${item.name}"></td></tr>
+  </table>
+  <div th:if="${totalPages > 1}">
+    <span th:each="i: ${#numbers.sequence(1, totalPages)}">
+      <a th:if="${currentPage != i}" th:href="@{'/catalog.html?page=__${i}__'}">[[${i}]]</a>
+    </span>
+    <a th:if="${currentPage > 1}" th:href="@{'/catalog.html?page=1'}" title="First"></a>
+  </div>
+</body>
+</html>

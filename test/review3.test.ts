@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { documentUrl, toArazzo } from "../src/arazzo.js";
+import { offersNext } from "../src/chains.js";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { declarationOf, resolveModule } from "../src/extract/binding.js";
 import { callsFromText, callsFromTypeScript } from "../src/extract/calls.js";
@@ -295,11 +296,14 @@ describe("framework rules", () => {
     const graph = scan(memory(files), config);
     const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
     expect(page.at.line).toBe(14);
-    const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id && !offersNext(e)).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     // makeHandler, track and the function called on the spot run while rendering; the handler makeHandler returns, the
     // address a link holds and the client module do not.
     // A get that may only build a string is no request: its address is the browser's.
     expect(reach.sort()).toEqual(["/api/built", "/api/direct", "/api/field", "/api/notes/1", "/api/setup", "/api/spot", "/api/stats", "/api/tags", "/api/track"]);
+    // The addresses its links hold are offered next; one a helper builds from its argument is not known to be one.
+    const offered = graph.edges.filter((e) => offersNext(e) && e.from === page.id).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    expect(offered.sort()).toEqual(["/create", "/next"]);
   });
 
   it("renders a Pages Router page through whatever its default export names", () => {
@@ -341,7 +345,7 @@ describe("framework rules", () => {
 
   it("joins a page only to the requests it makes while rendering, not to a link on the same line", () => {
     const files = {
-      "app/one/page.tsx": 'export default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
+      "app/one/page.tsx": 'import Link from "next/link";\nexport default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
       "app/next/page.tsx": "export default function Next() { return null; }",
       "app/api/data/route.ts": "export function GET() {}",
     };
@@ -351,9 +355,12 @@ describe("framework rules", () => {
       calls: [{ from: "web", to: "web", files: ["app/**/*.tsx"] }],
     });
     const graph = scan(memory(files), config);
-    const reached = graph.edges.filter((e) => e.kind === "reach" && e.from === "web|GET /one").map((e) => graph.calls.find((c) => c.id === e.to)!.path);
+    const reached = (next: boolean) =>
+      graph.edges.filter((e) => e.kind === "reach" && e.from === "web|GET /one" && offersNext(e) === next).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     expect(graph.calls.map((c) => c.path).sort()).toEqual(["/api/data", "/next"]);
-    expect(reached).toEqual(["/api/data"]);
+    expect(reached(false)).toEqual(["/api/data"]);
+    // The link is what the page offers next.
+    expect(reached(true)).toEqual(["/next"]);
   });
 
   it("joins a request to the URL that holds it, not to a URL built around it", () => {
@@ -384,8 +391,8 @@ describe("framework rules", () => {
     });
     const graph = scan(memory(files), config);
     const reached = (id: string) =>
-      graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => graph.calls.find((c) => c.id === e.to)!).map((c) => `${c.method} ${c.path}`);
-    // The links are calls of their own; only the requests made while rendering join the page.
+      graph.edges.filter((e) => e.kind === "reach" && e.from === id && !offersNext(e)).map((e) => graph.calls.find((c) => c.id === e.to)!).map((c) => `${c.method} ${c.path}`);
+    // The links are calls of their own, offered next; only the requests made while rendering join the page's request.
     const callsIn = (file: string) => graph.calls.filter((c) => c.at.file === file).map((c) => `${c.method} ${c.path}`).sort();
     expect(callsIn("app/two/page.tsx")).toEqual(["* /next/{}", "GET /api/data"]);
     expect(callsIn("app/three/page.tsx")).toEqual(["* /next/{}"]);

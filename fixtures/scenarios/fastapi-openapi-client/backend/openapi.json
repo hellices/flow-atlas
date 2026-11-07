@@ -1,0 +1,284 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Workspace",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/login/access-token": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Login Access Token",
+        "operationId": "login-login_access_token",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/login/test-token": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Test Token",
+        "operationId": "login-test_token",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read Users",
+        "operationId": "users-read_users",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsersPublic"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create User",
+        "operationId": "users-create_user",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User Me",
+        "operationId": "users-read_user_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update User Me",
+        "operationId": "users-update_user_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete User Me",
+        "operationId": "users-delete_user_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User By Id",
+        "operationId": "users-read_user_by_id",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete User",
+        "operationId": "users-delete_user",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Message": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "Message"
+      },
+      "Token": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "Token"
+      },
+      "UserPublic": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "id"
+        ],
+        "title": "UserPublic"
+      },
+      "UsersPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/UserPublic"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "UsersPublic"
+      }
+    }
+  }
+}
