@@ -67,7 +67,6 @@ function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | und
 function fetchMethod(init: ts.Expression | undefined, absent = "GET"): string {
   if (!init) return absent;
   if (!ts.isObjectLiteralExpression(init)) return "*";
-  if (init.properties.some((p) => ts.isSpreadAssignment(p))) return "*";
   return initMethod(init) ?? absent;
 }
 

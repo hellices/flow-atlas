@@ -273,6 +273,8 @@ describe("client wrappers in the configuration", () => {
     expect(rows.map(([code]) => wrapped(code))).toEqual(rows.map(([, calls]) => calls));
     // fetch is read by the same rule.
     expect(read('fetch("/items", { [key]: verb });\nfetch("/items", { __proto__: init });')).toEqual(["* /items", "* /items"]);
+    // fetch reads its init as a wrapper does: a method stated after a spread is the one the object ends with.
+    expect(read('fetch("/items", { ...options, method: "POST" });\nfetch("/items", { method: "POST", ...options });\nfetch("/items", { ...options });')).toEqual(["POST /items", "* /items", "* /items"]);
   });
 
   it("reads a configured wrapper before the names a method is read from without one", () => {
