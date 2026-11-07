@@ -1,0 +1,15 @@
+# How scripts/frameworks.mjs installs Actix Web and asks it for the routes the application serves. Cargo.lock pins
+# every crate from crates.io.
+toolchain: rust
+docs:
+  - https://actix.rs/docs/url-dispatch
+  - https://actix.rs/docs/application
+  - https://actix.rs/docs/static-files
+  - https://docs.rs/actix-web/latest/actix_web/struct.HttpRequest.html#method.match_pattern
+setup: cargo fetch --locked
+# The latest releases of Actix Web and actix-files on crates.io.
+latest: >-
+  w=$(cargo search actix-web --limit 1 | sed -n 's/^actix-web = "\([0-9.]*\)".*/\1/p')
+  && f=$(cargo search actix-files --limit 1 | sed -n 's/^actix-files = "\([0-9.]*\)".*/\1/p')
+  && cargo add -q actix-web@$w actix-files@$f && cargo update -q
+oracle: cargo run -q --locked --bin oracle

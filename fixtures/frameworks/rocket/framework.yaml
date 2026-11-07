@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs installs Rocket and asks it for the routes the application serves. Cargo.lock pins every
+# crate from crates.io.
+toolchain: rust
+docs:
+  - https://rocket.rs/guide/v0.5/requests/
+  - https://rocket.rs/guide/v0.5/overview/#mounting
+  - https://api.rocket.rs/v0.5/rocket/struct.Rocket.html#method.routes
+  - https://api.rocket.rs/v0.5/rocket/fs/struct.FileServer.html
+setup: cargo fetch --locked
+# The latest release of Rocket on crates.io.
+latest: >-
+  v=$(cargo search rocket --limit 1 | sed -n 's/^rocket = "\([0-9.]*\)".*/\1/p')
+  && cargo add -q rocket@$v && cargo update -q
+oracle: cargo run -q --locked --bin oracle

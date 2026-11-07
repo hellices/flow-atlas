@@ -1,0 +1,22 @@
+[package]
+name = "oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The application's source, compiled against `recorder.rs` in axum's place: it forwards every call to axum and records
+# the routes registered.
+[lib]
+name = "axum"
+path = "recorder.rs"
+
+[[bin]]
+name = "oracle"
+path = "../oracle.rs"
+
+[dependencies]
+axum-real = { package = "axum", version = "0.8.9" }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["fs"] }
