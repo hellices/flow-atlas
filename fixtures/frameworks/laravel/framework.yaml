@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs Laravel and asks it for the routes the application serves. The application has no
+# database and no .env: the oracle gives it a throwaway APP_KEY.
+toolchain: php
+docs:
+  - https://laravel.com/docs/12.x/routing
+  - https://laravel.com/docs/12.x/controllers#resource-controllers
+  - https://laravel.com/docs/12.x/artisan
+setup: composer install --no-interaction --no-progress
+latest: composer require --no-interaction --no-progress --update-with-all-dependencies 'laravel/framework:*'
+oracle: APP_ENV=local APP_KEY="base64:$(php -r 'echo base64_encode(random_bytes(32));')" LOG_CHANNEL=stderr php oracle.php

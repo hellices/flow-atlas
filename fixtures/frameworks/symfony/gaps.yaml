@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the routes Symfony serves. Remove the entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no style for PHP: the `#[Route]` attributes on controller classes and methods (with their requirements,
+  defaults and methods), the routes and imports of config/routes.yaml and config/routes/*.yaml|php with their prefixes,
+  and the error pages FrameworkBundle serves in the dev environment are not read; a limit says the route files gave
+  nothing ("routes app: 11 files read, nothing extracted") but names none of the routes left out, and `atlas inventory`
+  finds neither a component (composer.json is no manifest it reads) nor a route candidate.

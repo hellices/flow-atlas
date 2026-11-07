@@ -1,0 +1,21 @@
+{
+    "name": "flow-atlas/laravel-routes",
+    "description": "A small Laravel application exercising the routing guide, for flow-atlas's framework fixtures.",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

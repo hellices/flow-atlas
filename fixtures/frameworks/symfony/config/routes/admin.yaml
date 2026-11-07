@@ -1,0 +1,6 @@
+# The admin controllers' attribute routes, under a prefix and a name prefix.
+admin:
+    resource: ../../src/Admin/
+    type: attribute
+    prefix: /admin
+    name_prefix: admin_
