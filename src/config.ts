@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { parse } from "yaml";
 import type { RuleId } from "./model.js";
 
@@ -131,7 +132,7 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
   if (raw.versions !== undefined) throw new Error("versions: contract-version checks (FA006) were removed; delete the versions section");
   const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
   return {
-    components: list(raw.components),
+    components: list<Config["components"][number]>(raw.components).map((c) => (typeof c?.path === "string" ? { ...c, path: componentPath(c.path) } : c)),
     manifest: raw.manifest as Config["manifest"],
     routes: list<RouteSource>(raw.routes).map(checkRoute),
     calls: list<CallSource>(raw.calls).map(checkCalls),
@@ -143,6 +144,15 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
     origins: (raw.origins as Record<string, string> | undefined) ?? {},
     rules: (raw.rules as Config["rules"]) ?? {},
   };
+}
+
+/**
+ * A component's directory as the repository's file paths start with it: `""` for the root, however it is written
+ * (`.`, `./`), and otherwise without a leading `./` or trailing `/` (`./apps/web/` is `apps/web`).
+ */
+export function componentPath(path: string): string {
+  const out = posix.normalize(path).replace(/^(?:\.\/)+/, "").replace(/\/+$/, "");
+  return out === "." ? "" : out;
 }
 
 function checkRoute(route: RouteSource): RouteSource {

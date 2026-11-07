@@ -97,11 +97,17 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
   const unsettled = new Map<number, Surface[]>();
   graph.calls.forEach((call, ci) => {
     const candidates: Array<{ surface: Surface; index: number }> = [];
-    // Next.js settles the route by the path first; the method is checked on that route only.
-    let path: string | undefined;
-    if (ranked.get(call.to) === "next" && !call.path.includes(HOLE)) {
+    // Next.js settles the route by the path first; the method is checked on that route only. Each request a call stands
+    // for goes to the most specific path that fits it, so a call with interpolations reaches every path down to the
+    // first that takes any value they may hold, and none after it. A path is not reached either where a more specific
+    // one takes every request the call and it share: `/{a}/new` meets `/editor/{id}` only in `/editor/new`.
+    let paths: Set<string> | undefined;
+    if (ranked.get(call.to) === "next") {
       const fits = [...new Set(graph.surfaces.filter((s) => s.component === call.to && pathsMatch(s.path, call.path)).map((s) => s.path))];
-      path = fits.sort((a, b) => compare(nextRank(a), nextRank(b)))[0];
+      fits.sort((a, b) => compare(nextRank(a), nextRank(b)));
+      const covering = fits.findIndex((p) => pathCovers(p, call.path));
+      const before = covering < 0 ? fits : fits.slice(0, covering + 1);
+      paths = new Set(before.filter((p, i) => !fits.slice(0, i).some((q) => pathCovers(q, narrowedPath(p, call.path)))));
     }
     // Starlette redirects a path no route matches, by any method, to the same path with a `/` added; a route ending in
     // `{name:path}` takes that with the segment empty. A call with interpolations may name the path the redirect
@@ -117,9 +123,10 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     const headByGet = ranked.get(call.to) === "spring" && call.method.toUpperCase() === "HEAD";
     graph.surfaces.forEach((surface, si) => {
       if (surface.component !== call.to) return;
-      if (path !== undefined && surface.path !== path) return;
-      // What the framework answers by itself is reached only by a request that names that method.
-      if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
+      if (paths && !paths.has(surface.path)) return;
+      // What the framework answers by itself beside a GET (HEAD, OPTIONS) is reached only by a request that names that
+      // method; a file it serves with no handler is reached by GET as a route is.
+      if (surface.implicit && surface.method !== "GET" && call.method.toUpperCase() !== surface.method) return;
       if (!methodsMatch(surface.method, call.method) && !(headByGet && surface.method === "GET")) return;
       if (pathsMatch(surface.path, call.path) || redirected(surface)) candidates.push({ surface, index: si });
     });

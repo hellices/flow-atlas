@@ -146,7 +146,7 @@
           }
         },
         "implicit": {
-          "description": "Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS with an Allow header. No rule expects a caller for it.",
+          "description": "Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS with an Allow header, and serves the files of public/; or requested by convention from outside the code, as crawlers fetch Next.js's robots.txt and sitemaps. No rule expects a caller for it.",
           "const": true
         }
       }

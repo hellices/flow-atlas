@@ -30,8 +30,9 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
  * built from a request's result, starts elsewhere. A call in a page's template is reached by the routes that render it,
  * one relative to the page only by the routes of the path it was resolved against; `redirected` gives, by call index,
- * the routes whose replies redirect to it (evidence `text`, `via` redirect). A call whose method is not read and whose
- * routes take different methods has no edge; `limits` names it.
+ * the routes whose replies redirect to it (evidence `text`, `via` redirect); `offered` gives, by route, the
+ * `file@offset` of each link or form its page renders (evidence `static`, `via` the view). A call whose method is not
+ * read and whose routes take different methods has no edge; `limits` names it.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
@@ -40,6 +41,7 @@ export function edgesOf(
   spans: Array<[number, number] | undefined> = [],
   limits: string[] = [],
   redirected: Map<number, string[]> = new Map(),
+  offered?: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf, unsettled } = matchCalls(graph, ranked);
@@ -53,7 +55,8 @@ export function edgesOf(
     const reached = new Set(s.reaches ?? []);
     const runs = executed?.get(s.id);
     const sent = replies.get(s.id) ?? [];
-    if (!reached.size && !runs?.size && !sent.length) continue;
+    const offers = offered?.get(s.id);
+    if (!reached.size && !runs?.size && !sent.length && !offers?.size) continue;
     const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
     const runsIn = (i: number, file: string): boolean => {
       const span = spans[i];
@@ -65,6 +68,12 @@ export function edgesOf(
         continue;
       }
       if (c.from !== s.component) continue;
+      // A link or a form the page renders is a request it offers next, as a template's are.
+      const span = spans[i];
+      if (span && offers?.has(`${c.at.file}@${span[0]}`)) {
+        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: `view ${c.at.file}` });
+        continue;
+      }
       if (runsIn(i, c.at.file)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
@@ -129,13 +138,14 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const executed = new Map<string, Set<string>>();
   const spans = new Spans();
   const redirects: Redirects = new Map();
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans, redirects);
+  const offered = new Map<string, Set<string>>();
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans, redirects, offered);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces, limits);
   const read = extractCalls(source, config, coverage, spans, limits, { surfaces, pages: renderedPages(surfaces, executed) });
   const replies = redirectCalls(surfaces, redirects);
   const calls = assignCallIds([...read, ...replies.map((r) => r.call)].map(withoutSpan));
   const redirected = new Map(replies.map((r, k) => [read.length + k, r.from]));
-  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits, redirected);
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits, redirected, offered);
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",

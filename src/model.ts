@@ -66,7 +66,8 @@ export interface Surface {
   reaches?: string[];
   /**
    * Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS
-   * with an Allow header. A request can reach it; no rule expects a caller for it.
+   * with an Allow header, and serves the files of `public/`; or requested by convention from outside the code, as
+   * crawlers fetch Next.js's robots.txt and sitemaps. A request can reach it; no rule expects a caller for it.
    */
   implicit?: boolean;
 }

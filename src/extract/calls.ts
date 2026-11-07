@@ -4,7 +4,7 @@ import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
 import { callPath, HOLE, hostOf, isLoopback, joinRoute, pathsMatch, resolveReference, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
-import { declarationOf, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
 
@@ -213,9 +213,10 @@ function locationNavigation(node: ts.Node): boolean {
 
 /**
  * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
- * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to; a URL
- * the window's Location navigates to; a client router's navigation that loads the document. A `redirect` keeps the
- * request's method (307, 308) where it answers one that is not a page's GET, so its method is left open.
+ * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to, either
+ * branch of a conditional included; a URL the window's Location navigates to; a client router's navigation that loads
+ * the document. A `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its
+ * method is left open.
  */
 function navigatesWithGet(node: ts.Node): boolean {
   if (locationNavigation(node) || clientRoute(node) === "document") return true;
@@ -343,6 +344,28 @@ function windowOpen(callee: ts.Expression): boolean {
 const keyOf = (p: ts.PropertyAssignment): string => (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name) ? p.name.text : "");
 
 /**
+ * Whether a string is in the `matcher` of the `config` a Next.js middleware or proxy file exports: the paths the
+ * middleware runs on, as strings or as objects' `source`, not requests (Next.js, Proxy: Matcher).
+ */
+function middlewareMatcher(node: ts.Node, file: string): boolean {
+  if (!/(?:^|\/)(?:middleware|proxy)\.(?:c|m)?[jt]s$/.test(file)) return false;
+  for (let a = node.parent; a && !ts.isSourceFile(a); a = a.parent) {
+    if (!ts.isPropertyAssignment(a) || keyOf(a) !== "matcher") continue;
+    const holder = outermost(a.parent).parent;
+    const statement = ts.isVariableDeclaration(holder) ? holder.parent.parent : undefined;
+    return (
+      ts.isVariableDeclaration(holder) &&
+      ts.isIdentifier(holder.name) &&
+      holder.name.text === "config" &&
+      !!statement &&
+      ts.isVariableStatement(statement) &&
+      !!ts.getModifiers(statement)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    );
+  }
+  return false;
+}
+
+/**
  * Whether a string is a `path` option that does not start at the root. Node's `http.request` takes the request path
  * alone in `path` (`/index.html?page=12`), as clients modelled on it do; a `path` joined to another value is a file
  * path, or a path under something else.
@@ -392,15 +415,6 @@ function fromOneParameter(e: ts.Expression): boolean {
 }
 
 const NEXT_ROUTERS = ["next/navigation", "next/router"];
-
-/** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
-function importedFrom(id: ts.Identifier, modules: string[]): string | undefined {
-  const d = declarationOf(id);
-  const spec = (n: ts.Node | undefined) => (n && ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined);
-  if (d && ts.isImportSpecifier(d) && modules.includes(spec(d.parent.parent.parent) ?? "")) return (d.propertyName ?? d.name).text;
-  if (d && ts.isImportClause(d) && modules.includes(spec(d.parent) ?? "")) return "default";
-  return undefined;
-}
 
 /** Whether an expression is Next.js's router: what `useRouter()` returns, or the `Router` `next/router` exports. */
 function isNextRouter(e: ts.Expression): boolean {
@@ -696,7 +710,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
   const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
-    if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw)) return undefined;
+    if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw) || middlewareMatcher(node, file)) return undefined;
     // A client router's own route, unless it names another origin (`<Link to="https://...">`), which the browser loads.
     if (clientRoute(node) === "route" && hostOf(raw) === undefined) return undefined;
     if (spec.prefix && prefixing(node, spec.prefix)) {

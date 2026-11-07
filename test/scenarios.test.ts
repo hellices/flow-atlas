@@ -21,6 +21,8 @@ interface Expected {
   surfaces: string[];
   findings: string[];
   chains: string[];
+  /** What each chain offers to follow it, `chain => next chain (via)`; compared when given. */
+  next?: string[];
   /** Every call read, `from->to|METHOD path @ file:line` (`based` after the path when the URL joins a base); compared when given. */
   calls?: string[];
   /** Fragments of the limits atlas reports, one per limit, in order. */
@@ -55,6 +57,7 @@ function run(dir: string) {
     findings: findings.map((f) => f.key).sort(),
     // A chain by its id, then every other surface it reaches.
     chains: chains.chains.map((c) => [c.id, ...c.surfaces.filter((s) => s !== c.root).sort()].join(" + ")).sort(),
+    next: chains.chains.flatMap((c) => c.next.map((n) => `${c.id} => ${n.chain} (${n.via})`)).sort(),
     calls: graph.calls.map((c) => `${c.from}->${c.to}|${c.method} ${c.path}${c.based ? " based" : ""} @ ${c.at.file}:${c.at.line}`).sort(),
     limits: graph.limits,
     documents: graph.apiDocuments.map((d) => `${d.component} ${d.location} ${d.convention} ${d.at.file}:${d.at.line}`),
@@ -79,6 +82,7 @@ describe("scenarios from real repositories", () => {
       expect(actual.surfaces).toEqual([...expected.surfaces].sort());
       expect(actual.findings).toEqual([...expected.findings].sort());
       expect(actual.chains).toEqual([...expected.chains].sort());
+      if (expected.next) expect(actual.next).toEqual([...expected.next].sort());
       if (expected.calls) expect(actual.calls).toEqual([...expected.calls].sort());
       expect(actual.limits.length).toBe((expected.limits ?? []).length);
       (expected.limits ?? []).forEach((fragment, i) => expect(actual.limits[i]).toContain(fragment));

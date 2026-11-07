@@ -189,7 +189,7 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller) |
 | call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `page` (the path a URL relative to its page was resolved against) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
@@ -252,6 +252,9 @@ same request (the client's call), or at a surface declared in `publicSurfaces` t
 takes in the surface the call reaches and every surface that surface's handler reaches, along reach and match edges,
 fan-out included. Its id is `<entry>-><surface id>`, such as `mobile->bff|POST /orders`.
 
+A reach edge to a call in the template a page renders (`via view <name>`), or in a link or form a Next.js page renders
+(`via view <file>`), is not part of the page's request: the user makes that call later. Those calls start chains of
+their own, and the page's chain lists them as `next`, which is where a journey's following step comes from.
 A reach edge to a call in the template a page renders (`via view <name>`) is not part of the page's request: the user
 makes that call later. Those calls start chains of their own, and the page's chain lists them as `next`, which is where
 a journey's following step comes from. A redirect of the chain's root (`via redirect`) is followed by the entry that
