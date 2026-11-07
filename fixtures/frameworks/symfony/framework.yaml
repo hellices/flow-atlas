@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Symfony and asks it for the routes the application serves, in the dev
+# environment (where FrameworkBundle also serves its error pages).
+toolchain: php
+docs:
+  - https://symfony.com/doc/8.1/routing.html
+  - https://symfony.com/doc/8.1/configuration/micro_kernel_trait.html
+setup: composer install --no-interaction --no-progress
+latest: composer require --no-interaction --no-progress --update-with-all-dependencies 'symfony/console:*' 'symfony/framework-bundle:*' 'symfony/yaml:*'
+oracle: APP_ENV=dev php oracle.php

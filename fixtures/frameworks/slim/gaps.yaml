@@ -1,0 +1,9 @@
+# Where atlas's reading differs from the routes Slim serves. Remove the entry when atlas reads it right; the test fails
+# while a listed difference no longer occurs.
+unread: >-
+  atlas has no style for PHP: the routes `$app->get`/`post`/`put`/`patch`/`delete`/`options`/`map`/`any`/`redirect`
+  in app/routes.php, their FastRoute placeholders (`{id:[0-9]+}`, the rest of the path `{path:.+}`) and optional
+  segments (`[/{id}]`, nested `[/{year}[/{month}]]`), and the patterns of `$app->group` and nested groups are not read;
+  a limit says the route file gave nothing ("routes app: 1 files read, nothing extracted") but names none of the routes
+  left out, and `atlas inventory` finds neither a component (composer.json is no manifest it reads) nor a route
+  candidate.
