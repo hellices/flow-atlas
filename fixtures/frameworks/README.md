@@ -34,7 +34,7 @@ routes shows before a user meets it.
 
 1. Create `fixtures/frameworks/<name>/` with the application under its usual source directory, its dependency
    manifest and lock file, and `framework.yaml` naming the `toolchain` (one the workflow sets up: node, python, java,
-   dotnet, go, rust, elixir, php, ruby, bun, deno), the guide (`docs`) and the `setup`, `latest` and `oracle`
+   dotnet, go, rust, elixir, php, ruby, bun, deno, swift, dart), the guide (`docs`) and the `setup`, `latest` and `oracle`
    commands, run in the directory. A lock names no registry mirror (the tests check every lock file): rewrite an npm
    lock's `resolved` URLs to `https://registry.npmjs.org/` (npm still installs through the registry you configure),
    and write Python dependencies as `uv pip compile pyproject.toml --generate-hashes --no-header` output, which names
@@ -43,7 +43,8 @@ routes shows before a user meets it.
 3. Run `node scripts/frameworks.mjs <name>`, write `atlas.config.yaml`, run `pnpm vitest run test/frameworks.test.ts`
    and list each difference in `gaps.yaml` after checking that atlas, not the oracle, is wrong.
 
-Without the toolchain installed, push the fixture to a `frameworks/<name>` branch: the workflow runs it and hands back
+Without the toolchain installed, push the fixture to a `frameworks/<name>` branch: the workflow runs the fixtures the
+branch changes and hands back
 what the framework reported, `routes.json` and any lock file the install wrote, as the artifact
 `frameworks-<name>` (`gh run download <run> -n frameworks-<name>`). A toolchain the workflow does not set up yet needs a step in `.github/workflows/frameworks.yml`.
 

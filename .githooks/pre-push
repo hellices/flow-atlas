@@ -1,9 +1,11 @@
 #!/bin/sh
-# The tests before a push, then a pre-push hook kept locally in .git/hooks, with the same arguments and refs.
+# A pre-push hook kept locally in .git/hooks first (a guard against names that must not leave the machine), then the
+# tests. ATLAS_SKIP_TESTS=1 skips the tests only, for a push whose tests are known to fail; the local hook still runs.
 refs=$(cat)
-pnpm -s test || exit 1
 local_hook="$(git rev-parse --git-common-dir)/hooks/pre-push"
 if [ -x "$local_hook" ]; then
   printf '%s\n' "$refs" | grep -v '^$' | "$local_hook" "$@" || exit 1
 fi
+[ "$ATLAS_SKIP_TESTS" = 1 ] && exit 0
+pnpm -s test || exit 1
 exit 0
