@@ -177,12 +177,13 @@ function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
 
 /**
  * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
- * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to. A
+ * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to, either
+ * branch of a conditional included. A
  * `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its method is
  * left open.
  */
 function navigatesWithGet(node: ts.Node): boolean {
-  const value = outermost(node);
+  const value = valuePlace(node);
   const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(holder) && holder.name.getText() === "href") {
     const tag = holder.parent.parent.tagName;
@@ -304,6 +305,28 @@ function windowOpen(callee: ts.Expression): boolean {
 
 /** The key a property is written with, quoted or not. */
 const keyOf = (p: ts.PropertyAssignment): string => (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name) ? p.name.text : "");
+
+/**
+ * Whether a string is in the `matcher` of the `config` a Next.js middleware or proxy file exports: the paths the
+ * middleware runs on, as strings or as objects' `source`, not requests (Next.js, Proxy: Matcher).
+ */
+function middlewareMatcher(node: ts.Node, file: string): boolean {
+  if (!/(?:^|\/)(?:middleware|proxy)\.(?:c|m)?[jt]s$/.test(file)) return false;
+  for (let a = node.parent; a && !ts.isSourceFile(a); a = a.parent) {
+    if (!ts.isPropertyAssignment(a) || keyOf(a) !== "matcher") continue;
+    const holder = outermost(a.parent).parent;
+    const statement = ts.isVariableDeclaration(holder) ? holder.parent.parent : undefined;
+    return (
+      ts.isVariableDeclaration(holder) &&
+      ts.isIdentifier(holder.name) &&
+      holder.name.text === "config" &&
+      !!statement &&
+      ts.isVariableStatement(statement) &&
+      !!ts.getModifiers(statement)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    );
+  }
+  return false;
+}
 
 /**
  * Whether a string is a `path` option that does not start at the root. Node's `http.request` takes the request path
@@ -468,7 +491,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
   const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
-    if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw)) return undefined;
+    if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw) || middlewareMatcher(node, file)) return undefined;
     if (spec.prefix && prefixing(node, spec.prefix)) {
       if (report) prefixed?.push({ file, line: lineAt(node) });
       return undefined;

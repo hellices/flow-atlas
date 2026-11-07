@@ -36,6 +36,7 @@ export function edgesOf(
   ranked?: Map<string, Ranking>,
   spans: Array<[number, number] | undefined> = [],
   limits: string[] = [],
+  offered?: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf, unsettled } = matchCalls(graph, ranked);
@@ -46,7 +47,8 @@ export function edgesOf(
   for (const s of graph.surfaces) {
     const reached = new Set(s.reaches ?? []);
     const runs = executed?.get(s.id);
-    if (!reached.size && !runs?.size) continue;
+    const offers = offered?.get(s.id);
+    if (!reached.size && !runs?.size && !offers?.size) continue;
     const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
     const runsIn = (i: number, file: string): boolean => {
       const span = spans[i];
@@ -58,6 +60,12 @@ export function edgesOf(
         continue;
       }
       if (c.from !== s.component) continue;
+      // A link or a form the page renders is a request it offers next, as a template's are.
+      const span = spans[i];
+      if (span && offers?.has(`${c.at.file}@${span[0]}`)) {
+        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: `view ${c.at.file}` });
+        continue;
+      }
       if (runsIn(i, c.at.file)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
@@ -82,11 +90,12 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const coverage: Coverage[] = [];
   const executed = new Map<string, Set<string>>();
   const spans = new Spans();
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans);
+  const offered = new Map<string, Set<string>>();
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans, offered);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces, limits);
   const read = extractCalls(source, config, coverage, spans, limits);
   const calls = assignCallIds(read.map(withoutSpan));
-  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits);
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits, offered);
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",

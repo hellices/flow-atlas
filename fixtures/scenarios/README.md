@@ -3,7 +3,7 @@
 Each directory here is a small repository in the shape of one atlas was run on: the same frameworks, the same way of
 writing routes and calls, the same configuration, with names and business logic replaced. `expected.yaml` holds what
 that run showed once atlas read the code right, and `case` says what went wrong before. `test/scenarios.test.ts` runs
-each one through scan, check, chains, flows and inventory, and compares everything exactly (the calls read too, where
+each one through scan, check, chains, flows and inventory, and compares everything exactly (the calls read and what each chain offers next too, where
 `expected.yaml` lists them), so a change that moves any result shows as a difference in a case someone met.
 
 | Scenario | Shape | What it pins down |
@@ -12,6 +12,7 @@ each one through scan, check, chains, flows and inventory, and compares everythi
 | `express-spring-twins` | the same API in Express and Spring, a k6 load script as client | Express routers served only under a literal or declared mount path; an undeclared one left out with a limit, as is a route on a path the file does not spell out |
 | `nextjs-app` | a Next.js app whose browser code calls its own route handlers | route handlers as surfaces, the HEAD and OPTIONS Next.js answers itself, no cycle for a component calling itself |
 | `nextjs-pages` | a Next.js app whose pages link to each other, and a client of one route handler | pages as GET surfaces, links and share-link helpers reaching them, a literal type that is no request |
+| `nextjs-content` | a Next.js App Router site at the repository root (`path: .`): marketing pages beside a catch-all, an editor under a dynamic segment, robots.ts, sitemap.ts, public/ files, a middleware | a link with a value in its path not reaching the catch-all Next.js serves after the dynamic segment, public files served before dynamic routes, a middleware matcher that is no request, both branches of a link as GET, metadata routes at their fixed paths, the links a page's server components and layouts render offered as `next` |
 | `flutter-spring` | a Flutter app on Dio, a Spring backend under `/api/v1` | verbs with type arguments and paths on the next line, a declared client prefix, call files narrowed to the code that calls Dio, no components from the app's Android host |
 | `spring-modulith-groups` | one Spring Boot application whose Spring Modulith modules are the components, springdoc with two groups | the default document and one per `GroupedOpenApi` group, found from the build file and beans outside the modules, shared by every module, left ambiguous |
 | `ts-monorepo-bases` | Kotlin app → BFF → core service → file service, and a Python agent | URLs built on a `const` base, f-string URLs, route registrations that are no requests, `res.send()` that names no port, a journey whose order only the flow states, event streams on paths held in consts named in limits, a Kotlin exception given the path it reports on that is no request |

@@ -1,0 +1,105 @@
+case: |
+  A Next.js App Router site at the repository root: marketing pages beside a catch-all for content pages, an editor
+  under a dynamic segment, a dashboard, one route handler, robots.ts and sitemap.ts, files in public/, and a middleware
+  whose matcher names the pages it guards.
+  Seen in a real run: a link to `/editor/${id}` reached the catch-all as well as the editor, though Next.js serves the
+  dynamic segment first; the icon and manifest in public/ reached the catch-all too, though Next.js serves public files
+  before any dynamic route; the matcher's `/login` was read as a request; a `<Link>` whose href is one of two paths was
+  read with an unknown method; robots.ts and sitemap.ts were not read as routes; no page offered the links it renders
+  as what can follow it; and the component written as `path: .` read no route at all. Now a call with a value in its
+  path reaches every route Next.js may serve it by, down to the first that takes any value there; public files are
+  implicit GET surfaces (with HEAD) that rank as static paths; a matcher is no request; both branches of a link are
+  GET; robots.ts serves GET /robots.txt and sitemap.ts GET /sitemap.xml; a page offers the links and forms its server
+  components and layouts render as `next`; and `.` is the repository root. The one finding is the post list nothing
+  requests.
+surfaces:
+  - site|GET /
+  - site|GET /dashboard
+  - site|GET /editor/{postId}
+  - site|GET /login
+  - site|GET /pricing
+  - site|GET /register
+  - site|GET /{slug}/**
+  - site|GET /api/posts
+  - site|POST /api/posts
+  - site|GET /robots.txt
+  - site|GET /sitemap.xml
+  - site|GET /favicon.ico (implicit)
+  - site|GET /images/icon-192.png (implicit)
+  - site|GET /site.webmanifest (implicit)
+  - site|HEAD / (implicit)
+  - site|HEAD /dashboard (implicit)
+  - site|HEAD /editor/{postId} (implicit)
+  - site|HEAD /login (implicit)
+  - site|HEAD /pricing (implicit)
+  - site|HEAD /register (implicit)
+  - site|HEAD /{slug}/** (implicit)
+  - site|HEAD /api/posts (implicit)
+  - site|HEAD /robots.txt (implicit)
+  - site|HEAD /sitemap.xml (implicit)
+  - site|HEAD /favicon.ico (implicit)
+  - site|HEAD /images/icon-192.png (implicit)
+  - site|HEAD /site.webmanifest (implicit)
+  - site|OPTIONS /api/posts (implicit)
+  - site|OPTIONS /robots.txt (implicit)
+  - site|OPTIONS /sitemap.xml (implicit)
+calls:
+  - site->site|* /favicon.ico @ app/layout.tsx:5
+  - site->site|* /site.webmanifest @ app/layout.tsx:6
+  - site->site|GET /pricing @ app/(marketing)/layout.tsx:8
+  - site->site|GET /register @ app/(marketing)/page.tsx:7
+  - site->site|GET /login @ app/(marketing)/pricing/page.tsx:4
+  - site->site|GET / @ app/(auth)/login/page.tsx:6
+  - site->site|GET /register @ app/(auth)/login/page.tsx:7
+  - site->site|GET /terms @ app/(auth)/register/page.tsx:6
+  - site->site|GET /editor/{} @ components/post-item.tsx:4
+  - site->site|POST /api/posts @ components/post-create-button.tsx:8
+  - site->site|GET /editor/{} @ components/post-create-button.tsx:10
+  - site->site|GET /dashboard @ components/user-nav.tsx:4
+  - site->site|GET /login @ components/user-nav.tsx:4
+  - site->site|* /login @ middleware.ts:6
+findings:
+  - FA001|site|GET /api/posts
+chains:
+  - outside->site|GET /robots.txt
+  - outside->site|GET /sitemap.xml
+  - site->site|GET /
+  - site->site|GET /dashboard
+  - site->site|GET /editor/{postId}
+  - site->site|GET /favicon.ico
+  - site->site|GET /login
+  - site->site|GET /pricing
+  - site->site|GET /register
+  - site->site|GET /site.webmanifest
+  - site->site|GET /{slug}/**
+  - site->site|POST /api/posts
+next:
+  - site->site|GET / => site->site|GET /register (view app/(marketing)/page.tsx)
+  - site->site|GET / => site->site|GET /pricing (view app/(marketing)/layout.tsx)
+  - site->site|GET / => site->site|GET /dashboard (view components/user-nav.tsx)
+  - site->site|GET / => site->site|GET /login (view components/user-nav.tsx)
+  - site->site|GET /pricing => site->site|GET /login (view app/(marketing)/pricing/page.tsx)
+  - site->site|GET /pricing => site->site|GET /pricing (view app/(marketing)/layout.tsx)
+  - site->site|GET /pricing => site->site|GET /dashboard (view components/user-nav.tsx)
+  - site->site|GET /pricing => site->site|GET /login (view components/user-nav.tsx)
+  - site->site|GET /{slug}/** => site->site|GET /pricing (view app/(marketing)/layout.tsx)
+  - site->site|GET /{slug}/** => site->site|GET /dashboard (view components/user-nav.tsx)
+  - site->site|GET /{slug}/** => site->site|GET /login (view components/user-nav.tsx)
+  - site->site|GET /login => site->site|GET / (view app/(auth)/login/page.tsx)
+  - site->site|GET /login => site->site|GET /register (view app/(auth)/login/page.tsx)
+  - site->site|GET /register => site->site|GET /{slug}/** (view app/(auth)/register/page.tsx)
+  - site->site|GET /dashboard => site->site|GET /editor/{postId} (view components/post-item.tsx)
+descriptions:
+  - site none - NoneFound
+inventory:
+  routes:
+    - app/(auth)/login/page.tsx next 1
+    - app/(auth)/register/page.tsx next 1
+    - app/(dashboard)/dashboard/page.tsx next 1
+    - app/(editor)/editor/[postId]/page.tsx next 1
+    - app/(marketing)/[...slug]/page.tsx next 1
+    - app/(marketing)/page.tsx next 1
+    - app/(marketing)/pricing/page.tsx next 1
+    - app/api/posts/route.ts next 2
+  calls:
+    - components/post-create-button.tsx 1

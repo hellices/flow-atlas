@@ -1,0 +1,13 @@
+components:
+  # The app is the repository itself.
+  - { name: site, path: . }
+routes:
+  # Pages, route handlers and metadata routes under app/, as Next.js serves them; public/ is served beside them.
+  - { component: site, files: ["app/**/*.{ts,tsx}"], styles: [next] }
+calls:
+  # Pages, layouts and components link to the app's pages and call its route handlers; the middleware redirects.
+  - { from: site, to: site, files: ["app/**/*.{ts,tsx}", "components/**/*.tsx", "middleware.ts"] }
+publicSurfaces:
+  - "site|GET /"              # the home page, entered by its address
+  - "site|GET /robots.txt"    # read by crawlers
+  - "site|GET /sitemap.xml"   # read by crawlers

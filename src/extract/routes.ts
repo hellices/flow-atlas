@@ -5,7 +5,7 @@ import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { lineOf, select, type Source } from "../source.js";
+import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
 import { routesFromSpring, type Views } from "./spring.js";
 import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
@@ -98,25 +98,50 @@ function operationIdIn(args: readonly ts.Expression[]): string | undefined {
 
 const NEXT_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
 
+/** The image metadata files, with the numbered variants Next.js accepts (`icon1`). */
+const METADATA_IMAGES = "(?:icon|apple-icon|opengraph-image|twitter-image)\\d?";
+
 /**
  * The path Next.js serves a file at, and what the file is there: a route handler `app/**\/route.ts`, a page
- * `app/**\/page.tsx`, or under `pages/`, an API route (`pages/api/**`) or a page; `app/` and `pages/` at the
- * component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
- * (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots `@x` add no
- * segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under `pages/` those
- * are plain segments, and `_app`, `_document`, `_error`, `404` and `500` are not routes.
+ * `app/**\/page.tsx`, a metadata route, or under `pages/`, an API route (`pages/api/**`) or a page; `app/` and `pages/`
+ * at the component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one
+ * segment (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots
+ * `@x` add no segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under
+ * `pages/` those are plain segments, and `_app`, `_document`, `_error`, `404` and `500` are not routes.
+ *
+ * Metadata routes are special route handlers whose default export makes the file (Next.js, Metadata Files): at the root
+ * of `app/`, `robots.ts` serves `/robots.txt` (where RFC 9309 puts it) and `manifest.ts` `/manifest.webmanifest`; in
+ * any segment, `sitemap.ts` serves `sitemap.xml` there. An image one (`icon`, `apple-icon`, `opengraph-image`,
+ * `twitter-image`) is served at a path Next.js generates, which the file does not settle (`image`). `app` is the
+ * directory of an App Router file's `app/`.
  */
-export function nextRoute(file: string, root?: string): { path: string; kind: "handler" | "api" | "page" } | undefined {
+export function nextRoute(file: string, root?: string): { path: string; kind: "handler" | "api" | "page" | "metadata" | "image"; app?: string } | undefined {
   // Inside the component, `app/` and `pages/` sit at its root or under `src/`; without a root, the first one found.
   const inside = root === undefined ? file : root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
   if (inside === undefined) return undefined;
   const lead = root === undefined ? "(?:^|\\/)" : "^(?:src\\/)?";
-  const app = new RegExp(`${lead}app\\/((?:[^]*\\/)?)(route|page)\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  const app =
+    new RegExp(`${lead}app\\/((?:[^]*\\/)?)(route|page)\\.(?:c|m)?[jt]sx?$`).exec(inside) ??
+    new RegExp(`${lead}app\\/((?:[^]*\\/)?)(robots|manifest|sitemap|${METADATA_IMAGES})\\.[jt]sx?$`).exec(inside);
   const pages = app ? undefined : new RegExp(`${lead}pages\\/([^]+)\\.(?:c|m)?[jt]sx?$`).exec(inside);
   if (pages && /^(?:_app|_document|_error|404|500)$/.test(pages[1]!)) return undefined;
   const rest = app?.[1] ?? pages?.[1];
   if (rest === undefined) return undefined;
-  const kind = app ? (app[2] === "route" ? "handler" : "page") : rest.startsWith("api/") ? "api" : "page";
+  const segments = nextSegments(rest, !!app);
+  if (!segments) return undefined;
+  if (pages && segments[segments.length - 1] === "index") segments.pop();
+  const name = app?.[2];
+  const appDir = app ? file.slice(0, file.length - inside.length + app.index + app[0].indexOf("app/") + "app".length) : undefined;
+  if (name === "route" || name === "page") return { path: joinRoute(...segments), kind: name === "route" ? "handler" : "page", app: appDir };
+  // Next.js reads robots and manifest only at the root of app/.
+  if (name === "robots" || name === "manifest") return rest ? undefined : { path: name === "robots" ? "/robots.txt" : "/manifest.webmanifest", kind: "metadata" };
+  if (name === "sitemap") return { path: joinRoute(...segments, "sitemap.xml"), kind: "metadata" };
+  if (name) return { path: joinRoute(...segments, name), kind: "image" };
+  return { path: joinRoute(...segments), kind: rest.startsWith("api/") ? "api" : "page" };
+}
+
+/** The segments of the folders a Next.js file sits in, as `nextRoute` reads them; undefined where the App Router serves nothing. */
+function nextSegments(rest: string, app: boolean): string[] | undefined {
   const segments: string[] = [];
   for (const seg of rest.split("/").filter(Boolean)) {
     if (app) {
@@ -131,8 +156,44 @@ export function nextRoute(file: string, root?: string): { path: string; kind: "h
     else if (required) segments.push(`{${required[1]}}`, "**");
     else segments.push(one ? `{${one[1]}}` : seg);
   }
-  if (pages && segments[segments.length - 1] === "index") segments.pop();
-  return { path: joinRoute(...segments), kind };
+  return segments;
+}
+
+/**
+ * The path Next.js serves a static file at, without a handler: a file under `public/` at the component's root, from the
+ * base URL (Next.js, public Folder); and the metadata files written as files in `app/` (Next.js, Metadata Files):
+ * `favicon.ico`, `robots.txt`, `manifest.json` and `manifest.webmanifest` at its root, `sitemap.xml` in any segment.
+ * Undefined for any other file.
+ */
+export function nextStaticFile(file: string, root: string): string | undefined {
+  const inside = root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
+  if (inside === undefined) return undefined;
+  if (inside.startsWith("public/")) return `/${inside.slice("public/".length)}`;
+  const meta = /^(?:src\/)?app\/((?:[^]*\/)?)(favicon\.ico|robots\.txt|manifest\.json|manifest\.webmanifest|sitemap\.xml)$/.exec(inside);
+  if (!meta) return undefined;
+  if (meta[2] !== "sitemap.xml") return meta[1] ? undefined : `/${meta[2]}`;
+  const segments = nextSegments(meta[1]!, true);
+  return segments && joinRoute(...segments, "sitemap.xml");
+}
+
+/**
+ * The layouts and templates that wrap an App Router page, by their default exports: in the page's folder and each one
+ * above it up to `app/`. They render in the same request, around the page (Next.js, layout.js and template.js). A file
+ * under `pages/` has none.
+ */
+function nextWrappers(file: string, appDir: string, reach: Reach): Array<{ file: string; node: ts.Node }> {
+  const folders = file.slice(appDir.length + 1).split("/").slice(0, -1);
+  const out: Array<{ file: string; node: ts.Node }> = [];
+  for (let n = 0; n <= folders.length; n++) {
+    const dir = [appDir, ...folders.slice(0, n)].join("/");
+    for (const name of ["layout", "template"]) {
+      for (const ext of ["tsx", "ts", "jsx", "js"]) {
+        const found = reach.exported(`${dir}/${name}.${ext}`, "default");
+        if (found) out.push(found);
+      }
+    }
+  }
+  return out;
 }
 
 /** A member's name as written in any static form: `render`, `"render"`, `["render"]`. */
@@ -180,6 +241,16 @@ function ownRender(cls: ts.ClassDeclaration): ts.Node | undefined {
   return undefined;
 }
 
+/** Whether a module exports a value under a name: a function, a variable or an `export { }` entry that is not a type. */
+function exportsValue(sf: ts.SourceFile, name: string): boolean {
+  return sf.statements.some(
+    (st) =>
+      (ts.isFunctionDeclaration(st) && exported(st) && st.name?.text === name) ||
+      (ts.isVariableStatement(st) && exported(st) && st.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name)) ||
+      (ts.isExportDeclaration(st) && !st.isTypeOnly && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === name && !e.isTypeOnly)),
+  );
+}
+
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
 /** `executed` collects, per surface id, the `file@offset` of each expression its handler hands to a call it runs (see `Reach.from`). */
@@ -196,9 +267,11 @@ export function routesFromTypeScript(
     spans?: Spans;
     /** The component's directory, which the Next.js paths are read from. */
     root?: string;
+    /** Per surface id, the `file@offset` of each address a page renders in a link or a form (see `Reach.from`). */
+    offered?: Map<string, Set<string>>;
   } = {},
 ): Surface[] {
-  const { reach, executed, mounts, limits, spans, root } = context;
+  const { reach, executed, mounts, limits, spans, root, offered } = context;
   const span = (node: ts.Node | undefined) => {
     if (node) spans?.add(file, node.getStart(sf), node.getEnd());
   };
@@ -222,10 +295,12 @@ export function routesFromTypeScript(
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string; render?: boolean } = {},
+    more: { implicit?: boolean; handlerFile?: string; render?: boolean; offers?: boolean; wrappers?: Array<{ file: string; node: ts.Node }> } = {},
   ) => {
     const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
+    const offers = more.offers && offered ? (offered.get(id) ?? offered.set(id, new Set()).get(id)!) : undefined;
+    const starts = handler ? [{ file: more.handlerFile ?? file, node: handler }, ...(more.wrappers ?? [])] : [];
     out.push({
       id,
       component: spec.component,
@@ -234,7 +309,7 @@ export function routesFromTypeScript(
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
-      ...(reach && handler ? { reaches: reach.from(more.handlerFile ?? file, handler, lines, more.render) } : {}),
+      ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers)))].sort() } : {}),
       ...(more.implicit ? { implicit: true } : {}),
     });
   };
@@ -248,12 +323,29 @@ export function routesFromTypeScript(
     const found = target ? reach!.exported(target, (e.propertyName ?? e.name).text) : undefined;
     return found ? { handler: found.node, file: found.file } : {};
   };
-  if (next?.kind === "page") {
+  const isDefault = (st: ts.Statement) =>
+    (ts.isExportAssignment(st) && !st.isExportEquals) ||
+    ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+  if (next?.kind === "image") {
+    limits?.push(`routes ${spec.component}: ${file} is a metadata image route, served at a path Next.js generates; it is not read`);
+  } else if (next?.kind === "metadata") {
+    // The default export makes the file, and Next.js serves it to GET; as for any route handler, it answers HEAD with
+    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`.
+    const statement =
+      sf.statements.find(isDefault) ??
+      sf.statements.find((st) => ts.isExportDeclaration(st) && !st.isTypeOnly && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === "default" && !e.isTypeOnly));
+    if (statement) {
+      const found = reach?.exported(file, "default");
+      const handler = found?.node ?? (ts.isExportAssignment(statement) ? statement.expression : statement);
+      const split = next.path.endsWith("/sitemap.xml") && exportsValue(sf, "generateSitemaps");
+      const path = split ? next.path.replace(/\.xml$/, "/{id}.xml") : next.path;
+      add("GET", path, statement, handler, undefined, { handlerFile: found?.file });
+      add("HEAD", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file });
+      add("OPTIONS", path, statement, undefined, undefined, { implicit: true });
+    }
+  } else if (next?.kind === "page") {
     // A page answers GET (and HEAD) by rendering its default export. What the server runs while rendering is part of
     // the request; a link, or a handler the browser runs later, starts another one.
-    const isDefault = (st: ts.Statement) =>
-      (ts.isExportAssignment(st) && !st.isExportEquals) ||
-      ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
     let page: ts.Statement | undefined = sf.statements.find(isDefault);
     // A class component renders through its `render` method; `this.x()` called there is followed from it.
     let component: ts.Node | undefined =
@@ -275,8 +367,11 @@ export function routesFromTypeScript(
       component = found?.node;
       handlerFile = found?.file;
     }
-    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile });
-    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile });
+    // An App Router page renders inside the layouts and templates of its folders; the GET response holds the links and
+    // forms they render, which the page offers to follow. HEAD answers with no body.
+    const wrappers = reach && next.app !== undefined ? nextWrappers(file, next.app, reach) : [];
+    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, wrappers });
+    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, wrappers });
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
@@ -862,6 +957,7 @@ export function extractRoutes(
   limits: string[] = [],
   executed?: Map<string, Set<string>>,
   spans?: Spans,
+  offered?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
   const roots = new Map(config.components.map((c) => [c.name, c.path]));
@@ -879,11 +975,25 @@ export function extractRoutes(
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component) }));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), offered }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits));
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
+  }
+  // What Next.js serves from files with no handler: public/ and the metadata files written as files. After the code, so
+  // a route a file also names keeps the handler's place.
+  const skip = matcher(config.exclude);
+  for (const component of new Set(config.routes.filter((r) => (r.styles ?? []).includes("next")).map((r) => r.component))) {
+    const root = roots.get(component);
+    if (root === undefined) continue;
+    for (const file of source.list()) {
+      const path = skip(file) ? undefined : nextStaticFile(file, root);
+      if (path === undefined) continue;
+      for (const method of ["GET", "HEAD"]) {
+        out.push({ id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true });
+      }
+    }
   }
   // A route two entries both register is one surface, so the document enriches the copy that is kept.
   const code = unique(out);

@@ -16,6 +16,8 @@ function requestCallee(e: ts.Expression): boolean {
 
 /** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
 const LATER_PROPS = /^(?:href|src|srcSet|poster|action|formAction|on[A-Z]\w*)$/;
+/** The JSX props whose address a rendered page offers to request next: a link's and a form's (`href`, `action`, `formAction`). */
+const OFFERED_PROPS = /^(?:href|action|formAction)$/;
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -222,9 +224,11 @@ export class Reach {
   /**
    * `render`: the start is a server-rendered page. What runs while it renders is followed, prop values included; client
    * modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions passed as
-   * props are left out: the browser makes those requests later.
+   * props are left out: the browser makes those requests later. `offered` collects the `file@offset` of each address a
+   * link or a form the page renders holds (`href`, `action`, `formAction`), through a conditional's branches and a
+   * `const` it names: the requests the page offers to make next.
    */
-  from(file: string, start: ts.Node, executed?: Set<string>, render = false): string[] {
+  from(file: string, start: ts.Node, executed?: Set<string>, render = false, offered?: Set<string>): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -297,7 +301,17 @@ export class Reach {
           // makeHandler while rendering. Only the value it ends in is the address: `(track(), "/next")` runs track,
           // and `ok() ? "/a" : "/b"` runs ok.
           const later = LATER_PROPS.test(name);
+          const offers = offered && OFFERED_PROPS.test(name) ? offered : undefined;
+          if (offers && n.initializer && ts.isStringLiteral(n.initializer)) offers.add(`${f}@${n.initializer.getStart(parsed.sf)}`);
           const prop = (v: ts.Expression): void => {
+            if (offers) {
+              offers.add(`${f}@${v.getStart(parsed.sf)}`);
+              const held = ts.isIdentifier(v) ? declarationOf(v) : undefined;
+              if (held && ts.isVariableDeclaration(held) && held.initializer && held.parent.flags & ts.NodeFlags.Const) {
+                offers.add(`${f}@${held.initializer.getStart(parsed.sf)}`);
+                offers.add(`${f}@${unwrap(held.initializer).getStart(parsed.sf)}`);
+              }
+            }
             if (ts.isParenthesizedExpression(v)) return prop(v.expression);
             if (ts.isBinaryExpression(v) && v.operatorToken.kind === ts.SyntaxKind.CommaToken) {
               visit(v.left, false, true);
