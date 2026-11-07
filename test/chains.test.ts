@@ -5,7 +5,9 @@ import { normalizeConfig } from "../src/config.js";
 import { flowsText } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { draftChainFlows } from "../src/draft.js";
+import { seedsFor, trace, traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
+import { evaluate } from "../src/rules.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import type { Graph } from "../src/model.js";
@@ -205,6 +207,43 @@ describe("chains of a server-rendered app", () => {
       report,
     );
     expect(flows.items[0]!.status.conditions.find((c) => c.type === "Connected")).toEqual({ type: "Connected", status: "True", reason: "AllStepsConnected" });
+  });
+
+  it("offers the page a redirect leads to, and a form posting back to the URL of each page that shows it", () => {
+    const pages = {
+      "src/main/java/app/TeamController.java": [
+        "@Controller",
+        "class TeamController {",
+        '  private static final String FORM = "teams/form";',
+        '  @GetMapping("/teams/new") String create() { return FORM; }',
+        "  @PostMapping(\"/teams/new\") String save(Team t) { if (bad) { return FORM; } return \"redirect:/teams/\" + t.getId(); }",
+        '  @GetMapping("/teams/{teamId}") String show() { return "teams/detail"; }',
+        '  @GetMapping("/teams") @ResponseBody List<Team> all() { return null; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/teams/form.html": '<form th:object="${team}" method="post"></form>',
+      "src/main/resources/templates/teams/detail.html": '<a th:href="@{/teams/new}">new</a>',
+    };
+    const graph = scan(memory(pages), spring);
+    const id = (callId: string) => callId.split("@")[0];
+    expect(graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${id(e.to)} ${e.evidence} ${e.via}`)).toEqual([
+      "server|GET /teams/new -> web->server|POST /teams/new name view teams/form",
+      "server|POST /teams/new -> web->server|POST /teams/new name view teams/form",
+      "server|POST /teams/new -> server->server|GET /teams/{} text redirect",
+      "server|GET /teams/{teamId} -> web->server|GET /teams/new name view teams/detail",
+    ]);
+    const report = deriveChains(graph, spring);
+    // The redirect's path has a value where both GET routes have a segment, so it fits both, as a link would.
+    expect(report.chains.map((c) => [c.id, c.entry.callers.length, ...c.next.map((n) => `${n.chain} (${n.via})`)])).toEqual([
+      ["web->server|GET /teams/{teamId}", 0, "web->server|GET /teams/new (view teams/detail)"],
+      ["web->server|GET /teams/new", 1, "web->server|POST /teams/new (view teams/form)"],
+      ["web->server|POST /teams/new", 1, "web->server|GET /teams/{teamId} (redirect)", "web->server|GET /teams/new (redirect)", "web->server|POST /teams/new (view teams/form)"],
+    ]);
+    expect(report.unchained).toEqual(["server|GET /teams"]);
+    expect(evaluate(graph, spring).map((f) => f.key)).toEqual(["FA001|server|GET /teams"]);
+    expect(traceText(trace(graph, seedsFor(graph, "server|GET /teams")))).toContain(
+      "not followed: a Spring handler is followed to the template its view renders and the URL it redirects to; atlas reads neither here",
+    );
   });
 });
 

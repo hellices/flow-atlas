@@ -212,7 +212,8 @@ names in the repository are relative to the root.
 - In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
   the handler calls (evidence `name`), or, for a Spring page, made by the template its view name renders (`via view
-  <name>`). A `~` by name through a generic name (`get`, `send`) needs a look at the code.
+  <name>`) or sent by the client that follows its redirect (`via redirect`). A `~` by name through a generic name
+  (`get`, `send`) needs a look at the code.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
 - Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a

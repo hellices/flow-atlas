@@ -26,8 +26,8 @@ Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
 | Reads | From |
 |---|---|
 | routes | TypeScript and JavaScript code (NestJS decorators, Express, Fastify and other `app.get("/x")` receivers, Express routers under their mount paths, Next.js route handlers), FastAPI decorators and Starlette StaticFiles mounts, Spring MVC annotations with Spring Security's login and logout, and the OpenAPI 2.0 or 3.x document of any framework |
-| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and configured `data-*` URLs, Thymeleaf `@{...}` links, inline scripts); Kotlin, Python and other languages as text |
-| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders |
+| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations); HTML templates (root-relative `href`, `src`, `action`, `formaction` and configured `data-*` URLs, Thymeleaf `@{...}` links, page-relative links and forms with no action against the pages that show them, inline scripts); Kotlin, Python and other languages as text |
+| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders, and the GET its `redirect:` leads to |
 
 atlas reads only what a file states for certain: a path written as a literal, with the meaning a standard or the
 framework's documentation gives it. A URL taken from a variable, another template engine, or htmx and Vue attributes
@@ -121,7 +121,8 @@ route's handler is followed through local functions, relative imports and re-exp
 name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls
 `deps.backend.getOrder()` and the adapter's `getOrder` makes the HTTP request. Because it joins by name, a link
 through a common name such as `get` or `send` is worth opening. For a Spring page, the requests in the template its
-view name renders are its outbound calls (`via view <name>`).
+view name renders are its outbound calls (`via view <name>`), and so is the GET its `redirect:` leads to (`via
+redirect`); both are requests the client makes next, not part of the page's own request.
 
 ## Flows and schemas
 

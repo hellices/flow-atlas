@@ -12,7 +12,7 @@ import { fileConstants, routesFromSpring, type Views } from "../src/extract/spri
 import { documentUrl } from "../src/arazzo.js";
 import { inventory } from "../src/inventory.js";
 import { matchCalls } from "../src/match.js";
-import type { Call, Surface } from "../src/model.js";
+import type { Call, Place, Surface } from "../src/model.js";
 import { scan } from "../src/scan.js";
 import { WorktreeSource, type Source } from "../src/source.js";
 
@@ -266,6 +266,41 @@ describe("Spring routes", () => {
       ["server|GET /page", ["api/page"]],
     ]);
   });
+
+  it("follows a view name held in a constant or returned by a private method, and reads where a reply redirects", () => {
+    const views: Views = new Map();
+    const limits: string[] = [];
+    const text = [
+      "@Controller",
+      '@RequestMapping("/teams/{teamId}")',
+      "class Members {",
+      '  private static final String FORM = "members/form";',
+      '  @GetMapping("/members/new") String create() { return FORM; }',
+      '  @PostMapping("/members/new") String save(Member m) {',
+      "    if (invalid) { return FORM; }",
+      '    return "redirect:/teams/{teamId}";',
+      "  }",
+      '  @GetMapping("/members") String list(Model model) { return page(model); }',
+      '  @PostMapping("/members/{id}") String update(Member m) { return "redirect:/teams/" + m.getTeamId() + "/members?sort=name"; }',
+      '  @PostMapping("/members/{id}/move") String move() { return "redirect:edit"; }',
+      '  @GetMapping("/elsewhere") String away() { return "redirect:https://example.com/x"; }',
+      '  @GetMapping("/back") String back(String target) { return "redirect:" + target; }',
+      '  @GetMapping("/either") String either(boolean a) { return choose(a); }',
+      '  private String page(Model model) { return "members/list"; }',
+      '  private String choose(int a) { return "members/a"; }',
+      '  private String choose(boolean a) { return "members/b"; }',
+      "}",
+    ].join("\n");
+    routesFromSpring("Members.java", text, spec, views, undefined, limits);
+    expect([...views].map(([id, v]) => [id, v.names, v.redirects.map((r) => `${r.path} ${r.line}`)])).toEqual([
+      ["server|GET /teams/{teamId}/members/new", ["members/form"], []],
+      ["server|POST /teams/{teamId}/members/new", ["members/form"], ["/teams/{} 8"]],
+      ["server|GET /teams/{teamId}/members", ["members/list"], []],
+      ["server|POST /teams/{teamId}/members/{id}", [], ["/teams/{}/members 11"]],
+      ["server|POST /teams/{teamId}/members/{id}/move", [], ["/teams/{}/members/{}/edit 12"]],
+    ]);
+    expect(limits).toEqual(["routes server: Members.java:14 redirects to a URL the file does not spell out (\"redirect:\" + target); the request it leads to is not read"]);
+  });
 });
 
 describe("template calls", () => {
@@ -337,6 +372,63 @@ describe("template calls", () => {
   it("takes a submit button's method from formmethod, else its form", () => {
     const html = ['<form method="get">', '  <button formaction="/save">s</button>', '  <button formmethod="post" formaction="/drop">d</button>', "</form>", '<button form="f" formaction="/out">o</button><form id="f" method="post"></form>'].join("\n");
     expect(calls(html)).toEqual(["GET /save 2", "POST /drop 3", "POST /out 5"]);
+  });
+
+  it("reads a quoted or appended URL base, preprocessed values and literal substitutions, and names links it cannot read", () => {
+    const html = [
+      `<a th:href="@{'/teams?page=1'}">1</a>`,
+      `<a th:href="@{'/teams?page=' + \${i}}">i</a>`,
+      `<a th:href="@{'/teams/' + \${t.id} + '/members'(sort='name')}">m</a>`,
+      `<a th:href="@{/teams/__\${t.id}__}">t</a>`,
+      `<a th:href="@{|/teams/\${t.id}/board|}">b</a>`,
+      `<a th:href="@{\${url}}">u</a>`,
+      `<a th:href="@{__\${link}__}">l</a>`,
+      `<a th:href="@{(\${admin} ? '/admin' : '/home')}">c</a>`,
+      `<a th:href="@{|\${base}/x|}">s</a>`,
+      `<a th:href="@{https://example.com/x}">x</a> <p th:text="@{\${shown}}">p</p>`,
+    ].join("\n");
+    const unread: Place[] = [];
+    expect(callsFromTemplate("t.html", html, call, { unread }).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual([
+      "GET /teams 1",
+      "GET /teams 2",
+      "GET /teams/{}/members 3",
+      "GET /teams/{} 4",
+      "GET /teams/{}/board 5",
+    ]);
+    expect(unread.map((p) => p.line)).toEqual([6, 7, 8, 9]);
+  });
+
+  it("reads a path with a file extension only where a route of the target serves it", () => {
+    const html = [`<a th:href="@{'/board.html?page=__\${i}__'}">b</a>`, '<link th:href="@{/css/site.css}" rel="stylesheet">', '<a href="/board.html">b</a>'].join("\n");
+    expect(callsFromTemplate("t.html", html, call, { served: (p) => p === "/board.html" }).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual(["GET /board.html 1", "GET /board.html 3"]);
+    expect(calls(html)).toEqual([]);
+  });
+
+  it("resolves page-relative links and forms with no action against each page that renders the template", () => {
+    const html = [
+      `<a th:href="@{__\${team.id}__/edit}">e</a> <a th:href="@{members/new}">n</a> <a th:href="@{#top}">top</a>`,
+      `<form th:object="\${team}" method="post">`,
+      "</form>",
+      '<form action="" method="get"></form>',
+      '<form method="dialog"></form>',
+      '<form th:action="@{/teams}"></form>',
+    ].join("\n");
+    const read = (pages?: Map<string, string[]>, unpaged: Place[] = []) =>
+      callsFromTemplate("t.html", html, call, { pages, unpaged }).map((c) => `${c.method} ${c.path} ${c.at.line}${c.page ? ` on ${c.page}` : ""}`);
+    expect(read(new Map([["t.html", ["/teams/new", "/teams/{teamId}/edit"]]]))).toEqual([
+      "GET /teams/{}/edit 1 on /teams/new",
+      "GET /teams/{}/{}/edit 1 on /teams/{teamId}/edit",
+      "GET /teams/members/new 1 on /teams/new",
+      "GET /teams/{}/members/new 1 on /teams/{teamId}/edit",
+      "POST /teams/new 2 on /teams/new",
+      "POST /teams/{}/edit 2 on /teams/{teamId}/edit",
+      "GET /teams/new 4 on /teams/new",
+      "GET /teams/{}/edit 4 on /teams/{teamId}/edit",
+      "GET /teams 6",
+    ]);
+    const unpaged: Place[] = [];
+    expect(read(undefined, unpaged)).toEqual(["GET /teams 6"]);
+    expect(unpaged.map((p) => p.line)).toEqual([1, 1, 2, 4]);
   });
 });
 

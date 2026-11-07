@@ -190,7 +190,7 @@ tree, `code` has no digest.
 | Element | id | Tool metadata |
 |---|---|---|
 | route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
-| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based` |
+| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `page` (the path a URL relative to its page was resolved against) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
@@ -234,7 +234,12 @@ a Spring component, whose router picks the most specific route, a request whose 
 route; elsewhere it matches every route it fits, since registration order is not read. `reach` joins a route to an
 outbound call its handler leads to (route → call): the handler's code makes the request (`evidence: static`), the
 request sits in a method whose name the handler calls (`evidence: name`, `via` the method), or, for a Spring page, the
-request is in the template the handler's view name renders (`evidence: name`, `via view <name>`).
+request is in the template the handler's view name renders (`evidence: name`, `via view <name>`), or its reply
+redirects to the request (`evidence: text`, `via redirect`). A redirect's request is a call from the route's own
+component to itself, a GET of the URL after `redirect:`; it is the client's that made the request, so it is no
+component calling another (no FA003). A URL relative to its page (a page-relative Thymeleaf link, a form with no
+action) is read once for each path of the routes that render its template, and the call's `page` holds that path:
+only those routes reach it.
 
 `evidence` records how a fact was obtained: `declared`, written in a manifest or a document; `static`, parsed syntax;
 `text`, matched as text; `name`, joined because a name agrees. A renderer can vary line styles by it, and an agent
@@ -249,7 +254,8 @@ fan-out included. Its id is `<entry>-><surface id>`, such as `mobile->bff|POST /
 
 A reach edge to a call in the template a page renders (`via view <name>`) is not part of the page's request: the user
 makes that call later. Those calls start chains of their own, and the page's chain lists them as `next`, which is where
-a journey's following step comes from.
+a journey's following step comes from. A redirect of the chain's root (`via redirect`) is followed by the entry that
+made the request, so its `next` is a chain of that entry, made when no call of the entry starts it (with no callers).
 
 | Field | Meaning |
 |---|---|

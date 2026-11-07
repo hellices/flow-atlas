@@ -1,12 +1,14 @@
 import type { ChainReport } from "./chains.js";
-import { API_VERSION, type ComponentEdge, type Finding, type Graph, type GraphDiff } from "./model.js";
+import { API_VERSION, isRedirect, type ComponentEdge, type Finding, type Graph, type GraphDiff } from "./model.js";
 import { provenance } from "./provenance.js";
 
 function componentEdges(graph: Graph): Map<string, ComponentEdge> {
   const calls = new Map(graph.calls.map((c) => [c.id, c]));
   const edges = new Map<string, ComponentEdge>();
+  // A redirect's request is the client's that followed it, not one component calling another.
+  const redirects = new Set(graph.edges.filter(isRedirect).map((e) => e.to));
   for (const e of graph.edges) {
-    if (e.kind !== "match") continue;
+    if (e.kind !== "match" || redirects.has(e.from)) continue;
     const c = calls.get(e.from)!;
     edges.set(`${c.from}->${c.to}|call`, { from: c.from, to: c.to, via: "call" });
   }
