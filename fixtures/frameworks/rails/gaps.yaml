@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the routes Rails serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Rails style: the routes `config/routes.rb` draws (`resources` and `resource` with their actions,
+  `member` and `collection`, nested and shallow resources, `concern`, `namespace` and `scope`, `draw`, `root`, `match`
+  with `via:`, the `(.:format)` and other optional groups, globs, redirects, constraints) and the routes of an engine
+  or Rack application `mount` puts under a path are not read; a limit says the route files gave nothing ("3 files read,
+  nothing extracted"), and `atlas inventory` offers no style for them.
