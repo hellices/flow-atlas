@@ -203,6 +203,11 @@ export function toArazzo(
   for (const f of files.flatMap((x) => x.flows.map((y) => y.object))) {
     if ((f.spec.lifecycle ?? "active") !== "deprecated" && !available.has(f.metadata.name)) available.set(f.metadata.name, f);
   }
+  // A flow the export would need may be in a file that cannot be read: that is an input error, not an empty export.
+  if (available.size === 0 || (options.flow && !available.has(options.flow))) {
+    const unread = files.filter((f) => f.errors.length);
+    if (unread.length) throw new Error(`flow files cannot be read:\n${unread.map((f) => `${f.file}: ${f.errors.join("; ")}`).join("\n")}`);
+  }
   if (available.size === 0) throw new NothingToExport("nothing to export: no flow description is active");
   if (options.flow && !available.has(options.flow)) throw new NothingToExport(`nothing to export: no active flow is named ${options.flow}`);
   // A selected flow brings the flows its steps run, so each workflowId it names is in the export.

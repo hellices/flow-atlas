@@ -439,14 +439,35 @@ export interface ReadContext {
 /**
  * The hosts the branches of a conditional in a URL's leading hole name, `undefined` for a branch that names none
  * (`${prod ? "https://x.example" : ""}/api`, or the same joined with `+`); empty when the hole is no such conditional.
- * A branch that is not a literal may hold any host, so it is left out.
+ * The hole is looked for at the start of a template or concatenation the URL starts with, and in the value of a `const`
+ * it starts with, as the URL's text is read. A branch that is not a literal may hold any host, so it is left out.
  */
-function leadingHosts(node: ts.Node): { hosts: Array<string | undefined>; literal: boolean } {
+function leadingHosts(node: ts.Node, depth = 0): { hosts: Array<string | undefined>; literal: boolean } {
+  const none = { hosts: [], literal: false };
   const lead = ts.isTemplateExpression(node) && !node.head.text ? node.templateSpans[0]!.expression : isPlus(node) ? operands(node)[0] : undefined;
   const choice = lead && unwrap(lead);
-  if (!choice || !ts.isConditionalExpression(choice)) return { hosts: [], literal: false };
+  if (!choice || depth > 4) return none;
+  if (ts.isTemplateExpression(choice) || isPlus(choice)) return leadingHosts(choice, depth + 1);
+  if (ts.isIdentifier(choice)) {
+    const value = constFor(choice)?.initializer;
+    return value ? leadingHosts(unwrap(value), depth + 1) : none;
+  }
+  if (!ts.isConditionalExpression(choice)) return none;
   const branches = [unwrap(choice.whenTrue), unwrap(choice.whenFalse)].filter((b) => ts.isStringLiteral(b) || ts.isNoSubstitutionTemplateLiteral(b));
   return { hosts: branches.map((b) => hostOf((b as ts.StringLiteral).text)), literal: branches.length === 2 };
+}
+
+/**
+ * The host a URL is read as requesting (`undefined` where it may be the target's) and the other hosts it may name, from
+ * the host its text names or else the conditional in its leading hole (`leadingHosts`): a URL every branch of which
+ * names another host requests the first of them.
+ */
+function urlHosts(node: ts.Node, raw: string, origin: string | undefined): { host: string | undefined; other: string[] } {
+  const named = hostOf(raw);
+  if (named !== undefined) return { host: named, other: [] };
+  const { hosts, literal } = leadingHosts(node);
+  const other = hosts.filter((h): h is string => h !== undefined && !reachesTarget(h, origin));
+  return { host: literal && other.length === hosts.length ? other[0] : undefined, other };
 }
 
 /**
@@ -522,10 +543,10 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       const read = branches.map((b) => {
         const raw = ts.isStringLiteral(b) || ts.isNoSubstitutionTemplateLiteral(b) || ts.isTemplateExpression(b) || isPlus(b) ? urlText(b, 0) : undefined;
         const parsed = raw === undefined ? undefined : requested(b, raw, false);
-        return parsed && { raw: raw!, parsed };
+        return parsed && { raw: raw!, parsed, ...urlHosts(b, raw!, origin) };
       });
       const [a, b] = read;
-      const hosts = [a && hostOf(a.raw), b && hostOf(b.raw)];
+      const hosts = [a?.host, b?.host];
       const one = hosts[0] === hosts[1] || hosts.every((h) => reachesTarget(h, origin));
       const effective = (p: CallPath) => (p.based || !spec.prefix ? p.path : joinRoute(spec.prefix, p.path));
       if (a && b && effective(a.parsed) === effective(b.parsed) && one) {
@@ -533,6 +554,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
         const path = (a.parsed.based ? b.parsed : a.parsed).path;
         add(node, { path, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
         branches.forEach((branch) => merged.add(branch));
+        for (const host of [...a.other, ...b.other]) elsewhere?.push({ host, at: { file, line: lineAt(node) } });
       }
     }
     let raw: string | undefined;
@@ -544,9 +566,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       const parsed = merged.has(node) ? undefined : requested(node, raw, true);
       // A host chosen in the leading hole is another server's, as in a whole conditional: the URL is a request to the
       // target only where a branch names none of those hosts, and a limit names them.
-      const { hosts, literal } = parsed ? leadingHosts(node) : { hosts: [], literal: false };
-      const other = hosts.filter((h): h is string => h !== undefined && !reachesTarget(h, origin));
-      if (parsed) add(node, parsed, hostOf(raw) ?? (literal && other.length === hosts.length ? other[0] : undefined));
+      const { host, other } = parsed ? urlHosts(node, raw, origin) : { host: undefined, other: [] };
+      if (parsed) add(node, parsed, host);
       for (const host of other) elsewhere?.push({ host, at: { file, line: lineAt(node) } });
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
       if (whole) {
@@ -1298,6 +1319,8 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
         : /\.html?$/.test(file)
           ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, elsewhere })
           : callsFromText(file, text, spec, spans, labels);
+      // A host is named at the leading hole that writes it, ahead of the URLs built on it.
+      for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);
       for (const c of read) {
         const { host, ...call } = c;
         if (host !== undefined && !reachesTarget(host, origin)) {
@@ -1307,7 +1330,6 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
         // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
         out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
       }
-      for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
     const edge = `calls ${spec.from}->${spec.to}`;

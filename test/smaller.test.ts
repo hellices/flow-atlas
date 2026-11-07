@@ -87,6 +87,24 @@ describe("a host in a template's leading hole", () => {
     expect(limits).toEqual([hostLimit.replace("a.ts:1", "a.html:3")]);
   });
 
+  it("is found in a template a concatenation starts with, and through the const a URL starts with", () => {
+    const both = "calls web->api: URLs to other.example (a.ts:1), more.example (a.ts:1) are not read as requests to api; set origins.api if that is its host";
+    expect(read("fetch(`${prod ? 'https://other.example' : 'https://more.example'}/api/status` + '?page=1');")).toEqual({ calls: [], limits: [both] });
+    expect(read("fetch(`${prod ? 'https://other.example' : ''}/api/status` + '?page=1');")).toEqual({ calls: ["GET /api/status based"], limits: [hostLimit] });
+    const based = "const BASE = `${prod ? 'https://other.example' : 'https://more.example'}/api`;\nfetch(`${BASE}/items`);\nfetch(BASE + '/notes');";
+    expect(read(based)).toEqual({ calls: [], limits: [both] });
+    expect(read("const BASE = `${prod ? 'https://other.example' : ''}/api`;\nfetch(`${BASE}/items`);")).toEqual({ calls: ["GET /api/items based"], limits: [hostLimit] });
+  });
+
+  it("is named where a conditional's branches read as one request, which is to the target only where a branch can be", () => {
+    expect(read("fetch(flag ? `${prod ? 'https://other.example' : ''}/api/status` : '/api/status');")).toEqual({ calls: ["GET /api/status"], limits: [hostLimit] });
+    const foreign = "fetch(flag ? `${prod ? 'https://other.example' : 'https://more.example'}/api/status` : `${prod ? 'https://other.example' : 'https://more.example'}/api/status`);";
+    expect(read(foreign)).toEqual({
+      calls: [],
+      limits: ["calls web->api: URLs to other.example (a.ts:1), more.example (a.ts:1) are not read as requests to api; set origins.api if that is its host"],
+    });
+  });
+
   it("says nothing of a loopback host or the target's origin", () => {
     expect(read("fetch(`${dev ? 'http://localhost:3000' : ''}/api/status`);").limits).toEqual([]);
     expect(read("fetch(`${prod ? 'https://other.example' : ''}/api/status`);", { api: "https://other.example" }).limits).toEqual([]);
@@ -132,6 +150,9 @@ describe("inventory's client call candidates", () => {
     expect(offered({ "a.js": "import axios from 'axios';\naxios({ method: 'post', url: '/api/items', data });\naxios.request({ url: \"/api/items/1\" });" })).toEqual(["a.js 2"]);
     // A generated client's types name each operation's URL as a literal type, which requests nothing.
     expect(offered({ "types.gen.ts": "export type ReadItemsData = {\n    query?: never;\n    url: '/api/v1/items/';\n};" })).toEqual([]);
+    expect(offered({ "types.gen.ts": "export type ReadItemsData = { url: '/api/v1/items/', query?: never };" })).toEqual([]);
+    expect(offered({ "types.gen.ts": "export type ReadItemsData = {\n    readonly url: '/api/v1/items/'\n    query?: never\n};" })).toEqual([]);
+    expect(offered({ "types.gen.ts": "export interface ReadItemsData {\n    url: '/api/v1/items/'\n}\nexport const read = () => client.get({ url: '/api/v1/items/' });" })).toEqual(["types.gen.ts 1"]);
   });
 
   it("count Angular's and axios's verb calls, type arguments allowed, on the names the file binds to the client", () => {
@@ -281,5 +302,20 @@ describe("export arazzo's exit status", () => {
   it("is 2 for an error", () => {
     expect(run("export", "arazzo", "--root", root, "--out", mkdtempSync(join(tmpdir(), "atlas-export-")), "--config", join(root, "missing.yaml")).code).toBe(2);
     expect(run("export", "openapi", "--root", root).code).toBe(2);
+  });
+
+  it("is 2, naming the files and what is wrong with them, where the only flows are in files that cannot be read", () => {
+    const out = mkdtempSync(join(tmpdir(), "atlas-export-"));
+    mkdirSync(join(out, "flows"));
+    writeFileSync(join(out, "flows", "broken.flow.yaml"), "metadata: [unclosed\n");
+    writeFileSync(join(out, "flows", "invalid.flow.yaml"), flow.replace("kind: Flow", "kind: Other"));
+    for (const args of [[], ["--flow", "list-notes"]]) {
+      const { code, stdout, stderr } = run("export", "arazzo", "--root", root, "--out", out, ...args);
+      expect({ code, stdout }).toEqual({ code: 2, stdout: "" });
+      expect(stderr).not.toContain("nothing to export");
+      expect(stderr).toContain("flows/broken.flow.yaml");
+      expect(stderr).toContain("flows/invalid.flow.yaml");
+      expect(stderr).toContain("kind");
+    }
   });
 });

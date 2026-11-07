@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import ts from "typescript";
 import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments, spectacularDocuments } from "./extract/apidocs.js";
 import { withoutComments } from "./extract/calls.js";
@@ -63,14 +64,33 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
 
+/**
+ * A request given as an object: a generated client's `client.get({ url: "/x" })`, axios's request config. A member of a
+ * type (`url: "/x"`) names a value instead (`typeMembers`).
+ */
+const URL_PROPERTY = /\burl\s*:\s*(["'`])\/[A-Za-z][^"'`]*\1/g;
+
+/**
+ * Where the members of a script's types (in a type literal or an interface) start: their meaning is a type, whatever
+ * separates them.
+ */
+function typeMembers(file: string, text: string): Set<number> {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const starts = new Set<number>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isPropertySignature(n)) starts.add(n.name.getStart(sf));
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return starts;
+}
+
 const CALL_SHAPES = [
   /["'`](?:\$\{[^}]+\}|\$[A-Za-z_]\w*)\/[A-Za-z][^"'`]*["'`]/g,
   // fetch and the wrappers named after it: authFetch, fetchJson, useFetch.
   /\b(?:fetch\w*|\w*Fetch\w*)\(\s*["'`]\/[A-Za-z][^"'`]*/g,
   /\bpath:\s*["'`]\/[A-Za-z][^"'`]*/g,
-  // A request given as an object: a generated client's `client.get({ url: "/x" })`, axios's request config; not a
-  // member of a type (`url: "/x";`), which names a value.
-  /\burl\s*:\s*(["'`])\/[A-Za-z][^"'`]*\1(?!\s*;)/g,
+  URL_PROPERTY,
   /\(\s*["'`]\/[A-Za-z][^"'`]*["'`]\s*,\s*["'](?:GET|POST|PUT|PATCH|DELETE)["']/g,
   /@\{\s*~?\/[A-Za-z][^}]*\}/g,
   // A Python f-string that joins a value to a path: f"{base}/orders".
@@ -288,9 +308,13 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const routers = new Set(["app", "router", "_router", ...[...text.matchAll(/\b([A-Za-z_]\w*)\s*=\s*(?:new\s+)?(?:[A-Za-z_]\w*\.)*Router\s*\(/g)].map((m) => m[1]!)]);
     const clients = SCRIPT.test(file) ? httpClients(text) : [];
     const shapes = SCRIPT.test(file) ? [...CALL_SHAPES, ...(clients.length ? [clientCall(clients)] : [])] : [...CALL_SHAPES, VERB_CALL];
+    let types: Set<number> | undefined;
     for (const re of shapes) {
       for (const m of text.matchAll(re)) {
         if (re === VERB_CALL && m[1] !== undefined && (routers.has(m[1]) || m[1] === "Router")) continue;
+        if (re === URL_PROPERTY && SCRIPT.test(file) && (types ??= typeMembers(file, text)).has(m.index ?? 0)) continue;
+        // Outside a script, as in a Vue or Svelte file's script block, a member ended by `;` is taken for a type's.
+        if (re === URL_PROPERTY && !SCRIPT.test(file) && /^\s*;/.test(text.slice((m.index ?? 0) + m[0].length))) continue;
         count++;
         firstAt = Math.min(firstAt ?? Infinity, m.index ?? 0);
       }
