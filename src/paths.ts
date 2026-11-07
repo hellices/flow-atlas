@@ -14,8 +14,10 @@ export interface CallPath {
 /**
  * Turns a string a call site builds into a request path, or rejects it.
  * A leading interpolation followed by `/` is taken as a base address (`${baseUrl}/orders`).
+ * The root path `/` is read only with `root`, where the string's place makes it a request: anywhere else a lone `/` is
+ * a separator far more often than a URL.
  */
-export function callPath(text: string): CallPath | undefined {
+export function callPath(text: string, root = false): CallPath | undefined {
   let s = text.trim();
   let based = false;
   const lead = s.match(/^(?:\{\})+(?=\/)/);
@@ -30,6 +32,7 @@ export function callPath(text: string): CallPath | undefined {
     based = true;
   }
   s = s.split("?")[0]!.split("#")[0]!;
+  if (root && s === "/") return { path: "/", based };
   if (!s.startsWith("/") || s === "/" || s.startsWith("//")) return undefined;
   if (!PATHLIKE.test(s) || FILE_EXT.test(s)) return undefined;
   if (s.split("/").filter(Boolean).every((seg) => seg === HOLE)) return undefined;

@@ -161,7 +161,8 @@ OpenAPI document and point the routes at it (`references/openapi.md`), run `atla
 through a sample of findings with a person. Only then record the baseline.
 
 - Keep call files to the client adapters: screen routes (`context.push("/career/$id")`, `<Link href>`) look like
-  requests and come back as FA002.
+  requests and come back as FA002. React Router's and TanStack Router's navigations are known by their import and are
+  not read as requests.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
   router is mounted at or a FastAPI router included at (`routes[].mounts`), a Nest global prefix set from a variable
