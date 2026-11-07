@@ -1,0 +1,5 @@
+# How scripts/frameworks.mjs installs Express and asks it for the routes the application serves.
+docs: https://expressjs.com/en/guide/routing.html
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save express@latest
+oracle: node oracle.mjs

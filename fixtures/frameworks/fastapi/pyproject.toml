@@ -1,0 +1,5 @@
+[project]
+name = "fastapi-routes"
+version = "0"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115"]

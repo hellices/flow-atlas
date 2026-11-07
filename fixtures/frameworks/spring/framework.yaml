@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs installs Spring Boot and asks it for the routes the application serves.
+docs:
+  - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+  - https://docs.spring.io/spring-framework/reference/web/webmvc-functional.html
+  - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html
+  - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/api-version.html
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Spring Boot on Maven Central, in place of the pom's spring-boot.version.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dspring-boot.version=$(curl -fsS https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-dependencies/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java

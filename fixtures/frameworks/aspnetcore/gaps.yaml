@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the routes ASP.NET Core serves. Remove this when atlas reads it; the test fails
+# while a listed difference no longer occurs.
+unread: >-
+  atlas has no style for ASP.NET Core and reads no C#: minimal APIs (`MapGet`, `MapMethods`, `MapGroup`), controllers'
+  attribute and conventional routes, and the static assets, OpenAPI document and health check the framework serves are
+  all left out; the only sign is the limit "routes app: 9 files read, nothing extracted"

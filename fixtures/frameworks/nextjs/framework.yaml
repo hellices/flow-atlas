@@ -1,0 +1,19 @@
+# How scripts/frameworks.mjs installs Next.js and asks it for the routes the application serves.
+docs:
+  - https://nextjs.org/docs/app/getting-started/project-structure
+  - https://nextjs.org/docs/app/getting-started/route-handlers
+  - https://nextjs.org/docs/app/api-reference/file-conventions/route
+  - https://nextjs.org/docs/app/api-reference/file-conventions/dynamic-routes
+  - https://nextjs.org/docs/app/api-reference/file-conventions/route-groups
+  - https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes
+  - https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes
+  - https://nextjs.org/docs/app/api-reference/file-conventions/metadata
+  - https://nextjs.org/docs/app/api-reference/file-conventions/public-folder
+  - https://nextjs.org/docs/app/api-reference/file-conventions/src-folder
+  - https://nextjs.org/docs/pages/building-your-application/routing/pages-and-layouts
+  - https://nextjs.org/docs/pages/building-your-application/routing/dynamic-routes
+  - https://nextjs.org/docs/pages/building-your-application/routing/api-routes
+setup: npm ci --silent
+# `*`, not `latest`: npm's `latest` tag of next has pointed at a canary.
+latest: npm install --silent --no-save "next@*" "react@*" "react-dom@*"
+oracle: node oracle.mjs

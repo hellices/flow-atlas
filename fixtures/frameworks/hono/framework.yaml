@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs Hono and asks it for the routes the application serves.
+docs:
+  - https://hono.dev/docs/api/routing
+  - https://hono.dev/docs/api/hono
+  - https://hono.dev/docs/helpers/dev
+  - https://hono.dev/docs/helpers/route
+setup: npm ci --silent
+# Hono's `latest` tag names a 5.0 release candidate; the range takes the newest stable release.
+latest: npm install --silent --no-save "hono@>=4" @hono/node-server@latest
+oracle: node oracle.mjs

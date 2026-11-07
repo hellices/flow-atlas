@@ -1,0 +1,7 @@
+# How scripts/frameworks.mjs installs chi and asks it for the routes the application serves.
+docs:
+  - https://go-chi.io/#/pages/routing
+  - https://github.com/go-chi/chi#readme
+setup: go mod download
+latest: go get github.com/go-chi/chi/v5@latest && go mod tidy
+oracle: go run oracle.go

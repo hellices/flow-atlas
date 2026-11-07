@@ -1,0 +1,26 @@
+{
+  "framework": "net/http",
+  "version": "1.26.5",
+  "routes": [
+    {"method":"GET","path":"/","raw":"/{$}"},
+    {"method":"*","path":"/b/{}/o","raw":"/b/{bucket}/o/"},
+    {"method":"*","path":"/b/{}/o/{**}","raw":"/b/{bucket}/o/{objectname...}"},
+    {"method":"GET","path":"/files","raw":"/files/"},
+    {"method":"GET","path":"/files/{**}","raw":"/files/{path...}"},
+    {"method":"GET","path":"/images","raw":"/images/"},
+    {"method":"GET","path":"/images/{**}","raw":"/images/"},
+    {"method":"GET","path":"/images/thumbnails","raw":"/images/thumbnails/"},
+    {"method":"GET","path":"/images/thumbnails/{**}","raw":"/images/thumbnails/"},
+    {"method":"*","path":"/index.html"},
+    {"method":"GET","path":"/items"},
+    {"method":"POST","path":"/items"},
+    {"method":"DELETE","path":"/items/{}","raw":"/items/{id}"},
+    {"method":"GET","path":"/items/{}","raw":"/items/{id}"},
+    {"method":"PUT","path":"/items/{}","raw":"/items/{id}"},
+    {"method":"GET","path":"/items/{}/reviews","raw":"/items/{id}/reviews/{$}"},
+    {"method":"GET","path":"/posts/{}","raw":"/posts/{id}"},
+    {"method":"GET","path":"/posts/latest"},
+    {"method":"GET","path":"/static","raw":"/static/"},
+    {"method":"GET","path":"/static/{**}","raw":"/static/"}
+  ]
+}

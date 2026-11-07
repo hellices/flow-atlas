@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Nest and asks it for the routes the application serves.
+docs:
+  - https://docs.nestjs.com/controllers
+  - https://docs.nestjs.com/faq/global-prefix
+  - https://docs.nestjs.com/techniques/versioning
+  - https://docs.nestjs.com/recipes/router-module
+setup: npm ci --silent
+latest: npm install --silent --no-save @nestjs/common@latest @nestjs/core@latest @nestjs/platform-express@latest
+oracle: npm run -s build && node oracle.mjs

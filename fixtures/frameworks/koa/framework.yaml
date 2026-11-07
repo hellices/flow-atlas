@@ -1,0 +1,7 @@
+# How scripts/frameworks.mjs installs Koa and @koa/router and asks the routers for the routes the application serves.
+docs:
+  - https://github.com/koajs/router/blob/master/README.md
+  - https://koajs.com/
+setup: npm ci --silent
+latest: npm install --silent --no-save koa@latest @koa/router@latest
+oracle: node oracle.mjs
