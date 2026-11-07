@@ -1,0 +1,30 @@
+@page "/weather"
+@attribute [StreamRendering]
+
+<PageTitle>Weather</PageTitle>
+
+<h1>Weather</h1>
+
+@if (forecasts == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <ul>
+        @foreach (var forecast in forecasts)
+        {
+            <li>@forecast</li>
+        }
+    </ul>
+}
+
+@code {
+    private string[]? forecasts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.Yield();
+        forecasts = ["Freezing", "Mild", "Hot"];
+    }
+}

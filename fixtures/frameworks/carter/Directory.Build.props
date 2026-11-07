@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- The packages the projects use: Carter, and the ASP.NET Core test host at the release of the shared framework they run on. -->
+    <CarterVersion Condition="'$(CarterVersion)' == ''">10.0.0</CarterVersion>
+    <AspNetCoreVersion Condition="'$(AspNetCoreVersion)' == ''">10.0.14</AspNetCoreVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

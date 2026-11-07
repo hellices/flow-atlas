@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    A Blazor Web App takes the client script it serves (_framework/blazor.web.js) from the package
+    Microsoft.AspNetCore.App.Internal.Assets, at the version the SDK in use bundles. Pinned to the release the oracle's
+    test host is at, the lock and the files served stay the same whichever 10.x SDK restores them.
+  -->
+  <ItemGroup>
+    <KnownAspNetCorePack Update="Microsoft.AspNetCore.App.Internal.Assets" AspNetCorePackVersion="$(AspNetCoreVersion)" />
+  </ItemGroup>
+</Project>
