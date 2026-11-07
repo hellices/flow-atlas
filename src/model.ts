@@ -68,7 +68,8 @@ export interface Surface {
   reaches?: string[];
   /**
    * Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS
-   * with an Allow header. A request can reach it; no rule expects a caller for it.
+   * with an Allow header, and serves the files of `public/`; or requested by convention from outside the code, as
+   * crawlers fetch Next.js's robots.txt and sitemaps. A request can reach it; no rule expects a caller for it.
    */
   implicit?: boolean;
 }
@@ -88,6 +89,11 @@ export interface Call {
   evidence: Evidence;
   /** The function or method that holds the call site. */
   scope?: string;
+  /**
+   * For a URL relative to the page that holds it (a page-relative link, a form with no action): the path of the routes
+   * whose page it was resolved against. The template is read once for each such path, and only those routes reach it.
+   */
+  page?: string;
 }
 
 /**
@@ -225,6 +231,13 @@ export interface ComponentEdge {
   /** `call` when a call matched a surface; otherwise the manifest field that declares it. */
   via: string;
 }
+
+/**
+ * A reach edge from a route to the request its reply redirects to: the client that made the request follows it, so the
+ * request is the client's, not a call the server makes. It is read as text; a call in a method named `redirect` is
+ * reached with other evidence.
+ */
+export const isRedirect = (e: Edge): boolean => e.kind === "reach" && e.via === "redirect" && e.evidence === "text";
 
 export const surfaceId = (s: { component: string; method: string; path: string }): string =>
   `${s.component}|${s.method} ${s.path}`;

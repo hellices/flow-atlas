@@ -1,0 +1,10 @@
+<html xmlns:th="https://www.thymeleaf.org">
+<body>
+  <form>
+    <th:block th:fragment="input (label, name, type)">
+      <label th:text="${label}">Label</label>
+      <input th:field="*{__${name}__}" th:type="${type}" />
+    </th:block>
+  </form>
+</body>
+</html>

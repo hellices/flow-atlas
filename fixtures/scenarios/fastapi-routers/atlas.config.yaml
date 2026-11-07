@@ -1,0 +1,13 @@
+components:
+  - { name: backend, path: backend }
+  - { name: frontend, path: frontend }
+routes:
+  - component: backend
+    files: ["backend/app/**/*.py"]
+    styles: [fastapi]
+    mounts:
+      # backend/app/main.py:9 includes api_router at settings.API_V1_STR, which backend/app/core/config.py:3 sets to /api/v1
+      "backend/app/api/main.py": /api/v1
+calls:
+  # The client generated from the backend's OpenAPI document; its URLs carry the whole served path.
+  - { from: frontend, to: backend, files: ["frontend/src/client/sdk.gen.ts"] }

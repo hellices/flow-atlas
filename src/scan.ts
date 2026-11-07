@@ -1,13 +1,14 @@
 import type { Config } from "./config.js";
 import { extractApiDocuments, resolveApiDescriptions } from "./extract/apidocs.js";
-import { extractCalls, withoutSpan } from "./extract/calls.js";
+import { extractCalls, serves, withoutSpan, type ReadCall } from "./extract/calls.js";
 import { extractComponents } from "./extract/components.js";
 import { Reach } from "./extract/reach.js";
 import { extractRegistries } from "./extract/registries.js";
-import { extractRoutes } from "./extract/routes.js";
+import { extractRoutes, type Redirects } from "./extract/routes.js";
 import { Spans } from "./extract/spans.js";
 import { matchCalls, rankedComponents, slashlessLimits, unsettledLimits, type Ranking } from "./match.js";
-import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph } from "./model.js";
+import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph, type Surface } from "./model.js";
+import { callPath } from "./paths.js";
 import { select, type Source } from "./source.js";
 import { codeDependency, configDependency, provenance } from "./provenance.js";
 
@@ -27,9 +28,12 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * lead to: a call the handler's code runs (evidence `static`), or one held in a method the handler calls by name
  * (evidence `name`). `spans[i]` are the offsets of the expression holding `calls[i]`'s URL; the handler runs the call
  * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
- * built from a request's result, starts elsewhere. A call whose method is not read and whose routes take different
- * methods has no edge, nor has one that leaves out the trailing slash its route's document writes, by a method other
- * than GET or HEAD; `limits` names them.
+ * built from a request's result, starts elsewhere. A call in a page's template is reached by the routes that render it,
+ * one relative to the page only by the routes of the path it was resolved against; `redirected` gives, by call index,
+ * the routes whose replies redirect to it (evidence `text`, `via` redirect); `offered` gives, by route, the
+ * `file@offset` of each link or form its page renders (evidence `static`, `via` the view). A call whose method is not
+ * read and whose routes take different methods has no edge, nor has one that leaves out the trailing slash its route's
+ * document writes, by a method other than GET or HEAD; `limits` names them.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
@@ -37,6 +41,8 @@ export function edgesOf(
   ranked?: Map<string, Ranking>,
   spans: Array<[number, number] | undefined> = [],
   limits: string[] = [],
+  redirected: Map<number, string[]> = new Map(),
+  offered?: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   const { targetsOf, unsettled, slashless } = matchCalls(graph, ranked);
@@ -44,10 +50,14 @@ export function edgesOf(
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });
+  const replies = new Map<string, number[]>();
+  for (const [i, from] of redirected) for (const s of from) (replies.get(s) ?? replies.set(s, []).get(s)!).push(i);
   for (const s of graph.surfaces) {
     const reached = new Set(s.reaches ?? []);
     const runs = executed?.get(s.id);
-    if (!reached.size && !runs?.size) continue;
+    const sent = replies.get(s.id) ?? [];
+    const offers = offered?.get(s.id);
+    if (!reached.size && !runs?.size && !sent.length && !offers?.size) continue;
     const rendered = new Map([...(runs ?? [])].filter((r) => r.includes(":*")).map((r) => [r.slice(0, r.indexOf(":*")), r.slice(r.indexOf(":*") + 2)]));
     const runsIn = (i: number, file: string): boolean => {
       const span = spans[i];
@@ -55,15 +65,60 @@ export function edgesOf(
     };
     for (const [i, c] of graph.calls.entries()) {
       if (rendered.has(c.at.file)) {
-        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: `view ${rendered.get(c.at.file)}` });
+        if (c.page === undefined || c.page === s.path) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: `view ${rendered.get(c.at.file)}` });
         continue;
       }
       if (c.from !== s.component) continue;
+      // A link or a form the page renders is a request it offers next, as a template's are.
+      const span = spans[i];
+      if (span && offers?.has(`${c.at.file}@${span[0]}`)) {
+        edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: `view ${c.at.file}` });
+        continue;
+      }
       if (runsIn(i, c.at.file)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "static", via: c.scope ?? "handler" });
       else if (c.scope && reached.has(c.scope)) edges.push({ kind: "reach", from: s.id, to: c.id, evidence: "name", via: c.scope });
     }
+    for (const i of sent) edges.push({ kind: "reach", from: s.id, to: graph.calls[i]!.id, evidence: "text", via: "redirect" });
   }
   return edges;
+}
+
+/** Per template, the paths of the routes whose views render it (`executed` holds `<template>:*<view>`). */
+function renderedPages(surfaces: Surface[], executed: Map<string, Set<string>>): Map<string, string[]> {
+  const pages = new Map<string, string[]>();
+  for (const s of surfaces) {
+    for (const run of executed.get(s.id) ?? []) {
+      const at = run.indexOf(":*");
+      if (at < 0) continue;
+      const paths = pages.get(run.slice(0, at)) ?? pages.set(run.slice(0, at), []).get(run.slice(0, at))!;
+      if (!paths.includes(s.path)) paths.push(s.path);
+    }
+  }
+  for (const paths of pages.values()) paths.sort();
+  return pages;
+}
+
+/**
+ * The requests redirects lead to, one per place and path, with the routes whose replies send each. A browser follows
+ * the 302 Spring's RedirectView sends with a GET when the request was a GET or a POST, and with a HEAD after a HEAD
+ * (Fetch, "HTTP-redirect fetch"); after any other method the client may keep it, so the method is not read.
+ */
+function redirectCalls(surfaces: Surface[], redirects: Redirects): Array<{ call: ReadCall; from: string[] }> {
+  const out = new Map<string, { call: ReadCall; from: string[] }>();
+  const byComponent = new Map<string, Surface[]>();
+  for (const s of surfaces) (byComponent.get(s.component) ?? byComponent.set(s.component, []).get(s.component)!).push(s);
+  const served = new Map([...byComponent].map(([component, routes]) => [component, serves(routes)]));
+  for (const s of surfaces) {
+    for (const r of redirects.get(s.id) ?? []) {
+      const parsed = callPath(r.path, false, served.get(s.component));
+      if (!parsed) continue;
+      const method = s.method === "HEAD" ? "HEAD" : ["GET", "POST"].includes(s.method) ? "GET" : "*";
+      const key = `${s.component}|${method} ${parsed.path}@${r.at.file}:${r.at.line}`;
+      const entry = out.get(key) ?? out.set(key, { call: { from: s.component, to: s.component, method, path: parsed.path, based: false, at: r.at, evidence: "text" }, from: [] }).get(key)!;
+      entry.from.push(s.id);
+    }
+  }
+  return [...out.values()];
 }
 
 /** `root` names the configuration relative to the repository; `requested` is the revision as the caller gave it. */
@@ -83,11 +138,15 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   const coverage: Coverage[] = [];
   const executed = new Map<string, Set<string>>();
   const spans = new Spans();
-  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans);
+  const redirects: Redirects = new Map();
+  const offered = new Map<string, Set<string>>();
+  const surfaces = extractRoutes(source, config, new Reach(source), coverage, limits, executed, spans, redirects, offered);
   const apiDocuments = extractApiDocuments(source, config, components, surfaces, limits);
-  const read = extractCalls(source, config, coverage, spans, limits);
-  const calls = assignCallIds(read.map(withoutSpan));
-  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits);
+  const read = extractCalls(source, config, coverage, spans, limits, { surfaces, pages: renderedPages(surfaces, executed) });
+  const replies = redirectCalls(surfaces, redirects);
+  const calls = assignCallIds([...read, ...replies.map((r) => r.call)].map(withoutSpan));
+  const redirected = new Map(replies.map((r, k) => [read.length + k, r.from]));
+  const edges = edgesOf({ surfaces, calls }, executed, rankedComponents(config), read.map((c) => c.span), limits, redirected, offered);
   const graph: Graph = {
     apiVersion: API_VERSION,
     kind: "Graph",

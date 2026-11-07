@@ -48,8 +48,8 @@ describe("strings that are no requests", () => {
       // The string a test is made on, or a replacement made in, is still the URL.
       ['fetch("/orders/{id}".replace("{id}", id));', ["GET /orders/{id}"]],
       ['const u = `${base}/updates`.replace(/^\\/?/, "/");', ["* /updates based"]],
-      // Location's and Next.js's router's replace navigate.
-      ['window.location.replace("/login");', ["* /login"]],
+      // Location's and Next.js's router's replace navigate, with GET.
+      ['window.location.replace("/login");', ["GET /login"]],
       ['import { useRouter } from "next/navigation";\nconst router = useRouter();\nrouter.replace("/login");', ["GET /login"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
@@ -117,9 +117,9 @@ describe("the second review of #21", () => {
     const rows: Array<[string, string[]]> = [
       ['const t = text.replace("/api");', []],
       ['const t = text["replace"]("/api");', []],
-      ['location.replace("/login");', ["* /login"]],
-      ['window.location.replace("/login");', ["* /login"]],
-      ['document.location.replace("/login");', ["* /login"]],
+      ['location.replace("/login");', ["GET /login"]],
+      ['window.location.replace("/login");', ["GET /login"]],
+      ['document.location.replace("/login");', ["GET /login"]],
       [next + 'router.replace("/login");', ["GET /login"]],
       // A value of the code's own named location is not the window's.
       ['const location = useLocation();\nlocation.replace("/login");', []],

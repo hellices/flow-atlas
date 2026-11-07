@@ -2,7 +2,7 @@ import type { Config } from "./config.js";
 import { ruleEnabled } from "./config.js";
 import { matchCalls, plausibleRequest, rankedComponents } from "./match.js";
 import type { Finding, Graph } from "./model.js";
-import { surfaceId } from "./model.js";
+import { isRedirect, surfaceId } from "./model.js";
 
 /** Titles only. What to do about a finding is decided by whoever reads it; guidance lives with the skill. */
 export const RULES: Record<Finding["rule"], { title: string }> = {
@@ -66,10 +66,12 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
   if (ruleEnabled(config, "FA003")) {
     const declared = new Set(graph.declared.map((e) => `${e.from}->${e.to}`));
     const actual = new Map<string, Finding["at"]>();
+    // The request a redirect leads to is the client's that followed it; the server does not call itself.
+    const redirects = new Set(graph.edges.filter(isRedirect).map((e) => e.to));
     graph.calls.forEach((c, i) => {
       // Whichever route a call of unread method reaches, or one without its route's trailing slash, the component it
       // calls is known.
-      if (!targetsOf.has(i) && !unsettled.has(i) && !slashless.has(i)) return;
+      if ((!targetsOf.has(i) && !unsettled.has(i) && !slashless.has(i)) || redirects.has(c.id)) return;
       const k = `${c.from}->${c.to}`;
       (actual.get(k) ?? actual.set(k, []).get(k)!).push(c.at);
     });

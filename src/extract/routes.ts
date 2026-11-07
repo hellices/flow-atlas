@@ -1,11 +1,11 @@
 import ts from "typescript";
 import type { Config, RouteSource } from "../config.js";
-import type { Coverage, Surface } from "../model.js";
+import type { Coverage, Place, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { lineOf, select, type Source } from "../source.js";
+import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
 import { routesFromSpring, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
@@ -14,6 +14,8 @@ import { expressMounts, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 import { declarationOf } from "./binding.js";
+import { fastapiRouters, type Routers } from "./fastapi.js";
+import { nestApp, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -98,25 +100,50 @@ function operationIdIn(args: readonly ts.Expression[]): string | undefined {
 
 const NEXT_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
 
+/** The image metadata files, with the numbered variants Next.js accepts (`icon1`). */
+const METADATA_IMAGES = "(?:icon|apple-icon|opengraph-image|twitter-image)\\d?";
+
 /**
  * The path Next.js serves a file at, and what the file is there: a route handler `app/**\/route.ts`, a page
- * `app/**\/page.tsx`, or under `pages/`, an API route (`pages/api/**`) or a page; `app/` and `pages/` at the
- * component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one segment
- * (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots `@x` add no
- * segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under `pages/` those
- * are plain segments, and `_app`, `_document`, `_error`, `404` and `500` are not routes.
+ * `app/**\/page.tsx`, a metadata route, or under `pages/`, an API route (`pages/api/**`) or a page; `app/` and `pages/`
+ * at the component's root or under its `src/`. `[x]` is a parameter, `[...x]` the rest of the path with at least one
+ * segment (`{x}/**`) and `[[...x]]` with none or more (`{*x}`). In the App Router only, route groups `(x)` and slots
+ * `@x` add no segment, and a private folder (`_x`) or an intercepting route `(.)x` is not served (undefined); under
+ * `pages/` those are plain segments, and `_app`, `_document`, `_error`, `404` and `500` are not routes.
+ *
+ * Metadata routes are special route handlers whose default export makes the file (Next.js, Metadata Files): at the root
+ * of `app/`, `robots.ts` serves `/robots.txt` (where RFC 9309 puts it) and `manifest.ts` `/manifest.webmanifest`; in
+ * any segment, `sitemap.ts` serves `sitemap.xml` there. An image one (`icon`, `apple-icon`, `opengraph-image`,
+ * `twitter-image`) is served at a path Next.js generates, which the file does not settle (`image`). `app` is the
+ * directory of an App Router file's `app/`.
  */
-export function nextRoute(file: string, root?: string): { path: string; kind: "handler" | "api" | "page" } | undefined {
+export function nextRoute(file: string, root?: string): { path: string; kind: "handler" | "api" | "page" | "metadata" | "image"; app?: string } | undefined {
   // Inside the component, `app/` and `pages/` sit at its root or under `src/`; without a root, the first one found.
   const inside = root === undefined ? file : root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
   if (inside === undefined) return undefined;
   const lead = root === undefined ? "(?:^|\\/)" : "^(?:src\\/)?";
-  const app = new RegExp(`${lead}app\\/((?:[^]*\\/)?)(route|page)\\.(?:c|m)?[jt]sx?$`).exec(inside);
+  const app =
+    new RegExp(`${lead}app\\/((?:[^]*\\/)?)(route|page)\\.(?:c|m)?[jt]sx?$`).exec(inside) ??
+    new RegExp(`${lead}app\\/((?:[^]*\\/)?)(robots|manifest|sitemap|${METADATA_IMAGES})\\.[jt]sx?$`).exec(inside);
   const pages = app ? undefined : new RegExp(`${lead}pages\\/([^]+)\\.(?:c|m)?[jt]sx?$`).exec(inside);
   if (pages && /^(?:_app|_document|_error|404|500)$/.test(pages[1]!)) return undefined;
   const rest = app?.[1] ?? pages?.[1];
   if (rest === undefined) return undefined;
-  const kind = app ? (app[2] === "route" ? "handler" : "page") : rest.startsWith("api/") ? "api" : "page";
+  const segments = nextSegments(rest, !!app);
+  if (!segments) return undefined;
+  if (pages && segments[segments.length - 1] === "index") segments.pop();
+  const name = app?.[2];
+  const appDir = app ? file.slice(0, file.length - inside.length + app.index + app[0].indexOf("app/") + "app".length) : undefined;
+  if (name === "route" || name === "page") return { path: joinRoute(...segments), kind: name === "route" ? "handler" : "page", app: appDir };
+  // Next.js reads robots and manifest only at the root of app/.
+  if (name === "robots" || name === "manifest") return rest ? undefined : { path: name === "robots" ? "/robots.txt" : "/manifest.webmanifest", kind: "metadata" };
+  if (name === "sitemap") return { path: joinRoute(...segments, "sitemap.xml"), kind: "metadata" };
+  if (name) return { path: joinRoute(...segments, name), kind: "image" };
+  return { path: joinRoute(...segments), kind: rest.startsWith("api/") ? "api" : "page" };
+}
+
+/** The segments of the folders a Next.js file sits in, as `nextRoute` reads them; undefined where the App Router serves nothing. */
+function nextSegments(rest: string, app: boolean): string[] | undefined {
   const segments: string[] = [];
   for (const seg of rest.split("/").filter(Boolean)) {
     if (app) {
@@ -131,8 +158,46 @@ export function nextRoute(file: string, root?: string): { path: string; kind: "h
     else if (required) segments.push(`{${required[1]}}`, "**");
     else segments.push(one ? `{${one[1]}}` : seg);
   }
-  if (pages && segments[segments.length - 1] === "index") segments.pop();
-  return { path: joinRoute(...segments), kind };
+  return segments;
+}
+
+/**
+ * The path Next.js serves a static file at, without a handler of the app's: a file under `public/` at the component's
+ * root, from the base URL (Next.js, public Folder); and the metadata files written as files in `app/` (Next.js,
+ * Metadata Files): `favicon.ico`, `robots.txt`, `manifest.json` and `manifest.webmanifest` at its root, `sitemap.xml` in
+ * any segment. Undefined for any other file. A public file's name is written as a request holds it: the characters the
+ * URL Standard's path percent-encode set holds, and `%`, percent-encoded; Next.js matches a request to the file both
+ * encoded and decoded (filesystem.ts, `encodeURIPath`).
+ */
+export function nextStaticFile(file: string, root: string): { path: string; kind: "public" | "metadata" } | undefined {
+  const inside = root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
+  if (inside === undefined) return undefined;
+  if (inside.startsWith("public/")) return { path: `/${inside.slice("public/".length).replace(/[\0- "#%<>?^`{}\x7F-\u{10FFFF}]/gu, encodeURIComponent)}`, kind: "public" };
+  const meta = /^(?:src\/)?app\/((?:[^]*\/)?)(favicon\.ico|robots\.txt|manifest\.json|manifest\.webmanifest|sitemap\.xml)$/.exec(inside);
+  if (!meta) return undefined;
+  if (meta[2] !== "sitemap.xml") return meta[1] ? undefined : { path: `/${meta[2]}`, kind: "metadata" };
+  const segments = nextSegments(meta[1]!, true);
+  return segments && { path: joinRoute(...segments, "sitemap.xml"), kind: "metadata" };
+}
+
+/**
+ * The layouts and templates that wrap an App Router page, by their default exports: in the page's folder and each one
+ * above it up to `app/`. They render in the same request, around the page (Next.js, layout.js and template.js). A file
+ * under `pages/` has none.
+ */
+function nextWrappers(file: string, appDir: string, reach: Reach): Array<{ file: string; node: ts.Node }> {
+  const folders = file.slice(appDir.length + 1).split("/").slice(0, -1);
+  const out: Array<{ file: string; node: ts.Node }> = [];
+  for (let n = 0; n <= folders.length; n++) {
+    const dir = [appDir, ...folders.slice(0, n)].join("/");
+    for (const name of ["layout", "template"]) {
+      for (const ext of ["tsx", "ts", "jsx", "js"]) {
+        const found = reach.exported(`${dir}/${name}.${ext}`, "default");
+        if (found) out.push(found);
+      }
+    }
+  }
+  return out;
 }
 
 /** A member's name as written in any static form: `render`, `"render"`, `["render"]`. */
@@ -180,6 +245,16 @@ function ownRender(cls: ts.ClassDeclaration): ts.Node | undefined {
   return undefined;
 }
 
+/** Whether a module exports a value under a name: a function, a variable or an `export { }` entry that is not a type. */
+function exportsValue(sf: ts.SourceFile, name: string): boolean {
+  return sf.statements.some(
+    (st) =>
+      (ts.isFunctionDeclaration(st) && exported(st) && st.name?.text === name) ||
+      (ts.isVariableStatement(st) && exported(st) && st.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name)) ||
+      (ts.isExportDeclaration(st) && !st.isTypeOnly && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === name && !e.isTypeOnly)),
+  );
+}
+
 const exported = (node: ts.Node): boolean => ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
 /** `executed` collects, per surface id, the `file@offset` of each expression its handler hands to a call it runs (see `Reach.from`). */
@@ -196,9 +271,16 @@ export function routesFromTypeScript(
     spans?: Spans;
     /** The component's directory, which the Next.js paths are read from. */
     root?: string;
+    /** The global prefix and versioning of the Nest application the controllers belong to. */
+    nest?: NestApp;
+    /** Per surface id, the `file@offset` of each address a page renders in a link or a form (see `Reach.from`). */
+    offered?: Map<string, Set<string>>;
   } = {},
 ): Surface[] {
-  const { reach, executed, mounts, limits, spans, root } = context;
+  const { reach, executed, mounts, limits, spans, root, offered } = context;
+  const nest = context.nest ?? { prefix: spec.prefix ?? "", exclude: [] };
+  // A version changes the path only under URI versioning.
+  const versioned = nest.versioning === "unread" || !!nest.versioning?.uri;
   const span = (node: ts.Node | undefined) => {
     if (node) spans?.add(file, node.getStart(sf), node.getEnd());
   };
@@ -216,25 +298,32 @@ export function routesFromTypeScript(
   const readConstants = new Map<ts.Node, string>();
   const unreadPaths: Array<{ arg: ts.Expression; method?: string; prefixes?: string[] }> = [];
   const unread = (arg: ts.Expression, method?: string, prefixes?: string[]) => unreadPaths.push({ arg, method, prefixes });
+  const unreadVersion = (arg: ts.Node) =>
+    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} gives a version the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
   const add = (
     method: string,
     path: string,
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string; render?: boolean } = {},
+    more: { implicit?: boolean; handlerFile?: string; render?: boolean; served?: boolean; offers?: boolean; alongside?: Array<{ file: string; node: ts.Node }> } = {},
   ) => {
-    const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
+    // A Nest route's path is already the one it is served at; any other is served under the configured prefix.
+    const template = routeTemplate(more.served ? joinRoute(path) : joinRoute(spec.prefix ?? "", path));
+    const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: template });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
+    const offers = more.offers && offered ? (offered.get(id) ?? offered.set(id, new Set()).get(id)!) : undefined;
+    // `alongside`: what runs in the same request beside the handler (a page's layouts, a split sitemap's `generateSitemaps`).
+    const starts = handler ? [{ file: more.handlerFile ?? file, node: handler }, ...(more.alongside ?? [])] : [];
     out.push({
       id,
       component: spec.component,
       method: method.toUpperCase(),
-      path: routeTemplate(joinRoute(path)),
+      path: template,
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
-      ...(reach && handler ? { reaches: reach.from(more.handlerFile ?? file, handler, lines, more.render) } : {}),
+      ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers)))].sort() } : {}),
       ...(more.implicit ? { implicit: true } : {}),
     });
   };
@@ -248,12 +337,34 @@ export function routesFromTypeScript(
     const found = target ? reach!.exported(target, (e.propertyName ?? e.name).text) : undefined;
     return found ? { handler: found.node, file: found.file } : {};
   };
-  if (next?.kind === "page") {
+  const isDefault = (st: ts.Statement) =>
+    (ts.isExportAssignment(st) && !st.isExportEquals) ||
+    ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+  if (next?.kind === "image") {
+    limits?.push(`routes ${spec.component}: ${file} is a metadata image route, served at a path Next.js generates; it is not read`);
+  } else if (next?.kind === "metadata") {
+    // The default export makes the file, and Next.js serves it to GET; as for any route handler, it answers HEAD with
+    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`, and the handler
+    // Next.js generates calls it on each request to find the id asked for (next-metadata-route-loader). Crawlers fetch
+    // robots.txt where RFC 9309 puts it and the sitemaps it names, and browsers the manifest the page's head links to:
+    // none is requested by the app's own code, so each is implicit, as a file in public/ is.
+    const statement =
+      sf.statements.find(isDefault) ??
+      sf.statements.find((st) => ts.isExportDeclaration(st) && !st.isTypeOnly && !!st.exportClause && ts.isNamedExports(st.exportClause) && st.exportClause.elements.some((e) => e.name.text === "default" && !e.isTypeOnly));
+    if (statement) {
+      const found = reach?.exported(file, "default");
+      const handler = found?.node ?? (ts.isExportAssignment(statement) ? statement.expression : statement);
+      const split = next.path.endsWith("/sitemap.xml") && exportsValue(sf, "generateSitemaps");
+      const path = split ? next.path.replace(/\.xml$/, "/{id}.xml") : next.path;
+      const ids = split ? reach?.exported(file, "generateSitemaps") : undefined;
+      const alongside = ids ? [ids] : [];
+      add("GET", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file, alongside });
+      add("HEAD", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file, alongside });
+      add("OPTIONS", path, statement, undefined, undefined, { implicit: true });
+    }
+  } else if (next?.kind === "page") {
     // A page answers GET (and HEAD) by rendering its default export. What the server runs while rendering is part of
     // the request; a link, or a handler the browser runs later, starts another one.
-    const isDefault = (st: ts.Statement) =>
-      (ts.isExportAssignment(st) && !st.isExportEquals) ||
-      ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && exported(st) && !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
     let page: ts.Statement | undefined = sf.statements.find(isDefault);
     // A class component renders through its `render` method; `this.x()` called there is followed from it.
     let component: ts.Node | undefined =
@@ -275,8 +386,11 @@ export function routesFromTypeScript(
       component = found?.node;
       handlerFile = found?.file;
     }
-    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile });
-    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile });
+    // An App Router page renders inside the layouts and templates of its folders; the GET response holds the links and
+    // forms they render, which the page offers to follow. HEAD answers with no body.
+    const wrappers = reach && next.app !== undefined ? nextWrappers(file, next.app, reach) : [];
+    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, alongside: wrappers });
+    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, alongside: wrappers });
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
@@ -328,12 +442,19 @@ export function routesFromTypeScript(
   const visit = (node: ts.Node): void => {
     if (styles.has("nest") && ts.isClassDeclaration(node)) {
       let bases: string[] | undefined;
+      /** The controller's version: none given, the versions it states, or null where it is not spelled out. */
+      let version: string[] | undefined | null;
       for (const d of decorators(node)) {
         const call = decoratorCall(d);
         if (call?.name === "Controller") {
           bases = decoratorPaths(call.args);
           if (!bases) unread(call.args[0]!);
           for (const a of call.args) span(a);
+          const options = call.args[0] && ts.isObjectLiteralExpression(call.args[0]) ? call.args[0] : undefined;
+          // `version: '2'` or `{ version }`; a spread or an accessor may give one the file does not spell out.
+          const given = options ? property(options, "version") : undefined;
+          version = given === undefined || !versioned ? undefined : given ? (versionsOf(given) ?? null) : null;
+          if (version === null) unreadVersion(given ?? options!);
         }
       }
       if (bases !== undefined) {
@@ -346,6 +467,12 @@ export function routesFromTypeScript(
           const operationId =
             operationIdIn(explicit?.args ?? []) ??
             (spec.operationIds === "nest-swagger" && className && methodName ? `${className}_${methodName}` : undefined);
+          // `@Version()` on the method takes the place of the controller's.
+          const own = decorators(member)
+            .map(decoratorCall)
+            .find((c) => c?.name === "Version");
+          const versions = !versioned ? undefined : own?.args[0] ? (versionsOf(own.args[0]) ?? null) : own ? null : version;
+          if (own && versions === null) unreadVersion(own.args[0] ?? member);
           for (const d of decorators(member)) {
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
@@ -353,7 +480,12 @@ export function routesFromTypeScript(
             if (call && method && !paths) unread(call.args[0]!, method, bases);
             if (!paths) continue;
             for (const a of call!.args) span(a);
-            for (const base of bases) for (const path of paths) add(method!, joinRoute(base, path), member, member, operationId);
+            if (versions === null) continue;
+            for (const base of bases) {
+              for (const path of paths) {
+                for (const served of nestPaths(nest, method!, joinRoute(base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true });
+              }
+            }
           }
         }
       }
@@ -453,7 +585,7 @@ export function pythonCode(text: string): string {
 }
 
 /** The index of the `)` that closes the `(` before `from`, in code whose strings and comments are blanked. */
-function closingParen(code: string, from: number): number {
+export function closingParen(code: string, from: number): number {
   let depth = 1;
   for (let i = from; i < code.length; i++) {
     if ("([{".includes(code[i]!)) depth++;
@@ -536,7 +668,7 @@ function pythonString(text: string): { value: string; length: number } | undefin
  * A string literal and those written next to it, which Python joins into one (`"/api" "/users"`), across lines inside the
  * brackets of a call; undefined when one of them is not a plain literal (an f-string, a name).
  */
-function pythonStrings(text: string): { value: string; length: number } | undefined {
+export function pythonStrings(text: string): { value: string; length: number } | undefined {
   const first = pythonString(text);
   if (!first) return undefined;
   let { value, length } = first;
@@ -563,7 +695,7 @@ const pythonLiteralLength = (text: string): number | undefined => pythonStrings(
 const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):str\}/g, "{$1}"));
 
 /** The start of each top-level argument of the call whose arguments begin at `from`, in blanked code. */
-function pythonArgStarts(code: string, from: number): number[] {
+export function pythonArgStarts(code: string, from: number): number[] {
   const end = closingParen(code, from);
   const starts = [from];
   let depth = 0;
@@ -584,7 +716,7 @@ function definesName(code: string, at: number): boolean {
 }
 
 /** The text of the argument starting at `at`, up to the comma or bracket that ends it, in blanked code. */
-function pythonArg(text: string, code: string, at: number): string {
+export function pythonArg(text: string, code: string, at: number): string {
   let depth = 0;
   let end = at;
   for (; end < code.length; end++) {
@@ -596,8 +728,17 @@ function pythonArg(text: string, code: string, at: number): string {
   return text.slice(at, end).trim();
 }
 
-export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans): Surface[] {
+/**
+ * `routers` tells where the FastAPI routers of the route files are served; without it, only this file's are known, and
+ * why one is not read is said in `limits` here rather than once for every file.
+ */
+export function routesFromPython(file: string, text: string, spec: RouteSource, limits?: string[], spans?: Spans, routers?: Routers): Surface[] {
+  // Styles left out, as a direct call does, read FastAPI; the scan always passes the configured ones.
+  const fastapi = !spec.styles || spec.styles.includes("fastapi");
+  const own = routers || !fastapi ? undefined : fastapiRouters(new Map([[file, text]]), spec.mounts);
   const out: Surface[] = [];
+  /** Receivers whose decorators register routes but which no binding of the files read makes an application or router. */
+  const untraced = new Set<string>();
   const receivers = new Set(spec.receivers ?? ["app", "router"]);
   const code = pythonCode(text);
   /** A registration whose path argument is a name, an f-string or an expression: said in `limits`. */
@@ -614,7 +755,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       return;
     }
     const method = verb.toUpperCase();
-    const path = starlettePath(raw);
+    const path = starlettePath(spec.prefix ? joinRoute(spec.prefix, raw) : raw);
     out.push({
       id: surfaceId({ component: spec.component, method, path }),
       component: spec.component,
@@ -625,8 +766,6 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       ...(implicit ? { implicit: true } : {}),
     });
   };
-  // Styles left out, as a direct call does, read FastAPI; the scan always passes the configured ones.
-  const fastapi = !spec.styles || spec.styles.includes("fastapi");
   for (const m of fastapi ? code.matchAll(FASTAPI) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
@@ -637,14 +776,22 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       .find((a) => a.m);
     const pathAt = named ? named.at + named.m![0].length : first;
     if (pathAt !== undefined) unread(pathAt);
-    const path = pathAt === undefined ? undefined : pythonLiteral(text.slice(pathAt));
-    if (!path) continue;
+    const path = pathAt === undefined ? undefined : pythonStrings(text.slice(pathAt))?.value;
+    if (path === undefined) continue;
+    // An application serves at the root; a router under every prefix it is served at, or not at all where one is unknown.
+    const key = (routers ?? own!).receiver(file, m[1]!, m.index ?? 0);
+    const prefixes = key ? (routers ?? own!).served(key) : [""];
+    // An empty path is the router's prefix itself; with no prefix FastAPI refuses it.
+    if (!prefixes || (!path && prefixes.every((p) => joinRoute(p) === "/"))) continue;
     spans?.add(file, argsStart, closingParen(code, argsStart));
     const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
-    for (const method of methods ?? []) add(method, path, m.index ?? 0);
+    const before = out.length;
+    for (const prefix of prefixes) for (const method of methods ?? []) add(method, joinRoute(prefix, path), m.index ?? 0);
+    if (!key && out.length > before) untraced.add(m[1]!);
   }
   // Starlette's mount hands everything under its path to the mounted application, compiled as the path with
-  // `/{path:path}` joined. StaticFiles answers GET and HEAD; what another application serves is not read here.
+  // `/{path:path}` joined. StaticFiles answers GET and HEAD, under every prefix the receiver is served at; what another
+  // application serves is not read here.
   for (const m of fastapi ? code.matchAll(/\b(\w+)\.mount\(\s*/g) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
@@ -661,11 +808,19 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const app = keyword("app");
     const mounted = app ? app.at : positional.find((a) => a !== pathAt);
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
-      add("GET", joinRoute(path, "{path:path}"), m.index ?? 0);
-      add("HEAD", joinRoute(path, "{path:path}"), m.index ?? 0, true);
-    } else {
+      const key = (routers ?? own!).receiver(file, m[1]!, m.index ?? 0);
+      if (!key) untraced.add(m[1]!);
+      for (const prefix of (key ? (routers ?? own!).served(key) : [""]) ?? []) {
+        add("GET", joinRoute(prefix, path, "{path:path}"), m.index ?? 0);
+        add("HEAD", joinRoute(prefix, path, "{path:path}"), m.index ?? 0, true);
+      }
+    } else if (mounted === undefined || !(routers ?? own!).traced(file, pythonArg(text, code, mounted).replace(/^app\s*=\s*/, ""), m.index ?? 0)) {
+      // An application or router of the route files that it mounts is served under the mount with the routes read there.
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} mounts an application at ${path} whose routes are not read`);
     }
+  }
+  for (const name of untraced) {
+    limits?.push(`routes ${spec.component}: ${file} registers routes on ${name}, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written`);
   }
   for (const c of spec.calls ?? []) {
     for (const m of code.matchAll(new RegExp(`(?<![\\w.])(?:\\w+\\.)?${escapeRegExp(c.name)}\\(`, "g"))) {
@@ -681,6 +836,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       }
     }
   }
+  if (own) limits?.push(...own.limits(spec.component));
   return out;
 }
 
@@ -864,6 +1020,24 @@ function buildRoot(file: string, files: Set<string>): string | undefined {
   return undefined;
 }
 
+/**
+ * The global prefix and versioning of a Nest component, from its `bootstrap` file when the entry names one, else from
+ * the calls that set them in the route files and in the component's code (tests and the other excluded files left out).
+ */
+function nestBootstrap(source: Source, config: Config, spec: RouteSource, files: string[], root: string | undefined, limits: string[]): NestApp {
+  const script = (f: string) => /\.(c|m)?[jt]sx?$/.test(f);
+  if (spec.bootstrap !== undefined) {
+    const text = source.read(spec.bootstrap);
+    if (text === undefined) limits.push(`routes ${spec.component}: the bootstrap file ${spec.bootstrap} is not there${source.ref === "WORKTREE" ? "" : " at this revision"}`);
+    return nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix);
+  }
+  const dir = root?.replace(/\/+$/, "");
+  const component = dir === undefined ? [] : select(source, [dir ? `${dir}/**` : "**"], config.exclude);
+  const candidates = [...new Set([...files, ...component])].filter(script);
+  const texts = new Map(candidates.map((f) => [f, source.read(f) ?? ""]));
+  return nestApp(texts, spec.component, limits, spec.prefix);
+}
+
 /** Surfaces with one per component, method and path, the first kept. */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Set<string>();
@@ -883,6 +1057,8 @@ export function extractRoutes(
   limits: string[] = [],
   executed?: Map<string, Set<string>>,
   spans?: Spans,
+  redirects?: Redirects,
+  offered?: Map<string, Set<string>>,
 ): Surface[] {
   const out: Surface[] = [];
   const roots = new Map(config.components.map((c) => [c.name, c.path]));
@@ -896,15 +1072,36 @@ export function extractRoutes(
     const before = out.length;
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts) : undefined;
+    const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
+    const routers = (spec.styles ?? []).includes("fastapi")
+      ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
+      : undefined;
     for (const file of files) {
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component) }));
-      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered }));
+      else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits));
     }
+    if (routers) limits.push(...routers.limits(spec.component));
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
+  }
+  // What Next.js serves from files with no handler of the app's: public/ as files, to GET and HEAD, and the metadata
+  // files written as files through a route handler it generates, which answers OPTIONS too (next-metadata-route-loader,
+  // auto-implement-methods). After the code, so a route a file also names keeps the handler's place.
+  const skip = matcher(config.exclude);
+  for (const component of new Set(config.routes.filter((r) => (r.styles ?? []).includes("next")).map((r) => r.component))) {
+    const root = roots.get(component);
+    if (root === undefined) continue;
+    for (const file of source.list()) {
+      const served = skip(file) ? undefined : nextStaticFile(file, root);
+      if (served === undefined) continue;
+      const { path } = served;
+      for (const method of served.kind === "metadata" ? ["GET", "HEAD", "OPTIONS"] : ["GET", "HEAD"]) {
+        out.push({ id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true });
+      }
+    }
   }
   // A route two entries both register is one surface, so the document enriches the copy that is kept.
   const code = unique(out);
@@ -947,5 +1144,9 @@ export function extractRoutes(
       }
     }
   }
+  for (const [id, { file, redirects: to }] of views) if (to.length) redirects?.set(id, to.map((r) => ({ path: r.path, at: { file, line: r.line } })));
   return unique(out);
 }
+
+/** The paths a route's replies redirect to (see `routesFromSpring`), by route, each where it is written. */
+export type Redirects = Map<string, Array<{ path: string; at: Place }>>;

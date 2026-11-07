@@ -1,0 +1,49 @@
+openapi: 3.0.3
+info:
+  title: Shop
+  version: 1.0.0
+paths:
+  /api/status/:
+    get:
+      operationId: status_retrieve
+      responses:
+        '200':
+          description: ''
+  /api/members/:
+    get:
+      operationId: members_list
+      responses:
+        '200':
+          description: ''
+    post:
+      operationId: members_create
+      responses:
+        '201':
+          description: ''
+  /api/members/{id}/:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    get:
+      operationId: members_retrieve
+      responses:
+        '200':
+          description: ''
+    put:
+      operationId: members_update
+      responses:
+        '200':
+          description: ''
+    patch:
+      operationId: members_partial_update
+      responses:
+        '200':
+          description: ''
+    delete:
+      operationId: members_destroy
+      responses:
+        '204':
+          description: ''

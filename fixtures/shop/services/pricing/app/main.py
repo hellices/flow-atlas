@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 router = APIRouter()
 
@@ -11,3 +11,7 @@ def quotes():
 @router.post("/discounts")
 def discounts():
     return {}
+
+
+app = FastAPI()
+app.include_router(router)

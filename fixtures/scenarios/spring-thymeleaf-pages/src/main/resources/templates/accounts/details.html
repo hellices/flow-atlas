@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'accounts')}">
+<body>
+  <h2>Account Information</h2>
+  <table th:object="${account}">
+    <tr><th>Name</th><td th:text="*{name}"></td></tr>
+  </table>
+  <a th:href="@{__${account.id}__/edit}">Edit Account</a>
+  <a th:href="@{__${account.id}__/devices/new}">Add New Device</a>
+  <table>
+    <tr th:each="device : ${account.devices}">
+      <td th:text="${device.name}"></td>
+      <td><a th:href="@{__${account.id}__/devices/__${device.id}__/tickets/new}">Add Ticket</a></td>
+    </tr>
+  </table>
+</body>
+</html>
