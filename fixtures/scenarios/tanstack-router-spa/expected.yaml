@@ -8,7 +8,8 @@ case: |
   from `@tanstack/react-router`, through the navigate function `useNavigate()` returns) is no request, and the
   generated route tree, which registers its routes by declaring `FileRoutesByPath` in that module, holds none. A
   `window.location.href = "/login"` does load the document, so it is read, as the GET it is. A `/` the router goes to
-  is not a request either.
+  is not a request either. The app calls no item-changing function of the generated client; those routes are FA001,
+  with a limit naming `createItem` and `deleteItem`.
 surfaces:
   - backend|POST /api/v1/login/access-token
   - backend|GET /api/v1/users/me
@@ -16,21 +17,21 @@ surfaces:
   - backend|GET /api/v1/items
   - backend|POST /api/v1/items
   - backend|DELETE /api/v1/items/{id}
-findings: []
+findings:
+  - FA001|backend|POST /api/v1/items
+  - FA001|backend|DELETE /api/v1/items/{id}
+limits:
+  - "calls frontend->backend: 2 functions of frontend/src/client/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: createItem, deleteItem"
 chains:
   - frontend->backend|POST /api/v1/login/access-token
   - frontend->backend|GET /api/v1/users/me
   - frontend->backend|POST /api/v1/users/signup
   - frontend->backend|GET /api/v1/items
-  - frontend->backend|POST /api/v1/items
-  - frontend->backend|DELETE /api/v1/items/{id}
 calls:
   - frontend->backend|POST /api/v1/login/access-token @ frontend/src/client/sdk.gen.ts:11
   - frontend->backend|GET /api/v1/users/me @ frontend/src/client/sdk.gen.ts:21
   - frontend->backend|POST /api/v1/users/signup @ frontend/src/client/sdk.gen.ts:29
   - frontend->backend|GET /api/v1/items @ frontend/src/client/sdk.gen.ts:39
-  - frontend->backend|POST /api/v1/items @ frontend/src/client/sdk.gen.ts:47
-  - frontend->backend|DELETE /api/v1/items/{id} @ frontend/src/client/sdk.gen.ts:55
   # The page the static host serves for the app's path; the backend serves no such path.
   - frontend->backend|GET /login @ frontend/src/main.tsx:16
 descriptions:

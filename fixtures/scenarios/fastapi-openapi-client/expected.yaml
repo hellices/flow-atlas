@@ -42,7 +42,6 @@ calls:
   - frontend->backend|DELETE /api/v1/users/me @ frontend/src/client/sdk.gen.ts:59
   - frontend->backend|PATCH /api/v1/users/me @ frontend/src/client/sdk.gen.ts:67
   - frontend->backend|DELETE /api/v1/users/{user_id} @ frontend/src/client/sdk.gen.ts:83
-  - frontend->backend|* /login @ frontend/src/hooks/useAuth.ts:28
 documents:
   - backend backend/openapi.json committed backend/openapi.json:2
 descriptions:

@@ -22,7 +22,7 @@ describe("the root path where a string is a request (#31)", () => {
     expect(callPath("/?tab=1#top", true)).toEqual({ path: "/", based: false });
     expect(callPath("http://localhost:3000/", true)).toEqual({ path: "/", based: true });
     expect(callPath("{}/", true)).toEqual({ path: "/", based: true });
-    expect(callPath("/orders/", true)).toEqual({ path: "/orders", based: false });
+    expect(callPath("/orders/", true)).toEqual({ path: "/orders", based: false, slash: true });
     expect(callPath("//cdn.example/", true)).toBeUndefined();
   });
 

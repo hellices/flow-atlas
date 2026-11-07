@@ -33,7 +33,7 @@ chains:
 calls:
   - frontend->backend|GET /api/rest/rest-check @ frontend/js/api/sdk.gen.ts:14
   - frontend->backend|GET /api/users @ frontend/js/api/sdk.gen.ts:22
-  - frontend->backend|* /admin/login @ frontend/js/loaders/users.ts:15
+  - frontend->backend|GET /admin/login @ frontend/js/loaders/users.ts:15
   - frontend->backend|POST /api/users @ frontend/js/utils/invite.ts:4
   - frontend->backend|GET /api/rest/rest-check @ frontend/js/utils/invite.ts:8
 descriptions:

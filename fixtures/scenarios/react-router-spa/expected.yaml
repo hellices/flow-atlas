@@ -7,7 +7,9 @@ case: |
   arguments of its functions (known by the import from `react-router`) is no request. Where the navigation loads the
   document instead, the browser does request it: `redirectDocument()` sends the user to the backend's login page,
   read as the GET it is, and a plain `<a href="/">` is the GET of the root path it always was. Inventory offered the
-  app's `src/pages/*.tsx` as Next.js pages; the package does not depend on next, so they are not offered.
+  app's `src/pages/*.tsx` as Next.js pages; the package does not depend on next, so they are not offered. The app
+  calls only `statusRetrieve` and `membersList` of the generated client; the other member routes are FA001, with a
+  limit naming the functions no other file names.
 surfaces:
   - backend|GET /api/status
   - backend|GET /api/members
@@ -16,23 +18,21 @@ surfaces:
   - backend|PUT /api/members/{id}
   - backend|PATCH /api/members/{id}
   - backend|DELETE /api/members/{id}
-findings: []
+findings:
+  - FA001|backend|POST /api/members
+  - FA001|backend|GET /api/members/{id}
+  - FA001|backend|PUT /api/members/{id}
+  - FA001|backend|PATCH /api/members/{id}
+  - FA001|backend|DELETE /api/members/{id}
+limits:
+  - "routes backend: no handler was found in the configured route files for 7 operations of backend/schema.yml"
+  - "calls frontend->backend: 5 functions of frontend/js/api/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: membersCreate, membersRetrieve, membersUpdate, membersPartialUpdate, membersDestroy"
 chains:
   - frontend->backend|GET /api/status
   - frontend->backend|GET /api/members
-  - frontend->backend|POST /api/members
-  - frontend->backend|GET /api/members/{id}
-  - frontend->backend|PUT /api/members/{id}
-  - frontend->backend|PATCH /api/members/{id}
-  - frontend->backend|DELETE /api/members/{id}
 calls:
   - frontend->backend|GET /api/status @ frontend/js/api/sdk.gen.ts:9
   - frontend->backend|GET /api/members @ frontend/js/api/sdk.gen.ts:17
-  - frontend->backend|POST /api/members @ frontend/js/api/sdk.gen.ts:25
-  - frontend->backend|GET /api/members/{id} @ frontend/js/api/sdk.gen.ts:33
-  - frontend->backend|PUT /api/members/{id} @ frontend/js/api/sdk.gen.ts:41
-  - frontend->backend|PATCH /api/members/{id} @ frontend/js/api/sdk.gen.ts:49
-  - frontend->backend|DELETE /api/members/{id} @ frontend/js/api/sdk.gen.ts:56
   # The brand link loads the root page; the NavLinks beside it (to="/", to="/members") are the router's.
   - frontend->backend|GET / @ frontend/js/components/TopNav.tsx:7
   # redirectDocument: a document load of the admin's login page, which Django serves outside the document.
