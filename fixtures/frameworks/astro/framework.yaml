@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs installs Astro and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://docs.astro.build/en/basics/project-structure/
+  - https://docs.astro.build/en/guides/routing/
+  - https://docs.astro.build/en/guides/endpoints/
+  - https://docs.astro.build/en/guides/on-demand-rendering/
+  - https://docs.astro.build/en/guides/integrations-guide/node/
+  - https://docs.astro.build/en/guides/middleware/
+  - https://docs.astro.build/en/reference/integrations-reference/
+setup: npm ci --silent
+# `*`, not `latest`: npm's `latest` tag of @astrojs/node has pointed at a beta.
+latest: npm install --silent --no-save "astro@*" "@astrojs/node@*"
+oracle: node oracle.mjs
