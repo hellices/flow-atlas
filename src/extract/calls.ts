@@ -61,25 +61,65 @@ function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | und
 
 /**
  * The method a `fetch(url, init)` call uses: GET when there is no init, or an init without a `method`; the stated
- * method when it is a known one; `*` when the method or the init is built at run time.
+ * method when it is a known one; `*` when the method or the init is built at run time. A configured wrapper around
+ * fetch sends its own default where fetch sends GET.
  */
-function fetchMethod(init: ts.Expression | undefined): string {
-  if (!init) return "GET";
+function fetchMethod(init: ts.Expression | undefined, absent = "GET"): string {
+  if (!init) return absent;
   if (!ts.isObjectLiteralExpression(init)) return "*";
-  if (init.properties.some((p) => ts.isSpreadAssignment(p))) return "*";
-  const method = init.properties.find((p) => p.name && p.name.getText().replace(/["']/g, "") === "method");
-  if (!method) return "GET";
-  return methodProperty(init) ?? "*";
+  return initMethod(init) ?? absent;
+}
+
+/**
+ * The method an init object sets, read in order as the object is built: the last of the properties that may set it
+ * decides. A known method stated as `method: "PUT"` is that method; a spread, a computed key, a getter or a
+ * `__proto__` may carry any, so they leave it `*`. Undefined when nothing in the object may set a method.
+ */
+function initMethod(init: ts.ObjectLiteralExpression): string | undefined {
+  let method: string | undefined;
+  let prototype = false;
+  for (const p of init.properties) {
+    const name = p.name && propertyName(p.name);
+    if (ts.isSpreadAssignment(p) || (p.name && name === undefined)) method = "*";
+    else if (name === "method") method = (ts.isPropertyAssignment(p) && statedMethod(p.initializer)) || "*";
+    else if (name === "__proto__" && ts.isPropertyAssignment(p) && !ts.isComputedPropertyName(p.name)) prototype = true;
+  }
+  return method ?? (prototype ? "*" : undefined);
+}
+
+/** The name a property key states: an identifier, a string, or a computed key that is a literal; undefined otherwise. */
+function propertyName(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    const key = unwrap(name.expression);
+    return ts.isStringLiteralLike(key) || ts.isNumericLiteral(key) ? key.text : undefined;
+  }
+  return name.text;
+}
+
+/**
+ * The method a configured wrapper's call sends when the string is its URL, the first argument, read as fetch with the
+ * wrapper's default; a known method stated as the second argument is kept, in any case, as one stated in the init.
+ */
+function wrapperMethod(call: ts.CallExpression, url: ts.Node, defaultMethod: string): string {
+  if (call.arguments[0] !== url) return "*";
+  const init = call.arguments[1];
+  const stated = init && statedMethod(init);
+  if (stated) return stated;
+  if (init && ts.isObjectLiteralExpression(init)) return initMethod(init) ?? defaultMethod;
+  return fetchMethod(init, defaultMethod);
 }
 
 /** The HTTP method a call site states near the string: `http.post(url)`, `request(url, "POST")`, `{ method: "POST" }`, otherwise `*`. */
-function methodNear(node: ts.Node): string {
+function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): string {
   let current: ts.Node | undefined = node;
   for (let depth = 0; current && depth < 6; depth++, current = current.parent) {
     const parent: ts.Node | undefined = current.parent;
     if (!parent) break;
     if (ts.isCallExpression(parent) && parent.arguments.includes(current as ts.Expression)) {
       const callee = parent.expression;
+      // A configured wrapper, by the name it is called with, comes before what its name would say without it.
+      const wrapper = wrappers.find((w) => w.name === callee.getText().replace(/\s+/g, ""));
+      if (wrapper) return wrapperMethod(parent, current, wrapper.defaultMethod);
       const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
       if (VERBS.has(name.toLowerCase())) return name.toUpperCase();
       // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
@@ -104,13 +144,16 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   for (const p of obj.properties) {
     if (ts.isPropertyAssignment(p) && p.name.getText().replace(/["']/g, "") === "method") {
       const v = p.initializer;
-      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
-        const method = v.text.toUpperCase();
-        return METHODS.has(method) ? method : undefined;
-      }
+      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) return statedMethod(v);
     }
   }
   return undefined;
+}
+
+/** A known method a string states, in any case. */
+function statedMethod(v: ts.Expression): string | undefined {
+  const method = ts.isStringLiteralLike(v) ? v.text.toUpperCase() : undefined;
+  return method && METHODS.has(method) ? method : undefined;
 }
 
 /** The operands a `+` chain joins, through the parentheses around a part of it. */
@@ -395,7 +438,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
-      method: navigatesWithGet(node) ? "GET" : methodNear(node),
+      method: navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers),
       path: parsed.path,
       based: parsed.based,
       at: { file, line: lineAt(node) },
@@ -489,7 +532,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
         const place = valuePlace(n).parent;
         const building = ts.isTemplateSpan(place) || isPlus(place);
         if (decl && ts.isVariableDeclaration(decl) && held.has(decl) && n !== decl.name && !building && !leads.get(decl)?.has(n)) {
-          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n));
+          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n, spec.wrappers));
         }
       }
       ts.forEachChild(n, find);

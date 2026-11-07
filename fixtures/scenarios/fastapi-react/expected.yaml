@@ -10,8 +10,10 @@ case: |
   atlas does not read into the wrapper, so `authFetch(url)` has no method it can read. Such a call to
   `/api/reports/${name}` used to reach `POST /api/reports/run` as well as the catch-all it reads, and one to
   `/api/templates/${name}` the PUT that saves a template, so both showed as callers of writes they never make. A call
-  whose method is not read is now matched to the routes it fits only when they take one method; otherwise atlas leaves
-  it unmatched, a limit names it, and the routes it fits are not reported as having no caller. `{filename:path}` was
+  whose method is not read is matched to the routes it fits only when they take one method; otherwise atlas leaves
+  it unmatched with a limit. The wrapper hands its URL and init to fetch, so the configuration declares its default
+  method (GET, as fetch sends without one): `authFetch(url)` reads as GET and reaches the GET routes it fits,
+  `authFetch(url, { method: "PUT" })` keeps its PUT, and no limit is left. `{filename:path}` was
   read as Spring's `{*filename}`, which takes no segment as well, so the call to `/api/reports` reached it beside
   `GET /api/reports`. Starlette compiles it as `.*` after the `/` written before it, as it compiles a mount; the path
   without that segment comes to it only by the redirect the router answers when no route serves a path, and
@@ -38,13 +40,13 @@ findings:
   - FA001|backend|GET /api/dashboard/summary
 limits:
   - mounts an application at /admin whose routes are not read
-  - "* /api/templates/{} at frontend/src/components/AuthGate.tsx:6 fits routes of GET and PUT"
-  - "* /api/reports/{} at frontend/src/components/ReportList.tsx:5 fits routes of GET and POST"
 chains:
   - outside->backend|GET /api/auth/callback
   - outside->backend|GET /api/health
   - web->backend|GET /api/reports
+  - web->backend|GET /api/reports/{filename:path}
   - web->backend|GET /api/auth/session
+  - web->backend|GET /api/templates/{name}
   - web->backend|PUT /api/templates/{name}
   - web->backend|GET /api/downloads/{path:path}
   - web->backend|POST /api/reports/run
@@ -53,12 +55,12 @@ chains:
 descriptions:
   - backend none - NoneFound
 calls:
-  - web->backend|* /api/auth/session @ frontend/src/components/AuthGate.tsx:4
+  - web->backend|GET /api/auth/session @ frontend/src/components/AuthGate.tsx:4
   - web->backend|POST /api/auth/logout @ frontend/src/components/AuthGate.tsx:5
-  - web->backend|* /api/templates/{} @ frontend/src/components/AuthGate.tsx:6
+  - web->backend|GET /api/templates/{} @ frontend/src/components/AuthGate.tsx:6
   - web->backend|PUT /api/templates/{} @ frontend/src/components/AuthGate.tsx:7
-  - web->backend|* /api/reports @ frontend/src/components/ReportList.tsx:4
-  - web->backend|* /api/reports/{} @ frontend/src/components/ReportList.tsx:5
+  - web->backend|GET /api/reports @ frontend/src/components/ReportList.tsx:4
+  - web->backend|GET /api/reports/{} @ frontend/src/components/ReportList.tsx:5
   - web->backend|POST /api/reports/run @ frontend/src/components/ReportList.tsx:6
   - web->backend|GET /api/downloads/{}/report.pdf @ frontend/src/components/ReportList.tsx:7
   # One request whichever base the caller passes: both branches of the conditional name /api/chat.
