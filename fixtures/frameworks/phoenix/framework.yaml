@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs installs Phoenix and asks it for the routes the application serves. mix.lock pins every
+# package by its Hex checksum and names no repository URL, so each machine fetches the same packages from the Hex it uses.
+toolchain: elixir
+docs:
+  - https://hexdocs.pm/phoenix/routing.html
+  - https://hexdocs.pm/phoenix/Phoenix.Router.html
+  - https://hexdocs.pm/phoenix/Mix.Tasks.Phx.Routes.html
+  - https://hexdocs.pm/phoenix/Phoenix.VerifiedRoutes.html
+  - https://hexdocs.pm/phoenix_live_view/Phoenix.LiveView.Router.html
+  - https://hexdocs.pm/plug/Plug.Router.html
+setup: mix deps.get && mix compile
+latest: mix deps.update --all && mix compile
+oracle: mix run --no-start oracle.exs
