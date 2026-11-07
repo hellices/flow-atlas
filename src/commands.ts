@@ -196,8 +196,8 @@ function cmdScan(o: Options): number {
       console.log(`  ${d.component}: ${head}${d.message ? `; ${d.message}` : ""}`);
     }
   }
-  for (const l of graph.limits) console.log(`limit: ${l}`);
   console.log(`graph written to ${join(o.out, "graph.json")}`);
+  for (const l of graph.limits) process.stderr.write(`limit: ${l}\n`);
   return 0;
 }
 

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
+import { main } from "../src/commands.js";
 import { normalizeConfig } from "../src/config.js";
 import { extractCalls } from "../src/extract/calls.js";
 import { scan } from "../src/scan.js";
@@ -84,5 +89,35 @@ describe("a host in a template's leading hole", () => {
   it("says nothing of a loopback host or the target's origin", () => {
     expect(read("fetch(`${dev ? 'http://localhost:3000' : ''}/api/status`);").limits).toEqual([]);
     expect(read("fetch(`${prod ? 'https://other.example' : ''}/api/status`);", { api: "https://other.example" }).limits).toEqual([]);
+  });
+});
+
+/** What a command prints on stdout and on stderr, and its exit code. */
+function run(...args: string[]): { code: number; stdout: string; stderr: string } {
+  let stdout = "";
+  let stderr = "";
+  const out = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((stdout += String(chunk)), true));
+  const log = vi.spyOn(console, "log").mockImplementation((...items: unknown[]) => void (stdout += `${items.join(" ")}\n`));
+  const err = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => ((stderr += String(chunk)), true));
+  try {
+    return { code: main(args), stdout, stderr };
+  } finally {
+    out.mockRestore();
+    log.mockRestore();
+    err.mockRestore();
+  }
+}
+
+describe("limit lines", () => {
+  const root = fileURLToPath(new URL("../fixtures/scenarios/nx-angular-nest", import.meta.url));
+  const limit = "limit: calls ui->api: URLs to remote.example";
+
+  it("go to stderr, once, from scan as from check", () => {
+    for (const command of ["scan", "check"]) {
+      const { code, stdout, stderr } = run(command, "--root", root, "--out", mkdtempSync(join(tmpdir(), "atlas-limits-")));
+      expect(code).toBe(0);
+      expect(stdout).not.toContain("limit:");
+      expect(stderr.split("\n").filter((l) => l.startsWith(limit))).toHaveLength(1);
+    }
   });
 });
