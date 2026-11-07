@@ -35,7 +35,8 @@ Future<String> dartFrog(List<String> args) async {
 Future<void> main() async {
   final config = buildRouteConfiguration(Directory.current);
   if (config.rogueRoutes.isNotEmpty) throw StateError('rogue routes: ${config.rogueRoutes.map((r) => r.path)}');
-  final listed = (await dartFrog(['list', '--plain', '.'])).split('\n').where((l) => l.isNotEmpty).toSet();
+  // The CLI may say other things first (its shell completion, on a first run): the routes are the lines with a path.
+  final listed = (await dartFrog(['list', '--plain', '.'])).split('\n').where((l) => l.startsWith('/')).toSet();
   if (!(listed.length == config.endpoints.length && listed.containsAll(config.endpoints.keys))) {
     throw StateError('dart_frog list prints $listed, not ${config.endpoints.keys}');
   }
