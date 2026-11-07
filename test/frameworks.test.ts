@@ -138,7 +138,9 @@ function lockHosts(file: string): string[] {
       .flatMap((url) => (url && /^https?:\/\//.test(url) ? [new URL(url).hostname] : []));
   }
   const pattern = file.endsWith("package-lock.json") ? /"resolved":\s*"https?:\/\/([^/":]+)/g : /https?:\/\/([^/"'\s\]:,)]+)/g;
-  return [...text.matchAll(pattern)].map((m) => m[1]!.toLowerCase());
+  // A comment a tool writes at the top of its lock (pub's links to its docs) installs nothing.
+  const installs = text.replace(/^\s*#.*$/gm, "");
+  return [...installs.matchAll(pattern)].map((m) => m[1]!.toLowerCase());
 }
 
 describe("routes as each framework serves them", () => {

@@ -115,8 +115,9 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # The runner image ships Swift; setup-swift does not support its Ubuntu release.
       - if: matrix.toolchain == 'swift'
-        uses: swift-actions/setup-swift@v2
+        run: swift --version
       - if: matrix.toolchain == 'dart'
         uses: dart-lang/setup-dart@v1
       - name: ask the framework for its routes and compare them with routes.json

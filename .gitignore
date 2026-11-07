@@ -5,7 +5,8 @@ coverage/
 # Framework fixtures install their framework next to the app.
 fixtures/frameworks/**/.venv/
 fixtures/frameworks/**/target/
-fixtures/frameworks/**/bin/
+fixtures/frameworks/**/bin/Debug/
+fixtures/frameworks/**/bin/Release/
 fixtures/frameworks/**/obj/
 fixtures/frameworks/**/.next/
 fixtures/frameworks/**/__pycache__/
