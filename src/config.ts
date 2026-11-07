@@ -143,7 +143,8 @@ function checkRoute(route: RouteSource): RouteSource {
       throw new Error(`routes of ${route.component}: a registration helper needs name, a pathArg position and either a methodArg position or method (${JSON.stringify(c)})`);
     }
   }
-  return route;
+  // A source read only from its OpenAPI document may leave `files` out, as `files: []`.
+  return route.files === undefined ? { ...route, files: [] } : route;
 }
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);

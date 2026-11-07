@@ -12,7 +12,7 @@ atlas's: atlas only reads files.
 routes:
   - component: orders
     openapi: services/orders/openapi.json   # in the repository, or an absolute path to a file generated outside it
-    files: ["services/orders/src/main/**/*.java"]   # where atlas looks for the handlers; may be empty
+    files: ["services/orders/src/main/**/*.java"]   # where atlas looks for the handlers; may be empty or left out
 ```
 
 ## What atlas takes from the document
