@@ -124,7 +124,12 @@ one call, which joins a base only when both branches do. Branches whose paths di
 put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
 absolute URL, in code of any language, is a request to the call source's target when its
 host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
-other host, a link to another site for one, is not read, and a limit names the host. Routes come
+other host, a link to another site for one, is not read, and a limit names the host. A client's own helper that puts
+the configured `prefix` straight before a path it is given (`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built
+from that one parameter alone) is the prefix written once more, not a request: the paths passed to it are read where
+they are written, with the prefix, and a limit names where the helper was left out. A path with a hole
+(`` `/orders/${id}` ``), another base, or text after the value is still a request. A path that already starts with the
+prefix still gets it, since a service may nest the same segment. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
 is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
@@ -160,7 +165,14 @@ the page it names as a request of its own. Include `.tsx` in the route
 files to read them. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
-from the last `fun`, `func` or `def` before it. FastAPI
+from the last `fun`, `func` or `def` before it. A path given to an exception is a label, not a request: an argument
+of a call that is thrown (`throw BffUnavailable("/my")`, `throw new X(...)`, Python's `raise X(...)`), of a class named
+as Java's, Kotlin's, Dart's and Python's own exceptions are (`Exception("/x")`, `IllegalStateException("/x")`,
+`SomeError("/x")`), and in
+Kotlin of the standard library's throwing functions `error`, `TODO`, `require` and `check` (not a member of that name);
+a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
+the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the
+language. FastAPI
 decorators are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
 none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
 that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,

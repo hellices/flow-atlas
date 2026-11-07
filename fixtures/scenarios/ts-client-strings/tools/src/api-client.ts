@@ -1,10 +1,14 @@
-/** A client of the notes API. Its base URL ends in /api/v1; the paths it is given are relative to it. */
+/** Every path of the notes API is under its version; a path given with the version already in it is kept. */
+function apiPath(path: string): string {
+  return /^\/api\/v1(?:[/?#]|$)/.test(path) ? path : `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/** A client of the notes API. Its base URL is the server's origin; `apiPath` puts the version before each path. */
 export class NotesApiClient {
   constructor(private readonly baseUrl: string) {}
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
-    if (path.startsWith("/api/v1")) throw new Error("paths are relative to the base URL, which ends in the API version");
-    const response = await fetch(`${this.baseUrl}${path}`, init);
+    const response = await fetch(`${this.baseUrl}${apiPath(path)}`, init);
     return response.json();
   }
 

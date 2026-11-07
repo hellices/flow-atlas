@@ -315,6 +315,45 @@ function pathOffRoot(node: ts.Node, raw: string): boolean {
   return ts.isPropertyAssignment(parent) && keyOf(parent) === "path" && !raw.trim().startsWith("/");
 }
 
+/**
+ * Whether a URL is the configured prefix put straight before a path its function is given, as a client's helper writes
+ * `` `/api/v1${path}` `` or `"/api/v1" + path`: the prefix the configuration already puts before every path the client
+ * requests, written once more. Its requests are the paths passed to the function, read where they are written. A path
+ * with a hole (`` `/orders/${id}` ``), another base, text after the value, or a value built from anything but one
+ * parameter is read as before.
+ */
+function prefixing(node: ts.Node, prefix: string): boolean {
+  const base = joinRoute(prefix);
+  let rest: ts.Expression | undefined;
+  if (ts.isTemplateExpression(node) && node.templateSpans.length === 1) {
+    const span = node.templateSpans[0]!;
+    if (node.head.text === base && span.literal.text === "") rest = span.expression;
+  } else if (isPlus(node)) {
+    const parts = operands(node).map(unwrap);
+    const first = parts[0]!;
+    if (parts.length === 2 && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) && first.text === base) rest = parts[1];
+  }
+  return rest !== undefined && fromOneParameter(rest);
+}
+
+/** Whether an expression is built from one parameter of a function around it and literal text alone. */
+function fromOneParameter(e: ts.Expression): boolean {
+  const parameters = new Set<ts.Node>();
+  let other = false;
+  const visit = (n: ts.Node): void => {
+    // `this` and `super` are inputs too, though neither is an identifier.
+    if (n.kind === ts.SyntaxKind.ThisKeyword || n.kind === ts.SyntaxKind.SuperKeyword) other = true;
+    else if (ts.isIdentifier(n)) {
+      const d = declarationOf(n);
+      if (d && ts.isParameter(d)) parameters.add(d);
+      else other = true;
+    } else if (ts.isPropertyAccessExpression(n)) visit(n.expression);
+    else ts.forEachChild(n, visit);
+  };
+  visit(e);
+  return !other && parameters.size === 1;
+}
+
 const NEXT_ROUTERS = ["next/navigation", "next/router"];
 
 /** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
@@ -391,6 +430,8 @@ export interface ReadContext {
   passed?: Passed[];
   /** The host of the target's `origins` entry. */
   origin?: string;
+  /** Collects where the configured prefix is put before a function's path parameter (`prefixing`). */
+  prefixed?: Place[];
 }
 
 /**
@@ -400,7 +441,7 @@ export interface ReadContext {
 export const reachesTarget = (host: string | undefined, origin: string | undefined): boolean => host === undefined || isLoopback(host) || host === origin;
 
 export function callsFromTypeScript(file: string, text: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
-  const { spans, passed, origin } = context;
+  const { spans, passed, origin, prefixed } = context;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
@@ -428,6 +469,10 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
   const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
     if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw)) return undefined;
+    if (spec.prefix && prefixing(node, spec.prefix)) {
+      if (report) prefixed?.push({ file, line: lineAt(node) });
+      return undefined;
+    }
     const parsed = callPath(raw) ?? rootNavigation(node, raw);
     const callee = parsed && laterArgument(node);
     if (callee === undefined) return parsed;
@@ -687,13 +732,84 @@ export function withoutComments(file: string, text: string): string {
   return out.join("");
 }
 
-/** Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or `%s` holes. */
-export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans): ReadCall[] {
+/**
+ * A callee written before an opening parenthesis, its type arguments taken off (`withoutTypeArguments`): `throw` (or
+ * Python's `raise`) before it, a `new`, the receivers it is named on, and its name.
+ */
+const CALLEE_BEFORE = /(?<![\w.$])(?:(throw|raise)\s+)?(?:new\s+)?((?:[A-Za-z_]\w*\s*\??\.\s*)*)([A-Za-z_]\w*)\s*$/;
+
+/**
+ * The text before a call's opening parenthesis without the type arguments it ends in (`<Map<String, List<Int>>>`),
+ * nested ones included. Text that ends in anything else, or whose angle brackets do not balance over characters type
+ * arguments are written with, is returned as it is.
+ */
+function withoutTypeArguments(before: string): string {
+  const end = before.trimEnd().length;
+  if (before[end - 1] !== ">") return before;
+  let depth = 0;
+  for (let j = end - 1; j >= 0; j--) {
+    const c = before[j]!;
+    if (c === ">") depth++;
+    else if (c === "<") {
+      if (--depth === 0) return before.slice(0, j);
+    } else if (!/[\w\s.,?*[\]$]/.test(c)) break;
+  }
+  return before;
+}
+
+/** Kotlin's standard functions that throw: `error` and `TODO` with the message given, `require` and `check` when the condition given is false. */
+const KOTLIN_THROWING = new Set(["error", "TODO", "require", "check"]);
+
+/**
+ * The string literals in code read as text that are arguments of an exception, from their opening quote to just past
+ * their closing one, with the name it is called by: the arguments of a call that is thrown (`throw X(...)`, `raise X(...)`) or of a class named
+ * as Java's, Kotlin's, Dart's and Python's own exceptions are (`...Error`, `...Exception`), and in Kotlin of the
+ * standard library's throwing functions. A request written inside those parentheses is inside a call of its own, so it
+ * is still read.
+ */
+function exceptionArguments(file: string, text: string): Array<{ start: number; end: number; exception: string }> {
+  const kotlin = /\.kts?$/.test(file);
+  const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
+  const out: Array<{ start: number; end: number; exception: string }> = [];
+  const frames: Array<{ open: string; exception?: string }> = [];
+  const opener: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  for (let i = 0; i < text.length; ) {
+    const c = text[i]!;
+    const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(c) ? c : undefined;
+    if (quote) {
+      const exception = frames.at(-1)?.exception;
+      const end = literalEnd(text, i, quote, file);
+      if (exception) out.push({ start: i, end, exception });
+      i = end;
+      continue;
+    }
+    if (c === "(") {
+      const m = CALLEE_BEFORE.exec(withoutTypeArguments(text.slice(Math.max(0, i - 200), i)));
+      const [, thrown, receivers = "", name = ""] = m ?? [];
+      const exception = !!thrown || /^(?:[A-Z]\w*)?(?:Error|Exception)$/.test(name) || (kotlin && !receivers && KOTLIN_THROWING.has(name));
+      frames.push({ open: c, exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined });
+    } else if (c === "[" || c === "{") frames.push({ open: c });
+    else if (opener[c]) {
+      // A bracket left open by text the scan misreads closes with the bracket around it.
+      const at = frames.map((f) => f.open).lastIndexOf(opener[c]);
+      if (at >= 0) frames.length = at;
+    }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or
+ * `%s` holes. `labels` collects the paths left unread because they are given to an exception (`exceptionArguments`).
+ */
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[]): ReadCall[] {
   const out: ReadCall[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
+  const exceptions = exceptionArguments(file, text);
   const python = /\.pyi?$/.test(file);
-  const read = (segment: string, offset: number): void => {
+  const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
     for (let m = re.exec(segment); m; m = re.exec(segment)) {
       const at = m.index;
@@ -702,20 +818,27 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       const end = fString ? fStringEnd(segment, at) : undefined;
       const body = end !== undefined ? segment.slice(at + 1, end) : (m[1] ?? m[2]!);
       if (end !== undefined) re.lastIndex = end + 1;
-      read1(body, offset + at, body.length + 2, fString);
+      read1(body, offset + at, body.length + 2, fString, field);
     }
   };
-  const read1 = (body: string, index: number, length: number, fString: boolean): void => {
+  const read1 = (body: string, index: number, length: number, fString: boolean, field: boolean): void => {
     // A route's own path is no request; the code in its f-string fields still runs, and is read below.
     const registered = spans?.holds(file, index);
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
     // code in a field runs, so the requests written in it are read too.
     const fields: Array<[number, number]> = [];
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
-    for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start);
+    for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
     if (registered) return;
     const parsed = callPath(inner);
     if (!parsed) return;
+    // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
+    // the exception's literal the string lies in. A string in an f-string field is in code of its own.
+    const exception = field ? undefined : exceptions.find((e) => e.start <= index && index < e.end)?.exception;
+    if (exception) {
+      labels?.push({ callee: exception, at: { file, line: lineOf(text, index) } });
+      return;
+    }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
     const before = text.slice(Math.max(0, index - 200), index);
@@ -1101,8 +1224,10 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const shift = lineOf(text, script.bodyStart) - 1;
     // Offsets in the script body are not offsets in the template; no handler runs a template's script anyway.
     const inScript: Passed[] = [];
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    const prefixed: Place[] = [];
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
+    context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
       for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
@@ -1114,12 +1239,23 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   return out.sort((a, b) => a.at.line - b.at.line);
 }
 
+/** Each function paths were passed to, with how many and where the first was. */
+function byCallee(passed: Passed[]): string {
+  const callees = new Map<string, { count: number; at: Place }>();
+  for (const p of passed) {
+    const entry = callees.get(p.callee) ?? callees.set(p.callee, { count: 0, at: p.at }).get(p.callee)!;
+    entry.count++;
+  }
+  return [...callees].map(([callee, { count, at }]) => `${callee} (${count}, first at ${at.file}:${at.line})`).join(", ");
+}
+
 /**
  * `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests.
  *
  * An absolute URL is a request to a source's target when its host is a loopback address, where the repository's
  * components run side by side, or the host of the target's `origins` entry. Any other host is another server's: its
- * URLs are left out. A limit names those hosts, and the functions paths were handed to after their first argument.
+ * URLs are left out. A limit names those hosts, the functions paths were handed to after their first argument, the
+ * exceptions paths were given to in code read as text, and where a helper puts the configured prefix before a path.
  */
 export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans, limits: string[] = []): ReadCall[] {
   const out: ReadCall[] = [];
@@ -1128,15 +1264,17 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     const origin = config.origins[spec.to] === undefined ? undefined : hostOf(config.origins[spec.to]!);
     const foreign = new Map<string, string>();
     const passed: Passed[] = [];
+    const labels: Passed[] = [];
+    const prefixed: Place[] = [];
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
       const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin })
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin })
-          : callsFromText(file, text, spec, spans);
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed })
+          : callsFromText(file, text, spec, spans, labels);
       for (const c of read) {
         const { host, ...call } = c;
         if (host !== undefined && !reachesTarget(host, origin)) {
@@ -1153,14 +1291,11 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const hosts = [...foreign].map(([host, at]) => `${host} (${at})`).join(", ");
       limits.push(`${edge}: URLs to ${hosts} are not read as requests to ${spec.to}; set origins.${spec.to} if that is its host`);
     }
-    if (passed.length) {
-      const callees = new Map<string, { count: number; at: Place }>();
-      for (const p of passed) {
-        const entry = callees.get(p.callee) ?? callees.set(p.callee, { count: 0, at: p.at }).get(p.callee)!;
-        entry.count++;
-      }
-      const list = [...callees].map(([callee, { count, at }]) => `${callee} (${count}, first at ${at.file}:${at.line})`).join(", ");
-      limits.push(`${edge}: paths handed to a function after its first argument are not read as requests: ${list}`);
+    if (passed.length) limits.push(`${edge}: paths handed to a function after its first argument are not read as requests: ${byCallee(passed)}`);
+    if (labels.length) limits.push(`${edge}: paths given to an exception or to a function that throws are not read as requests: ${byCallee(labels)}`);
+    if (prefixed.length) {
+      const places = prefixed.map((p) => `${p.file}:${p.line}`).join(", ");
+      limits.push(`${edge}: the configured prefix ${spec.prefix} put before a function's path parameter (${places}) is not read as a request; the paths passed to that function are`);
     }
   }
   return out;
