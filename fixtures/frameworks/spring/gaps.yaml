@@ -1,0 +1,67 @@
+# Where atlas's reading differs from the routes Spring Boot serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { route: "GET /", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`, which takes `/` too) are not a surface" }
+  - { route: "GET /actuator", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
+  - { route: "GET /actuator/health", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
+  - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
+  - { route: "GET /api/account/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/archive", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/archive/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/pages/t{}st.html", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `?` wildcard within a segment is read as literal text; and nothing says so" }
+  - { route: "GET /api/library/projects/{}/versions", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/resources", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/resources/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/resources/{}.png", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `*` wildcard within a segment is read as literal text; and nothing says so" }
+  - { route: "GET /api/library/{}-{}{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "POST /api/members", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
+  - { route: "GET /api/members/{}", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
+  - { route: "GET /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "POST /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "DELETE /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "POST /api/persons", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "DELETE /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "PATCH /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "PUT /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "POST /api/pets", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/pets/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "* /error", reason: "the error page Spring Boot serves by itself (`BasicErrorController`, any method) is not a surface" }
+  - { route: "GET /files/{**}", reason: "the resources a router function serves (`RouterFunctions.resources`, WebMvc.fn) are not read, and nothing says so" }
+  - { route: "GET /hello-world", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /memos", reason: "a router function of the Kotlin router DSL (`router { }`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /memos/{}", reason: "a router function of the Kotlin router DSL (`router { }`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /people", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "POST /people", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /people/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /teams", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "POST /teams", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "DELETE /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "PUT /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /user/{}", reason: "a handler method registered with `RequestMappingHandlerMapping.registerMapping` is not read, and nothing says so" }
+  - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
+  - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
+  - { route: "GET /{**}", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`) are not a surface" }
+extra:
+  - { route: "GET /account/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/archive", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/archive/{**}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/pages/t?st.html", reason: "the path without its `/api` prefix, and its `?` wildcard read as literal text" }
+  - { route: "GET /library/projects/{}/versions", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/resources", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/resources/*.png", reason: "the path without its `/api` prefix, and its `*` wildcard read as literal text" }
+  - { route: "GET /library/resources/{**}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /library/{}-{}{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /notes", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "POST /notes", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "DELETE /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "POST /persons", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "DELETE /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "PATCH /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "PUT /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "POST /pets", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /pets/{}", reason: "the path without the `/api` prefix the controller is served under" }

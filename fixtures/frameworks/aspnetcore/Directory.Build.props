@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- The ASP.NET Core packages the projects use, at the release of the shared framework they run on. -->
+    <AspNetCoreVersion Condition="'$(AspNetCoreVersion)' == ''">10.0.14</AspNetCoreVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

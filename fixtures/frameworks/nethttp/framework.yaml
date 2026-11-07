@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs asks Go's net/http for the routes the application serves. net/http comes with the Go
+# toolchain, so there is nothing to install: its release is the Go the workflow sets up, the latest stable one.
+toolchain: go
+docs:
+  - https://pkg.go.dev/net/http#ServeMux
+  - https://go.dev/blog/routing-enhancements
+setup: go version >&2
+latest: go version >&2
+oracle: go run oracle.go

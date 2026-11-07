@@ -1,0 +1,22 @@
+# Where atlas's reading differs from the routes Nest serves. Remove an entry when atlas reads it right; the test fails
+# while a listed difference no longer occurs.
+missing:
+  - { route: "GET /api/v1/admin", reason: "the `RouterModule.register` path (`admin`) is not put before the routes of its module's controllers, and nothing says so; read at `/api/v1`, which AppController serves too" }
+  - { route: "GET /api/v1/admin/dashboard/widgets", reason: "the `RouterModule.register` paths (`admin`, child `dashboard`) are not put before the routes of the module's controllers, and nothing says so" }
+  - { route: "GET /api/v1/admin/dashboard/widgets/{}", reason: "the `RouterModule.register` paths (`admin`, child `dashboard`) are not put before the routes of the module's controllers, and nothing says so" }
+  - { route: "DELETE /api/v1/admin/dashboard/widgets/{}", reason: "the `RouterModule.register` paths (`admin`, child `dashboard`) are not put before the routes of the module's controllers, and nothing says so" }
+  - { route: "GET /api/v1/admin/metrics", reason: "the `RouterModule.register` paths (`admin`, child `metrics`) are not put before the routes of the module's controllers, and nothing says so" }
+  - { route: "GET /api/v3/admin/metrics/cpu", reason: "the `RouterModule.register` paths (`admin`, child `metrics`) are not put before the routes of the module's controllers, and nothing says so" }
+  - { route: "GET /api/v1/cats/abcd", reason: "the unnamed wildcard `abcd/*`, which Nest serves as `abcd/{*path}` (the path with nothing after `abcd/`, and one segment or more), is read as one segment parameter, and nothing says so" }
+  - { route: "GET /api/v1/cats/abcd/{**}", reason: "the unnamed wildcard `abcd/*`, which Nest serves as `abcd/{*path}` (the path with nothing after `abcd/`, and one segment or more), is read as one segment parameter, and nothing says so" }
+  - { route: "GET /api/v1/cats/files/{**}", reason: "Express 5's named wildcard `*filepath` is read as literal text, and nothing says so" }
+  - { route: "GET /api/v3/dogs/trips/{}-{}", reason: "a parameter that shares its segment with text (`:from-:to`) is read as literal text, and nothing says so" }
+  - { route: "QUERY /api/v1/cats/search", reason: "`@QueryMethod()` (the QUERY method) is not read, and nothing says so" }
+extra:
+  - { route: "GET /api/v1/widgets", reason: "DashboardController read without its `RouterModule` path `/admin/dashboard`" }
+  - { route: "GET /api/v1/widgets/{}", reason: "DashboardController read without its `RouterModule` path `/admin/dashboard`" }
+  - { route: "DELETE /api/v1/widgets/{}", reason: "DashboardController read without its `RouterModule` path `/admin/dashboard`" }
+  - { route: "GET /api/v3/cpu", reason: "MetricsController read without its `RouterModule` path `/admin/metrics`" }
+  - { route: "GET /api/v1/cats/abcd/{}", reason: "the unnamed wildcard read as a parameter taking one segment" }
+  - { route: "GET /api/v1/cats/files/*filepath", reason: "the named wildcard read as literal text" }
+  - { route: "GET /api/v3/dogs/trips/:from-:to", reason: "parameters within a segment read as literal text" }

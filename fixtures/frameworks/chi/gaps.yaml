@@ -1,0 +1,3 @@
+# Where atlas's reading differs from the routes chi serves. Remove the entry when atlas reads it; the test fails while
+# a listed difference no longer occurs.
+unread: "atlas has no style for Go: the route files are read and nothing is extracted; a limit says so (`routes app: N files read, nothing extracted`) but names none of the routes left out"

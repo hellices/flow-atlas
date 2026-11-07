@@ -1,0 +1,29 @@
+# Where atlas's reading differs from the routes Hono serves. Remove an entry when atlas reads it right; the test fails
+# while a listed difference no longer occurs.
+missing:
+  - { route: "QUERY /search", reason: "`app.query` (QUERY method) is not read, and nothing says so" }
+  - { route: "PURGE /cache", reason: "`app.on(method, path)` is not read, and nothing says so" }
+  - { route: "PUT /post", reason: "`app.on([methods], path)` is not read, and nothing says so" }
+  - { route: "DELETE /post", reason: "`app.on([methods], path)` is not read, and nothing says so" }
+  - { route: "GET /greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
+  - { route: "GET /ja/greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
+  - { route: "GET /en/greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
+  - { route: "POST /endpoint", reason: "a chained route's verb with no path (`.get(path, h).post(h)`, the previous path) is not read, and nothing says so" }
+  - { route: "DELETE /endpoint", reason: "a chained route's verb with no path (`.get(path, h).delete(h)`, the previous path) is not read, and nothing says so" }
+  - { route: "GET /animal", reason: "an optional last parameter (`:type?`) is read as the path with the parameter only, not also without it" }
+  - { route: "GET /post/{}/{}", reason: "a parameter with a regexp (`:date{[0-9]+}`) is read as literal text" }
+  - { route: "GET /{**}", reason: "the fallback `app.get(\"*\")`, a path not starting with `/`, is not read, and nothing says so" }
+  - { route: "GET /book", reason: "a group mounted with `app.route(path, group)` is read without its path (its `/` as the root's), and nothing says so" }
+  - { route: "POST /book", reason: "a group mounted with `app.route(path, group)` is read without its path (its `/` as the root's), and nothing says so" }
+  - { route: "GET /book/{}", reason: "a group mounted with `app.route(path, group)` is read without its path, and nothing says so" }
+  - { route: "GET /users", reason: "an application's `basePath()` is not read (its `/` read as the root's), and nothing says so" }
+  - { route: "POST /users", reason: "an application's `basePath()` is not read (its `/` read as the root's), and nothing says so" }
+  - { route: "GET /api/catalog", reason: "an application's `basePath()` is not read, and nothing says so" }
+  - { route: "GET /api/v1/status", reason: "a group mounted with `route()` in an application with a `basePath()` is read without either, and nothing says so" }
+  - { route: "PATCH /api/v1/settings/{}", reason: "a group mounted with `route()` in an application with a `basePath()` is read without either, and nothing says so" }
+extra:
+  - { route: "GET /{}", reason: "a group's route read without the path the group is mounted at (`/book`)" }
+  - { route: "GET /catalog", reason: "a route read without its application's `basePath()` (`/api`)" }
+  - { route: "GET /status", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
+  - { route: "PATCH /settings/{}", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
+  - { route: "GET /post/:date{}/:title{}", reason: "regexp parameters read as literal text (their regexps' braces compared as parameters)" }

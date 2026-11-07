@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs installs Gin and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://gin-gonic.com/en/docs/routing/
+  - https://gin-gonic.com/en/docs/routing/http-method/
+  - https://gin-gonic.com/en/docs/routing/param-in-path/
+  - https://gin-gonic.com/en/docs/routing/grouping-routes/
+  - https://gin-gonic.com/en/docs/rendering/serving-static-files/
+setup: go mod download
+latest: go get github.com/gin-gonic/gin@latest && go mod tidy
+oracle: go run oracle.go
