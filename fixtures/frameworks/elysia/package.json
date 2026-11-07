@@ -1,0 +1,8 @@
+{
+  "name": "elysia-routes",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "elysia": "^1.4.30"
+  }
+}

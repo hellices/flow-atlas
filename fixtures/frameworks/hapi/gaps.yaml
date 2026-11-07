@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the routes hapi serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for hapi: routes declared as objects (`server.route({ method, path, handler })`, one or an array),
+  plugins' routes under their `routes.prefix`, and hapi's `{name?}`, `{name*n}` and `{name*}` parameters are all left
+  out; the only sign is the limit "routes app: 7 files read, nothing extracted"

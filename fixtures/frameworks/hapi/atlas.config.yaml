@@ -1,0 +1,4 @@
+components:
+  - { name: app, path: . }
+routes:
+  - { component: app, files: ["src/**/*.js"] }
