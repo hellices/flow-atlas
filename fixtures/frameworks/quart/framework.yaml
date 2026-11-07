@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs installs Quart and asks it for the routes the application serves. requirements.txt pins
+# every package with its hashes and names no index, so each machine installs the same files from the index it uses.
+toolchain: python
+docs:
+  - https://quart.palletsprojects.com/en/latest/how_to_guides/routing/
+  - https://quart.palletsprojects.com/en/latest/how_to_guides/blueprints/
+  - https://quart.palletsprojects.com/en/latest/how_to_guides/websockets/
+  - https://quart.palletsprojects.com/en/latest/reference/source/quart.views/
+setup: uv venv -q --allow-existing && uv pip sync -q requirements.txt
+latest: uv venv -q --allow-existing && uv pip install -q --upgrade -r pyproject.toml
+oracle: .venv/bin/python oracle.py

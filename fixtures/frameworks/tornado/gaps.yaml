@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Tornado serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Tornado style: the routing table of an `Application` (tuples and `url()` specs whose regexes' groups are
+  the parameters), the methods each RequestHandler subclass defines, rules nested under a `PathMatches`, another
+  Application routed to, and the static files routes `static_path` adds are not read; a limit says the route files gave
+  nothing ("4 files read, nothing extracted"), and `atlas inventory` offers no route candidate for them.

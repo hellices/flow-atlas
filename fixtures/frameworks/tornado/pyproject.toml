@@ -1,0 +1,5 @@
+[project]
+name = "tornado-routes"
+version = "0"
+requires-python = ">=3.12"
+dependencies = ["tornado>=6.5"]
