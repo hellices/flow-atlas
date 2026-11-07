@@ -1,0 +1,76 @@
+case: |
+  A Spring Boot MVC application whose Thymeleaf templates are its only client, written the way the framework's own
+  sample application writes them.
+  Seen in a real run: routes were all read, but 2 of 25 requests the templates make were, so 14 routes came back as
+  FA001 and 3 of 17 were in a chain. The templates link with a quoted base (`@{'/accounts?page=1'}`), with a value
+  preprocessed into the path (`@{/accounts/__${account.id}__}`), page-relative (`@{__${account.id}__/edit}` on the
+  page of GET /accounts/{accountId}), to a route that serves `/catalog.html`, and post forms with no action, which go
+  to the URL of the page; handlers name their view in a `static final String` or return it from a private method, and
+  answer a post with `redirect:`. Each is now read: a relative URL once for each page its template is rendered on, a
+  redirect as a GET the reply leads to. The menu's links come in as fragment parameters (`@{__${link}__}`), and a
+  fragment file wraps its fields in a `<form>` no route renders; neither is read, and limits name both.
+surfaces:
+  - server|GET /accounts/new
+  - server|POST /accounts/new
+  - server|GET /accounts/find
+  - server|GET /accounts
+  - server|GET /accounts/{accountId}/edit
+  - server|POST /accounts/{accountId}/edit
+  - server|GET /accounts/{accountId}
+  - server|GET /accounts/{accountId}/devices/new
+  - server|POST /accounts/{accountId}/devices/new
+  - server|GET /accounts/{accountId}/devices/{deviceId}/tickets/new
+  - server|POST /accounts/{accountId}/devices/{deviceId}/tickets/new
+  - server|GET /catalog.html
+  - server|GET /catalog
+findings: []
+calls:
+  - web->server|GET /catalog.html @ src/main/resources/templates/catalog/list.html:10
+  - web->server|GET /catalog.html @ src/main/resources/templates/catalog/list.html:12
+  - web->server|POST /accounts/new @ src/main/resources/templates/accounts/editForm.html:5
+  - web->server|POST /accounts/{}/edit @ src/main/resources/templates/accounts/editForm.html:5
+  - web->server|GET /accounts/{} @ src/main/resources/templates/accounts/list.html:7
+  - web->server|GET /accounts @ src/main/resources/templates/accounts/list.html:12
+  - web->server|GET /accounts @ src/main/resources/templates/accounts/list.html:14
+  - web->server|GET /accounts @ src/main/resources/templates/accounts/list.html:15
+  - web->server|GET /accounts/{}/edit @ src/main/resources/templates/accounts/details.html:8
+  - web->server|GET /accounts/{}/devices/new @ src/main/resources/templates/accounts/details.html:9
+  - web->server|GET /accounts/{}/devices/{}/tickets/new @ src/main/resources/templates/accounts/details.html:13
+  - web->server|GET /accounts @ src/main/resources/templates/accounts/find.html:5
+  - web->server|GET /accounts/new @ src/main/resources/templates/accounts/find.html:9
+  - web->server|POST /accounts/{}/devices/new @ src/main/resources/templates/devices/editForm.html:5
+  - web->server|POST /accounts/{}/devices/{}/tickets/new @ src/main/resources/templates/devices/ticketForm.html:5
+  - server->server|GET /catalog.html @ src/main/java/com/example/clinic/catalog/CatalogController.java:24
+  - server->server|GET /accounts/{} @ src/main/java/com/example/clinic/account/DeviceController.java:28
+  - server->server|GET /accounts/{} @ src/main/java/com/example/clinic/account/DeviceController.java:41
+  - server->server|GET /accounts/{} @ src/main/java/com/example/clinic/account/AccountController.java:35
+  - server->server|GET /accounts/{} @ src/main/java/com/example/clinic/account/AccountController.java:50
+  - server->server|GET /accounts/{} @ src/main/java/com/example/clinic/account/AccountController.java:72
+chains:
+  - outside->server|GET /catalog
+  - web->server|GET /accounts
+  - web->server|GET /accounts/find
+  - web->server|GET /accounts/new
+  - web->server|GET /accounts/{accountId}
+  - web->server|GET /accounts/{accountId}/devices/new
+  - web->server|GET /accounts/{accountId}/devices/{deviceId}/tickets/new
+  - web->server|GET /accounts/{accountId}/edit
+  - web->server|GET /catalog.html
+  - web->server|POST /accounts/new
+  - web->server|POST /accounts/{accountId}/devices/new
+  - web->server|POST /accounts/{accountId}/devices/{deviceId}/tickets/new
+  - web->server|POST /accounts/{accountId}/edit
+limits:
+  - "calls web->server: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: src/main/resources/templates/fragments/layout.html:11"
+  - "calls web->server: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: src/main/resources/templates/fragments/inputField.html:3"
+descriptions:
+  - server none - NoneFound
+inventory:
+  routes:
+    - src/main/java/com/example/clinic/account/AccountController.java spring 7
+    - src/main/java/com/example/clinic/account/DeviceController.java spring 5
+    - src/main/java/com/example/clinic/catalog/CatalogController.java spring 2
+  calls:
+    - src/main/resources/templates/fragments/layout.html 2
+    - src/main/resources/templates/accounts/find.html 2
+    - src/main/resources/templates/accounts/list.html 1

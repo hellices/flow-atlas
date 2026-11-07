@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
-import type { Call, Coverage, Draft, Place } from "../model.js";
-import { callPath, HOLE, hostOf, isLoopback, joinRoute, type CallPath } from "../paths.js";
+import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
+import { callPath, HOLE, hostOf, isLoopback, joinRoute, pathsMatch, resolveReference, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, importedFrom, unwrap } from "./binding.js";
@@ -163,26 +163,63 @@ function operands(e: ts.Expression): ts.Expression[] {
 }
 
 /**
- * The home page `/` where a string is plainly an address to go to: a JSX `href`, or the first argument of
- * `push`, `replace` or `redirect`. Elsewhere a lone `/` is a separator far more often than a request.
+ * The root path `/` where a string is in a request's place (`requestPosition`), or names another origin where a client
+ * router takes a route (`<Link to="https://...">`), which the browser loads; elsewhere a lone `/` is a separator far
+ * more often than a request.
  */
-function rootNavigation(node: ts.Node, raw: string): CallPath | undefined {
-  if (raw.replace(/[?#].*$/, "") !== "/") return undefined;
-  const value = outermost(node);
-  const parent = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
-  if (ts.isJsxAttribute(parent) && parent.name.getText() === "href") return { path: "/", based: false };
-  if (ts.isCallExpression(value.parent) && value.parent.arguments[0] === value && navigates(unwrap(value.parent.expression))) return { path: "/", based: false };
-  return undefined;
+function rootRequest(node: ts.Node, raw: string, wrappers: CallSource["wrappers"] = []): CallPath | undefined {
+  const parsed = callPath(raw, true);
+  return parsed && (requestPosition(node, wrappers) || (hostOf(raw) !== undefined && clientRoute(node) === "route")) ? parsed : undefined;
+}
+
+/**
+ * Whether a string is in a request's place: the URL, the first argument, of a call that requests or navigates (the
+ * global fetch, a call named after an HTTP method, a configured wrapper, Next.js's navigations, the window Location's
+ * `assign` and `replace`); a JSX `href`, `action`, `formAction` or `src`; a URL the window's Location is set to; a
+ * client router's navigation that loads the document.
+ */
+function requestPosition(node: ts.Node, wrappers: CallSource["wrappers"] = []): boolean {
+  if (locationNavigation(node) || clientRoute(node) === "document") return true;
+  const value = valuePlace(node);
+  const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
+  if (ts.isJsxAttribute(holder)) return /^(href|action|formAction|src)$/.test(holder.name.getText());
+  const place = argumentPlace(value);
+  if (!place || place.at !== 0 || !ts.isCallExpression(place.call)) return false;
+  if (navigates(place.callee) || wrappers.some((w) => w.name === place.call.expression.getText().replace(/\s+/g, ""))) return true;
+  if (VERBS.has(place.name.toLowerCase())) return true;
+  const m = member(place.callee);
+  return place.name === "fetch" && (isGlobal(place.callee, FETCH) || (!!m && isGlobal(unwrap(m.receiver), FETCH_GLOBALS)));
+}
+
+const FETCH = new Set(["fetch"]);
+const FETCH_GLOBALS = new Set(["window", "globalThis", "self"]);
+
+/**
+ * Whether a string is a URL the window's Location navigates to, as the HTML standard defines it: the argument of its
+ * `assign` or `replace`, or a value its `href` (or the Location itself) is set to. Each navigates with GET.
+ */
+function locationNavigation(node: ts.Node): boolean {
+  const value = valuePlace(node);
+  const parent = value.parent;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.right === value) {
+    const target = unwrap(parent.left);
+    const m = member(target);
+    return isLocation(target) || (m?.name === "href" && isLocation(m.receiver));
+  }
+  const place = argumentPlace(value);
+  const m = place && member(place.callee);
+  return !!place && !!m && place.at === 0 && ts.isCallExpression(place.call) && /^(assign|replace)$/.test(m.name) && isLocation(m.receiver);
 }
 
 /**
  * Whether a string is an address the browser goes to with GET, as the HTML standard and Next.js define: the `href` of
  * an `<a>` or `<area>`, or of Next.js's `<Link>`, and the address its router's `push` or `replace` navigates to, either
- * branch of a conditional included. A
- * `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its method is
- * left open.
+ * branch of a conditional included; a URL the window's Location navigates to; a client router's navigation that loads
+ * the document. A `redirect` keeps the request's method (307, 308) where it answers one that is not a page's GET, so its
+ * method is left open.
  */
 function navigatesWithGet(node: ts.Node): boolean {
+  if (locationNavigation(node) || clientRoute(node) === "document") return true;
   const value = valuePlace(node);
   const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(holder) && holder.name.getText() === "href") {
@@ -410,6 +447,188 @@ function navigates(callee: ts.Expression): "router" | "redirect" | undefined {
   return router ? "router" : undefined;
 }
 
+const TANSTACK_ROUTER = ["@tanstack/react-router"];
+
+/**
+ * A client-side router, known by the modules it is imported from: the components and functions that take the app's own
+ * routes, which the router renders in the browser with no request for them (React Router's `Link` is "a progressively
+ * enhanced `<a href>` wrapper to enable navigation with client-side routing"), and those that load the document instead.
+ */
+interface ClientRouter {
+  modules: string[];
+  /** Components whose attributes name routes. */
+  elements: string[];
+  /** Functions whose arguments name routes. */
+  functions: string[];
+  /** Functions that return a navigate function, or a router whose `navigate` method navigates. */
+  navigators: string[];
+  /** Functions that answer with a redirect the browser follows by loading the document. */
+  documents: string[];
+}
+
+const CLIENT_ROUTERS: ClientRouter[] = [
+  {
+    modules: ["react-router", "react-router-dom"],
+    elements: ["Link", "NavLink", "Navigate", "Route"],
+    functions: ["redirect", "replace", "useNavigate", "createBrowserRouter", "createHashRouter", "createMemoryRouter", "useRoutes"],
+    navigators: ["useNavigate", "createBrowserRouter", "createHashRouter", "createMemoryRouter"],
+    documents: ["redirectDocument"],
+  },
+  {
+    modules: TANSTACK_ROUTER,
+    elements: ["Link", "Navigate"],
+    functions: ["createFileRoute", "createLazyFileRoute", "createRoute", "redirect", "useNavigate", "getRouteApi"],
+    navigators: ["useNavigate", "useRouter", "createRouter"],
+    documents: [],
+  },
+];
+
+const routerFiles = new WeakMap<ts.SourceFile, boolean>();
+
+/** Whether a file imports a client router (`CLIENT_ROUTERS`). */
+function importsRouter(sf: ts.SourceFile): boolean {
+  let found = routerFiles.get(sf);
+  if (found === undefined) {
+    found = sf.statements.some((s) => ts.isImportDeclaration(s) && ts.isStringLiteral(s.moduleSpecifier) && CLIENT_ROUTERS.some((r) => r.modules.includes((s.moduleSpecifier as ts.StringLiteral).text)));
+    routerFiles.set(sf, found);
+  }
+  return found;
+}
+
+/**
+ * The client router a name is imported from, and the name it is exported as ("default" for a default import): a binding
+ * imported by name, or a member of a namespace import (`RR.Link` after `import * as RR`).
+ */
+function routerImport(e: ts.Node): { router: ClientRouter; name: string } | undefined {
+  const m = ts.isPropertyAccessExpression(e) ? { receiver: e.expression, name: e.name.text } : undefined;
+  const id = m ? unwrap(m.receiver) : e;
+  if (!ts.isIdentifier(id)) return undefined;
+  const d = declarationOf(id);
+  if (!d || !(m ? ts.isNamespaceImport(d) : ts.isImportSpecifier(d) || ts.isImportClause(d))) return undefined;
+  const declaration = ts.isImportSpecifier(d) ? d.parent.parent.parent : ts.isNamespaceImport(d) ? d.parent.parent : (d as ts.ImportClause).parent;
+  const module = ts.isStringLiteral(declaration.moduleSpecifier) ? declaration.moduleSpecifier.text : "";
+  const router = CLIENT_ROUTERS.find((r) => r.modules.includes(module));
+  return router && { router, name: m ? m.name : ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : "default" };
+}
+
+/** Whether an expression is a call of a router's navigator (`useNavigate()`, `useRouter()`). */
+function navigatorCall(e: ts.Expression | undefined): boolean {
+  const call = e && unwrap(e);
+  if (!call || !ts.isCallExpression(call)) return false;
+  const imported = routerImport(unwrap(call.expression));
+  return !!imported && imported.router.navigators.includes(imported.name);
+}
+
+/**
+ * Whether an expression is what a router's navigator returns: on the spot, held in a variable, or its `navigate` taken
+ * apart (`const { navigate } = useRouter()`).
+ */
+function navigatorValue(e: ts.Expression): boolean {
+  if (navigatorCall(e)) return true;
+  if (!ts.isIdentifier(e)) return false;
+  const d = declarationOf(e);
+  if (d && ts.isVariableDeclaration(d)) return navigatorCall(d.initializer);
+  if (!d || !ts.isBindingElement(d) || !ts.isObjectBindingPattern(d.parent) || !ts.isVariableDeclaration(d.parent.parent)) return false;
+  const key = d.propertyName ?? d.name;
+  return ts.isIdentifier(key) && key.text === "navigate" && navigatorCall(d.parent.parent.initializer);
+}
+
+/** What a call is to a client router: a navigation or route definition ("route"), a document load, or neither. */
+function routerCall(callee: ts.Expression): "route" | "document" | undefined {
+  const imported = routerImport(callee);
+  if (imported) return imported.router.documents.includes(imported.name) ? "document" : imported.router.functions.includes(imported.name) ? "route" : undefined;
+  const m = member(callee);
+  if (m) return m.name === "navigate" && navigatorValue(unwrap(m.receiver)) ? "route" : undefined;
+  return ts.isIdentifier(callee) && navigatorValue(callee) ? "route" : undefined;
+}
+
+/**
+ * Whether a navigation's options or a component's attributes set `reloadDocument`, to anything but `false`: the last
+ * one set wins, in a spread of an object literal too.
+ */
+function reloads(props: ts.ObjectLiteralExpression | ts.JsxAttributes): boolean {
+  let reload = false;
+  for (const p of props.properties) {
+    if (ts.isJsxAttribute(p) && p.name.getText() === "reloadDocument") {
+      const v = p.initializer && ts.isJsxExpression(p.initializer) ? p.initializer.expression : p.initializer;
+      reload = !v || unwrap(v).kind !== ts.SyntaxKind.FalseKeyword;
+    } else if (ts.isPropertyAssignment(p) && keyOf(p) === "reloadDocument") reload = unwrap(p.initializer).kind !== ts.SyntaxKind.FalseKeyword;
+    else if (ts.isShorthandPropertyAssignment(p) && p.name.text === "reloadDocument") reload = true;
+    else if (ts.isSpreadAssignment(p) || ts.isJsxSpreadAttribute(p)) {
+      const spread = unwrap(p.expression);
+      if (ts.isObjectLiteralExpression(spread) && setsReload(spread)) reload = reloads(spread);
+    }
+  }
+  return reload;
+}
+
+/** Whether an object literal sets `reloadDocument`, itself or in a spread of another. */
+function setsReload(o: ts.ObjectLiteralExpression): boolean {
+  return o.properties.some((p) => {
+    if (ts.isSpreadAssignment(p)) {
+      const spread = unwrap(p.expression);
+      return ts.isObjectLiteralExpression(spread) && setsReload(spread);
+    }
+    return (ts.isPropertyAssignment(p) && keyOf(p) === "reloadDocument") || (ts.isShorthandPropertyAssignment(p) && p.name.text === "reloadDocument");
+  });
+}
+
+/**
+ * What a string is to a client router (`CLIENT_ROUTERS`): "route" where it names one of the app's own routes, in an
+ * attribute of the router's component or in the arguments of its function, through the objects, arrays and spreads
+ * written there (a call or a function inside runs on its own); "document" where the navigation loads the document
+ * instead, which the browser requests with GET: a `to` or `href` beside `reloadDocument`, or the URL React Router's
+ * `redirectDocument` takes first (its response options are the router's, as `redirect`'s are). Undefined anywhere
+ * else, and in a file that imports no client router.
+ */
+function clientRoute(node: ts.Node): "route" | "document" | undefined {
+  if (!importsRouter(node.getSourceFile())) return undefined;
+  let value: ts.Node = valuePlace(node);
+  let key: string | undefined;
+  let options: ts.ObjectLiteralExpression | undefined;
+  for (;;) {
+    const parent = value.parent;
+    if (ts.isPropertyAssignment(parent) && parent.initializer === value) {
+      key = keyOf(parent);
+      options = parent.parent;
+      value = valuePlace(parent.parent);
+    } else if (ts.isSpreadAssignment(parent)) {
+      options = parent.parent;
+      value = valuePlace(parent.parent);
+    } else if (ts.isArrayLiteralExpression(parent)) value = valuePlace(parent);
+    else if (ts.isJsxExpression(parent)) value = parent;
+    else break;
+  }
+  const holder = value.parent;
+  const reloaded = (props: ts.ObjectLiteralExpression | ts.JsxAttributes) => (reloads(props) && (key === "to" || key === "href") ? "document" : "route");
+  if (ts.isJsxAttribute(holder) || ts.isJsxSpreadAttribute(holder)) {
+    if (ts.isJsxAttribute(holder)) key = holder.name.getText();
+    const imported = routerImport(holder.parent.parent.tagName);
+    return imported?.router.elements.includes(imported.name) ? reloaded(holder.parent) : undefined;
+  }
+  const place = argumentPlace(value);
+  if (!place || !ts.isCallExpression(place.call)) return undefined;
+  const call = routerCall(place.callee);
+  if (call === "document") return place.at === 0 && key === undefined ? "document" : "route";
+  return call === "route" && options ? reloaded(options) : call;
+}
+
+/**
+ * Whether a file is the route tree TanStack Router's generator writes (`routeTree.gen.ts`), which registers the routes
+ * it holds by declaring `FileRoutesByPath` in `@tanstack/react-router`: every path in it is one of the app's own routes.
+ */
+function generatedRouteTree(sf: ts.SourceFile): boolean {
+  return sf.statements.some(
+    (s) =>
+      ts.isModuleDeclaration(s) &&
+      ts.isStringLiteral(s.name) &&
+      TANSTACK_ROUTER.includes(s.name.text) &&
+      !!s.body &&
+      ts.isModuleBlock(s.body) &&
+      s.body.statements.some((d) => ts.isInterfaceDeclaration(d) && d.name.text === "FileRoutesByPath"),
+  );
+}
+
 /** The `const` with an initializer that the name used at `id` refers to, by its lexical scopes; undefined otherwise. */
 function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
   const d = declarationOf(id);
@@ -446,6 +665,14 @@ export interface ReadContext {
   origin?: string;
   /** Collects where the configured prefix is put before a function's path parameter (`prefixing`). */
   prefixed?: Place[];
+  /** Whether a route of the target serves a path; a path with a file extension is read only then. */
+  served?: (path: string) => boolean;
+  /** Per template, the paths of the routes that render it, against which a URL relative to the page is resolved. */
+  pages?: Map<string, string[]>;
+  /** Collects the Thymeleaf links whose URL is a value, not text (`@{${url}}`, `@{__${link}__}`). */
+  unread?: Place[];
+  /** Collects the page-relative URLs and forms with no action of a template no route atlas reads renders. */
+  unpaged?: Place[];
 }
 
 /**
@@ -457,6 +684,7 @@ export const reachesTarget = (host: string | undefined, origin: string | undefin
 export function callsFromTypeScript(file: string, text: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
   const { spans, passed, origin, prefixed } = context;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  if (generatedRouteTree(sf)) return [];
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
   const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
@@ -483,11 +711,13 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
   const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
     if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw) || middlewareMatcher(node, file)) return undefined;
+    // A client router's own route, unless it names another origin (`<Link to="https://...">`), which the browser loads.
+    if (clientRoute(node) === "route" && hostOf(raw) === undefined) return undefined;
     if (spec.prefix && prefixing(node, spec.prefix)) {
       if (report) prefixed?.push({ file, line: lineAt(node) });
       return undefined;
     }
-    const parsed = callPath(raw) ?? rootNavigation(node, raw);
+    const parsed = callPath(raw, false, context.served) ?? rootRequest(node, raw, spec.wrappers);
     const callee = parsed && laterArgument(node);
     if (callee === undefined) return parsed;
     if (report) passed?.push({ callee, at: { file, line: lineAt(node) } });
@@ -817,7 +1047,7 @@ function exceptionArguments(file: string, text: string): Array<{ start: number; 
  * Kotlin, Java, Swift, Python and other languages: double- or single-quoted string literals with `$x`, `${x}`, `{x}` or
  * `%s` holes. `labels` collects the paths left unread because they are given to an exception (`exceptionArguments`).
  */
-export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[]): ReadCall[] {
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean): ReadCall[] {
   const out: ReadCall[] = [];
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
@@ -844,7 +1074,9 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
     if (registered) return;
-    const parsed = callPath(inner);
+    const before = text.slice(Math.max(0, index - 200), index);
+    // The root path only as a verb call's URL.
+    const parsed = callPath(inner, false, served) ?? (VERB_BEFORE.test(before) ? callPath(inner, true, served) : undefined);
     if (!parsed) return;
     // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
     // the exception's literal the string lies in. A string in an f-string field is in code of its own.
@@ -855,7 +1087,6 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
-    const before = text.slice(Math.max(0, index - 200), index);
     const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
     const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + length);
     out.push({
@@ -931,29 +1162,97 @@ function scanHtml(original: string): { text: string; raw: RawText[] } {
 }
 
 /**
- * The path of the Thymeleaf link expression starting at `@{`: its `/...` literal with `{name}` placeholders, up to
- * the parameter list or the closing brace. The parameters may hold any expression; they are not read.
+ * An attribute value with Thymeleaf's preprocessing (`__${...}__`, tutorial section 4.15) done as far as it can be
+ * without the model: each preprocessed expression becomes a `{...}` group of the same length, a value written into the
+ * text where it stands, as a path variable is.
  */
-function linkPath(text: string, at: number): string | undefined {
-  let i = at + 2;
-  while (/\s/.test(text[i] ?? "")) i++;
-  if (text[i] === "~") i++;
-  if (text[i] !== "/") return undefined;
-  let path = "";
-  while (i < text.length) {
-    const c = text[i]!;
-    if (c === "{") {
-      const close = text.indexOf("}", i);
-      if (close < 0) return undefined;
-      path += text.slice(i, close + 1);
-      i = close + 1;
-      continue;
-    }
-    if (c === "(" || c === "}" || /\s/.test(c)) break;
-    path += c;
-    i++;
+function preprocessed(value: string): string {
+  return value.replace(/__[\s\S]*?__/g, (m) => `{${m.slice(1, -1).replace(/[^\n]/g, " ")}}`);
+}
+
+/** Where the `{` of a `${...}` (or a `{...}` group) at `open` closes, nested braces counted. */
+function braceEnd(text: string, open: number): number | undefined {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return i;
   }
-  return path;
+  return undefined;
+}
+
+/**
+ * The URL a Thymeleaf link expression starting at `@{` writes, as text with `{...}` groups for the values in it, up to
+ * its parameter list; null when its base is an expression whose value is the URL. Thymeleaf's Standard URL Syntax:
+ * `@{/order/details(...)}` is a shortcut for `@{'/order/details'(...)}`, and the base may be any expression. Read are a
+ * literal token, and text expressions that start with literal text: quoted literals and literal substitutions
+ * (`|/a/${x}|`) appended with `+` (tutorial sections 4.7 and 4.8), any `${...}` in them a value. A base that starts with
+ * a value (`${url}`, `|${base}/x|`) or is any other expression (a conditional) is the URL itself, and is not read.
+ */
+function linkUrl(text: string, at: number): string | null {
+  let i = at + 2;
+  const skip = () => {
+    while (/\s/.test(text[i] ?? "")) i++;
+  };
+  skip();
+  let url = "";
+  if (text[i] === "'" || text[i] === "|") {
+    for (let first = true; ; first = false) {
+      skip();
+      const c = text[i];
+      if (c === "'") {
+        let end = i + 1;
+        while (end < text.length && text[end] !== "'") end += text[end] === "\\" ? 2 : 1;
+        if (end >= text.length) return null;
+        url += text.slice(i + 1, end).replace(/\\(.)/g, "$1");
+        i = end + 1;
+      } else if (c === "|") {
+        const end = text.indexOf("|", i + 1);
+        if (end < 0) return null;
+        const body = text.slice(i + 1, end);
+        if (first && /^[$*#]\{/.test(body)) return null;
+        url += body.replace(/[$*#]\{[^}]*\}/g, HOLE);
+        i = end + 1;
+      } else if (!first && (/^[$*#]\{/.test(text.slice(i, i + 2)) || c === "{")) {
+        const end = braceEnd(text, c === "{" ? i : i + 1);
+        if (end === undefined) return null;
+        url += HOLE;
+        i = end + 1;
+      } else return null;
+      skip();
+      if (text[i] !== "+") break;
+      i++;
+    }
+  } else {
+    if (/^[$*#(]/.test(text[i] ?? "")) return null;
+    while (i < text.length) {
+      const c = text[i]!;
+      if (c === "{") {
+        const close = text.indexOf("}", i);
+        if (close < 0) return null;
+        url += text.slice(i, close + 1);
+        i = close + 1;
+        continue;
+      }
+      if (c === "(" || c === "}" || /\s/.test(c)) break;
+      url += c;
+      i++;
+    }
+  }
+  skip();
+  return text[i] === "(" || text[i] === "}" ? url : null;
+}
+
+/**
+ * What a link's URL requests: a path from the root (context-relative, or server-relative `~/...`), or a path relative
+ * to the page (`edit`, `{id}/edit`, `?page=2`); undefined for a URL that requests nothing here (another site, another
+ * scheme, a fragment of the same page); null for one whose path has no text of its own, only values (`{link}`).
+ */
+function linkTarget(url: string): { path: string; relative: boolean } | null | undefined {
+  const u = url.trim().replace(/^~\//, "/");
+  if (!u || u.startsWith("#") || u.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(u)) return undefined;
+  const path = u.split(/[?#]/)[0]!;
+  if (/\{[^{}]*\}/.test(path) && !/[^/\s]/.test(path.replace(/\{[^{}]*\}/g, ""))) return null;
+  return { path: u, relative: !u.startsWith("/") };
 }
 
 const valueOf = (tag: StartTag, name: string): string | undefined => tag.attributes.find((a) => a.name === name)?.value;
@@ -1155,7 +1454,9 @@ function templateMethod(page: Page, tag: StartTag, name: string): string | null 
  *   the configured `th:data-*` and the items of `th:attr` naming those attributes. `th:attrappend` and `th:attrprepend` add their
  *   value to the static attribute, so the request is the two joined, and nothing when there is no static value;
  * - root-relative URLs in `href`, `src`, `action`, `formaction` and the configured `data-*`, unless Thymeleaf replaces the
- *   attribute;
+ *   attribute; a form with no action, or an empty one, submits to its page's URL;
+ * - a link relative to the page, or a form with no action, once for each path in `context.pages` the template is
+ *   rendered at, resolved against it (the call's `page`); with none, `context.unpaged` collects it;
  * - in inline scripts, the requests the JavaScript makes and, where Thymeleaf inlines JavaScript, link expressions in
  *   `[[...]]` or `[(...)]`.
  * A `{name}` placeholder is any segment text; a `data-*` URL ending in `/` is a base a script appends one segment to.
@@ -1166,9 +1467,11 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
   const page = pageOf(text, raw);
   const requests = requestAttributes(new Set((spec.dataUrls ?? []).map((n) => n.toLowerCase())));
   const out: ReadCall[] = [];
-  const add = (raw: string, index: number, tag: StartTag | undefined, name: string) => {
+  const at = (index: number): Place => ({ file, line: lineOf(text, index) });
+  const add = (raw: string, index: number, tag: StartTag | undefined, name: string, from?: string) => {
     const base = name.startsWith("data-") && raw.length > 1 && raw.endsWith("/");
-    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`);
+    // The root path in a link, a form target or a source; a script reads a `data-*` URL, which may be a base.
+    const parsed = callPath(`${raw.replace(/\{[^{}]*\}/g, HOLE)}${base ? HOLE : ""}`, tag !== undefined && !name.startsWith("data-"), context.served);
     const method = tag ? templateMethod(page, tag, name) : "*";
     if (!parsed || method === null) return;
     out.push({
@@ -1177,9 +1480,26 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       method,
       path: parsed.path,
       based: false,
-      at: { file, line: lineOf(text, index) },
+      at: at(index),
       evidence: "text",
+      ...(from === undefined ? {} : { page: from }),
     });
+  };
+  // A URL relative to the page is resolved against the URL of each page the template is rendered on: the path of each
+  // route whose view it is. A route ending in a catch-all has no one path to resolve against.
+  const pages = (context.pages?.get(file) ?? []).filter((p) => !/\{\*|\*\*/.test(p));
+  const relative = (url: string, index: number, tag: StartTag | undefined, name: string) => {
+    if (tag && templateMethod(page, tag, name) === null) return;
+    if (!pages.length) context.unpaged?.push(at(index));
+    for (const p of pages) add(resolveReference(p, url), index, tag, name, p);
+  };
+  /** A link expression at `index` of `value` (which starts at `start` in the template), in an attribute that requests. */
+  const link = (value: string, index: number, start: number, tag: StartTag | undefined, name: string) => {
+    const url = linkUrl(value, index);
+    const target = url === null ? null : linkTarget(url);
+    if (target === null) context.unread?.push(at(start + index));
+    else if (target?.relative) relative(target.path, start + index, tag, name);
+    else if (target) add(target.path, start + index, tag, name);
   };
 
   for (const tag of page.tags) {
@@ -1190,20 +1510,26 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       const th = /^(?:th:|data-th-)(.+)$/.exec(a.name)?.[1];
       if (!th) continue;
       const family = /^attr(append|prepend)?$/.exec(th);
-      for (let i = a.value.indexOf("@{"); i >= 0; i = a.value.indexOf("@{", i + 2)) {
-        const name = family ? itemName(a.value, i) : th;
-        const path = linkPath(a.value, i);
-        if (!name || !requests(name) || !path) continue;
+      const value = preprocessed(a.value);
+      for (let i = value.indexOf("@{"); i >= 0; i = value.indexOf("@{", i + 2)) {
+        const name = family ? itemName(value, i) : th;
+        if (!name || !requests(name)) continue;
         if (!family || !family[1]) {
           replaced.add(name);
-          add(path, a.at + i, tag, name);
+          link(value, i, a.at, tag, name);
           continue;
         }
         // attrappend / attrprepend: the request is the static value with this added, if the static value is known.
         joined.add(name);
+        const url = linkUrl(value, i);
+        const target = url === null ? null : linkTarget(url);
+        if (target === null) context.unread?.push(at(a.at + i));
         const fixed = plain.get(name);
-        if (!fixed || !fixed.value.startsWith("/")) continue;
-        add(family[1] === "append" ? `${fixed.value}${path}` : `${path}${fixed.value}`, fixed.at, tag, name);
+        if (!target || !fixed) continue;
+        // The joined URL is read as a written one is: from the root, or relative to the page.
+        const joinedTarget = linkTarget(family[1] === "append" ? `${fixed.value}${target.path}` : `${target.path}${fixed.value}`);
+        if (joinedTarget?.relative) relative(joinedTarget.path, fixed.at, tag, name);
+        else if (joinedTarget) add(joinedTarget.path, fixed.at, tag, name);
       }
       if (!family) replaced.add(th);
       else if (!family[1]) for (const item of a.value.split(",")) {
@@ -1216,6 +1542,9 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
       if (!a.value.startsWith("/") || a.value.startsWith("//")) continue;
       add(a.value.replace(/[?#].*$/, ""), a.at, tag, a.name);
     }
+    // A form with no action, or an empty one, submits to the URL of its document (HTML's form submission algorithm).
+    const action = plain.get("action");
+    if (tag.name === "form" && !replaced.has("action") && !joined.has("action") && !action?.value.trim()) relative("", action?.at ?? tag.start, tag, "action");
   }
 
   // Inline scripts, without a src: their requests, at their lines in the template.
@@ -1243,11 +1572,8 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
-      for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
-        const at = (e.index ?? 0) + e[0].length - 2;
-        const path = linkPath(body, at);
-        if (path) add(path, script.bodyStart + at, undefined, "script");
-      }
+      const inlined = preprocessed(body);
+      for (const e of inlined.matchAll(/\[[[(]\s*@\{/g)) link(inlined, (e.index ?? 0) + e[0].length - 2, script.bodyStart, undefined, "script");
     }
   }
   return out.sort((a, b) => a.at.line - b.at.line);
@@ -1264,6 +1590,17 @@ function byCallee(passed: Passed[]): string {
 }
 
 /**
+ * Whether one of the routes serves a path with a file extension: one that matches the path and spells the extension out
+ * (`@GetMapping("/vets.html")`), so the path names a page the application serves, not a file.
+ */
+export const serves =
+  (routes: Array<Pick<Surface, "path">>) =>
+  (path: string): boolean => {
+    const extension = /\.\w+$/.exec(path)?.[0];
+    return !!extension && routes.some((s) => s.path.endsWith(extension) && pathsMatch(s.path, path));
+  };
+
+/**
  * `spans`: where route registrations write their paths (see `extractRoutes`); strings there are not requests.
  *
  * An absolute URL is a request to a source's target when its host is a loopback address, where the repository's
@@ -1271,7 +1608,14 @@ function byCallee(passed: Passed[]): string {
  * URLs are left out. A limit names those hosts, the functions paths were handed to after their first argument, the
  * exceptions paths were given to in code read as text, and where a helper puts the configured prefix before a path.
  */
-export function extractCalls(source: Source, config: Config, coverage: Coverage[] = [], spans?: Spans, limits: string[] = []): ReadCall[] {
+export function extractCalls(
+  source: Source,
+  config: Config,
+  coverage: Coverage[] = [],
+  spans?: Spans,
+  limits: string[] = [],
+  read: { surfaces?: Surface[]; pages?: Map<string, string[]> } = {},
+): ReadCall[] {
   const out: ReadCall[] = [];
   for (const spec of config.calls) {
     const files = select(source, spec.files, config.exclude);
@@ -1280,23 +1624,28 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     const passed: Passed[] = [];
     const labels: Passed[] = [];
     const prefixed: Place[] = [];
+    const unread: Place[] = [];
+    const unpaged: Place[] = [];
+    const routes = serves((read.surfaces ?? []).filter((s) => s.component === spec.to));
+    const served = (path: string): boolean => routes(path) || (!!spec.prefix && routes(joinRoute(spec.prefix, path)));
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
-      const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed })
+      const calls = /\.(c|m)?[tj]sx?$/.test(file)
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed })
-          : callsFromText(file, text, spec, spans, labels);
-      for (const c of read) {
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged })
+          : callsFromText(file, text, spec, spans, labels, served);
+      for (const c of calls) {
         const { host, ...call } = c;
         if (host !== undefined && !reachesTarget(host, origin)) {
           if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
           continue;
         }
-        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
-        out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
+        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it, and so
+        // does one resolved against a page, whose route's path is whole.
+        out.push(spec.prefix && !call.based && call.page === undefined ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
       }
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
@@ -1311,6 +1660,9 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
       const places = prefixed.map((p) => `${p.file}:${p.line}`).join(", ");
       limits.push(`${edge}: the configured prefix ${spec.prefix} put before a function's path parameter (${places}) is not read as a request; the paths passed to that function are`);
     }
+    const places = (list: Place[]) => [...new Set(list.map((p) => `${p.file}:${p.line}`))].join(", ");
+    if (unread.length) limits.push(`${edge}: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: ${places(unread)}`);
+    if (unpaged.length) limits.push(`${edge}: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: ${places(unpaged)}`);
   }
   return out;
 }

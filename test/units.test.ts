@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callPath, joinRoute, methodsMatch, narrowedPath, pathsMatch, routeTemplate } from "../src/paths.js";
+import { callPath, joinRoute, methodsMatch, narrowedPath, pathsMatch, resolveReference, routeTemplate } from "../src/paths.js";
 import { cycleSearch, cycles, surfacePattern } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { documentStart } from "../src/extract/apidocs.js";
@@ -32,6 +32,25 @@ describe("callPath", () => {
     expect(callPath("/")).toBeUndefined();
     expect(callPath("orders")).toBeUndefined();
     expect(callPath("/{}")).toBeUndefined();
+  });
+});
+
+describe("a path with a file extension", () => {
+  it("is read only where a route serves it", () => {
+    expect(callPath("/board.html?page=2")).toBeUndefined();
+    expect(callPath("/board.html?page=2", false, (p) => p === "/board.html")).toEqual({ path: "/board.html", based: false });
+  });
+});
+
+describe("resolveReference", () => {
+  it("resolves a relative path against a page's path as RFC 3986 does", () => {
+    expect(resolveReference("/teams/{}", "{}/edit")).toBe("/teams/{}/edit");
+    expect(resolveReference("/teams/{}/edit", "")).toBe("/teams/{}/edit");
+    expect(resolveReference("/teams/{}/edit", "?page=2")).toBe("/teams/{}/edit?page=2");
+    expect(resolveReference("/teams/{}/members/", "../board")).toBe("/teams/{}/board");
+    expect(resolveReference("/teams", "./")).toBe("/");
+    expect(resolveReference("/a/b", "/x")).toBe("/x");
+    expect(resolveReference("/a/b", "/x/../y?q")).toBe("/y?q");
   });
 });
 
@@ -247,6 +266,7 @@ describe("routesFromTypeScript", () => {
       "async def add_endpoint(app, path):",
       "    add_endpoint(app, '/agent')",
       "add_endpoint(app, AGENT_PATH)",
+      "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);

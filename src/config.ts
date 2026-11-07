@@ -21,10 +21,23 @@ export interface RouteSource {
   styles?: Array<"nest" | "express" | "fastapi" | "spring" | "next">;
   receivers?: string[];
   /**
-   * Where an Express router file is mounted, when the code does not say it with a literal path, as
-   * `app.use(\`${PREFIX}/collect\`, router)` does: `{ "src/routes/collect.js": "/collect" }`.
+   * Where the routers a file declares serve their routes, when the code does not say it with literal paths: an Express
+   * router mounted as `app.use(\`${PREFIX}/collect\`, router)` does, `{ "src/routes/collect.js": "/collect" }`, or a
+   * FastAPI router included as `app.include_router(api_router, prefix=settings.API_V1_STR)` does,
+   * `{ "app/api/main.py": "/api/v1" }`. It takes the place of every mount or include of those routers.
    */
   mounts?: Record<string, string>;
+  /**
+   * The path the application serves every route of the entry under, where the code sets it in a way atlas does not
+   * read. For `nest`, the global prefix: it takes the place of the one `setGlobalPrefix` sets, whose `exclude` and the
+   * version still apply. For the other styles, a path put before every route the code registers.
+   */
+  prefix?: string;
+  /**
+   * For `nest`: the file whose `setGlobalPrefix` and `enableVersioning` calls set up the application, when it is not
+   * the one atlas finds in the component.
+   */
+  bootstrap?: string;
   /**
    * Registration helpers, in TypeScript or Python: the argument that holds the path, and either the argument that holds
    * the method or the one `method` the helper always registers (`*` for every method).
@@ -143,6 +156,19 @@ export function componentPath(path: string): string {
 }
 
 function checkRoute(route: RouteSource): RouteSource {
+  const where = `routes of ${route.component}`;
+  const path = (v: unknown) => typeof v === "string" && v.startsWith("/");
+  if (route.mounts !== undefined) {
+    const entries = route.mounts && typeof route.mounts === "object" && !Array.isArray(route.mounts) ? Object.entries(route.mounts) : undefined;
+    if (!entries?.every(([file, at]) => file.trim().length > 0 && path(at))) {
+      throw new Error(`${where}: mounts maps a file to the path it is served under, starting with / (${JSON.stringify(route.mounts)})`);
+    }
+  }
+  if (route.prefix !== undefined && !path(route.prefix)) throw new Error(`${where}: prefix is a path starting with / (${JSON.stringify(route.prefix)})`);
+  if (route.bootstrap !== undefined) {
+    if (typeof route.bootstrap !== "string" || !route.bootstrap.trim()) throw new Error(`${where}: bootstrap names one file (${JSON.stringify(route.bootstrap)})`);
+    if (!(route.styles ?? []).includes("nest")) throw new Error(`${where}: bootstrap is read for the nest style only`);
+  }
   for (const c of route.calls ?? []) {
     // Exactly one of method and methodArg; an argument position is a whole number from 0.
     const fixed = c.method !== undefined;

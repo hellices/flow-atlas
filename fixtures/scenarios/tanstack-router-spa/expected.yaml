@@ -1,0 +1,45 @@
+case: |
+  A FastAPI backend and a React single-page app on TanStack Router with file-based routes, calling the backend
+  through the SDK hey-api generates; every source file of the app is a call file.
+  Seen in a real run: 70 of the 93 requests read were the app's own routes, each with no method: the paths of
+  `createFileRoute`, the `to` of a `Link`, of `navigate({ to })` and of `redirect({ to })`, and the route ids, paths
+  and type keys of the route tree the router generates (`routeTree.gen.ts`). TanStack Router renders them in the
+  browser; no request reaches the server. Now a string in the router's components and functions (known by the import
+  from `@tanstack/react-router`, through the navigate function `useNavigate()` returns) is no request, and the
+  generated route tree, which registers its routes by declaring `FileRoutesByPath` in that module, holds none. A
+  `window.location.href = "/login"` does load the document, so it is read, as the GET it is. A `/` the router goes to
+  is not a request either.
+surfaces:
+  - backend|POST /api/v1/login/access-token
+  - backend|GET /api/v1/users/me
+  - backend|POST /api/v1/users/signup
+  - backend|GET /api/v1/items
+  - backend|POST /api/v1/items
+  - backend|DELETE /api/v1/items/{id}
+findings: []
+chains:
+  - frontend->backend|POST /api/v1/login/access-token
+  - frontend->backend|GET /api/v1/users/me
+  - frontend->backend|POST /api/v1/users/signup
+  - frontend->backend|GET /api/v1/items
+  - frontend->backend|POST /api/v1/items
+  - frontend->backend|DELETE /api/v1/items/{id}
+calls:
+  - frontend->backend|POST /api/v1/login/access-token @ frontend/src/client/sdk.gen.ts:11
+  - frontend->backend|GET /api/v1/users/me @ frontend/src/client/sdk.gen.ts:21
+  - frontend->backend|POST /api/v1/users/signup @ frontend/src/client/sdk.gen.ts:29
+  - frontend->backend|GET /api/v1/items @ frontend/src/client/sdk.gen.ts:39
+  - frontend->backend|POST /api/v1/items @ frontend/src/client/sdk.gen.ts:47
+  - frontend->backend|DELETE /api/v1/items/{id} @ frontend/src/client/sdk.gen.ts:55
+  # The page the static host serves for the app's path; the backend serves no such path.
+  - frontend->backend|GET /login @ frontend/src/main.tsx:16
+descriptions:
+  - backend none - NoneFound
+inventory:
+  components:
+    - frontend frontend/package.json
+  routes:
+    - backend/app/main.py fastapi 6
+  calls:
+    # A text shape: inventory offers `path:` properties for whoever writes the configuration to judge.
+    - frontend/src/routeTree.gen.ts 6

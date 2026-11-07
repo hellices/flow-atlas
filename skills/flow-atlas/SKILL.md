@@ -161,10 +161,12 @@ OpenAPI document and point the routes at it (`references/openapi.md`), run `atla
 through a sample of findings with a person. Only then record the baseline.
 
 - Keep call files to the client adapters: screen routes (`context.push("/career/$id")`, `<Link href>`) look like
-  requests and come back as FA002.
+  requests and come back as FA002. React Router's and TanStack Router's navigations are known by their import and are
+  not read as requests.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
-  router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`), the `data-*`
+  router is mounted at or a FastAPI router included at (`routes[].mounts`), a Nest global prefix set from a variable
+  (`routes[].prefix`), a registration helper's method (`routes[].calls[].method`), the `data-*`
   attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends
   when the call states none (`calls[].wrappers`, after reading that it hands its URL and init to fetch). A `limit:`
   line tells you when one is missing; never declare one to make a finding go away. A limit on a call whose method is
@@ -212,7 +214,8 @@ names in the repository are relative to the root.
 - In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
   the handler calls (evidence `name`), or, for a Spring page, made by the template its view name renders (`via view
-  <name>`). A `~` by name through a generic name (`get`, `send`) needs a look at the code.
+  <name>`) or sent by the client that follows its redirect (`via redirect`). A `~` by name through a generic name
+  (`get`, `send`) needs a look at the code.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
 - Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'accounts')}">
+<body>
+  <h2>Accounts</h2>
+  <table>
+    <tr th:each="account : ${listAccounts}">
+      <td><a th:href="@{/accounts/__${account.id}__}" th:text="${account.name}">Name</a></td>
+    </tr>
+  </table>
+  <div th:if="${totalPages > 1}">
+    <span th:each="i: ${#numbers.sequence(1, totalPages)}">
+      <a th:if="${currentPage != i}" th:href="@{'/accounts?page=' + ${i}}">[[${i}]]</a>
+    </span>
+    <a th:if="${currentPage > 1}" th:href="@{'/accounts?page=1'}" title="First"></a>
+    <a th:if="${currentPage < totalPages}" th:href="@{'/accounts?page=__${currentPage + 1}__'}" title="Next"></a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html xmlns:th="https://www.thymeleaf.org" th:replace="~{fragments/layout :: layout (~{::body},'accounts')}">
+<body>
+  <h2>Account</h2>
+  <form th:object="${account}" class="form-horizontal" id="add-account-form" method="post">
+    <input th:replace="~{fragments/inputField :: input ('Name', 'name', 'text')}" />
+    <button type="submit" th:text="${account['new']} ? 'Add Account' : 'Update Account'">Add Account</button>
+  </form>
+</body>
+</html>

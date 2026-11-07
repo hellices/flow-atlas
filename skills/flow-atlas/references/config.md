@@ -23,8 +23,10 @@ routes:
     files: ["services/orders/src/**/*.ts"]
     styles: [nest]            # nest | express | fastapi | spring | next
     receivers: [app, router]  # express receivers; default app, router, server, fastify
-    mounts:                   # where an Express router file is served, when its `use` path is not a literal
-      "services/orders/src/routes/collect.js": /collect
+    mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
+      "services/orders/src/routes/collect.js": /collect   # an Express router's `use` path, or a FastAPI router's include prefix
+    prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
+    bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
     calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler); positions count from 0
@@ -113,7 +115,26 @@ method is `*`: atlas does not read into the wrapper. A method named in brackets 
 the method named after a dot. A string in a type
 (`path: "/m" | "/r"`) names a value and is no request, nor is a string compared (`===`, `!==`, `==`, `!=`, `case`) or
 handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`, `indexOf`, `match`, `search`, `test`,
-`split`, `replace` other than the window's `location.replace(url)` and Next.js's router's). fetch, axios, ky, got and project wrappers take their URL first, so a path
+`split`, `replace` other than the window's `location.replace(url)` and Next.js's router's). The window's Location
+navigates with GET, as the HTML standard defines: `location.href = url` (also `window.location`, `document.location`,
+or the Location itself set), `location.assign(url)` and `location.replace(url)`. The root path `/` is read only where
+the string is in a request's place: the URL, the first argument, of the global fetch, of a call named after an HTTP method or of a
+configured wrapper; a JSX `href`, `action`, `formAction` or `src`; a navigation of Next.js's router or of the window's
+Location; a branch of a conditional in one of those places. A lone `/` anywhere else is a separator, a join or a key,
+and is not read. A client-side router's navigations and route definitions are the app's own routes, which the router
+renders in the browser, and are no requests, the names imported one by one or as a namespace (`RR.Link`). React
+Router (imported from `react-router` or `react-router-dom`): the
+attributes of `Link`, `NavLink`, `Navigate` and `Route`; the arguments of `redirect`, `replace`, `useNavigate`,
+`createBrowserRouter`, `createHashRouter`, `createMemoryRouter` and `useRoutes`, through the objects, arrays and spreads
+written there; the function `useNavigate()` returns, and the `navigate` method of a router those create. TanStack Router
+(imported from `@tanstack/react-router`): the attributes of `Link` and `Navigate`; the arguments of `createFileRoute`,
+`createLazyFileRoute`, `createRoute`, `redirect`, `useNavigate` and `getRouteApi`; the function `useNavigate()` returns
+and the `navigate` method of `useRouter()` or `createRouter()`; and the route tree its generator writes
+(`routeTree.gen.ts`, known by the `FileRoutesByPath` it declares in `@tanstack/react-router`), which holds no request.
+A call written there (a loader's `fetch`) still runs and is read. A navigation that loads the document instead is a
+GET: a `to` (or TanStack's `href`) beside `reloadDocument` (the last one set, in a spread of an object literal too),
+while the navigation's other options stay the router's; and the URL React Router's `redirectDocument(url, init)` takes
+first. An absolute URL to another origin is read as any absolute URL is, its root path too. The same names imported from anywhere else are read as before. fetch, axios, ky, got and project wrappers take their URL first, so a path
 handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
 method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)` or Angular's
 `request(method, url)` with the method held in a value, or a `redirect(status, url)`; the window's `open(url, target)`
@@ -144,7 +165,34 @@ its routes under each literal path it is mounted at with `use` (an inline middle
 nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
-read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
+read and a limit says so. A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
+Multiple Files"), at the router's `prefix` joined to its path, under every `include_router` that takes the router in
+with that call's `prefix`, under where the router or application it is included into is served; an application
+(`FastAPI()`) serves at the root. Routers are followed through nested includes and the imports of the route files
+(`items.router` after `from app.api.routes import items`, `utils_router` after `from .utils import router as
+utils_router`), and an include under a condition counts. A router whose prefix, or the prefix of an include on its way
+to the application, the file does not spell out (`settings.API_V1_STR`, an f-string, a `**` argument that may hold it), and one included nowhere in the
+route files, serves nothing atlas can place: its routes are not read, and one limit names the include or the router
+and the router files it leaves out. `mounts` gives the path a router file's routers serve their routes under, their own
+prefix included, in place of their includes; the routers included into them are read under it. A StaticFiles mount
+is served under the prefixes of the application or router it is mounted on. A decorator on a receiver the files bind
+to no application or router (a function's parameter, a router made by a factory) is read at the path written, and a
+limit says so; a name a function binds (a parameter, or a name its body assigns to anything but `FastAPI()` or
+`APIRouter()`) is the function's own, not the file's router, in decorators and includes alike. A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
+/techniques/versioning), under the global prefix `setGlobalPrefix` sets, except those an `exclude` entry matches
+without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled as path-to-regexp 8 does: `:name`,
+`*name` and `{...}`), and with URI versioning (`enableVersioning()` or `type: VersioningType.URI`) after the prefix
+`v<version>` (or the `prefix` option's text), the version being the method's `@Version`, else the controller's
+`@Controller({ version })`, else `defaultVersion`; a list serves one path per version and `VERSION_NEUTRAL` none. An
+excluded route keeps its version. atlas reads those calls in the route files and the component's code (tests and the
+other excluded files left out), or in the `bootstrap` file the entry names; literals and `const`s of the file are read.
+Calls that set different values (two applications) leave the controllers' routes unread; a setting not spelled out
+agrees with no other. A prefix, version or versioning option
+not spelled out leaves the routes it applies to unread, with a limit; an `exclude` entry not spelled out (built with
+`.map`, a template) or of other syntax is named in a limit, and the routes it might keep out are read under the
+prefix. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of
+the one the bootstrap sets (its exclusions and the version still apply); for the other styles, before each path the code
+registers. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
 under its `src/`: route groups and slots add no segment, private folders and intercepting routes are not served, `[id]`
 is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and `[[...rest]]` is `{*rest}` (none or more). Next.js
@@ -187,6 +235,11 @@ template's are: they start chains of their own, which the page's chain lists as 
 of another component (what it renders from it is not read), a `<link>`, a Pages Router `_app` and what `notFound()` or an error renders are not read for it. Include `.tsx` in the route
 files to read them. The `matcher` of the `config` a `middleware` or `proxy` file exports names the paths it runs on,
 not requests. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
+`useRouter().push`; also parenthesized or with `as const`) is a GET, and a `redirect` from `next/navigation` keeps the
+method of the request it answers (`*`); each reaches
+the page it names as a request of its own. Include `.tsx` in the route
+files to read them. `inventory` offers the `next` style for a file only where the nearest `package.json` above it
+depends on `next`, or none is found. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. A path given to an exception is a label, not a request: an argument
@@ -204,8 +257,9 @@ unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, 
 `/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
-(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
-is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; an application or router of the route files
+that it mounts serves the routes read there under `/x`, as an include would; another mounted application is not read,
+and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
@@ -218,14 +272,30 @@ mapping where it is written. A Security URL held in a constant registers nothing
 lambda, on a chain that starts at its parameter; in the chained form, on the chain that continues `formLogin()` or
 `logout()`. A page handler that returns a view name (`return "movies/detail"`) leads to the requests in
 `src/main/resources/templates/movies/detail.html` of its application, where Spring Boot's default Thymeleaf resolver
-looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. A route source's
+looks; a `@RestController` or `@ResponseBody` handler's string is its response, not a view. The name may be a
+`static final String` (Kotlin `const val`) the file declares, or what a private method of the handler's class returns
+when the handler returns its result and the class declares one method of that name. A name starting with `redirect:`
+is a redirect (Spring MVC's view resolution: the rest is the URL): it leads to a GET of that path, which the client
+that made the request sends next (a chain's `next`, `via redirect`), from a GET or POST route (a HEAD from a HEAD
+route, which a GET mapping serves when no HEAD mapping fits; after another method the client may keep it, so its method
+is `*`); a Kotlin expression body's whole result is read, each branch of an `if` or `when` apart; the current request's URI variables (`{id}`) and any value appended in
+code are values, a relative URL is resolved against the route's path, and one starting with a value is named in a
+limit. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
 (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and
 `th:attr` items, and root-relative URLs in `href`, `action`, `src`, `formaction` and the configured `data-*`; also the
 requests inline scripts without a `src` (written, or rendered by `th:src` or `th:attr`) make,
-and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link is a GET. A form action takes the
+and link expressions in `[[...]]` where a script has `th:inline="javascript"`. A link's base may be quoted
+(`@{'/owners?page=1'}`) and appended to (`@{'/owners/' + ${id}}`), or a literal substitution (`@{|/owners/${id}|}`),
+as long as it starts with text; a preprocessed value (`@{/owners/__${owner.id}__}`) is a value in the path. A link
+whose URL is a value (`@{${url}}`, a fragment parameter `@{__${link}__}`, a conditional) is not read, and a limit names
+it. A page-relative link (`@{__${owner.id}__/edit}`) and a form with no `action` (or an empty one), which submits to the
+URL of its page, are resolved against the path of each route whose view renders the template: one call per path, which
+only the routes of that path reach (the call's `page`). In a template no route atlas reads renders (a fragment file),
+they are not read, and a limit names them. A path ending in a file extension (`.html`, `.css`) names a file and is
+not read, unless a route of the target serves it with that extension spelled out (`@GetMapping("/vets.html")`). A link is a GET. A form action takes the
 form's method, and a submit button's `formaction` its `formmethod`, else its form's; a submit control with no form
 owner (none around it, or a `form` attribute naming no form) submits nothing. A plain `method` or `formmethod`
 is read as the HTML standard defines it: `get` or `post`, nothing sent for `dialog`, and GET for any other value, as a
@@ -237,7 +307,7 @@ Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attr
 `dataUrls` (those the project's scripts request, as `data-api-url`) are read: any method, and one ending in `/` is a
 base the script appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
-their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
+their value to the plain one, and a joined URL relative to the page is resolved as a page-relative link is. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
 
 Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without

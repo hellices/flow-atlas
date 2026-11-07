@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
 import { FlowIndex } from "./flow.js";
-import { API_VERSION, type Document, type Edge, type Graph } from "./model.js";
+import { API_VERSION, isRedirect, type Document, type Edge, type Graph } from "./model.js";
 import { derived } from "./provenance.js";
 import { surfacePattern } from "./rules.js";
 
@@ -40,8 +40,11 @@ export interface ChainReport extends Document<"Chains"> {
   unchained: string[];
 }
 
-/** A reach edge to what a rendered page offers is a later request, not part of the one that rendered it. */
-export const offersNext = (e: Edge): boolean => e.kind === "reach" && (e.via ?? "").startsWith("view ");
+/**
+ * A reach edge to what a rendered page offers, or to where a reply redirects, is a later request, not part of the one
+ * that rendered or redirected.
+ */
+export const offersNext = (e: Edge): boolean => (e.kind === "reach" && (e.via ?? "").startsWith("view ")) || isRedirect(e);
 
 export const chainId = (entry: string, surface: string): string => `${entry}->${surface}`;
 
@@ -54,11 +57,13 @@ export function chainRoot(id: string): string | undefined {
 export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces">): ChainReport {
   const index = new FlowIndex(graph);
   const isPublic = surfacePattern(config.publicSurfaces);
-  // A call that a handler makes in the same request belongs to that request; any other call starts one.
+  // A call that a handler makes in the same request belongs to that request; any other call starts one. A redirect is
+  // followed by the client that made the request, so it starts a request of that client's, after the one it answers.
   const inRequest = new Set(graph.edges.filter((e) => e.kind === "reach" && !offersNext(e)).map((e) => e.to));
+  const redirects = new Set(graph.edges.filter(isRedirect).map((e) => e.to));
   const roots = new Map<string, { component: string; root: string; callers: string[] }>();
   for (const c of graph.calls) {
-    if (inRequest.has(c.id)) continue;
+    if (inRequest.has(c.id) || redirects.has(c.id)) continue;
     for (const e of index.out.get(c.id) ?? []) {
       if (e.kind !== "match") continue;
       const id = chainId(c.from, e.to);
@@ -66,14 +71,24 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       r.callers.push(c.id);
     }
   }
-  // A client outside the repository is assumed only for a public surface nothing in the repository calls.
-  const called = new Set(graph.edges.filter((e) => e.kind === "match" && index.calls.has(e.from)).map((e) => e.to));
+  // A client outside the repository is assumed only for a public surface nothing in the repository calls. A redirect
+  // calls a surface only for the client of a chain it answers: one leading from a request a component makes, maybe after
+  // other redirects. Public surfaces that only redirect to each other have no such client.
+  const called = new Set(graph.edges.filter((e) => e.kind === "match" && index.calls.has(e.from) && !redirects.has(e.from)).map((e) => e.to));
+  const redirectedTo = (s: string) =>
+    (index.out.get(s) ?? []).filter(isRedirect).flatMap((r) => (index.out.get(r.to) ?? []).filter((m) => m.kind === "match").map((m) => m.to));
+  const answered = new Set([...roots.values()].map((r) => r.root));
+  for (const s of answered) for (const t of redirectedTo(s)) answered.add(t);
   for (const s of graph.surfaces) {
-    if (isPublic(s.id) && !called.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
+    if (isPublic(s.id) && !called.has(s.id) && !answered.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
   }
 
   const chains: Chain[] = [];
-  for (const [id, r] of [...roots.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  // A redirect's target becomes a chain of the redirected client's when nothing else starts one, so roots grow as chains
+  // are walked.
+  const queue = [...roots.keys()];
+  for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+    const r = roots.get(id)!;
     const surfaces = [r.root];
     const edges: Edge[] = [];
     const next: Chain["next"] = [];
@@ -89,6 +104,17 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
           if (!call) continue;
           for (const m of index.out.get(call.id) ?? []) {
             if (m.kind !== "match") continue;
+            if (isRedirect(reach)) {
+              // Only the root's reply goes back to the entry; a surface reached inside the request answers its caller.
+              if (s !== r.root) continue;
+              const following = chainId(r.component, m.to);
+              if (!roots.has(following)) {
+                roots.set(following, { component: r.component, root: m.to, callers: [] });
+                queue.push(following);
+              }
+              next.push({ chain: following, from: s, via: reach.via! });
+              continue;
+            }
             if (offersNext(reach)) {
               next.push({ chain: chainId(call.from, m.to), from: s, via: reach.via! });
               continue;
@@ -130,6 +156,7 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       digest,
     });
   }
+  chains.sort((a, b) => a.id.localeCompare(b.id));
   const reached = new Set(chains.flatMap((c) => c.surfaces));
   return {
     apiVersion: API_VERSION,

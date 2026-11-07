@@ -1,7 +1,7 @@
 import type { RouteSource } from "../config.js";
 import type { Surface } from "../model.js";
 import { surfaceId } from "../model.js";
-import { joinRoute, routeTemplate } from "../paths.js";
+import { HOLE, joinRoute, resolveReference, routeTemplate } from "../paths.js";
 import { lineOf } from "../source.js";
 import type { Spans } from "./spans.js";
 import { literalEnd, withoutComments } from "./calls.js";
@@ -12,8 +12,11 @@ const MAPPING = /@(?:[\w.]*\.)?(RequestMapping|GetMapping|PostMapping|PutMapping
 const TYPE = /\b(?:class|interface|object|record)\s+(?:[A-Za-z_]\w*|`[^`\n]+`)/g;
 const REQUEST_METHODS = /\b(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|TRACE)\b/g;
 
-/** The views a handler renders, by route, with the file of the handler so its application's templates can be found. */
-export type Views = Map<string, { file: string; names: string[] }>;
+/**
+ * The views a handler renders, by route, with the file of the handler so its application's templates can be found; and
+ * the paths its replies redirect to, with the line of each.
+ */
+export type Views = Map<string, { file: string; names: string[]; redirects: Array<{ path: string; line: number }> }>;
 
 /**
  * Java or Kotlin code with the contents of every string and character literal blanked (quotes, newlines and offsets
@@ -430,9 +433,9 @@ function expressionEnd(masked: string, from: number): number {
 
 /**
  * The body of the method a mapping annotates, after its parameter list: `{ ... }`, or a Kotlin `= expression`; as
- * written and with its strings masked.
+ * written and with its strings masked, and where it starts in the file.
  */
-function methodBody(code: string, masked: string, open: number): { body: string; masked: string } | undefined {
+function methodBody(code: string, masked: string, open: number): { body: string; masked: string; start: number } | undefined {
   const close = closing(masked, open);
   if (close === undefined) return undefined;
   const brace = masked.slice(close + 1).search(/[{;=]/);
@@ -442,24 +445,236 @@ function methodBody(code: string, masked: string, open: number): { body: string;
   if (masked[start] === "=") end = expressionEnd(masked, start + 1);
   else if (masked[start] === "{") end = (closing(masked, start) ?? -2) + 1;
   if (end === undefined || end < 0) return undefined;
-  return { body: code.slice(start, end), masked: masked.slice(start, end) };
+  return { body: code.slice(start, end), masked: masked.slice(start, end), start };
+}
+
+/** Where a statement's expression that starts at `from` ends: at a `;` or a closing bracket outside brackets. */
+function statementEnd(masked: string, from: number, kotlin: boolean): number {
+  let depth = 0;
+  const end = kotlin ? expressionEnd(masked, from) : masked.length;
+  for (let i = from; i < end; i++) {
+    const c = masked[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c) && depth-- === 0) return i;
+    else if (c === ";" && depth === 0) return i;
+  }
+  return end;
 }
 
 /**
- * View names a handler body renders: `ModelAndView("x")` and `setViewName("x")` always; when the handler writes no
- * response body, also `return "x"` or a Kotlin expression body `= "x"`. Redirects and forwards are not views.
+ * Whether the `return` at `at` of a block body (`masked` starts with its `{`) returns from the handler: no brace around
+ * it opens the body of a type declared or created in it, or of a function declared in it, or (in Java) of a lambda. A
+ * Kotlin lambda's `return` returns from the enclosing function; a Java switch rule's block (`case A -> {`) is the
+ * handler's.
  */
-function viewNames({ body, masked }: { body: string; masked: string }, strings: boolean): string[] {
-  const explicit = /(?:ModelAndView\s*\(\s*|setViewName\s*\(\s*)"([^"\\:]+)"/g;
-  // In a Kotlin expression body, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
-  const returned = !body.trimStart().startsWith("{")
-    ? /(?:\breturn\s+|=\s*|\)\s*|\belse\s+|->\s*)"([^"\\:]+)"/g
-    : /\breturn\s+"([^"\\:]+)"/g;
+function handlerReturn(masked: string, at: number, kotlin: boolean): boolean {
+  const open: number[] = [];
+  for (let i = 0; i < at; i++) {
+    if (masked[i] === "{") open.push(i);
+    else if (masked[i] === "}") open.pop();
+  }
+  return open.slice(1).every((b) => {
+    const before = masked.slice(0, b).trimEnd();
+    // A type: `class X`, `object : Y`, `new X() {`, `record R(...)`.
+    if (/(?<![\w$.])(?:class|interface|enum)\s+[\w$][^{};=]*$/.test(before)) return false;
+    if (kotlin && /(?<![\w$.])object\b[^{};=]*$/.test(before)) return false;
+    if (before.endsWith(")")) {
+      const paren = openingParen(before, before.length - 1);
+      const head = before.slice(0, paren).trimEnd();
+      if (/\bnew\s+[\w$.]+(?:\s*<[^;{}()]*>)?$|\brecord\s+[\w$]+(?:\s*<[^;{}()]*>)?$/.test(head)) return false;
+    }
+    if (kotlin) return !/\bfun\b[^{};=]*$/.test(before);
+    // A Java lambda's block; a switch rule's starts with its label.
+    return !before.endsWith("->") || /(?:^|[;{}])\s*(?:case\b[^;{}]*|default\s*)->$/.test(before);
+  });
+}
+
+/** Where the `(` that the `)` at `close` closes opens, in masked code. */
+function openingParen(masked: string, close: number): number {
+  let depth = 0;
+  for (let i = close; i >= 0; i--) {
+    if (masked[i] === ")") depth++;
+    else if (masked[i] === "(" && --depth === 0) return i;
+  }
+  return 0;
+}
+
+/**
+ * Where a Kotlin expression from `from` (up to `limit`) ends, as a branch: at a `;`, a closing bracket or an `else`
+ * outside brackets, or at the end of a line that neither leaves it open (an operator) nor is continued by the next.
+ */
+function branchEnd(masked: string, from: number, limit: number): number {
+  let depth = 0;
+  for (let i = from; i < limit; i++) {
+    const c = masked[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) {
+      if (depth === 0) return i;
+      depth--;
+    } else if (depth > 0) continue;
+    else if (c === ";" || (/^else\b/.test(masked.slice(i, i + 5)) && !/[\w$]/.test(masked[i - 1] ?? ""))) return i;
+    else if (c === "\n") {
+      const line = masked.slice(masked.lastIndexOf("\n", i - 1) + 1, i).trim();
+      const next = /^\s*(\S{1,2})/.exec(masked.slice(i + 1, limit))?.[1] ?? "";
+      if (line && !/(?:[=,+\-*/(]|->|&&|\|\||\?:)$/.test(line) && !/^(\?\.|\?:|\.|&&|\|\|)/.test(next)) return i;
+    }
+  }
+  return limit;
+}
+
+/**
+ * The results of a Kotlin expression from `from` (up to `limit`), as ranges of `masked`, and where it ends: the whole
+ * expression, or for an `if` or `when`, the results of each branch. A branch that is a block is not read.
+ */
+function kotlinResults(masked: string, from: number, limit: number): { ranges: Array<readonly [number, number]>; end: number } {
+  let i = from;
+  while (i < limit && /\s/.test(masked[i]!)) i++;
+  const skip = (at: number) => at + (/^\s*/.exec(masked.slice(at, limit))?.[0].length ?? 0);
+  const keyword = /^(if|when)\b/.exec(masked.slice(i, limit))?.[1];
+  if (masked[i] === "{") return { ranges: [], end: (closing(masked, i) ?? limit - 1) + 1 };
+  if (keyword === "if") {
+    const open = skip(i + 2);
+    const close = masked[open] === "(" ? closing(masked, open) : undefined;
+    if (close === undefined || close >= limit) return { ranges: [], end: limit };
+    const then = kotlinResults(masked, close + 1, limit);
+    const other = skip(then.end);
+    if (!/^else\b/.test(masked.slice(other, limit))) return then;
+    const otherwise = kotlinResults(masked, other + 4, limit);
+    return { ranges: [...then.ranges, ...otherwise.ranges], end: otherwise.end };
+  }
+  if (keyword === "when") {
+    let open = skip(i + 4);
+    if (masked[open] === "(") open = skip((closing(masked, open) ?? limit) + 1);
+    const close = masked[open] === "{" ? closing(masked, open) : undefined;
+    if (close === undefined || close >= limit) return { ranges: [], end: limit };
+    const ranges: Array<readonly [number, number]> = [];
+    let depth = 0;
+    for (let k = open + 1; k < close; k++) {
+      const c = masked[k]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (depth === 0 && masked.startsWith("->", k)) {
+        const arm = kotlinResults(masked, k + 2, close);
+        ranges.push(...arm.ranges);
+        k = arm.end - 1;
+      }
+    }
+    return { ranges, end: close + 1 };
+  }
+  const end = branchEnd(masked, i, limit);
+  return { ranges: i < end ? [[i, end]] : [], end };
+}
+
+/** What a handler's reply leads to: the views it renders and the URLs it redirects to, by where each is written. */
+interface Replies {
+  views: string[];
+  redirects: Array<{ url: string; at: number }>;
+  /** Redirects to a URL that starts with a value the file does not spell out. */
+  unread: Array<{ at: number; expression: string }>;
+}
+
+interface ReplyContext {
+  code: string;
+  masked: string;
+  kotlin: boolean;
+  constant: Constant;
+  /** The body of the private method of the handler's type that a call by this name, at this offset, runs. */
+  helper: (name: string, at: number) => { body: string; masked: string; start: number } | undefined;
+}
+
+/**
+ * The text an expression yields: string literals, and the string constants the file declares, joined with `+`; any
+ * other term is a value, written as `{}`. `known` says no term was one.
+ */
+function textOf(expression: string, at: number, context: ReplyContext): { text: string; known: boolean } {
+  let text = "";
+  let known = true;
+  for (const term of splitTop(expression.trim(), "+")) {
+    const literal = term.startsWith('"') ? literals(term, context.kotlin) : undefined;
+    const value = literal?.length === 1 ? literal[0] : context.constant(term, at);
+    if (value !== undefined) text += value;
+    // A Kotlin string template is text with values in it.
+    else if (context.kotlin && /^"(?:[^"\\\n]|\\.)*"$/.test(term)) {
+      text += term.slice(1, -1).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, "{}");
+      known = false;
+    } else {
+      text += "{}";
+      known = false;
+    }
+  }
+  return { text, known };
+}
+
+/**
+ * What a handler body replies with. `ModelAndView(x)` and `setViewName(x)` always; when the handler writes no response
+ * body, also what it returns (or a Kotlin expression body's value and branches), and what a private method of its type
+ * returns when the handler returns that method's result. A name is a view when it is text the file spells out: a
+ * literal or a `static final String` (Kotlin `const val`). A name starting with `redirect:` is a redirect, the rest of
+ * it the URL (Spring MVC, "Redirecting"), a value in it written as `{}`; `forward:` is neither.
+ */
+function replies(
+  body: { body: string; masked: string; start: number },
+  strings: boolean,
+  context: ReplyContext,
+  seen: Set<number> = new Set(),
+): Replies {
+  const out: Replies = { views: [], redirects: [], unread: [] };
+  const take = (written: string, from: number) => {
+    const expression = written.trim();
+    const at = from + written.length - written.trimStart().length;
+    const call = /^(?:this\s*\.\s*)?([A-Za-z_]\w*)\s*\(/.exec(expression);
+    if (call && closing(context.masked, at + call[0].length - 1) === at + expression.length - 1) {
+      const helper = context.helper(call[1]!, at);
+      if (!helper || seen.has(helper.start)) return;
+      const inner = replies(helper, true, context, new Set([...seen, helper.start]));
+      out.views.push(...inner.views);
+      out.redirects.push(...inner.redirects);
+      out.unread.push(...inner.unread);
+      return;
+    }
+    const { text, known } = textOf(expression, at, context);
+    if (text.startsWith("redirect:")) {
+      const url = text.slice("redirect:".length);
+      if (url.startsWith("{}")) out.unread.push({ at, expression });
+      else out.redirects.push({ url, at });
+    } else if (known && /^[\w./-]+$/.test(text)) out.views.push(text);
+  };
+  const { body: code, masked, start } = body;
   // A match that starts inside a string literal (masked there) is text, not a call or a result.
-  const names = [...body.matchAll(explicit), ...(strings ? body.matchAll(returned) : [])]
-    .filter((m) => masked[m.index ?? 0] === body[m.index ?? 0])
-    .map((m) => m[1]!);
-  return [...new Set(names.filter((n) => /^[\w./-]+$/.test(n)))];
+  for (const m of code.matchAll(/\b(?:ModelAndView|setViewName)\s*\(/g)) {
+    const open = (m.index ?? 0) + m[0].length - 1;
+    if (masked[m.index ?? 0] !== code[m.index ?? 0]) continue;
+    const close = closing(masked, open);
+    if (close === undefined) continue;
+    const argument = splitTop(code.slice(open + 1, close), ",")[0] ?? "";
+    if (argument) take(argument, start + open + 1);
+  }
+  if (!strings) return out;
+  const results = (from: number, end: number) => {
+    // In Kotlin, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
+    const ranges = context.kotlin ? kotlinResults(masked, from, end).ranges : [[from, end] as const];
+    for (const [a, b] of ranges) if (code.slice(a, b).trim()) take(code.slice(a, b), start + a);
+  };
+  if (code.trimStart().startsWith("{")) {
+    for (const m of masked.matchAll(/\breturn\b/g)) {
+      if (!handlerReturn(masked, m.index ?? 0, context.kotlin)) continue;
+      const from = (m.index ?? 0) + m[0].length;
+      results(from, statementEnd(masked, from, context.kotlin));
+    }
+  } else results(1, code.length);
+  return { views: [...new Set(out.views)], redirects: out.redirects, unread: out.unread };
+}
+
+/**
+ * The path a redirect URL leads to from a route: a path from the root as written (RedirectView puts the context path
+ * before it), a relative one resolved against the route's path, as a browser resolves the Location it is sent; its URI
+ * variables are the current request's (Spring MVC, "Redirect Attributes"), values here. Undefined for an absolute URL,
+ * another site's.
+ */
+function redirectPath(url: string, route: string): string | undefined {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url) || url.startsWith("//")) return undefined;
+  const resolved = url.startsWith("/") ? url : resolveReference(route, url);
+  return resolved.split(/[?#]/)[0]!.replace(/\{[^{}]*\}/g, HOLE);
 }
 
 interface TypeScope {
@@ -527,6 +742,26 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     });
   }
 
+  // The type a position is in: the innermost body around it.
+  const typeAt = (at: number): TypeScope | undefined => types.filter((t) => t.start < at && at < t.end).sort((a, b) => b.start - a.start)[0];
+  // The private method of the type a call at `at` is in, when the type declares one method of that name: a private
+  // method is not overridden, and with no overload the call runs that one.
+  const helper = (name: string, at: number) => {
+    const owner = typeAt(at);
+    if (!owner) return undefined;
+    const declarations = [...masked.matchAll(new RegExp(kotlin ? `\\bfun\\s+${name}\\s*\\(` : `\\b${name}\\s*\\(`, "g"))].filter((m) => {
+      const i = m.index ?? 0;
+      if (typeAt(i) !== owner) return false;
+      if (kotlin) return true;
+      const close = closing(masked, i + m[0].length - 1);
+      return close !== undefined && /^\s*(?:throws\b[^{;]*)?\{/.test(masked.slice(close + 1)) && !/\bnew\s*$/.test(masked.slice(0, i));
+    });
+    if (declarations.length !== 1) return undefined;
+    const at0 = declarations[0]!.index ?? 0;
+    if (!/\bprivate\b/.test(masked.slice(declarationStart(masked, at0), at0))) return undefined;
+    return methodBody(code, masked, at0 + declarations[0]![0].length - 1);
+  };
+
   const out: Surface[] = [];
   const unreadTypes = new Set<TypeScope>();
   // A mapping annotation's arguments are its paths, not requests, type-level ones included.
@@ -554,13 +789,24 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     const signature = code.slice(annotationsStart(masked, m.at), open ?? m.end);
     const responseBody = (owner?.responseBody ?? false) || /@(?:[\w.]*\.)?ResponseBody\b/.test(signature);
     const body = views && open !== undefined ? methodBody(code, masked, open) : undefined;
-    const rendered = body ? viewNames(body, !responseBody) : [];
+    const reply = body ? replies(body, !responseBody, { code, masked, kotlin, constant, helper }) : undefined;
+    const rendered = reply?.views ?? [];
+    for (const u of reply?.unread ?? []) {
+      limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, u.at)} redirects to a URL the file does not spell out (${u.expression}); the request it leads to is not read`);
+    }
     for (const base of bases) {
       for (const path of paths) {
-        const full = springTemplate(joinRoute(base, path));
+        const full = springTemplate(joinRoute(spec.prefix ?? "", base, path));
+        const redirects = (reply?.redirects ?? []).flatMap((r) => {
+          const target = redirectPath(r.url, full);
+          return target ? [{ path: target, line: lineOf(text, r.at) }] : [];
+        });
         for (const method of methods) {
           const id = surfaceId({ component: spec.component, method, path: full });
-          if (rendered.length) views!.set(id, { file, names: [...new Set([...(views!.get(id)?.names ?? []), ...rendered])] });
+          if (rendered.length || redirects.length) {
+            const known = views!.get(id);
+            views!.set(id, { file, names: [...new Set([...(known?.names ?? []), ...rendered])], redirects: [...(known?.redirects ?? []), ...redirects] });
+          }
           const line = lineOf(text, m.at);
           // Paths that differ only in a trailing `/` are one route here, so a mapping that lists both registers it once.
           if (out.some((o) => o.id === id && o.at.line === line)) continue;
@@ -698,7 +944,7 @@ function securityRoutes(file: string, text: string, code: string, masked: string
   // Only a file that configures HttpSecurity; `request.logout()` on a servlet request is not a configurer.
   if (!/\bHttpSecurity\b|\bSecurityFilterChain\b|\bWebSecurityConfigurerAdapter\b/.test(masked)) return out;
   const add = (path: string, index: number) => {
-    const full = springTemplate(joinRoute(path));
+    const full = springTemplate(joinRoute(spec.prefix ?? "", path));
     out.push({ id: surfaceId({ component: spec.component, method: "POST", path: full }), component: spec.component, method: "POST", path: full, at: { file, line: lineOf(text, index) }, evidence: "text" });
   };
   const declared = bindings(masked, /\.kts?$/.test(file));
