@@ -1,0 +1,10 @@
+# Where atlas's reading differs from the routes Django Ninja serves. Remove an entry when atlas reads it right; the
+# test fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Django Ninja style (nor a Django one): the operations of a `NinjaAPI` and its routers, the `add_router`
+  prefixes, nested routers, Django's path converters, the URLconf the APIs are included in (`api.urls`) and the OpenAPI
+  document and docs page each API serves are not read; a limit says the route files gave nothing ("11 files read,
+  nothing extracted"). `atlas inventory` offers the `fastapi` style for these files, which reads the operations of
+  each module's `router` at the paths written, without the `add_router` prefixes or the API's mount (`GET /add`, `GET
+  /`, `GET /{event_id}`, `POST /`), and says it does not trace those routers to a FastAPI application, but not that the
+  operations on the `NinjaAPI` of project/api.py are left out.

@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the routes Quart serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Quart style: the rules `@app.route`, `@blueprint.get`, `@app.websocket` and the like, `add_url_rule` and
+  class-based views register, the blueprints' url prefixes and the static files routes Quart adds are not read; a limit
+  says the route files gave nothing ("7 files read, nothing extracted"). `atlas inventory` offers the `fastapi` style
+  for these files, which reads only the application's `@app.get`/`@app.put`/`@app.delete` decorators, at
+  `/user/<username>` as written, and says it does not trace `app` to a FastAPI application.
