@@ -114,20 +114,27 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
 
 export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Where a definition stands: its line and, in a parsed script, the offset of its name. */
+export interface Definition {
+  line: number;
+  offset?: number;
+}
+
 /**
- * The lines where a TypeScript or JavaScript file defines each function or method with a body, by name, and each
- * method of a named class also as `Class.method`: parsed, so a signature whose parameters run over several lines (as
- * prettier writes a decorated Nest handler) is found, and an overload signature or a call is not.
+ * Where a TypeScript or JavaScript file defines each function or method with a body, by name, and each method of a
+ * named class also as `Class.method`: parsed, so a signature whose parameters run over several lines (as prettier
+ * writes a decorated Nest handler) is found, and an overload signature or a call is not.
  */
-function scriptDefinitions(file: string, text: string): Map<string, number[]> {
+function scriptDefinitions(file: string, text: string): Map<string, Definition[]> {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const out = new Map<string, number[]>();
-  const add = (name: string, line: number) => (out.get(name) ?? out.set(name, []).get(name)!).push(line);
+  const out = new Map<string, Definition[]>();
+  const add = (name: string, at: Definition) => (out.get(name) ?? out.set(name, []).get(name)!).push(at);
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body && node.name && !ts.isComputedPropertyName(node.name)) {
-      const line = sf.getLineAndCharacterOfPosition(node.name.getStart(sf)).line + 1;
-      add(node.name.text, line);
-      if (ts.isClassLike(node.parent) && node.parent.name) add(`${node.parent.name.text}.${node.name.text}`, line);
+      const offset = node.name.getStart(sf);
+      const at = { line: sf.getLineAndCharacterOfPosition(offset).line + 1, offset };
+      add(node.name.text, at);
+      if (ts.isClassLike(node.parent) && node.parent.name) add(`${node.parent.name.text}.${node.name.text}`, at);
     }
     ts.forEachChild(node, visit);
   };
@@ -135,16 +142,22 @@ function scriptDefinitions(file: string, text: string): Map<string, number[]> {
   return out;
 }
 
+/** The lines `definitions` finds. */
+export function definitionLines(file: string, text: string, name: string, parsed?: Map<string, Map<string, Definition[]>>): number[] {
+  return definitions(file, text, name, parsed).map((d) => d.line);
+}
+
 /**
  * Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or
- * method with a body, a Kotlin `fun`, a Java method (a return type before the name). `parsed` keeps each script's
- * definitions, so a file is parsed once however many names are looked up in it.
+ * method with a body, a Kotlin `fun`, a Java method (a return type before the name). A script's definitions keep the
+ * offset of their name, as two on one line differ only by it. `parsed` keeps each script's definitions, so a file is
+ * parsed once however many names are looked up in it.
  */
-export function definitionLines(file: string, text: string, name: string, parsed?: Map<string, Map<string, number[]>>): number[] {
+export function definitions(file: string, text: string, name: string, parsed?: Map<string, Map<string, Definition[]>>): Definition[] {
   if (/\.(c|m)?[jt]sx?$/.test(file)) {
-    const definitions = parsed?.get(file) ?? scriptDefinitions(file, text);
-    parsed?.set(file, definitions);
-    return definitions.get(name) ?? [];
+    const found = parsed?.get(file) ?? scriptDefinitions(file, text);
+    parsed?.set(file, found);
+    return found.get(name) ?? [];
   }
   // A method of a named class is read only from a parsed script.
   if (name.includes(".")) return [];
@@ -156,10 +169,10 @@ export function definitionLines(file: string, text: string, name: string, parsed
       ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
       : // A Java declaration up to its opening parenthesis: annotations, modifiers, type parameters, a return type.
         [new RegExp(`^\\s*(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*${modifiers}(?:<[^>]*>\\s*)?[\\w$.]+(?:<[^()]*>)?(?:\\[\\])*\\s+${n}\\s*\\(`)];
-  const out: number[] = [];
+  const out: Definition[] = [];
   text.split("\n").forEach((line, i) => {
     if (/^\s*(?:return|if|else|for|while|do|switch|case|catch|new|throw|yield|await|assert)\b/.test(line)) return;
-    if (patterns.some((p) => p.test(line))) out.push(i + 1);
+    if (patterns.some((p) => p.test(line))) out.push({ line: i + 1 });
   });
   return out;
 }

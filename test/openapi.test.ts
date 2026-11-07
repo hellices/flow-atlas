@@ -227,11 +227,11 @@ describe("routes from an OpenAPI document", () => {
     });
     // Documents whose operationIds name no handler, or that write none.
     expect(graph.limits).toEqual([
-      "routes flask-smorest: no handler was found in the configured route files for 2 operations of py-smorest.json (GET /api/v1/orders/{order_id} with no operationId, POST /api/v1/orders with no operationId); they stay at their line in the document",
-      "routes flasgger: no handler was found in the configured route files for 2 operations of py-flasgger.json (POST /api/v1/orders with no operationId, GET /api/v1/orders/{order_id} with no operationId); they stay at their line in the document",
+      "routes flask-smorest: 2 operations of py-smorest.json have no operationId to find a handler by (GET /api/v1/orders/{order_id}, POST /api/v1/orders); they stay at their line in the document",
+      "routes flasgger: 2 operations of py-flasgger.json have no operationId to find a handler by (POST /api/v1/orders, GET /api/v1/orders/{order_id}); they stay at their line in the document",
       "routes django-drf: no handler was found in the configured route files for 4 operations of py-drf.json (api_v1_orders_create, api_v1_orders_retrieve, api_v1_orders_history_retrieve, internal_health_retrieve); they stay at their line in the document",
-      "routes fastify: no handler was found in the configured route files for 2 operations of node-fastify-openapi.json (GET /api/v1/orders/{orderId} with no operationId, POST /api/v1/orders/ with no operationId); they stay at their line in the document",
-      "routes fastify-swagger: no handler was found in the configured route files for 2 operations of node-fastify-swagger.json (GET /api/v1/orders/{orderId} with no operationId, POST /api/v1/orders/ with no operationId); they stay at their line in the document",
+      "routes fastify: 2 operations of node-fastify-openapi.json have no operationId to find a handler by (GET /api/v1/orders/{orderId}, POST /api/v1/orders/); they stay at their line in the document",
+      "routes fastify-swagger: 2 operations of node-fastify-swagger.json have no operationId to find a handler by (GET /api/v1/orders/{orderId}, POST /api/v1/orders/); they stay at their line in the document",
     ]);
   });
 
@@ -454,7 +454,7 @@ describe("routes from an OpenAPI document", () => {
     expect(limits).toEqual([`routes svc: ${outside} is outside the repository and is read as it is now, not at 0123456789ab`]);
   });
 
-  it("says which documented operations have no handler in the route files", () => {
+  it("says which documented operations have no handler in the route files, and which have no operationId to find one by", () => {
     const source = memory({
       "svc/views.py": "class UserViewSet(viewsets.ModelViewSet):\n    queryset = User.objects.all()\n",
       "svc/schema.yml": "openapi: 3.0.3\npaths:\n  /api/users/:\n    get: {operationId: users_list}\n    post: {operationId: users_create}\n  /api/health/:\n    get: {}\n",
@@ -463,7 +463,8 @@ describe("routes from an OpenAPI document", () => {
     const routes = (files: string[]) => normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files, openapi: "svc/schema.yml" }] });
     extractRoutes(source, routes(["svc/**/*.py"]), undefined, [], limits);
     expect(limits).toEqual([
-      "routes svc: no handler was found in the configured route files for 3 operations of svc/schema.yml (users_list, users_create, GET /api/health/ with no operationId); they stay at their line in the document",
+      "routes svc: no handler was found in the configured route files for 2 operations of svc/schema.yml (users_list, users_create); they stay at their line in the document",
+      "routes svc: 1 operation of svc/schema.yml has no operationId to find a handler by (GET /api/health/); it stays at its line in the document",
     ]);
     // Where no route files are configured, no handler was looked for.
     limits.length = 0;
@@ -480,6 +481,16 @@ describe("routes from an OpenAPI document", () => {
     const text = traceText(trace(graph, seedsFor(graph, "svc|GET /api/users")));
     expect(text).toContain("not traced: no handler of this operation was found in the configured route files");
     expect(text).not.toContain("TypeScript");
+  });
+
+  it("follows the method of the class the operationId names, though another class on its line has one of that name", () => {
+    const source = memory({
+      "api/users.ts": "class A { read() { return this.a(); } a() {} } class B { read() { return this.b(); } b() {} }\n",
+      "api/openapi.json": JSON.stringify({ openapi: "3.0.0", paths: { "/users": { get: { operationId: "B_read" } } } }),
+    });
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.ts"], openapi: "api/openapi.json" }] });
+    const [surface] = extractRoutes(source, config, new Reach(source), [], []);
+    expect(surface).toMatchObject({ evidence: "name", at: { file: "api/users.ts", line: 1 }, reaches: ["b"] });
   });
 
   it("finds and follows a Nest handler whose signature runs over several lines", () => {

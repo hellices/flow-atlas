@@ -183,6 +183,22 @@ describe("routes an OpenAPI document describes", () => {
     // A route read only from code, or one whose document writes no slash, is matched as before.
     expect(reached([surface("POST", "/api/users")], call("POST", "/api/users"))).toEqual(["s|POST /api/users"]);
     expect(reached([surface("POST", "/api/users", "/api/users")], call("POST", "/api/users", true))).toEqual(["s|POST /api/users"]);
+    // HEAD, as GET, is matched.
+    expect(reached([surface("HEAD", "/api/users", "/api/users/")], call("HEAD", "/api/users"))).toEqual(["s|HEAD /api/users"]);
+    // A server path before the root key `/` puts the slash after it: `/api/` is served, not `/api`.
+    expect(matchCalls({ surfaces: [surface("POST", "/api", "/")], calls: [call("POST", "/api")] }).slashless.get(0)!.map((s) => s.id)).toEqual(["s|POST /api"]);
+    expect(reached([surface("POST", "/", "/")], call("POST", "/"))).toEqual(["s|POST /"]);
+  });
+
+  it("matches a route whose path the request writes exactly before one it reaches only by a slash redirect", () => {
+    // Starlette and Django redirect to the path with a `/` added only when no route matches the path as written.
+    const me = surface("POST", "/users/me", "/users/me/");
+    const byId = surface("POST", "/users/{id}", "/users/{id}");
+    const matched = matchCalls({ surfaces: [me, byId], calls: [call("POST", "/users/me")] });
+    expect((matched.targetsOf.get(0) ?? []).map((s) => s.id)).toEqual(["s|POST /users/{id}"]);
+    expect(matched.slashless.size).toBe(0);
+    expect(reached([surface("GET", "/users/me", "/users/me/"), surface("GET", "/users/{id}", "/users/{id}")], call("GET", "/users/me"))).toEqual(["s|GET /users/{id}"]);
+    expect(reached([me, byId], call("POST", "/users/me", true))).toEqual(["s|POST /users/me"]);
   });
 
   it("reads the trailing slash a call writes", () => {

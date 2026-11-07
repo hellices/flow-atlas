@@ -208,8 +208,11 @@ request without that segment reaches it only by the redirect to the path with a 
 answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
 description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
 tool cannot resolve. Paths that differ only in a trailing `/` are one route; where an OpenAPI document writes the
-`/`, a call that leaves it out reaches the route only by GET or HEAD (`describedPath` and the call's `slash` keep
-what was written). An
+`/` (a server path or `basePath` before the root key `/` puts one after it), a call that leaves it out is matched to
+the route only by GET or HEAD. Whether another method reaches it depends on the framework (Starlette's redirect keeps
+the method, Django's may lose a POST's body), so such a call is matched to none and a `limit:` names it. A route
+whose document writes the path as the call does comes before one the call reaches only by that redirect
+(`describedPath` and the call's `slash` keep what was written). An
 `operationId` is read where the code states it (route options, `@ApiOperation`); with `operationIds: nest-swagger` in
 the configuration, @nestjs/swagger's default rule (`Class_method`) is applied.
 

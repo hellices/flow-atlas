@@ -19,4 +19,4 @@ class RestViewSet(viewsets.ViewSet):
         url_path="rest-check",
     )
     def rest_check(self, request):
-        return Response({"result": "This message comes from the backend."}, status=status.HTTP_200_OK)
+        return Response({"message": "This message comes from the backend."}, status=status.HTTP_200_OK)

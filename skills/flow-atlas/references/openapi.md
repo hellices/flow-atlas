@@ -64,7 +64,13 @@ It does not take request or response schemas, security, or callers: the document
   those redirects serve it. Any other method is matched to none: a `limit:` names the call and the path the document
   writes, the route is not reported as having no caller, and the call is not reported as serving nothing. Write the
   slash the document writes, as a client generated from it does. A call that writes a `/` its route's path does not
-  end with is matched to the route; which frameworks serve it is not told apart.
+  end with is matched to the route; which frameworks serve it is not told apart. A server path or Swagger `basePath`
+  before the root key `/` puts the slash after it: `servers: [{url: /api}]` with `paths: {/: ...}` serves `/api/`.
+- A path as written before a slash redirect. Starlette's router (adding or removing the `/`) and Django's
+  `CommonMiddleware` (adding it) redirect only when no route matches the path as the request writes it, so of one method's routes a fully known request fits,
+  one whose document writes the path as the call does comes first: with `POST /users/me/` and `POST /users/{id}`
+  described, `POST /users/me` reaches `/users/{id}`. This is applied before a concrete path is put before a templated
+  one.
 - A client generated from the document: see "Generated clients" in `references/config.md`.
 
 ## Documents springdoc serves

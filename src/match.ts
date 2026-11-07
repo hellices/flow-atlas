@@ -96,6 +96,26 @@ function concreteFirst(call: Call, candidates: Array<{ surface: Surface; index: 
 }
 
 /**
+ * Whether the path a route's document describes ends with a `/`. A server path or Swagger `basePath` before the root
+ * key `/` puts the slash after it (`/api/`); the root itself has none to leave out.
+ */
+const slashEnds = (s: Surface): boolean => !!s.describedPath?.endsWith("/") && s.path !== "/";
+
+/** Whether a request reaches a route its document describes only if the server forgives a trailing slash. */
+const aliased = (call: Call, s: Surface): boolean => s.describedPath !== undefined && slashEnds(s) !== !!call.slash;
+
+/**
+ * Starlette's router (adding or removing a trailing slash) and Django's CommonMiddleware (adding one) redirect a
+ * request only when no route matches the path as written. Of the routes of one method a fully known request fits, those whose document writes
+ * the path as the request does come first; the ones it reaches only by such a redirect give way to them.
+ */
+function exactFirst(call: Call, candidates: Array<{ surface: Surface; index: number }>): Array<{ surface: Surface; index: number }> {
+  if (call.path.includes(HOLE)) return candidates;
+  const exact = new Set(candidates.filter((c) => c.surface.describedPath !== undefined && !aliased(call, c.surface)).map((c) => c.surface.method));
+  return candidates.filter((c) => !(exact.has(c.surface.method) && aliased(call, c.surface)));
+}
+
+/**
  * Whether a request reaches a route only if the server forgives a missing trailing slash: the route's document writes
  * its path with a `/` at the end, the call does not, and the method is neither GET nor HEAD. Django's APPEND_SLASH
  * redirects such a request, which may lose a POST's body (and raises in DEBUG for DELETE, POST, PUT and PATCH),
@@ -103,8 +123,7 @@ function concreteFirst(call: Call, candidates: Array<{ surface: Surface; index: 
  * depends on the framework. A GET or HEAD, which those redirects serve, still reaches the route.
  */
 function slashLeftOut(call: Call, surface: Surface): boolean {
-  const key = surface.describedPath;
-  return !call.slash && !!key && key.length > 1 && key.endsWith("/") && surface.method !== "GET" && surface.method !== "HEAD";
+  return !call.slash && slashEnds(surface) && surface.method !== "GET" && surface.method !== "HEAD";
 }
 
 export interface Matches {
@@ -155,7 +174,7 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       if (surface.implicit && call.method.toUpperCase() !== surface.method) return;
       if ((pathsMatch(surface.path, call.path) || redirected(surface)) && methodsMatch(surface.method, call.method)) candidates.push({ surface, index: si });
     });
-    const reach = reached(call, ranked.has(call.to) ? candidates : concreteFirst(call, candidates), ranked);
+    const reach = reached(call, ranked.has(call.to) ? candidates : concreteFirst(call, exactFirst(call, candidates)), ranked);
     // A method that is not read would pick among routes that take different ones; which it picks is not read either.
     if (call.method === "*" && new Set(reach.map((c) => c.surface.method)).size > 1) {
       unsettled.set(ci, reach.map((c) => c.surface));
