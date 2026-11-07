@@ -8,6 +8,6 @@ docs:
   - https://hexdocs.pm/phoenix/Phoenix.VerifiedRoutes.html
   - https://hexdocs.pm/phoenix_live_view/Phoenix.LiveView.Router.html
   - https://hexdocs.pm/plug/Plug.Router.html
-setup: mix deps.get && mix compile
+setup: mix deps.get --check-locked && mix compile
 latest: mix deps.update --all && mix compile
 oracle: mix run --no-start oracle.exs
