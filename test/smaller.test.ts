@@ -197,3 +197,26 @@ describe("inventory's served documents", () => {
     ]);
   });
 });
+
+describe("inventory's route candidates", () => {
+  it("do not count a mapping annotation a comment mentions", () => {
+    const java = [
+      "@Controller",
+      "class VisitController {",
+      "  /**",
+      "   * Called before each and every @RequestMapping annotated method.",
+      "   */",
+      "  @ModelAttribute(\"visit\")",
+      "  public Visit load() { return new Visit(); }",
+      "  // @GetMapping(\"/old\")",
+      "  @GetMapping(\"/owners/{ownerId}/pets/{petId}/visits/new\")",
+      "  public String initNewVisitForm() { return \"pets/createOrUpdateVisitForm\"; }",
+      "}",
+    ].join("\n");
+    const kotlin = "/* @PostMapping(\"/x\") */\n@RestController\nclass A {\n  @PostMapping(\"/items\") fun add() = \"ok\"\n}";
+    expect(inventory(memory({ "VisitController.java": java, "A.kt": kotlin }), []).routes.map((r) => `${r.file} ${r.style} ${r.count} ${r.example}`)).toEqual([
+      "VisitController.java spring 1 VisitController.java:9",
+      "A.kt spring 1 A.kt:4",
+    ]);
+  });
+});

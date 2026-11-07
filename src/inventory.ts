@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments, spectacularDocuments } from "./extract/apidocs.js";
+import { withoutComments } from "./extract/calls.js";
 import { BUILD_FILE, springdocDocuments } from "./extract/springdoc.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -271,9 +272,11 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
     if (file.endsWith(".py") && text.includes("Spectacular")) apiDocuments.push(...spectacularDocuments(file, text, component));
+    // An annotation a Java or Kotlin comment mentions (`each @RequestMapping method` in a Javadoc) maps nothing.
+    const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : text;
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file)) continue;
-      const hits = [...text.matchAll(re)].filter((m) => !accept || accept(m));
+      const hits = [...code.matchAll(re)].filter((m) => !accept || accept(m));
       if (!hits.length) continue;
       const first = hits[0]!;
       const label = style === "registration" ? `registration ${first[1]}` : style;
