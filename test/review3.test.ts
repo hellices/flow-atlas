@@ -660,7 +660,7 @@ describe("names resolve by their bindings", () => {
     // The path may be passed by name.
     // A mount's path and app by name.
     const mounted = 'app.mount(path="/static", app=StaticFiles(directory="s"))\napp.mount(app=StaticFiles(directory="t"), path="/assets")';
-    expect(routesFromPython("r.py", mounted, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /static/**", "HEAD /static/**", "GET /assets/**", "HEAD /assets/**"]);
+    expect(routesFromPython("r.py", mounted, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /static/{path:path}", "HEAD /static/{path:path}", "GET /assets/{path:path}", "HEAD /assets/{path:path}"]);
     const named = '@app.get(path="/items")\ndef a(): ...\n@app.api_route(methods=["PUT"], path="/carts")\ndef b(): ...\n@app.get(response_model=X)\ndef c(): ...';
     expect(routesFromPython("r.py", named, { component: "c", files: [] }).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /items", "PUT /carts"]);
   });

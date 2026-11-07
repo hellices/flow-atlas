@@ -148,9 +148,14 @@ files to read them. Other languages are read as text: Kotlin templates (`$x`, `$
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
 comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
 from the last `fun`, `func` or `def` before it. FastAPI
-decorators are read from Python, with Starlette's converters (`{name:path}` takes the rest of the path, as `{*name}`;
-`{id:int}` is one segment; a `path` converter before a suffix is not matched, so that route is left out with a limit),
-and `app.mount("/x", StaticFiles(...))` serves GET (and an implicit HEAD) under `/x/**`; another mounted application
+decorators are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
+none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
+that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,
+unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, so a call written `/x/` is read as
+`/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
+`{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
+suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
+(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
 is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
