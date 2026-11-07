@@ -99,12 +99,13 @@ function propertyName(name: ts.PropertyName): string | undefined {
 
 /**
  * The method a configured wrapper's call sends when the string is its URL, the first argument, read as fetch with the
- * wrapper's default; a method stated as the second argument, the existing reading of any call, is kept.
+ * wrapper's default; a known method stated as the second argument is kept, in any case, as one stated in the init.
  */
 function wrapperMethod(call: ts.CallExpression, url: ts.Node, defaultMethod: string): string {
   if (call.arguments[0] !== url) return "*";
   const init = call.arguments[1];
-  if (init && ts.isStringLiteralLike(init) && METHODS.has(init.text)) return init.text;
+  const stated = init && statedMethod(init);
+  if (stated) return stated;
   if (init && ts.isObjectLiteralExpression(init)) return initMethod(init) ?? defaultMethod;
   return fetchMethod(init, defaultMethod);
 }

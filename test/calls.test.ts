@@ -238,6 +238,8 @@ describe("client wrappers in the configuration", () => {
       ["authFetch(`/items/${id}`, { method: \"PUT\", body });", ["PUT /items/{}"]],
       ['authFetch("/items", { ...init, method: "DELETE" });', ["DELETE /items"]],
       ['authFetch("/items", "POST");', ["POST /items"]],
+      // A known method in any case, as a method stated in the init is read.
+      ['authFetch("/items", "post");', ["POST /items"]],
       // An init that may carry a method: a value, a spread, a method held in a value.
       ['authFetch("/items", init);', ["* /items"]],
       ['authFetch("/items", { ...init, headers });', ["* /items"]],
