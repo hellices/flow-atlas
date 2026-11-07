@@ -1,0 +1,7 @@
+name: shelf_fixture
+publish_to: none
+environment:
+  sdk: ^3.9.0
+dependencies:
+  shelf: ^1.4.3
+  shelf_router: ^1.1.5

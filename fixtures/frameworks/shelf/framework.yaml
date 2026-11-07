@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs shelf_router and asks it for the routes the application serves.
+toolchain: dart
+docs:
+  - https://pub.dev/packages/shelf_router
+  - https://pub.dev/packages/shelf_router/example
+  - https://pub.dev/documentation/shelf_router/latest/shelf_router/Router-class.html
+  - https://pub.dev/documentation/shelf_router/latest/shelf_router/Router/mount.html
+setup: dart pub get --enforce-lockfile
+latest: dart pub upgrade --major-versions shelf shelf_router
+oracle: dart oracle.dart

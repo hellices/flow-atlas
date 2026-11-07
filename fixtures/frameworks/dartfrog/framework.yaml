@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Dart Frog and asks it for the routes the application serves.
+toolchain: dart
+docs:
+  - https://dart-frog.dev/basics/routes/
+  - https://dart-frog.dev/basics/middleware/
+  - https://dart-frog.dev/basics/static-files/
+setup: dart pub get --enforce-lockfile
+latest: dart pub upgrade --major-versions dart_frog dart_frog_cli dart_frog_gen
+oracle: dart oracle.dart

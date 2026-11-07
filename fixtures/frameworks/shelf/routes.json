@@ -1,0 +1,28 @@
+{
+  "framework": "shelf_router",
+  "version": "1.1.5",
+  "routes": [
+    {"method":"*","path":"/","raw":"/<ignored|.*>"},
+    {"method":"GET","path":"/"},
+    {"method":"*","path":"/{**}","raw":"/<ignored|.*>"},
+    {"method":"GET","path":"/admin","raw":"/admin/"},
+    {"method":"DELETE","path":"/admin/cache"},
+    {"method":"GET","path":"/admin/stats"},
+    {"method":"GET","path":"/api/messages"},
+    {"method":"POST","path":"/api/messages"},
+    {"method":"GET","path":"/api/messages/{}","raw":"/api/messages/<id|[0-9]+>"},
+    {"method":"*","path":"/echo"},
+    {"method":"GET","path":"/files","raw":"/files/<path|.*>"},
+    {"method":"GET","path":"/files/{**}","raw":"/files/<path|.*>"},
+    {"method":"GET","path":"/flights/{}-{}","raw":"/flights/<from>-<to>"},
+    {"method":"GET","path":"/hello"},
+    {"method":"GET","path":"/items"},
+    {"method":"POST","path":"/items"},
+    {"method":"DELETE","path":"/items/{}","raw":"/items/<id|[0-9]+>"},
+    {"method":"PATCH","path":"/items/{}","raw":"/items/<id|[0-9]+>"},
+    {"method":"PUT","path":"/items/{}","raw":"/items/<id|[0-9]+>"},
+    {"method":"GET","path":"/users/{}/messages/{}","raw":"/users/<userName>/messages/<msgId|\\d+>"},
+    {"method":"GET","path":"/users/{}/say-hello","raw":"/users/<userName>/say-hello"},
+    {"method":"GET","path":"/users/{}/whoami","raw":"/users/<userName>/whoami"}
+  ]
+}
