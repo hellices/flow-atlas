@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Vapor and asks it for the routes the application serves. The package is in
+# `hello/`: a root package in a directory named `vapor` would take the identity of the Vapor package it depends on.
+toolchain: swift
+docs:
+  - https://docs.vapor.codes/basics/routing/
+  - https://docs.vapor.codes/basics/controllers/
+setup: cd hello && swift package resolve --force-resolved-versions
+latest: cd hello && swift package update
+oracle: cd hello && swift build -q --product Oracle >&2 && swift run --skip-build Oracle

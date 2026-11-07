@@ -1,0 +1,10 @@
+name: dartfrog_fixture
+description: Routes in the shapes of the Dart Frog guide.
+publish_to: none
+environment:
+  sdk: ^3.9.0
+dependencies:
+  dart_frog: ^1.2.6
+dev_dependencies:
+  dart_frog_cli: ^1.2.14
+  dart_frog_gen: ^2.1.0

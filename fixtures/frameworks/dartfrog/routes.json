@@ -1,0 +1,23 @@
+{
+  "framework": "dart_frog",
+  "version": "1.2.6",
+  "routes": [
+    {"method":"*","path":"/","raw":"routes/index.dart"},
+    {"method":"GET","path":"/api/v1/items","raw":"routes/api/v1/items/index.dart"},
+    {"method":"POST","path":"/api/v1/items","raw":"routes/api/v1/items/index.dart"},
+    {"method":"*","path":"/api/v1/status","raw":"routes/api/v1/status.dart"},
+    {"method":"*","path":"/files","raw":"routes/files/[...path].dart"},
+    {"method":"*","path":"/files/{**}","raw":"routes/files/[...path].dart"},
+    {"method":"*","path":"/greet/{}","raw":"routes/greet/[name].dart"},
+    {"method":"*","path":"/hello","raw":"routes/hello.dart"},
+    {"method":"*","path":"/hello.txt","raw":"public/hello.txt"},
+    {"method":"*","path":"/images/logo.svg","raw":"public/images/logo.svg"},
+    {"method":"GET","path":"/posts","raw":"routes/posts/index.dart"},
+    {"method":"POST","path":"/posts","raw":"routes/posts/index.dart"},
+    {"method":"DELETE","path":"/posts/{}","raw":"routes/posts/[id].dart"},
+    {"method":"GET","path":"/posts/{}","raw":"routes/posts/[id].dart"},
+    {"method":"PUT","path":"/posts/{}","raw":"routes/posts/[id].dart"},
+    {"method":"GET","path":"/users/{}","raw":"routes/users/[userId]/index.dart"},
+    {"method":"*","path":"/users/{}/posts/{}","raw":"routes/users/[userId]/posts/[postId].dart"}
+  ]
+}
