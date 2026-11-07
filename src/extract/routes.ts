@@ -556,11 +556,11 @@ const pythonLiteral = (text: string): string | undefined => pythonStrings(text)?
 const pythonLiteralLength = (text: string): number | undefined => pythonStrings(text)?.length;
 
 /**
- * A Starlette path in atlas's form: `{name:path}` is kept as written, since it takes the rest of the path after the `/`
- * before it, which neither Spring's `{*name}` nor `**` requires; any other converter (`int`, `str`, `float`, `uuid`)
- * is one segment.
+ * A Starlette path in atlas's form: a converter is kept as written, since `{name:path}` takes the rest of the path after
+ * the `/` before it, which neither Spring's `{*name}` nor `**` requires, and `int`, `float` and `uuid` take only the
+ * segments their regex does. `{name:str}` is `{name}`, the convertor Starlette applies when none is named.
  */
-const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):(?!path\})\w+\}/g, "{$1}"));
+const starlettePath = (path: string): string => joinRoute(path.replace(/\{(\w+):str\}/g, "{$1}"));
 
 /** The start of each top-level argument of the call whose arguments begin at `from`, in blanked code. */
 function pythonArgStarts(code: string, from: number): number[] {

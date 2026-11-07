@@ -196,8 +196,10 @@ tree, `code` has no digest.
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
 | description choice | component | `status` (chosen, ambiguous, none), `location`, `kind`, `reason`, `candidates` |
 
-Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`.
-The same route has the same id whichever framework registered it, and matches an OpenAPI `paths` key as is. Two forms
+Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`,
+Starlette's `{id:str}` becomes `{id}`. The same route has the same id whichever framework registered it, and matches an
+OpenAPI `paths` key as is. Starlette's other converters (`{id:int}`, `{id:float}`, `{id:uuid}`) are kept as written:
+each takes only the segments its regex does. Two forms
 are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path, which
 matches the rest of a request's path, and a wildcard within a segment (`*.txt`), which matches any text in that
 segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written `{*rest}`) match the path without them too;

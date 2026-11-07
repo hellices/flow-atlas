@@ -1,5 +1,5 @@
 import type { Call, Graph, Surface } from "./model.js";
-import { firstLiteral, HOLE, methodsMatch, pathsMatch, segments, slashRedirectPath } from "./paths.js";
+import { firstLiteral, HOLE, methodsMatch, narrowedPath, pathCovers, pathsMatch, segments, slashRedirectPath } from "./paths.js";
 
 import type { Config } from "./config.js";
 
@@ -104,12 +104,13 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     }
     // Starlette redirects a path no route matches, by any method, to the same path with a `/` added; a route ending in
     // `{name:path}` takes that with the segment empty. A call with interpolations may name the path the redirect
-    // serves; a route that serves that path itself keeps it from being redirected.
+    // serves, as the route spells it where the call does not; only a route that surely matches that path keeps it from
+    // being redirected.
     const redirected = (surface: Surface): boolean => {
       const bare = slashRedirectPath(surface.path);
       if (bare === undefined || !pathsMatch(bare, call.path)) return false;
-      const served = call.path.includes(HOLE) ? bare : call.path;
-      return !graph.surfaces.some((s) => s.component === call.to && pathsMatch(s.path, served));
+      const served = narrowedPath(bare, call.path);
+      return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served));
     };
     graph.surfaces.forEach((surface, si) => {
       if (surface.component !== call.to) return;

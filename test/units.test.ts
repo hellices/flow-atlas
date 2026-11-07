@@ -72,6 +72,13 @@ describe("Starlette's path converter", () => {
     expect(rows.map(([route, call]) => pathsMatch(route, call))).toEqual(rows.map(([, , m]) => m));
   });
 
+  it("leaves out a route with a path converter before its end, with a limit", () => {
+    const limits: string[] = [];
+    const text = '@app.get("/files/{rest:path}/meta")\ndef f(): ...';
+    expect(routesFromPython("a.py", text, { component: "c", files: [] }, limits)).toEqual([]);
+    expect(limits).toEqual(["routes c: a.py:1 has a path converter before the end of /files/{rest:path}/meta; the route is not read"]);
+  });
+
   it("reaches the path without that segment only through the redirect the router answers when no route serves it", () => {
     const surface = (method: string, path: string): Surface => ({ id: `s|${method} ${path}`, component: "s", method, path, at: { file: "a.py", line: 1 }, evidence: "text" });
     const call = (method: string, path: string): Call => ({ id: "c", from: "w", to: "s", method, path, at: { file: "b.ts", line: 1 }, evidence: "text", based: false });
@@ -85,6 +92,42 @@ describe("Starlette's path converter", () => {
     // An interpolated segment may name the path the redirect serves, unless a route serves that path itself.
     expect(reached([surface("GET", "/users"), tail], call("GET", "/{}"))).toEqual(["s|GET /users", "s|GET /files/{name:path}"]);
     expect(reached([surface("GET", "/users"), surface("GET", "/files"), tail], call("GET", "/{}"))).toEqual(["s|GET /users", "s|GET /files"]);
+  });
+
+  it("keeps a one-segment converter other than str, whose regex decides a fixed segment", () => {
+    const text = '@app.get("/a/{id:int}")\ndef a(): ...\n@app.get("/b/{id:str}")\ndef b(): ...\n@app.get("/c/{v:float}/{u:uuid}/{s:slug}")\ndef c(): ...';
+    expect(routesFromPython("a.py", text, { component: "c", files: [] }).map((s) => s.path)).toEqual(["/a/{id:int}", "/b/{id}", "/c/{v:float}/{u:uuid}/{s:slug}"]);
+    const uuid = "123e4567-e89b-12d3-a456-426614174000";
+    const rows: Array<[string, string, boolean]> = [
+      ["/a/{id:int}", "/a/7", true],
+      ["/a/{id:int}", "/a/static", false],
+      ["/a/{id:int}", "/a/{}", true],
+      ["/c/{v:float}/{u:uuid}/{s:slug}", `/c/1.5/${uuid}/x`, true],
+      ["/c/{v:float}/{u:uuid}/{s:slug}", `/c/x/${uuid}/x`, false],
+      ["/c/{v:float}/{u:uuid}/{s:slug}", "/c/1/7/x", false],
+      // A convertor registered elsewhere is not read: its segment may take anything.
+      ["/c/{v:float}/{u:uuid}/{s:slug}", `/c/1/${uuid}/{}`, true],
+    ];
+    expect(rows.map(([route, call]) => pathsMatch(route, call))).toEqual(rows.map(([, , m]) => m));
+  });
+
+  it("keeps the redirect only where a route surely serves the path it would leave", () => {
+    const surface = (method: string, path: string): Surface => ({ id: `s|${method} ${path}`, component: "s", method, path, at: { file: "a.py", line: 1 }, evidence: "text" });
+    const call = (method: string, path: string): Call => ({ id: "c", from: "w", to: "s", method, path, at: { file: "b.ts", line: 1 }, evidence: "text", based: false });
+    const reached = (surfaces: Surface[], c: Call) => (matchCalls({ surfaces, calls: [c] }).targetsOf.get(0) ?? []).map((s) => s.id);
+    const rest = surface("GET", "/api/static/{rest:path}");
+    // `static` is not an int, so `/api/{id:int}` does not match `/api/static` and the router redirects it.
+    expect(reached([surface("GET", "/api/{id:int}"), rest], call("GET", "/api/static"))).toEqual(["s|GET /api/static/{rest:path}"]);
+    // A convertor that is not read may or may not take `static`: either route may serve it.
+    expect(reached([surface("GET", "/api/{s:slug}"), rest], call("GET", "/api/static"))).toEqual(["s|GET /api/{s:slug}", "s|GET /api/static/{rest:path}"]);
+    // A route of another method that matches the path answers it (405), so it is not redirected; the call's fixed
+    // segments name that path together with the ones the redirect fixes.
+    const files = surface("GET", "/api/{tenant}/files/{rest:path}");
+    expect(reached([surface("POST", "/api/acme/{item}"), files], call("GET", "/api/acme/{}"))).toEqual([]);
+    expect(reached([surface("POST", "/api/other/{item}"), files], call("GET", "/api/acme/{}"))).toEqual(["s|GET /api/{tenant}/files/{rest:path}"]);
+    // Whether `/api/{}/{}` is `/api/acme/files` is not known; a route that takes any tenant serves every such path.
+    expect(reached([surface("POST", "/api/acme/{item}"), files], call("GET", "/api/{}/{}"))).toEqual(["s|GET /api/{tenant}/files/{rest:path}"]);
+    expect(reached([surface("POST", "/api/{t}/{item}"), files], call("GET", "/api/{}/{}"))).toEqual([]);
   });
 });
 
