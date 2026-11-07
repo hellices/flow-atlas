@@ -2,12 +2,12 @@
 // Asks each framework under fixtures/frameworks for the routes its application serves and writes them to routes.json.
 //
 //   node scripts/frameworks.mjs [name ...] [--check [--keep]] [--latest]
-//   node scripts/frameworks.mjs --matrix
+//   node scripts/frameworks.mjs --matrix [name ...]
 //
 // --check   compare with the committed routes.json instead of writing it; exit 1 on a difference
 // --keep    with --check, write what the framework reports to routes.json all the same, for CI to hand back
 // --latest  install the framework's latest release first (the fixture's `latest` command) instead of its locked one
-// --matrix  print each fixture with its toolchain as a GitHub Actions matrix and exit
+// --matrix  print each fixture (or each named one present) with its toolchain as a GitHub Actions matrix and exit
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +24,7 @@ const all = readdirSync(root, { withFileTypes: true })
   .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "framework.yaml")))
   .map((d) => d.name);
 if (args.includes("--matrix")) {
-  const include = all.map((fixture) => ({ fixture, toolchain: parse(readFileSync(join(root, fixture, "framework.yaml"), "utf8")).toolchain }));
+  const include = (names.length ? all.filter((n) => names.includes(n)) : all).map((fixture) => ({ fixture, toolchain: parse(readFileSync(join(root, fixture, "framework.yaml"), "utf8")).toolchain }));
   const missing = include.filter((i) => typeof i.toolchain !== "string");
   if (missing.length) {
     console.error(`framework.yaml names no toolchain in ${missing.map((i) => i.fixture).join(", ")}`);

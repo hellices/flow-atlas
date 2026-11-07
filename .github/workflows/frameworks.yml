@@ -29,6 +29,8 @@ jobs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 11
@@ -37,12 +39,29 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # A push to a frameworks/** branch runs only the fixtures it changes since the branch it starts from: of main and
+      # the feature branches, the one with the fewest commits between its merge base and the push.
       - id: list
-        run: echo "matrix=$(node scripts/frameworks.mjs --matrix)" >> "$GITHUB_OUTPUT"
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          names=""
+          if [ "${{ github.event_name }}" = push ] && [ "${BRANCH#frameworks/}" != "$BRANCH" ]; then
+            base=""; best=""
+            for ref in $(git for-each-ref --format='%(refname)' refs/remotes/origin/main 'refs/remotes/origin/feat/*'); do
+              n=$(git rev-list --count "$(git merge-base "$ref" HEAD)..HEAD")
+              if [ -z "$best" ] || [ "$n" -lt "$best" ]; then best=$n; base=$ref; fi
+            done
+            echo "changes since $base"
+            names=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD -- fixtures/frameworks | cut -d/ -f3 | sort -u | tr '\n' ' ')
+            [ -n "$names" ] || names=none
+          fi
+          echo "matrix=$(node scripts/frameworks.mjs --matrix $names)" >> "$GITHUB_OUTPUT"
 
   routes:
     name: ${{ matrix.fixture }}
     needs: fixtures
+    if: needs.fixtures.outputs.matrix != '{"include":[]}'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -96,6 +115,10 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - if: matrix.toolchain == 'swift'
+        uses: swift-actions/setup-swift@v2
+      - if: matrix.toolchain == 'dart'
+        uses: dart-lang/setup-dart@v1
       - name: ask the framework for its routes and compare them with routes.json
         env:
           DOTNET_NOLOGO: 1
