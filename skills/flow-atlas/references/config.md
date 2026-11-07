@@ -104,8 +104,10 @@ constant used only that way is a base, not a request of its own. A URL held in a
 use requesting it states (`fetch(url, { method: "POST" })`); uses that differ or state none leave it `*`. A wrapper the call source names in `wrappers` is read as fetch is, with
 its own default: called by the name written there (`authFetch`, or `api.authFetch` for that member call only), with
 the URL as its first argument, it sends `defaultMethod` when there is no second argument or the second is an object
-literal without `method` and without a spread; a method the call states (`{ method: "PUT" }`, also after a spread,
-or `authFetch(url, "POST")`) is kept; an init held in a value or spread, or a `method` held in a value, leaves it `*`. A wrapper whose default is not
+literal in which nothing may set `method`; a method the call states (`{ method: "PUT" }`, also after a spread,
+or `authFetch(url, "POST")`) is kept; an init held in a value, or one where a spread, a computed key (`[key]: verb`),
+a getter, a `__proto__` or a `method` held in a value comes last among what may set it, leaves it `*`. The wrapper is
+read before what its name says without the entry: a wrapper named `post` or `fetch` sends its own default. A wrapper whose default is not
 fetch's GET (one that always posts, say) says so in `defaultMethod`. Without the entry, a wrapper's call that states no
 method is `*`: atlas does not read into the wrapper. A method named in brackets (`path["startsWith"]`) is
 the method named after a dot. A string in a type

@@ -255,6 +255,33 @@ describe("client wrappers in the configuration", () => {
     expect(wrapped('authFetch("/items");', [])).toEqual(["* /items"]);
   });
 
+  it("leaves the method open while anything in the init may name method, and reads one stated after it", () => {
+    const rows: Array<[string, string[]]> = [
+      // A computed key, a getter, a prototype or a spread may carry a method.
+      ['authFetch("/items", { [key]: verb });', ["* /items"]],
+      ['authFetch("/items", { ["method"]: verb });', ["* /items"]],
+      ['authFetch("/items", { get method() { return verb; } });', ["* /items"]],
+      ['authFetch("/items", { __proto__: init, headers });', ["* /items"]],
+      ['authFetch("/items", { method: "DELETE", ...init });', ["* /items"]],
+      ['authFetch("/items", { method: "POST", [key]: verb });', ["* /items"]],
+      // A method stated after them is the one sent; a computed key that is a literal is that name.
+      ['authFetch("/items", { [key]: verb, method: "PUT" });', ["PUT /items"]],
+      ['authFetch("/items", { ["headers"]: headers });', ["GET /items"]],
+    ];
+    expect(rows.map(([code]) => wrapped(code))).toEqual(rows.map(([, calls]) => calls));
+    // fetch is read by the same rule.
+    expect(read('fetch("/items", { [key]: verb });\nfetch("/items", { __proto__: init });')).toEqual(["* /items", "* /items"]);
+  });
+
+  it("reads a configured wrapper before the names a method is read from without one", () => {
+    const post = [{ name: "post", defaultMethod: "POST" }];
+    expect(wrapped('post("/items");\npost("/items", { method: "GET" });\npost("/items", init);', post)).toEqual(["POST /items", "GET /items", "* /items"]);
+    const fetch = [{ name: "fetch", defaultMethod: "POST" }];
+    expect(wrapped('fetch("/items");\nfetch("/items", { headers });\nfetch("/items", { method: "GET" });', fetch)).toEqual(["POST /items", "POST /items", "GET /items"]);
+    // Without the wrapper the name decides.
+    expect(read('post("/items", { method: "GET" });\npost("/items", init);')).toEqual(["POST /items", "POST /items"]);
+  });
+
   it("takes a name and one of the HTTP methods as the default", () => {
     const wrappers = (list: unknown) => () => normalizeConfig({ components: [{ name: "a", path: "" }, { name: "b", path: "" }], calls: [{ from: "a", to: "b", files: ["*.ts"], wrappers: list }] });
     expect(wrappers([{ name: "authFetch", defaultMethod: "GET" }])).not.toThrow();

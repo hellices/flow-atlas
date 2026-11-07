@@ -68,9 +68,45 @@ function fetchMethod(init: ts.Expression | undefined, absent = "GET"): string {
   if (!init) return absent;
   if (!ts.isObjectLiteralExpression(init)) return "*";
   if (init.properties.some((p) => ts.isSpreadAssignment(p))) return "*";
-  const method = init.properties.find((p) => p.name && p.name.getText().replace(/["']/g, "") === "method");
-  if (!method) return absent;
-  return methodProperty(init) ?? "*";
+  return initMethod(init) ?? absent;
+}
+
+/**
+ * The method an init object sets, read in order as the object is built: the last of the properties that may set it
+ * decides. A known method stated as `method: "PUT"` is that method; a spread, a computed key, a getter or a
+ * `__proto__` may carry any, so they leave it `*`. Undefined when nothing in the object may set a method.
+ */
+function initMethod(init: ts.ObjectLiteralExpression): string | undefined {
+  let method: string | undefined;
+  let prototype = false;
+  for (const p of init.properties) {
+    const name = p.name && propertyName(p.name);
+    if (ts.isSpreadAssignment(p) || (p.name && name === undefined)) method = "*";
+    else if (name === "method") method = (ts.isPropertyAssignment(p) && statedMethod(p.initializer)) || "*";
+    else if (name === "__proto__" && ts.isPropertyAssignment(p) && !ts.isComputedPropertyName(p.name)) prototype = true;
+  }
+  return method ?? (prototype ? "*" : undefined);
+}
+
+/** The name a property key states: an identifier, a string, or a computed key that is a literal; undefined otherwise. */
+function propertyName(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    const key = unwrap(name.expression);
+    return ts.isStringLiteralLike(key) || ts.isNumericLiteral(key) ? key.text : undefined;
+  }
+  return name.text;
+}
+
+/**
+ * The method a configured wrapper's call sends when the string is its URL, the first argument, read as fetch with the
+ * wrapper's default; a method stated as the second argument, the existing reading of any call, is kept.
+ */
+function wrapperMethod(call: ts.CallExpression, url: ts.Node, defaultMethod: string): string {
+  if (call.arguments[0] !== url) return "*";
+  const init = call.arguments[1];
+  if (init && ts.isStringLiteralLike(init) && METHODS.has(init.text)) return init.text;
+  if (init && ts.isObjectLiteralExpression(init)) return initMethod(init) ?? defaultMethod;
+  return fetchMethod(init, defaultMethod);
 }
 
 /** The HTTP method a call site states near the string: `http.post(url)`, `request(url, "POST")`, `{ method: "POST" }`, otherwise `*`. */
@@ -81,15 +117,14 @@ function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): strin
     if (!parent) break;
     if (ts.isCallExpression(parent) && parent.arguments.includes(current as ts.Expression)) {
       const callee = parent.expression;
+      // A configured wrapper, by the name it is called with, comes before what its name would say without it.
+      const wrapper = wrappers.find((w) => w.name === callee.getText().replace(/\s+/g, ""));
+      if (wrapper) return wrapperMethod(parent, current, wrapper.defaultMethod);
       const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
       if (VERBS.has(name.toLowerCase())) return name.toUpperCase();
       // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
       const global = ts.isIdentifier(callee) || (ts.isPropertyAccessExpression(callee) && /^(window|globalThis|self)$/.test(callee.expression.getText()));
       if (name === "fetch" && global && parent.arguments[0] === current) return fetchMethod(parent.arguments[1]);
-      // A configured wrapper, by the name it is called with, takes the URL first and a fetch init second.
-      const wrapper = parent.arguments[0] === current ? wrappers.find((w) => w.name === callee.getText().replace(/\s+/g, "")) : undefined;
-      const sent = wrapper && fetchMethod(parent.arguments[1], wrapper.defaultMethod);
-      if (sent && sent !== "*") return sent;
       for (const arg of parent.arguments) {
         if (arg === current) continue;
         if ((ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) && METHODS.has(arg.text)) return arg.text;
@@ -109,13 +144,16 @@ function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
   for (const p of obj.properties) {
     if (ts.isPropertyAssignment(p) && p.name.getText().replace(/["']/g, "") === "method") {
       const v = p.initializer;
-      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
-        const method = v.text.toUpperCase();
-        return METHODS.has(method) ? method : undefined;
-      }
+      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) return statedMethod(v);
     }
   }
   return undefined;
+}
+
+/** A known method a string states, in any case. */
+function statedMethod(v: ts.Expression): string | undefined {
+  const method = ts.isStringLiteralLike(v) ? v.text.toUpperCase() : undefined;
+  return method && METHODS.has(method) ? method : undefined;
 }
 
 /** The operands a `+` chain joins, through the parentheses around a part of it. */
