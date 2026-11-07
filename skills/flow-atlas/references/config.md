@@ -142,8 +142,9 @@ outbound call of the same component held in a method of that name continues the 
 of its component's call files does not turn its own registrations into calls. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
 its routes under each literal path it is mounted at with `use` (an inline middleware first is the pathless overload),
 nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
-router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
-shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
+router or on an `express()` application, created there or imported from a relative module; `use` returns the router,
+so a chain (`Router().use(a).use("/b", b)`, `export default Router().use("/api", api)`) is that router with each `use`
+a mount on it. Routers are told apart by their bindings, so a shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
 read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
 under its `src/`: route groups and slots add no segment, private folders and intercepting routes are not served, `[id]`

@@ -9,8 +9,9 @@ import { declarationOf, resolveModule, unwrap } from "./binding.js";
  * required or imported from a relative module, or a mount the configuration declares. A router mounted anywhere atlas
  * cannot read is not placed at the root.
  *
- * Routers are told apart by their declarations, not their names: a router is `<file>@<offset of its name>`, and a name
- * that a closer scope binds to something else is not that router.
+ * Routers are told apart by where they are created, not their names: a router is `<file>@<offset of its Router()>`, and
+ * a name that a closer scope binds to something else is not that router. `use` returns the router it is called on, so
+ * a chain `Router().use(a).use("/b", b)` is that router, with each `use` a mount on it.
  */
 export interface Mounts {
   /** The router the name used at `id` in `file` refers to, defined there or imported; undefined when it is none. */
@@ -57,6 +58,22 @@ function importOf(decl: ts.Node | undefined): { spec: string; name: string } | u
   return undefined;
 }
 
+/** The receiver a `use` call is made on: `x.use(...)` and `x["use"](...)`, which is the same call. */
+function useReceiver(node: ts.Node): ts.Expression | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+  const callee = node.expression;
+  if (ts.isPropertyAccessExpression(callee) && callee.name.text === "use") return callee.expression;
+  if (ts.isElementAccessExpression(callee) && literal(callee.argumentExpression) === "use") return callee.expression;
+  return undefined;
+}
+
+/** The `Router()` an expression is: the creation itself, or a chain of `use` calls made on it. */
+function chainRoot(e: ts.Expression): ts.Expression | undefined {
+  let u = unwrap(e);
+  for (let r = useReceiver(u); r; r = useReceiver(u)) u = unwrap(r);
+  return createsRouter(u) ? u : undefined;
+}
+
 /** Whether an expression creates an Express router: `Router()` or `new Router()` where `Router` comes from `express`. */
 function createsRouter(e: ts.Expression | undefined): boolean {
   const u = e && unwrap(e);
@@ -86,30 +103,33 @@ function isExpressApp(id: ts.Identifier): boolean {
   return from?.spec === "express" && from.name === "default";
 }
 
-const keyOf = (file: string, decl: ts.VariableDeclaration): string => `${file}@${decl.name.getStart()}`;
+/** The key of the router an expression is, or undefined when it is none. */
+const routerIn = (file: string, e: ts.Expression): string | undefined => {
+  const root = chainRoot(e);
+  return root ? `${file}@${root.getStart()}` : undefined;
+};
 
 interface FileFacts {
   sf: ts.SourceFile;
-  /** Routers declared in the file, by key. */
-  routers: Set<string>;
-  /** What the module exports, by exported name: a name of the file, or a name another module exports. */
-  exports: Map<string, ts.Identifier | { spec: string; name: string }>;
+  /** What the module exports, by exported name: a name or a router of the file, or a name another module exports. */
+  exports: Map<string, ts.Expression | { spec: string; name: string }>;
   /** Modules re-exported whole (`export * from "./routes"`). */
   stars: string[];
-  /** The router mounted: a name, or a module's export taken from it (`routes.router`). */
-  uses: Array<{ receiver: ts.Identifier; path: string | undefined; target: ts.Identifier | ts.PropertyAccessExpression }>;
+  /** The router mounted: a name, a module's export taken from it (`routes.router`), or a router created in place. */
+  uses: Array<{ receiver: ts.Expression; path: string | undefined; target: ts.Expression }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, routers: new Set(), exports: new Map(), stars: [], uses: [] };
+  const facts: FileFacts = { sf, exports: new Map(), stars: [], uses: [] };
   const exported = (n: ts.Node): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  /** A name, or a router created in place (`export default Router().use("/api", api)`). */
+  const exportable = (e: ts.Expression): boolean => ts.isIdentifier(e) || chainRoot(e) !== undefined;
   const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && createsRouter(node.initializer)) facts.routers.add(keyOf(file, node));
     if (ts.isVariableStatement(node) && exported(node)) {
       for (const d of node.declarationList.declarations) if (ts.isIdentifier(d.name)) facts.exports.set(d.name.text, d.name);
     }
-    if (ts.isExportAssignment(node) && ts.isIdentifier(unwrap(node.expression))) facts.exports.set("default", unwrap(node.expression) as ts.Identifier);
+    if (ts.isExportAssignment(node) && exportable(unwrap(node.expression))) facts.exports.set("default", unwrap(node.expression));
     if (ts.isExportDeclaration(node) && !node.exportClause && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) facts.stars.push(node.moduleSpecifier.text);
     if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
       for (const el of node.exportClause.elements) {
@@ -122,7 +142,7 @@ function factsOf(text: string, file: string): FileFacts {
       const left = node.left.getText(sf);
       const right = unwrap(node.right);
       const named = /^(?:module\.)?exports\.(\w+)$/.exec(left);
-      if (ts.isIdentifier(right) && left === "module.exports") facts.exports.set("default", right);
+      if (exportable(right) && left === "module.exports") facts.exports.set("default", right);
       if (ts.isIdentifier(right) && named) facts.exports.set(named[1]!, right);
       // `module.exports = { router, api: apiRouter }` exports each name a property holds.
       if (left === "module.exports" && ts.isObjectLiteralExpression(right)) {
@@ -134,15 +154,9 @@ function factsOf(text: string, file: string): FileFacts {
         }
       }
     }
-    // `app.use(...)`, and `app["use"](...)`, which is the same call.
-    const callee = ts.isCallExpression(node) ? node.expression : undefined;
-    const use =
-      callee && ts.isPropertyAccessExpression(callee) && callee.name.text === "use"
-        ? callee.expression
-        : callee && ts.isElementAccessExpression(callee) && literal(callee.argumentExpression) === "use"
-          ? callee.expression
-          : undefined;
-    if (ts.isCallExpression(node) && use && ts.isIdentifier(use)) {
+    // `app.use(...)` on a name, or on a router created in place (`Router().use(...)`).
+    const use = useReceiver(node);
+    if (ts.isCallExpression(node) && use && (ts.isIdentifier(unwrap(use)) || chainRoot(use))) {
       const args = node.arguments;
       const first = args[0] && unwrap(args[0]);
       const path = literal(first);
@@ -150,8 +164,8 @@ function factsOf(text: string, file: string): FileFacts {
       const pathless = first && (ts.isArrowFunction(first) || ts.isFunctionExpression(first));
       for (const arg of args) {
         const target = unwrap(arg);
-        if (!ts.isIdentifier(target) && !(ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression))) continue;
-        facts.uses.push({ receiver: use, path: path ?? (pathless || target === first ? "/" : undefined), target });
+        if (!ts.isIdentifier(target) && !(ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) && !chainRoot(target)) continue;
+        facts.uses.push({ receiver: unwrap(use), path: path ?? (pathless || target === first ? "/" : undefined), target });
       }
     }
     ts.forEachChild(node, visit);
@@ -164,7 +178,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   const facts = new Map([...texts].map(([file, text]) => [file, factsOf(text, file)]));
   const resolve = (from: string, spec: string) => resolveModule(from, spec, (f) => facts.has(f));
 
-  type At<T> = (file: string, id: ts.Identifier, seen: Set<string>) => T | undefined;
+  type At<T> = (file: string, e: ts.Expression, seen: Set<string>) => T | undefined;
   /** What `at` finds for the name a module exports, following re-exports through relative modules. */
   const exported = <T>(file: string, name: string, seen: Set<string>, at: At<T>): T | undefined => {
     const key = `${file}#${name}`;
@@ -214,24 +228,23 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const target = spec === undefined ? undefined : resolve(file, spec);
     return target ? exported(target, access.name.text, new Set(), routerAt) : undefined;
   };
-  const routerAt = (file: string, id: ts.Identifier, seen = new Set<string>()): string | undefined => {
-    const decl = declarationOf(id);
+  /** The router a name holds (`const api = Router().use(x)`), or the one an expression creates in place. */
+  const routerAt = (file: string, e: ts.Expression, seen = new Set<string>()): string | undefined => {
+    if (!ts.isIdentifier(e)) return routerIn(file, e);
+    const decl = declarationOf(e);
     if (!decl) return undefined;
-    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name)) {
-      const key = keyOf(file, decl);
-      if (facts.get(file)?.routers.has(key)) return key;
-    }
-    return imported(file, id, seen, routerAt) ?? aliased(file, id, seen, routerAt);
+    const own = ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.initializer ? routerIn(file, decl.initializer) : undefined;
+    return own ?? imported(file, e, seen, routerAt) ?? aliased(file, e, seen, routerAt);
   };
   // An application created here, or one a relative module exports (`export const app = express()`).
-  const appAt = (file: string, id: ts.Identifier, seen = new Set<string>()): true | undefined =>
-    isExpressApp(id) ? true : (imported(file, id, seen, appAt) ?? aliased(file, id, seen, appAt));
+  const appAt = (file: string, e: ts.Expression, seen = new Set<string>()): true | undefined =>
+    !ts.isIdentifier(e) ? undefined : isExpressApp(e) ? true : (imported(file, e, seen, appAt) ?? aliased(file, e, seen, appAt));
 
   // Each mount, keyed by the router it serves; the parent is the router it is mounted on, or none for an application.
   const mounts = new Map<string, Array<{ parent: string | undefined; path: string | undefined }>>();
   for (const [file, f] of facts) {
     for (const use of f.uses) {
-      const child = ts.isIdentifier(use.target) ? routerAt(file, use.target) : memberRouter(file, use.target);
+      const child = ts.isPropertyAccessExpression(use.target) ? memberRouter(file, use.target) : routerAt(file, use.target);
       if (!child) continue;
       // Mounted on a router, or on an Express application; `use` on anything else is no mount atlas can place.
       const parent = routerAt(file, use.receiver);
