@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -259,5 +259,27 @@ describe("files served from a directory", () => {
         "routes api: main.py:4 serves a frontend's files at /app (router.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read",
       ],
     });
+  });
+});
+
+describe("export arazzo's exit status", () => {
+  const root = fileURLToPath(new URL("../fixtures/scenarios/express-chained-routers", import.meta.url));
+  const flow = ["apiVersion: flow-atlas.dev/v1alpha1", "kind: Flow", "metadata:", "  name: list-notes", "spec:", "  steps:", "    - stepId: list", '      surface: "api|GET /api/notes"', ""].join("\n");
+
+  it("is 1 where there is nothing to export: no active flow, no flow of the name asked for, no step an OpenAPI description names", () => {
+    const empty = mkdtempSync(join(tmpdir(), "atlas-export-"));
+    expect(run("export", "arazzo", "--root", root, "--out", empty)).toMatchObject({ code: 1, stdout: "", stderr: "atlas export: nothing to export: no flow description is active\n" });
+    const out = mkdtempSync(join(tmpdir(), "atlas-export-"));
+    mkdirSync(join(out, "flows"));
+    writeFileSync(join(out, "flows", "notes.flow.yaml"), flow);
+    expect(run("export", "arazzo", "--root", root, "--out", out, "--flow", "other")).toMatchObject({ code: 1, stdout: "" });
+    const undescribed = run("export", "arazzo", "--root", root, "--out", out);
+    expect(undescribed).toMatchObject({ code: 1, stdout: "" });
+    expect(undescribed.stderr).toContain("nothing to export: no step of the selected flows could be written as an operation\nlist-notes.list: no OpenAPI description is decided for api");
+  });
+
+  it("is 2 for an error", () => {
+    expect(run("export", "arazzo", "--root", root, "--out", mkdtempSync(join(tmpdir(), "atlas-export-")), "--config", join(root, "missing.yaml")).code).toBe(2);
+    expect(run("export", "openapi", "--root", root).code).toBe(2);
   });
 });

@@ -253,7 +253,8 @@ read it from the repository's deployment files.
 
 `atlas export arazzo` writes a step only when its component's description is decided. A component with none (a plain
 HTTP server atlas reads from code) has its steps left out with a `limit:`, and the workflows that lose steps say so in
-`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. The export prints to stdout,
+`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. Where no step can be written,
+or no flow is active, there is nothing to export: it exits 1 and says why, where an error exits 2. The export prints to stdout,
 not to `--out`; save it at the repository root (`atlas export arazzo > flows.arazzo.yaml`), because a description
 file in the repository is written relative to the root. A file outside it (a
 committed link to one included) is written by its file name, with a `limit:` to commit it or publish it and set

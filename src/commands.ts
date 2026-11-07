@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { stringify } from "yaml";
 import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
-import { toArazzo } from "./arazzo.js";
+import { NothingToExport, toArazzo, type ArazzoExport } from "./arazzo.js";
 import { chainsText, deriveChains, type ChainReport } from "./chains.js";
 import { draftChainFlows } from "./draft.js";
 import { diffGraphs, diffMarkdown } from "./diff.js";
@@ -65,6 +65,12 @@ Options
   --kind <k>          query: surfaces, calls or both (default)
   --flow <name>       export: only this flow
   --unnamed           chains: only the chains no flow names
+
+Exit status
+  0  done
+  1  check --fail-on-new: there are new findings; export arazzo: nothing to export (no active flow, none of the
+     name --flow gives, or no step the components' OpenAPI descriptions name)
+  2  an error: unknown command or option, a configuration or file that cannot be read, a description to choose
 `;
 
 interface Options {
@@ -475,13 +481,21 @@ function cmdExport(o: Options): number {
   const config = configFor(o);
   const source = openSource(o.root, o.ref);
   const graph = scan(source, config, { root: o.root, requested: o.ref ?? "WORKTREE" });
-  const { document, limits } = toArazzo(graph, loadFlows(source, config, o.out), config, {
-    flow: o.flow,
-    title: `Flows of ${basename(o.root)}`,
-    root: o.root,
-    // A description outside the repository, given by absolute path, is read from disk as route extraction reads it.
-    read: (path) => (isAbsolute(path) ? (existsSync(path) ? readFileSync(path, "utf8") : undefined) : source.read(path)),
-  });
+  let exported: ArazzoExport;
+  try {
+    exported = toArazzo(graph, loadFlows(source, config, o.out), config, {
+      flow: o.flow,
+      title: `Flows of ${basename(o.root)}`,
+      root: o.root,
+      // A description outside the repository, given by absolute path, is read from disk as route extraction reads it.
+      read: (path) => (isAbsolute(path) ? (existsSync(path) ? readFileSync(path, "utf8") : undefined) : source.read(path)),
+    });
+  } catch (e) {
+    if (!(e instanceof NothingToExport)) throw e;
+    process.stderr.write(`atlas export: ${e.message}\n`);
+    return 1;
+  }
+  const { document, limits } = exported;
   process.stdout.write(o.format === "json" ? `${JSON.stringify(document, null, 2)}\n` : stringify(document, { lineWidth: 0 }));
   for (const l of limits) process.stderr.write(`limit: ${l}\n`);
   return 0;
