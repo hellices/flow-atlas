@@ -1,0 +1,11 @@
+# One Express API in a standalone Nx workspace (project.json at the root), no client in the repository.
+components:
+  - { name: api, path: "" }
+routes:
+  # src/app/routes/routes.ts builds its routers by chaining `use`, which returns the router, and main.ts mounts the
+  # one it exports with `app.use(routes)`; no mounts are declared.
+  - { component: api, files: ["src/**/*.ts"], styles: [express] }
+publicSurfaces:
+  # Every /api route is for outside clients; GET / is the "API is running" probe.
+  - "api|* /api/**"
+  - "api|GET /"

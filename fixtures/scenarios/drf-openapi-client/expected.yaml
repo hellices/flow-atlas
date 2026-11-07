@@ -42,4 +42,9 @@ inventory:
   routes:
     - frontend/js/pages/Home.tsx next 1
   calls:
-    - frontend/js/utils/invite.ts 1
+    # The generated client's `url:` properties, and both axios calls of the invite helper.
+    - frontend/js/api/sdk.gen.ts 7
+    - frontend/js/utils/invite.ts 2
+  documents:
+    # The URL conf serves the document drf-spectacular builds (SpectacularAPIView).
+    - (none) /api/schema/ drf-spectacular urlconf backend/project/urls.py:17

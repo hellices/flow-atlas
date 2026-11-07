@@ -547,6 +547,11 @@ export function routesFromTypeScript(
   for (const name of unmounted) {
     limits?.push(`routes ${spec.component}: router ${name} in ${file} is mounted where the code gives no literal path; its routes are not read (declare it in mounts)`);
   }
+  // express.static answers with the files of a directory, and passes on what it does not hold: what it serves is the
+  // directory's content, not the code's.
+  for (const { line, paths } of mounts?.statics(file) ?? []) {
+    limits?.push(`routes ${spec.component}: ${file}:${line} serves the files of a directory at ${paths?.join(", ") ?? "a path the code does not spell out"} (express.static); their paths are not read`);
+  }
   return out;
 }
 
@@ -818,6 +823,19 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       // An application or router of the route files that it mounts is served under the mount with the routes read there.
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} mounts an application at ${path} whose routes are not read`);
     }
+  }
+  // `frontend` serves the files built into a directory where no route matches, and a fallback page for GET and HEAD
+  // (fastapi.tiangolo.com/tutorial/frontend): which paths answer depends on the build, not on the code.
+  for (const m of fastapi ? code.matchAll(/\b(\w+)\.frontend\(\s*/g) : []) {
+    if (!receivers.has(m[1]!)) continue;
+    const argsStart = (m.index ?? 0) + m[0].length;
+    const all = pythonArgStarts(code, argsStart);
+    const named = all.map((at) => ({ at, m: /^path\s*=\s*/.exec(code.slice(at)) })).find((a) => a.m);
+    const pathAt = named ? named.at + named.m![0].length : all.find((a) => !/^\w+\s*=(?!=)/.test(code.slice(a)));
+    const path = pathAt === undefined ? undefined : pythonLiteral(text.slice(pathAt));
+    limits?.push(
+      `routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} serves a frontend's files at ${path ?? "a path the file does not spell out"} (${m[1]}.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read`,
+    );
   }
   for (const name of untraced) {
     limits?.push(`routes ${spec.component}: ${file} registers routes on ${name}, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written`);

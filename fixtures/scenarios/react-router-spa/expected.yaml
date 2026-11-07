@@ -44,5 +44,7 @@ inventory:
     - shop-frontend package.json
   routes: []
   calls:
+    # The generated client's `url:` properties.
+    - frontend/js/api/sdk.gen.ts 7
     # A text shape: inventory offers a `path:` property for whoever writes the configuration to judge.
     - frontend/js/routes/index.ts 1

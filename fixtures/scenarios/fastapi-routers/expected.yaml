@@ -86,7 +86,8 @@ inventory:
     - backend/app/api/routes/users.py fastapi 7
     - backend/app/api/routes/utils.py fastapi 1
     - backend/app/api/routes/webhooks.py fastapi 1
-  # Inventory's shapes take an f-string that joins a value to a path for a request; the generated client's `url:`
-  # property is none of them.
+  # Inventory's shapes take an f-string that joins a value to a path for a request, and the generated client's `url:`
+  # properties.
   calls:
     - backend/app/main.py 1
+    - frontend/src/client/sdk.gen.ts 17

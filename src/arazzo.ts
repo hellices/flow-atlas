@@ -176,6 +176,9 @@ export function documentUrl(component: string, graph: Graph, config: Config, roo
   };
 }
 
+/** The flows selected hold nothing an Arazzo description can carry; `export arazzo` exits 1 for it, not 2. */
+export class NothingToExport extends Error {}
+
 /**
  * `read` gives the text of a repository file, so an operationPath can name the path key a committed description
  * actually uses. Without it, or for a served description, the code's path is written. `root`, the repository's
@@ -200,8 +203,13 @@ export function toArazzo(
   for (const f of files.flatMap((x) => x.flows.map((y) => y.object))) {
     if ((f.spec.lifecycle ?? "active") !== "deprecated" && !available.has(f.metadata.name)) available.set(f.metadata.name, f);
   }
-  if (available.size === 0) throw new Error("nothing to export: no flow description is active");
-  if (options.flow && !available.has(options.flow)) throw new Error(`nothing to export: no active flow is named ${options.flow}`);
+  // A flow the export would need may be in a file that cannot be read: that is an input error, not an empty export.
+  if (available.size === 0 || (options.flow && !available.has(options.flow))) {
+    const unread = files.filter((f) => f.errors.length);
+    if (unread.length) throw new Error(`flow files cannot be read:\n${unread.map((f) => `${f.file}: ${f.errors.join("; ")}`).join("\n")}`);
+  }
+  if (available.size === 0) throw new NothingToExport("nothing to export: no flow description is active");
+  if (options.flow && !available.has(options.flow)) throw new NothingToExport(`nothing to export: no active flow is named ${options.flow}`);
   // A selected flow brings the flows its steps run, so each workflowId it names is in the export.
   const selected = new Set<string>();
   const queue = options.flow ? [options.flow] : [...available.keys()];
@@ -352,7 +360,7 @@ export function toArazzo(
   const sourceDescriptions = written.map(([component, d]) => ({ name: sourceName(component), url: d.url, type: "openapi" }));
   // Arazzo requires at least one workflow and one source description.
   if (exported.length === 0 || sourceDescriptions.length === 0)
-    throw new Error(`nothing to export: no step of the selected flows could be written as an operation${limits.length ? `\n${limits.join("\n")}` : ""}`);
+    throw new NothingToExport(`nothing to export: no step of the selected flows could be written as an operation${limits.length ? `\n${limits.join("\n")}` : ""}`);
   const relativeFiles = written.some(([, d]) => d.file && !/^[a-z][a-z0-9+.-]*:/i.test(d.url));
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit;
   return {

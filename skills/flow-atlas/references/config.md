@@ -1,16 +1,18 @@
 # Configuration
 
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
-material: components from manifests, files that register routes (and in which style), files whose strings look like
-client requests and OpenAPI documents. It does not choose; many candidates are tests
-helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
+material: components from package manifests (`package.json`, `pyproject.toml`, `go.mod`, a Maven or Gradle build,
+`pubspec.yaml`, and in an Nx workspace each project's `project.json`, the workspace's root `package.json` left out), to
+list under `components:` (the `manifest:` setting reads only `component.json` declarations), files that register
+routes (and in which style), files whose strings look like client requests and OpenAPI documents. It does not choose;
+many candidates are tests helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
 part of the app beside them (`android/`, `ios/` and the like of a Flutter app, a React Native app or an Expo module) is
 that app's, not a component; components that would share a name are named by their paths (`mobile-app`), or numbered where the paths do not
 tell them apart, with a note. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
 ```yaml
-# Components: from manifests, or listed.
+# Components: from component.json manifests, or listed.
 manifest:
   kind: component-json        # any JSON with name, provides, consumes
   glob: "services/*/component.json"
@@ -146,7 +148,9 @@ one call, which joins a base only when both branches do. Branches whose paths di
 put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
 absolute URL, in code of any language, is a request to the call source's target when its
 host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
-other host, a link to another site for one, is not read, and a limit names the host. A client's own helper that puts
+other host, a link to another site for one, is not read, and a limit names the host. A host chosen in a URL's leading
+hole (`` `${prod ? "https://other.example" : ""}/api/status` ``) is read as that conditional's branches would be: the
+URL is still a request where a branch names no other host, and the limit names the other one. A client's own helper that puts
 the configured `prefix` straight before a path it is given (`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built
 from that one parameter alone) is the prefix written once more, not a request: the paths passed to it are read where
 they are written, with the prefix, and a limit names where the helper was left out. A path with a hole
@@ -164,6 +168,11 @@ outbound call of the same component held in a method of that name continues the 
 of its component's call files does not turn its own registrations into calls. An Express router, `Router()` from `express` (`express.Router()`, a named import, a destructured require), serves
 its routes under each literal path it is mounted at with `use` (an inline middleware first is the pathless overload),
 nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
+router or on an `express()` application, created there or imported from a relative module; `use` returns the router,
+so a chain (`Router().use(a).use("/b", b)`, `export default Router().use("/api", api)`) is that router with each `use`
+a mount on it. Routers are told apart by their bindings, so a shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
+read and a limit says so. `express.static` serves the files of a directory and passes on any path it does not hold, so
+what it serves is the directory's content: a limit names where it is mounted, and its paths are not read. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
 read and a limit says so. A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
@@ -258,6 +267,10 @@ unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, 
 `/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
+(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
+is not read, and a limit says so. `app.frontend("/", directory=...)` serves the files a frontend build put in a
+directory, and a fallback page for GET and HEAD, wherever no route matches: which paths answer depends on the build,
+so they are not read and a limit names the call. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 (and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; an application or router of the route files
 that it mounts serves the routes read there under `/x`, as an include would; another mounted application is not read,
 and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
@@ -359,7 +372,8 @@ read it from the repository's deployment files.
 
 `atlas export arazzo` writes a step only when its component's description is decided. A component with none (a plain
 HTTP server atlas reads from code) has its steps left out with a `limit:`, and the workflows that lose steps say so in
-`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. The export prints to stdout,
+`x-flow-atlas.omitted`; set `openapi.<component>` or `routes[].openapi` to write them. Where no step can be written,
+or no flow is active, there is nothing to export: it exits 1 and says why, where an error exits 2. The export prints to stdout,
 not to `--out`; save it at the repository root (`atlas export arazzo > flows.arazzo.yaml`), because a description
 file in the repository is written relative to the root. A file outside it (a
 committed link to one included) is written by its file name, with a `limit:` to commit it or publish it and set

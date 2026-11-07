@@ -96,6 +96,10 @@ atlas baseline update                         # accept the current findings as k
 change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md);
 expect two or three rounds of `scan` and correction before the findings are worth trusting.
 
+Every command exits 0 when it is done and 2 on an error. `check --fail-on-new` exits 1 when there are new findings, and
+`export arazzo` exits 1 when there is nothing to export: no active flow, none of the name `--flow` gives, or no step
+an OpenAPI description names.
+
 ## Day to day
 
 Once the configuration reads what it should, record the current findings with `atlas baseline update`. From then on
