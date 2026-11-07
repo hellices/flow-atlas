@@ -163,7 +163,9 @@ describe("routes as each framework serves them", () => {
   it("lock files name no registry but the public ones", () => {
     // A lock written through a registry mirror would send everyone's installs to its hosts. Only the file is named, so a
     // host that must stay private does not reach a public log either.
-    const named = fixtures.flatMap((name) => lockFiles(join(root, name)).filter((file) => !lockHosts(file).every((h) => PUBLIC_HOSTS.has(h))));
+    // Every fixture, recorded or not yet: a lock is pushed before CI hands back the routes it reports.
+    const all = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    const named = all.flatMap((name) => lockFiles(join(root, name)).filter((file) => !lockHosts(file).every((h) => PUBLIC_HOSTS.has(h))));
     expect(named.map((file) => file.slice(root.length + 1))).toEqual([]);
   });
   it.runIf(fixtures.length > 0)("prints the board", () => {

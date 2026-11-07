@@ -157,7 +157,8 @@ pnpm test
 ```
 
 The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
-`.git/hooks` still runs after them, with the same refs. CI runs the same checks.
+`.git/hooks` runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the
+same checks.
 
 `fixtures/shop` is a small monorepo with eight planted problems; the tests check that exactly those are found, that
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
