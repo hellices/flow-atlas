@@ -1,0 +1,45 @@
+case: |
+  A Django REST framework backend read from the document drf-spectacular generates, and a React app that calls it
+  through a client @hey-api/openapi-ts generated from that document, plus two requests written by hand. Seen in a real
+  run: every function of the generated client counted as a caller, so the four item routes and the create route,
+  which the app never requests, were not reported. A function of a file the generator marks as its own is read as a
+  request only when another configured file names it; only `restRestCheckRetrieve` and `usersList` are, and a limit
+  names the other five. DRF's router writes every path with a trailing slash, and atlas dropped it on both sides, so a
+  POST to `/api/users` matched `/api/users/` with nothing said, though Django's APPEND_SLASH only redirects such a
+  request (losing its body, or raising in DEBUG). A request without the slash the document writes is still matched
+  for GET and HEAD, which every framework that redirects serves, and for any other method it is matched to none,
+  with a limit, since whether it reaches the route depends on the framework. drf-spectacular's operationIds
+  (`users_list`) name no handler; a limit says none was found.
+surfaces:
+  - backend|GET /api/rest/rest-check
+  - backend|GET /api/users
+  - backend|POST /api/users
+  - backend|GET /api/users/{id}
+  - backend|PUT /api/users/{id}
+  - backend|PATCH /api/users/{id}
+  - backend|DELETE /api/users/{id}
+findings:
+  - FA001|backend|GET /api/users/{id}
+  - FA001|backend|PUT /api/users/{id}
+  - FA001|backend|PATCH /api/users/{id}
+  - FA001|backend|DELETE /api/users/{id}
+limits:
+  - "routes backend: no handler was found in the configured route files for 7 operations of backend/schema.yml"
+  - "calls frontend->backend: 5 functions of frontend/js/api/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: usersCreate, usersDestroy, usersRetrieve, usersPartialUpdate, usersUpdate"
+  - "calls frontend->backend: POST /api/users at frontend/js/utils/invite.ts:4 leaves out the trailing / the route's document writes (/api/users/)"
+chains:
+  - frontend->backend|GET /api/rest/rest-check
+  - frontend->backend|GET /api/users
+calls:
+  - frontend->backend|GET /api/rest/rest-check @ frontend/js/api/sdk.gen.ts:14
+  - frontend->backend|GET /api/users @ frontend/js/api/sdk.gen.ts:22
+  - frontend->backend|* /admin/login @ frontend/js/loaders/users.ts:15
+  - frontend->backend|POST /api/users @ frontend/js/utils/invite.ts:4
+  - frontend->backend|GET /api/rest/rest-check @ frontend/js/utils/invite.ts:8
+descriptions:
+  - backend chosen backend/schema.yml ReadForRoutes
+inventory:
+  routes:
+    - frontend/js/pages/Home.tsx next 1
+  calls:
+    - frontend/js/utils/invite.ts 1

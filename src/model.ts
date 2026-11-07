@@ -62,6 +62,8 @@ export interface Surface {
   described?: Place;
   /** The path key that document writes the operation under, which may differ from `path` by a base path, a trailing slash or parameter names. */
   describedPath?: string;
+  /** That document's version: `2.0` for Swagger, otherwise its `openapi` value. */
+  describedVersion?: string;
   /** Member methods the handler calls, following local and relatively imported functions. */
   reaches?: string[];
   /**
@@ -80,6 +82,8 @@ export interface Call {
   path: string;
   /** Whether the call site joins a base address to the path, as `${baseUrl}/orders` does. */
   based: boolean;
+  /** The call site writes a `/` at the end of the path, which `path` leaves out. */
+  slash?: true;
   at: Place;
   evidence: Evidence;
   /** The function or method that holds the call site. */

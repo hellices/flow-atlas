@@ -752,10 +752,11 @@ function handlerPlace(
   operationId: string,
   method: string,
   key: string,
+  parsed: Map<string, Map<string, number[]>>,
 ): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
-    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
+    for (const [f, t] of texts) for (const line of definitionLines(f, t, name, parsed)) hits.push({ file: f, line, offset: definitionOffset(t, line, name.slice(name.lastIndexOf(".") + 1)) });
     if (hits.length) break;
   }
   if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
@@ -804,15 +805,19 @@ function documentedSurfaces(
   // Matched by method and path with parameters unnamed: the document may name them differently from the code.
   const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
   const out: Surface[] = [];
+  const parsed = new Map<string, Map<string, number[]>>();
+  // Operations whose handler was looked for in the route files and not found, by operationId or, without one, by path.
+  const unplaced: string[] = [];
   for (const op of api.operations) {
     const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
     const known = byShape.get(operationShape(op.method, op.path));
     if (known) {
       if (op.operationId && !known.operationId) known.operationId = op.operationId;
-      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
+      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key, describedVersion: api.version });
       continue;
     }
-    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key, parsed) : undefined;
+    if (!place && texts.size) unplaced.push(op.operationId ?? `${op.method} ${op.key} with no operationId`);
     const handler = place && reach ? handlerNode(reach, place.at) : undefined;
     const surface: Surface = {
       id,
@@ -824,10 +829,17 @@ function documentedSurfaces(
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
+      describedVersion: api.version,
       ...(handler ? { reaches: reach!.from(place!.at.file, handler, executed && (executed.get(id) ?? executed.set(id, new Set()).get(id)!)) } : {}),
     };
     byShape.set(operationShape(op.method, op.path), surface);
     out.push(surface);
+  }
+  if (unplaced.length) {
+    const named = unplaced.length > 5 ? `${unplaced.slice(0, 5).join(", ")} and ${unplaced.length - 5} more` : unplaced.join(", ");
+    limits.push(
+      `routes ${spec.component}: no handler was found in the configured route files for ${unplaced.length} operation${unplaced.length === 1 ? "" : "s"} of ${file} (${named}); ${unplaced.length === 1 ? "it stays at its" : "they stay at their"} line in the document`,
+    );
   }
   return out;
 }

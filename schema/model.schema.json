@@ -138,6 +138,11 @@
           "minLength": 1,
           "pattern": "^/"
         },
+        "describedVersion": {
+          "description": "That document's version: 2.0 for Swagger, otherwise its openapi value.",
+          "type": "string",
+          "minLength": 1
+        },
         "reaches": {
           "description": "Member methods the handler calls, following local and relatively imported functions. Absent when the handler was not read.",
           "type": "array",
@@ -186,6 +191,10 @@
         "based": {
           "description": "The call site joins a base address to the path.",
           "type": "boolean"
+        },
+        "slash": {
+          "description": "The call site writes a / at the end of the path, which path leaves out.",
+          "const": true
         },
         "at": {
           "$ref": "#/$defs/place"

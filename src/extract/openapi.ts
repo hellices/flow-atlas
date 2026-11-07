@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { LineCounter, parseDocument } from "yaml";
 import { joinRoute, routeTemplate } from "../paths.js";
 import type { Place } from "../model.js";
@@ -89,17 +90,22 @@ export function describedOperations(file: string, text: string): DescribedApi | 
  * traced back to its name, since an operationId may end in a number for its own reasons and nothing in the document
  * says which generator wrote it.
  *
- * A Nest id joins the class and the method with `_`, and either may hold `_` itself, so every split after a class-like
- * prefix (an identifier that starts upper-case, as class names do) is a candidate, the longest method first:
- * `Admin_APIController_list` gives `APIController_list`, then `list`. The caller keeps the first that the code defines.
+ * A Nest id joins the class and the method with `_` (@nestjs/swagger's default `operationIdFactory`, from the
+ * controller's constructor name and the method's name), and either may hold `_` itself, so every split after a
+ * class-like prefix (an identifier that starts upper-case, as class names do) is a candidate: first the method of that
+ * class (`Class.method`), then the method by its name alone, the longest method first. `Admin_APIController_list`
+ * gives `Admin.APIController_list`, `Admin_APIController.list`, `APIController_list`, then `list`. The caller keeps
+ * the first that the code defines.
  */
 export function handlerNames(operationId: string, method: string, rawPath: string): string[] {
   const names = [operationId];
   if (/^[A-Z$][\w$]*$/.test(operationId)) {
+    const splits: Array<[string, string]> = [];
     for (let i = operationId.indexOf("_"); i > 0; i = operationId.indexOf("_", i + 1)) {
       const member = operationId.slice(i + 1);
-      if (/^[A-Za-z$][\w$]*$/.test(member)) names.push(member);
+      if (/^[A-Za-z$][\w$]*$/.test(member)) splits.push([operationId.slice(0, i), member]);
     }
+    names.push(...splits.map(([type, member]) => `${type}.${member}`), ...splits.map(([, member]) => member));
   }
   const fastapiSuffix = `${rawPath.replace(/\W/g, "_")}_${method.toLowerCase()}`;
   if (operationId.endsWith(fastapiSuffix) && operationId.length > fastapiSuffix.length) names.push(operationId.slice(0, -fastapiSuffix.length));
@@ -109,24 +115,47 @@ export function handlerNames(operationId: string, method: string, rawPath: strin
 export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
- * Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or
- * class method, a Kotlin `fun`, a Java method (a return type before the name).
+ * The lines where a TypeScript or JavaScript file defines each function or method with a body, by name, and each
+ * method of a named class also as `Class.method`: parsed, so a signature whose parameters run over several lines (as
+ * prettier writes a decorated Nest handler) is found, and an overload signature or a call is not.
  */
-export function definitionLines(file: string, text: string, name: string): number[] {
+function scriptDefinitions(file: string, text: string): Map<string, number[]> {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const out = new Map<string, number[]>();
+  const add = (name: string, line: number) => (out.get(name) ?? out.set(name, []).get(name)!).push(line);
+  const visit = (node: ts.Node): void => {
+    if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body && node.name && !ts.isComputedPropertyName(node.name)) {
+      const line = sf.getLineAndCharacterOfPosition(node.name.getStart(sf)).line + 1;
+      add(node.name.text, line);
+      if (ts.isClassLike(node.parent) && node.parent.name) add(`${node.parent.name.text}.${node.name.text}`, line);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Where a function or method of this name is defined in a file: Python `def`, a TypeScript or JavaScript function or
+ * method with a body, a Kotlin `fun`, a Java method (a return type before the name). `parsed` keeps each script's
+ * definitions, so a file is parsed once however many names are looked up in it.
+ */
+export function definitionLines(file: string, text: string, name: string, parsed?: Map<string, Map<string, number[]>>): number[] {
+  if (/\.(c|m)?[jt]sx?$/.test(file)) {
+    const definitions = parsed?.get(file) ?? scriptDefinitions(file, text);
+    parsed?.set(file, definitions);
+    return definitions.get(name) ?? [];
+  }
+  // A method of a named class is read only from a parsed script.
+  if (name.includes(".")) return [];
   const n = escapeRegExp(name);
   const modifiers = "(?:(?:public|protected|private|static|final|abstract|synchronized|async|override|suspend|open|export|default|readonly)\\s+)*";
   const patterns = file.endsWith(".py")
     ? [new RegExp(`^\\s*(?:async\\s+)?def\\s+${n}\\s*\\(`)]
-    : /\.(c|m)?[jt]sx?$/.test(file)
-      ? // A function or a class method, with an optional type parameter list before its parameters.
-        [
-          new RegExp(`^\\s*${modifiers}function\\s*\\*?\\s*${n}\\s*(?:<[^()]*>\\s*)?\\(`),
-          new RegExp(`^\\s*${modifiers}\\*?${n}\\s*(?:<[^()]*>\\s*)?\\([^;]*\\)\\s*(?::[^=;{]+)?\\{`),
-        ]
-      : /\.kts?$/.test(file)
-        ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
-        : // A Java declaration up to its opening parenthesis: annotations, modifiers, type parameters, a return type.
-          [new RegExp(`^\\s*(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*${modifiers}(?:<[^>]*>\\s*)?[\\w$.]+(?:<[^()]*>)?(?:\\[\\])*\\s+${n}\\s*\\(`)];
+    : /\.kts?$/.test(file)
+      ? [new RegExp(`^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*${modifiers}fun\\s+(?:<[^>]*>\\s*)?(?:[\\w.]+\\.)?${n}\\s*\\(`)]
+      : // A Java declaration up to its opening parenthesis: annotations, modifiers, type parameters, a return type.
+        [new RegExp(`^\\s*(?:@[\\w.]+(?:\\([^)]*\\))?\\s+)*${modifiers}(?:<[^>]*>\\s*)?[\\w$.]+(?:<[^()]*>)?(?:\\[\\])*\\s+${n}\\s*\\(`)];
   const out: number[] = [];
   text.split("\n").forEach((line, i) => {
     if (/^\s*(?:return|if|else|for|while|do|switch|case|catch|new|throw|yield|await|assert)\b/.test(line)) return;

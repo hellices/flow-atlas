@@ -141,9 +141,11 @@ export function traceText(doc: Subgraph): string {
     walk(seed, "out", "  ", new Set([seed]));
     if (lines.length === after) {
       lines.push(
-        s.reaches === undefined
-          ? "  not traced: the handler was not read as TypeScript"
-          : "  none found: no configured call of this component sits in a method the handler reaches",
+        s.reaches !== undefined
+          ? "  none found: no configured call of this component sits in a method the handler reaches"
+          : s.described && s.evidence === "declared"
+            ? "  not traced: no handler of this operation was found in the configured route files"
+            : "  not traced: the handler was not read as TypeScript",
       );
     }
     lines.push("", "= matched by method and path   ~ run by the handler (static) or held in a method it calls (by name)", "");

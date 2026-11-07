@@ -189,8 +189,8 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
-| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based` |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS; no rule expects a caller) |
+| call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `slash` (the path is written with a trailing `/`) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
 | OpenAPI document | component and location | `kind` (file, served), `convention` (how it was found), `aliasOf` (the path it shows), `agreement` (how much of the code's routes a committed file declares), `at` |
@@ -207,7 +207,9 @@ Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`),
 request without that segment reaches it only by the redirect to the path with a `/` added, which Starlette's router
 answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
 description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
-tool cannot resolve. Paths that differ only in a trailing `/` are one route. An
+tool cannot resolve. Paths that differ only in a trailing `/` are one route; where an OpenAPI document writes the
+`/`, a call that leaves it out reaches the route only by GET or HEAD (`describedPath` and the call's `slash` keep
+what was written). An
 `operationId` is read where the code states it (route options, `@ApiOperation`); with `operationIds: nest-swagger` in
 the configuration, @nestjs/swagger's default rule (`Class_method`) is applied.
 
@@ -221,7 +223,7 @@ of the first OpenAPI 3 server URL in front, without the host or a trailing `/`. 
 framework derives operationIds by (FastAPI `function_path_method`, Nest `Class_method`, springdoc's method name; a
 numbered id such as springdoc's `get_1` is not traced back to `get`) when
 it finds one definition (`evidence: name`), else where code declares the operationId as a quoted value, once (`text`),
-else at the document (`declared`). A route that any entry of the same component also reads from code (same method and
+else at the document (`declared`), and a limit lists the operations left there. A route that any entry of the same component also reads from code (same method and
 path, parameter names aside) keeps its code location and gains the document's operationId, `described` and
 `describedPath`.
 

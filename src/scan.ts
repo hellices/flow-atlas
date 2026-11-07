@@ -6,7 +6,7 @@ import { Reach } from "./extract/reach.js";
 import { extractRegistries } from "./extract/registries.js";
 import { extractRoutes } from "./extract/routes.js";
 import { Spans } from "./extract/spans.js";
-import { matchCalls, rankedComponents, unsettledLimits, type Ranking } from "./match.js";
+import { matchCalls, rankedComponents, slashlessLimits, unsettledLimits, type Ranking } from "./match.js";
 import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph } from "./model.js";
 import { select, type Source } from "./source.js";
 import { codeDependency, configDependency, provenance } from "./provenance.js";
@@ -28,7 +28,8 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * (evidence `name`). `spans[i]` are the offsets of the expression holding `calls[i]`'s URL; the handler runs the call
  * when it hands a call an expression starting there (`executed`). A link on the same line, or one whose address is
  * built from a request's result, starts elsewhere. A call whose method is not read and whose routes take different
- * methods has no edge; `limits` names it.
+ * methods has no edge, nor has one that leaves out the trailing slash its route's document writes, by a method other
+ * than GET or HEAD; `limits` names them.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
@@ -38,8 +39,8 @@ export function edgesOf(
   limits: string[] = [],
 ): Edge[] {
   const edges: Edge[] = [];
-  const { targetsOf, unsettled } = matchCalls(graph, ranked);
-  limits.push(...unsettledLimits(graph, unsettled));
+  const { targetsOf, unsettled, slashless } = matchCalls(graph, ranked);
+  limits.push(...unsettledLimits(graph, unsettled), ...slashlessLimits(graph, slashless));
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });

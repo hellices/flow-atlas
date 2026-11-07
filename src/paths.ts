@@ -9,6 +9,8 @@ const FILE_EXT = /\.(ts|tsx|js|mjs|cjs|json|ya?ml|md|png|jpe?g|svg|gif|webp|css|
 export interface CallPath {
   path: string;
   based: boolean;
+  /** The text ends its path with a `/`, which `path` leaves out. */
+  slash?: true;
 }
 
 /**
@@ -33,7 +35,7 @@ export function callPath(text: string): CallPath | undefined {
   if (!s.startsWith("/") || s === "/" || s.startsWith("//")) return undefined;
   if (!PATHLIKE.test(s) || FILE_EXT.test(s)) return undefined;
   if (s.split("/").filter(Boolean).every((seg) => seg === HOLE)) return undefined;
-  return { path: s.replace(/\/+$/, ""), based };
+  return { path: s.replace(/\/+$/, ""), based, ...(s.endsWith("/") ? { slash: true as const } : {}) };
 }
 
 /**
