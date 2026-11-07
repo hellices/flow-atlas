@@ -23,8 +23,10 @@ routes:
     files: ["services/orders/src/**/*.ts"]
     styles: [nest]            # nest | express | fastapi | spring | next
     receivers: [app, router]  # express receivers; default app, router, server, fastify
-    mounts:                   # where an Express router file is served, when its `use` path is not a literal
-      "services/orders/src/routes/collect.js": /collect
+    mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
+      "services/orders/src/routes/collect.js": /collect   # an Express router's `use` path, or a FastAPI router's include prefix
+    prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
+    bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
     operationIds: nest-swagger  # name operations ClassName_methodName, as @nestjs/swagger does by default
     calls:                    # registration helpers, TypeScript or Python: registerRoute(app, "POST", "/x", handler); positions count from 0
@@ -163,7 +165,34 @@ its routes under each literal path it is mounted at with `use` (an inline middle
 nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
-read and a limit says so. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
+read and a limit says so. A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
+Multiple Files"), at the router's `prefix` joined to its path, under every `include_router` that takes the router in
+with that call's `prefix`, under where the router or application it is included into is served; an application
+(`FastAPI()`) serves at the root. Routers are followed through nested includes and the imports of the route files
+(`items.router` after `from app.api.routes import items`, `utils_router` after `from .utils import router as
+utils_router`), and an include under a condition counts. A router whose prefix, or the prefix of an include on its way
+to the application, the file does not spell out (`settings.API_V1_STR`, an f-string, a `**` argument that may hold it), and one included nowhere in the
+route files, serves nothing atlas can place: its routes are not read, and one limit names the include or the router
+and the router files it leaves out. `mounts` gives the path a router file's routers serve their routes under, their own
+prefix included, in place of their includes; the routers included into them are read under it. A StaticFiles mount
+is served under the prefixes of the application or router it is mounted on. A decorator on a receiver the files bind
+to no application or router (a function's parameter, a router made by a factory) is read at the path written, and a
+limit says so; a name a function binds (a parameter, or a name its body assigns to anything but `FastAPI()` or
+`APIRouter()`) is the function's own, not the file's router, in decorators and includes alike. A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
+/techniques/versioning), under the global prefix `setGlobalPrefix` sets, except those an `exclude` entry matches
+without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled as path-to-regexp 8 does: `:name`,
+`*name` and `{...}`), and with URI versioning (`enableVersioning()` or `type: VersioningType.URI`) after the prefix
+`v<version>` (or the `prefix` option's text), the version being the method's `@Version`, else the controller's
+`@Controller({ version })`, else `defaultVersion`; a list serves one path per version and `VERSION_NEUTRAL` none. An
+excluded route keeps its version. atlas reads those calls in the route files and the component's code (tests and the
+other excluded files left out), or in the `bootstrap` file the entry names; literals and `const`s of the file are read.
+Calls that set different values (two applications) leave the controllers' routes unread; a setting not spelled out
+agrees with no other. A prefix, version or versioning option
+not spelled out leaves the routes it applies to unread, with a limit; an `exclude` entry not spelled out (built with
+`.map`, a template) or of other syntax is named in a limit, and the routes it might keep out are read under the
+prefix. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of
+the one the bootstrap sets (its exclusions and the version still apply); for the other styles, before each path the code
+registers. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
 under its `src/`: route groups and slots add no segment, private folders and intercepting routes are not served, `[id]`
 is `{id}`, `[...rest]` is `{rest}/**` (one segment or more) and `[[...rest]]` is `{*rest}` (none or more). Next.js
@@ -200,8 +229,9 @@ unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, 
 `/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
-(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
-is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; an application or router of the route files
+that it mounts serves the routes read there under `/x`, as an include would; another mounted application is not read,
+and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file

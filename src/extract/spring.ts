@@ -557,7 +557,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     const rendered = body ? viewNames(body, !responseBody) : [];
     for (const base of bases) {
       for (const path of paths) {
-        const full = springTemplate(joinRoute(base, path));
+        const full = springTemplate(joinRoute(spec.prefix ?? "", base, path));
         for (const method of methods) {
           const id = surfaceId({ component: spec.component, method, path: full });
           if (rendered.length) views!.set(id, { file, names: [...new Set([...(views!.get(id)?.names ?? []), ...rendered])] });
@@ -698,7 +698,7 @@ function securityRoutes(file: string, text: string, code: string, masked: string
   // Only a file that configures HttpSecurity; `request.logout()` on a servlet request is not a configurer.
   if (!/\bHttpSecurity\b|\bSecurityFilterChain\b|\bWebSecurityConfigurerAdapter\b/.test(masked)) return out;
   const add = (path: string, index: number) => {
-    const full = springTemplate(joinRoute(path));
+    const full = springTemplate(joinRoute(spec.prefix ?? "", path));
     out.push({ id: surfaceId({ component: spec.component, method: "POST", path: full }), component: spec.component, method: "POST", path: full, at: { file, line: lineOf(text, index) }, evidence: "text" });
   };
   const declared = bindings(masked, /\.kts?$/.test(file));

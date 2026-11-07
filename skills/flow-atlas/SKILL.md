@@ -165,7 +165,8 @@ through a sample of findings with a person. Only then record the baseline.
   not read as requests.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express
-  router is mounted at (`routes[].mounts`), a registration helper's method (`routes[].calls[].method`), the `data-*`
+  router is mounted at or a FastAPI router included at (`routes[].mounts`), a Nest global prefix set from a variable
+  (`routes[].prefix`), a registration helper's method (`routes[].calls[].method`), the `data-*`
   attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends
   when the call states none (`calls[].wrappers`, after reading that it hands its URL and init to fetch). A `limit:`
   line tells you when one is missing; never declare one to make a finding go away. A limit on a call whose method is
