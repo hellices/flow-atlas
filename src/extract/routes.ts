@@ -8,7 +8,7 @@ import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
 import { routesFromSpring, type Views } from "./spring.js";
-import { definitionLines, describedOperations, escapeRegExp, handlerNames } from "./openapi.js";
+import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
@@ -908,10 +908,12 @@ function handlerPlace(
   operationId: string,
   method: string,
   key: string,
+  parsed: Map<string, Map<string, Definition[]>>,
 ): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
-    for (const [f, t] of texts) for (const line of definitionLines(f, t, name)) hits.push({ file: f, line, offset: definitionOffset(t, line, name) });
+    for (const [f, t] of texts)
+      for (const { line, offset } of definitions(f, t, name, parsed)) hits.push({ file: f, line, offset: offset ?? definitionOffset(t, line, name) });
     if (hits.length) break;
   }
   if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
@@ -960,15 +962,21 @@ function documentedSurfaces(
   // Matched by method and path with parameters unnamed: the document may name them differently from the code.
   const byShape = new Map(code.filter((s) => s.component === spec.component).map((s) => [operationShape(s.method, s.path), s]));
   const out: Surface[] = [];
+  const parsed = new Map<string, Map<string, Definition[]>>();
+  // Operations whose handler was looked for in the route files by operationId and not found, and operations with no
+  // operationId to look for one by, which stay where the document writes them.
+  const unplaced: string[] = [];
+  const unnamed: string[] = [];
   for (const op of api.operations) {
     const id = surfaceId({ component: spec.component, method: op.method, path: op.path });
     const known = byShape.get(operationShape(op.method, op.path));
     if (known) {
       if (op.operationId && !known.operationId) known.operationId = op.operationId;
-      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key });
+      if (!known.described) Object.assign(known, { described: op.at, describedPath: op.key, describedVersion: api.version });
       continue;
     }
-    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key) : undefined;
+    const place = op.operationId ? handlerPlace(texts, op.operationId, op.method, op.key, parsed) : undefined;
+    if (!place && texts.size) (op.operationId ? unplaced : unnamed).push(op.operationId ?? `${op.method} ${op.key}`);
     const handler = place && reach ? handlerNode(reach, place.at) : undefined;
     const surface: Surface = {
       id,
@@ -980,10 +988,23 @@ function documentedSurfaces(
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
+      describedVersion: api.version,
       ...(handler ? { reaches: reach!.from(place!.at.file, handler, executed && (executed.get(id) ?? executed.set(id, new Set()).get(id)!)) } : {}),
     };
     byShape.set(operationShape(op.method, op.path), surface);
     out.push(surface);
+  }
+  const named = (ops: string[]) => (ops.length > 5 ? `${ops.slice(0, 5).join(", ")} and ${ops.length - 5} more` : ops.join(", "));
+  const stay = (ops: string[]) => (ops.length === 1 ? "it stays at its" : "they stay at their");
+  if (unplaced.length) {
+    limits.push(
+      `routes ${spec.component}: no handler was found in the configured route files for ${unplaced.length} operation${unplaced.length === 1 ? "" : "s"} of ${file} (${named(unplaced)}); ${stay(unplaced)} line in the document`,
+    );
+  }
+  if (unnamed.length) {
+    limits.push(
+      `routes ${spec.component}: ${unnamed.length === 1 ? "1 operation" : `${unnamed.length} operations`} of ${file} ${unnamed.length === 1 ? "has" : "have"} no operationId to find a handler by (${named(unnamed)}); ${stay(unnamed)} line in the document`,
+    );
   }
   return out;
 }

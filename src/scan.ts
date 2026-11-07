@@ -6,7 +6,7 @@ import { Reach } from "./extract/reach.js";
 import { extractRegistries } from "./extract/registries.js";
 import { extractRoutes, type Redirects } from "./extract/routes.js";
 import { Spans } from "./extract/spans.js";
-import { matchCalls, rankedComponents, unsettledLimits, type Ranking } from "./match.js";
+import { matchCalls, rankedComponents, slashlessLimits, unsettledLimits, type Ranking } from "./match.js";
 import { API_VERSION, type Call, type Coverage, type Draft, type Edge, type Graph, type Surface } from "./model.js";
 import { callPath } from "./paths.js";
 import { select, type Source } from "./source.js";
@@ -32,7 +32,8 @@ export function assignCallIds(drafts: Draft<Call>[]): Call[] {
  * one relative to the page only by the routes of the path it was resolved against; `redirected` gives, by call index,
  * the routes whose replies redirect to it (evidence `text`, `via` redirect); `offered` gives, by route, the
  * `file@offset` of each link or form its page renders (evidence `static`, `via` the view). A call whose method is not
- * read and whose routes take different methods has no edge; `limits` names it.
+ * read and whose routes take different methods has no edge, nor has one that leaves out the trailing slash its route's
+ * document writes, by a method other than GET or HEAD; `limits` names them.
  */
 export function edgesOf(
   graph: Pick<Graph, "surfaces" | "calls">,
@@ -44,8 +45,8 @@ export function edgesOf(
   offered?: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
-  const { targetsOf, unsettled } = matchCalls(graph, ranked);
-  limits.push(...unsettledLimits(graph, unsettled));
+  const { targetsOf, unsettled, slashless } = matchCalls(graph, ranked);
+  limits.push(...unsettledLimits(graph, unsettled), ...slashlessLimits(graph, slashless));
   graph.calls.forEach((c, i) => {
     for (const s of targetsOf.get(i) ?? []) edges.push({ kind: "match", from: c.id, to: s.id, evidence: c.evidence });
   });

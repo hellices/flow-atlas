@@ -20,17 +20,23 @@ routes:
 - Every operation becomes a surface: the method, and the path with Swagger 2.0 `basePath` or the path of the first
   OpenAPI 3 server URL in front. A server's scheme and host (variables in them included) and a trailing slash are
   dropped, so `/api/v1/orders/` and a code
-  route `/api/v1/orders` are one surface.
+  route `/api/v1/orders` are one surface. The slash is not forgotten: see "How calls match" below.
 - The `operationId`, where the document declares the operation (`described`), and the path key it writes it under
   (`describedPath`), which `export arazzo` uses for an `operationPath`.
 - Where the handler is, when the code gives it away: a function named as the framework derives the operationId (FastAPI
-  `read_order_api_v1_orders__order_id__get` → `def read_order`, Nest `OrdersController_read` → `read(`, springdoc
-  `read` → `read(`; a numbered id such as `read_1`, which springdoc gives the later methods sharing a name, is not
-  traced back, since nothing in the document says which generator wrote it), evidence `name`; else, when no name or several match, exactly one place in the component's
+  `read_order_api_v1_orders__order_id__get` → `def read_order`, Nest `OrdersController_read` → the method `read` of
+  class `OrdersController`, else any method `read`, as @nestjs/swagger's default `operationIdFactory` joins the
+  controller's class name and the method's; springdoc `read` → `read(`; a numbered id such as `read_1`, which springdoc
+  gives the later methods sharing a name, is not traced back, since nothing in the document says which generator wrote
+  it), evidence `name`. TypeScript and JavaScript are parsed, so a signature prettier spreads over several lines is
+  found and an overload signature is not; Python, Java and Kotlin definitions are found by the line that names them.
+  Else, when no name or several match, exactly one place in the component's
   route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
-  exactly one place, the surface stays at the document, evidence `declared`. A TypeScript or JavaScript handler found
-  this way is followed like a code route's (`reaches`), so a trace continues through it.
+  exactly one place, the surface stays at the document, evidence `declared`, and a `limit:` in `atlas scan` lists those
+  operations: an operationId that carries no handler's name (drf-spectacular's `users_list`, a FastAPI app's own
+  `generate_unique_id_function`) or none at all is found by no rule, and `trace` says no handler was found. A TypeScript
+  or JavaScript handler found this way is followed like a code route's (`reaches`), so a trace continues through it.
 - When any route entry of the component registers the same route in code (same method and path, whatever the
   parameters are named), the code's location stays and the document adds its operationId and place.
 - The document becomes the component's OpenAPI description (`ReadForRoutes`), unless `openapi.<component>` overrides
@@ -39,6 +45,33 @@ routes:
   that document's operationId, else its path key; an operation it does not declare is left out with a `limit:`.
 
 It does not take request or response schemas, security, or callers: the document says none of that about the code.
+
+## How calls match
+
+- A concrete path before a templated one. OpenAPI 3 (Paths Object): "When matching URLs, concrete (non-templated)
+  paths would be matched before their templated counterparts." Of two routes of one method an OpenAPI 3 document
+  describes, a request whose path is fully known (`GET /users/me`) reaches the concrete `/users/me` only, not
+  `/users/{user_id}`; a call with a value in that segment (`` `/users/${id}` ``) may be either and fits both. Two
+  templated paths (`/{entity}/me`, `/books/{id}`) stay ambiguous, as the specification leaves them. A route read only
+  from code, and one a Swagger 2.0 document describes (which states no such order), keeps its router's order, which
+  atlas does not read for Express, Nest or FastAPI: such a request fits both.
+- A trailing slash. The document writes the URL the route serves; a request without the `/` its path ends with is
+  another URL, and what the server does with it is the framework's: Django's `APPEND_SLASH` (on by default)
+  redirects it, which "may cause any data submitted in a POST request to be lost" (and in DEBUG raises for DELETE,
+  POST, PUT and PATCH); Starlette's `redirect_slashes` (FastAPI, on by default) redirects it with a 307, which keeps
+  the method; Express, outside strict routing, treats `/foo` and `/foo/` as one; Fastify, unless
+  `ignoreTrailingSlash` is set, treats them as two. A GET or HEAD without the slash is matched to the route, as
+  those redirects serve it. Any other method is matched to none: a `limit:` names the call and the path the document
+  writes, the route is not reported as having no caller, and the call is not reported as serving nothing. Write the
+  slash the document writes, as a client generated from it does. A call that writes a `/` its route's path does not
+  end with is matched to the route; which frameworks serve it is not told apart. A server path or Swagger `basePath`
+  before the root key `/` puts the slash after it: `servers: [{url: /api}]` with `paths: {/: ...}` serves `/api/`.
+- A path as written before a slash redirect. Starlette's router (adding or removing the `/`) and Django's
+  `CommonMiddleware` (adding it) redirect only when no route matches the path as the request writes it, so of one method's routes a fully known request fits,
+  one whose document writes the path as the call does comes first: with `POST /users/me/` and `POST /users/{id}`
+  described, `POST /users/me` reaches `/users/{id}`. This is applied before a concrete path is put before a templated
+  one.
+- A client generated from the document: see "Generated clients" in `references/config.md`.
 
 ## Documents springdoc serves
 

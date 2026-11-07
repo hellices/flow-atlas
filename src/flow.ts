@@ -145,7 +145,9 @@ export function traceText(doc: Subgraph): string {
           ? "  none found: no configured call of this component sits in a method the handler reaches"
           : /\.(java|kt|kts)$/.test(s.at.file)
             ? "  not followed: a Spring handler is followed to the template its view renders and the URL it redirects to; atlas reads neither here"
-            : "  not traced: the handler was not read as TypeScript",
+            : s.described && s.evidence === "declared"
+              ? "  not traced: no handler of this operation was found in the configured route files"
+              : "  not traced: the handler was not read as TypeScript",
       );
     }
     lines.push("", "= matched by method and path   ~ run by the handler (static) or held in a method it calls (by name)", "");

@@ -13,11 +13,13 @@ Key `FA001|<component>|<METHOD> <path>`.
 A route served by a component that some configured client calls, where no configured call site matches the
 route's method and path. Surface paths are OpenAPI templates (a Nest or Express `:id` reads `{id}`); path
 parameters (`{id}`, `*`) match any segment; interpolations in a call
-match any segment. A route that a call of unread method may reach, among routes of several methods, is not reported;
-a `limit:` line names that call.
+match any segment. A route that a call of unread method may reach, among routes of several methods, is not reported,
+nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than GET or
+HEAD; a `limit:` line names that call.
 
 Common causes: the provider was built ahead of its client; the client was removed or renamed; the client builds
-the path in a way the extractor cannot read (a URL returned by the server, a path assembled across functions).
+the path in a way the extractor cannot read (a URL returned by the server, a path assembled across functions); the
+only caller is a function of a generated client that no configured file calls (a `limit:` names it).
 
 Fix: add or wire the caller, or remove the route. If a client outside the repository uses it, add it to
 `publicSurfaces`. If the provider deliberately ships first, add an exception with a `reviewBy` date.
@@ -31,7 +33,8 @@ sources in the configuration (even if none of its routes is left) and the reques
 it starts from a base address, or its first segment is one the target serves.
 
 A call of unread method whose path fits routes of several methods is not reported either: it may reach any of them,
-so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it.
+so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it. The same holds for a call
+that leaves out the trailing `/` of its route's document path, by a method other than GET or HEAD.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.

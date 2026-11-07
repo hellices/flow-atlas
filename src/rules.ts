@@ -34,9 +34,10 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
 /** Findings for a graph. What the rules could not settle completely is added to `limits`. */
 export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];
-  const { callersOf, targetsOf, unsettled } = matchCalls(graph, rankedComponents(config));
-  // A call whose method is not read may reach any route it fits: none of them is shown to lack a caller.
-  const mayBeCalled = new Set([...unsettled.values()].flat());
+  const { callersOf, targetsOf, unsettled, slashless } = matchCalls(graph, rankedComponents(config));
+  // A call whose method is not read may reach any route it fits, and one without the trailing slash its route's document
+  // writes may reach that route: none of them is shown to lack a caller.
+  const mayBeCalled = new Set([...unsettled.values(), ...slashless.values()].flat());
   const isPublic = surfacePattern(config.publicSurfaces);
 
   if (ruleEnabled(config, "FA001")) {
@@ -55,7 +56,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     // Components whose routes are configured: a call to one is checked even when none of its routes is left.
     const served = new Set(config.routes.map((r) => r.component));
     graph.calls.forEach((c, i) => {
-      if (targetsOf.has(i) || unsettled.has(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
+      if (targetsOf.has(i) || unsettled.has(i) || slashless.has(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
       out.push(
         finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.`, [c.at]),
       );
@@ -68,8 +69,9 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     // The request a redirect leads to is the client's that followed it; the server does not call itself.
     const redirects = new Set(graph.edges.filter(isRedirect).map((e) => e.to));
     graph.calls.forEach((c, i) => {
-      // Whichever route a call of unread method reaches, the component it calls is known.
-      if ((!targetsOf.has(i) && !unsettled.has(i)) || redirects.has(c.id)) return;
+      // Whichever route a call of unread method reaches, or one without its route's trailing slash, the component it
+      // calls is known.
+      if ((!targetsOf.has(i) && !unsettled.has(i) && !slashless.has(i)) || redirects.has(c.id)) return;
       const k = `${c.from}->${c.to}`;
       (actual.get(k) ?? actual.set(k, []).get(k)!).push(c.at);
     });

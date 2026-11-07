@@ -115,7 +115,11 @@ atlas reports and does not block by default. To fail CI on new findings, use `--
 does not read (a project's wrapper around `fetch` that is given none, a `data-*` URL) joins the routes its path fits
 only when they all take one method; where they take several, which one it calls depends on the method, so it joins
 none of them and a `limit:` line names it. A wrapper the configuration names in `calls[].wrappers`, with the method
-it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Inside a component, a
+it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Routes from an OpenAPI 3
+document are joined as the specification says, a concrete path (`/users/me`) before a templated one (`/users/{id}`);
+a call that leaves out the trailing `/` a document's path ends with joins it only by GET or HEAD, since what a server
+does with another method depends on its framework (a `limit:` names it). A function of a client @hey-api/openapi-ts
+generated is a call only where another configured file's code names it, or names a generated helper that calls it. Inside a component, a
 route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
 (`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
 name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls

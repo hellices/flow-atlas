@@ -776,7 +776,7 @@ describe("review fixes: templates", () => {
 
 describe("review fixes: Spring", () => {
   it("splits a class-like operationId as Nest does, without guessing a numbering", () => {
-    expect(handlerNames("Get_list_1", "GET", "/x")).toEqual(["Get_list_1", "list_1"]);
+    expect(handlerNames("Get_list_1", "GET", "/x")).toEqual(["Get_list_1", "Get.list_1", "list_1"]);
   });
 
   it("links no template that belongs to a nested build module", () => {

@@ -1,0 +1,14 @@
+components:
+  - { name: frontend, path: frontend }
+  - { name: backend, path: backend }
+routes:
+  # The document FastAPI generates (app.openapi()); its operationIds are `{tag}-{name}`, from the app's own
+  # generate_unique_id_function (backend/app/main.py).
+  - component: backend
+    openapi: backend/openapi.json
+    files: ["backend/app/api/routes/*.py"]
+calls:
+  # The generated client (frontend/src/client) and the code that calls it.
+  - from: frontend
+    to: backend
+    files: ["frontend/src/client/**/*.ts", "frontend/src/hooks/**/*.ts", "frontend/src/components/**/*.tsx"]
