@@ -50,6 +50,8 @@ inventory:
   routes:
     - backend/app/api/routes/login.py fastapi 2
     - backend/app/api/routes/users.py fastapi 7
-  calls: []
+  calls:
+    # The generated client's `url:` properties.
+    - frontend/src/client/sdk.gen.ts 9
   documents:
     - (none) backend/openapi.json committed backend/openapi.json:2

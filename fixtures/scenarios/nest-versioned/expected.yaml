@@ -73,3 +73,5 @@ inventory:
     - apps/api/src/app/well-known/well-known.controller.ts nest 1
   calls:
     - apps/client/src/main.ts 1
+    # Angular's HttpClient calls.
+    - libs/ui/src/lib/services/data.service.ts 7

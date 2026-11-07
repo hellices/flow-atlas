@@ -278,6 +278,7 @@ describe("files served from a directory", () => {
       limits: [
         "routes api: main.py:3 serves a frontend's files at / (app.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read",
         "routes api: main.py:4 serves a frontend's files at /app (router.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read",
+        "routes api: main.py:2 includes api_router, which atlas does not trace to an APIRouter of the route files",
       ],
     });
   });

@@ -42,5 +42,7 @@ inventory:
   routes:
     - backend/app/main.py fastapi 6
   calls:
+    # The generated client's `url:` properties.
+    - frontend/src/client/sdk.gen.ts 6
     # A text shape: inventory offers `path:` properties for whoever writes the configuration to judge.
     - frontend/src/routeTree.gen.ts 6
