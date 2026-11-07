@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs installs axum and asks it for the routes the application serves. Cargo.lock pins every
+# crate from crates.io; the oracle is a second member of the Cargo workspace (oracle/).
+toolchain: rust
+docs:
+  - https://docs.rs/axum/latest/axum/routing/struct.Router.html
+  - https://docs.rs/axum/latest/axum/routing/method_routing/struct.MethodRouter.html
+  - https://docs.rs/axum/latest/axum/extract/struct.MatchedPath.html
+  - https://docs.rs/tower-http/latest/tower_http/services/struct.ServeDir.html
+setup: cargo fetch --locked
+# The latest release of axum on crates.io, for the application and for the oracle's copy of it.
+latest: >-
+  v=$(cargo search axum --limit 1 | sed -n 's/^axum = "\([0-9.]*\)".*/\1/p')
+  && cargo add -q -p axum-routes axum@$v && cargo add -q -p oracle axum@$v --rename axum-real && cargo update -q
+oracle: cargo run -q --locked -p oracle
