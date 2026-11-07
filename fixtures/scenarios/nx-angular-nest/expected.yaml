@@ -5,7 +5,8 @@ case: |
   branches written as a whole conditional gave a limit naming it. Now a host in a template's leading hole is named in
   the same limit, and the request the empty branch makes is still read. `atlas inventory` did not offer the HttpClient
   calls (`this.http.get<T>('/x')`), since a verb call in a script may register an Express route; it now counts a verb
-  call on a name the file binds to Angular's HttpClient.
+  call on a name the file binds to Angular's HttpClient. It offered the root package.json, which serves every
+  project, as the one component; it now offers the Nx projects, each from its project.json.
 surfaces:
   - api|GET /api/v1/admin
   - api|GET /api/v1/admin/queue/jobs
@@ -30,7 +31,9 @@ descriptions:
   - api none - NoneFound
 inventory:
   components:
-    - folio package.json
+    - api apps/api/project.json
+    - client apps/client/project.json
+    - ui libs/ui/project.json
   routes:
     - apps/api/src/app/admin/admin.controller.ts nest 3
     - apps/api/src/app/info/info.controller.ts nest 1

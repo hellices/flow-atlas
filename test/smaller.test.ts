@@ -148,3 +148,29 @@ describe("inventory's client call candidates", () => {
     expect(offered({ "untyped.ts": "class S { constructor(private http) {}\n  list() { return this.http.get('/api/items'); } }" })).toEqual([]);
   });
 });
+
+describe("inventory's components in an Nx workspace", () => {
+  const offered = (files: Record<string, string>) => inventory(memory(files), []).components.map((c) => `${c.name} ${c.path} ${c.manifest}`);
+  const project = (name: string) => JSON.stringify({ name, projectType: "application" });
+
+  it("are its projects, by the name project.json gives, without the root package.json that serves them all", () => {
+    expect(
+      offered({
+        "nx.json": "{}",
+        "package.json": JSON.stringify({ name: "folio", dependencies: { nx: "^21.0.0" } }),
+        "apps/api/project.json": project("api"),
+        "apps/client/project.json": project("client"),
+        "libs/ui/project.json": project("ui"),
+        "libs/ui/package.json": JSON.stringify({ name: "@folio/ui-kit" }),
+      }),
+    ).toEqual(["api apps/api apps/api/project.json", "client apps/client apps/client/project.json", "ui libs/ui libs/ui/project.json"]);
+  });
+
+  it("is the root project of a standalone workspace, by its project.json", () => {
+    expect(offered({ "nx.json": "{}", "package.json": JSON.stringify({ name: "@notes/source" }), "project.json": project("api") })).toEqual(["api  project.json"]);
+  });
+
+  it("does not take a project.json outside an Nx workspace for a manifest", () => {
+    expect(offered({ "package.json": JSON.stringify({ name: "web" }), "tools/project.json": project("tool") })).toEqual(["web  package.json"]);
+  });
+});

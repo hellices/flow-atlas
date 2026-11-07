@@ -19,7 +19,10 @@ export interface Inventory {
 }
 
 const CODE = "**/*.{ts,tsx,js,jsx,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
-const MANIFESTS = /(^|\/)(component\.json|package\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
+const MANIFESTS = /(^|\/)(component\.json|package\.json|project\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
+
+/** Of manifests in one directory, the one that names the component: component.json, then Nx's project.json. */
+const rank = (manifest: string): number => (/(^|\/)component\.json$/.test(manifest) ? 2 : /(^|\/)project\.json$/.test(manifest) ? 1 : 0);
 
 const SCRIPT = /\.(c|m)?[jt]sx?$/;
 
@@ -215,10 +218,14 @@ function uniqueNames(components: Inventory["components"]): void {
   }
 }
 
-/** A root manifest that only lists workspaces is the monorepo's tooling, not a component. */
+/**
+ * A root manifest that only lists workspaces is the monorepo's tooling, not a component; so is the root package.json of
+ * an Nx workspace whose projects are elsewhere, each with its project.json.
+ */
 function workspaceRoot(source: Source, manifest: string, all: string[]): boolean {
   if (manifest !== "package.json") return false;
   if (all.includes("pnpm-workspace.yaml")) return true;
+  if (all.includes("nx.json") && !all.includes("project.json") && all.some((f) => f.endsWith("/project.json"))) return true;
   try {
     return (JSON.parse(source.read(manifest) ?? "{}") as { workspaces?: unknown }).workspaces !== undefined;
   } catch {
@@ -230,7 +237,9 @@ export function inventory(source: Source, exclude: string[]): Inventory {
   const skip = matcher(exclude);
   const all = source.list().filter((f) => !skip(f));
 
-  const manifestFiles = all.filter((f) => MANIFESTS.test(f));
+  // project.json is a manifest where nx.json says the repository is an Nx workspace.
+  const nx = all.includes("nx.json");
+  const manifestFiles = all.filter((f) => MANIFESTS.test(f) && (nx || !/(^|\/)project\.json$/.test(f)));
   if (manifestFiles.length) select(source, manifestFiles, []);
   const platforms = platformFolders(source, all);
   const byDir = new Map<string, Inventory["components"][number]>();
@@ -239,8 +248,8 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (platforms.some((p) => m.startsWith(p))) continue;
     // A manifest at the root makes the repository itself a component, at path "".
     const dir = dirname(m) === "." ? "" : dirname(m);
-    const prefer = /component\.json/.test(m);
-    if (byDir.has(dir) && !prefer) continue;
+    const there = byDir.get(dir);
+    if (there && rank(there.manifest) >= rank(m)) continue;
     byDir.set(dir, { name: nameFrom(m, source.read(m), dir), path: dir, manifest: m });
   }
   const components = [...byDir.values()].sort((a, b) => a.path.localeCompare(b.path));
@@ -296,7 +305,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
 
 export function inventoryText(inv: Inventory): string {
   const lines: string[] = [];
-  lines.push(`components (${inv.components.length}, from manifests)`);
+  lines.push(`components (${inv.components.length}, from package manifests and Nx projects; list the ones to keep under components:)`);
   for (const c of inv.components) lines.push(`  ${c.name}  ${c.path}  ${c.manifest.split("/").pop()}${c.note ? `  (${c.note})` : ""}`);
   lines.push("", "route candidates (file, style, count, first)");
   for (const r of inv.routes) lines.push(`  ${r.component}  ${r.style}  ${r.count}  ${r.example}`);

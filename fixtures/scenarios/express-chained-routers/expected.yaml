@@ -3,7 +3,8 @@ case: |
   a router the module exports as `Router().use("/api", api)`, which the application mounts with `app.use(routes)`.
   Seen in a real run: atlas read no route of the routers and said they were mounted where the code gives no literal
   path, though every path in the chain is a literal; `router.use` returns the router, so the chain is the router. Now
-  each controller's routes are served under /api, and the application's own GET / at the root.
+  each controller's routes are served under /api, and the application's own GET / at the root. `atlas inventory`
+  offered the root package.json's name for the component; Nx names the project in project.json, which it now reads.
 surfaces:
   - api|GET /
   - api|GET /api/labels
@@ -24,7 +25,7 @@ descriptions:
   - api none - NoneFound
 inventory:
   components:
-    - source package.json
+    - api project.json
   routes:
     - src/main.ts express 1
     - src/app/routes/label/label.controller.ts express 1

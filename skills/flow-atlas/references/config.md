@@ -1,16 +1,18 @@
 # Configuration
 
 `atlas` reads only what the configuration names. You write the configuration; `atlas inventory` gives the raw
-material: components from manifests, files that register routes (and in which style), files whose strings look like
-client requests and OpenAPI documents. It does not choose; many candidates are tests
-helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
+material: components from package manifests (`package.json`, `pyproject.toml`, `go.mod`, a Maven or Gradle build,
+`pubspec.yaml`, and in an Nx workspace each project's `project.json`, the workspace's root `package.json` left out), to
+list under `components:` (the `manifest:` setting reads only `component.json` declarations), files that register
+routes (and in which style), files whose strings look like client requests and OpenAPI documents. It does not choose;
+many candidates are tests helpers, tools or contracts, not clients. A manifest in the platform folders a cross-platform framework builds as
 part of the app beside them (`android/`, `ios/` and the like of a Flutter app, a React Native app or an Expo module) is
 that app's, not a component; components that would share a name are named by their paths (`mobile-app`), or numbered where the paths do not
 tell them apart, with a note. Expect two or three rounds of `atlas scan` and correction before the
 findings are worth reading.
 
 ```yaml
-# Components: from manifests, or listed.
+# Components: from component.json manifests, or listed.
 manifest:
   kind: component-json        # any JSON with name, provides, consumes
   glob: "services/*/component.json"
