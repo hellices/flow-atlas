@@ -1,0 +1,6 @@
+{
+  "name": "api",
+  "sourceRoot": "apps/api/src",
+  "projectType": "application",
+  "targets": { "serve": { "executor": "@nx/js:node", "options": { "buildTarget": "api:build" } } }
+}

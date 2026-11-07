@@ -1,0 +1,7 @@
+{
+  "name": "folio",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "start:server": "nx run api:serve", "start:client": "nx run client:serve" },
+  "dependencies": { "@angular/common": "^20.0.0", "@nestjs/common": "^11.0.0" }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "client",
+  "sourceRoot": "apps/client/src",
+  "projectType": "application",
+  "targets": { "serve": { "executor": "@nx/angular:dev-server" } }
+}

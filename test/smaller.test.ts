@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
+import { extractCalls } from "../src/extract/calls.js";
 import { scan } from "../src/scan.js";
 import type { Source } from "../src/source.js";
 
@@ -53,5 +54,35 @@ describe("Express routers built by chaining use", () => {
     });
     expect(read.surfaces).toEqual([]);
     expect(read.limits[0]).toContain("router router in items.ts is mounted where the code gives no literal path");
+  });
+});
+
+describe("a host in a template's leading hole", () => {
+  const read = (code: string, origins: Record<string, string> = {}) => {
+    const config = normalizeConfig({ components: [{ name: "web", path: "" }, { name: "api", path: "" }], calls: [{ from: "web", to: "api", files: ["a.ts"] }], origins });
+    const limits: string[] = [];
+    const calls = extractCalls(memory({ "a.ts": code }), config, [], undefined, limits).map((c) => `${c.method} ${c.path}${c.based ? " based" : ""}`);
+    return { calls, limits };
+  };
+  const hostLimit = "calls web->api: URLs to other.example (a.ts:1) are not read as requests to api; set origins.api if that is its host";
+
+  it("is named in the limit the whole conditional gets, and the request of the other branch is still read", () => {
+    expect(read("fetch(prod ? 'https://other.example/api/status' : '/api/status');")).toEqual({ calls: ["GET /api/status"], limits: [hostLimit] });
+    expect(read("fetch(`${prod ? 'https://other.example' : ''}/api/status`);")).toEqual({ calls: ["GET /api/status based"], limits: [hostLimit] });
+    expect(read("fetch((prod ? 'https://other.example' : '') + '/api/status');")).toEqual({ calls: ["GET /api/status based"], limits: [hostLimit] });
+  });
+
+  it("leaves out a URL whose every branch names another host, and reads an inline script's alike", () => {
+    expect(read("fetch(`${prod ? 'https://other.example' : 'https://more.example'}/api/status`);").calls).toEqual([]);
+    const config = normalizeConfig({ components: [{ name: "web", path: "" }, { name: "api", path: "" }], calls: [{ from: "web", to: "api", files: ["a.html"] }] });
+    const limits: string[] = [];
+    const html = "<p>status</p>\n<script>\nfetch(`${prod ? 'https://other.example' : ''}/api/status`);\n</script>";
+    expect(extractCalls(memory({ "a.html": html }), config, [], undefined, limits).map((c) => `${c.method} ${c.path} ${c.at.line}`)).toEqual(["GET /api/status 3"]);
+    expect(limits).toEqual([hostLimit.replace("a.ts:1", "a.html:3")]);
+  });
+
+  it("says nothing of a loopback host or the target's origin", () => {
+    expect(read("fetch(`${dev ? 'http://localhost:3000' : ''}/api/status`);").limits).toEqual([]);
+    expect(read("fetch(`${prod ? 'https://other.example' : ''}/api/status`);", { api: "https://other.example" }).limits).toEqual([]);
   });
 });

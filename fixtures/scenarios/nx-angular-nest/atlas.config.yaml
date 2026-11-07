@@ -1,0 +1,13 @@
+# An Nx workspace: a Nest API, an Angular client and a library of Angular services. The components are the Nx projects
+# (apps/*/project.json, libs/*/project.json); the root package.json serves them all.
+components:
+  - { name: api, path: apps/api }
+  - { name: client, path: apps/client }
+  - { name: ui, path: libs/ui }
+routes:
+  - { component: api, files: ["apps/api/src/**/*.controller.ts"], styles: [nest] }
+calls:
+  # Angular HttpClient services; the URLs are root-relative.
+  - { from: ui, to: api, files: ["libs/ui/src/lib/services/**/*.ts"] }
+  # The client fetches /api/v1/info before it starts.
+  - { from: client, to: api, files: ["apps/client/src/main.ts"] }

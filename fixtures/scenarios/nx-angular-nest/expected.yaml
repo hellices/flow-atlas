@@ -1,0 +1,38 @@
+case: |
+  An Nx workspace with a Nest API, an Angular client and a library of Angular services that call the API through
+  HttpClient. One service picks the host in a template hole: `${production ? 'https://remote.example' : ''}/api/v2/...`.
+  Seen in a real run: that URL was read as a request to the API with nothing said about the other host, where the same
+  branches written as a whole conditional gave a limit naming it. Now a host in a template's leading hole is named in
+  the same limit, and the request the empty branch makes is still read.
+surfaces:
+  - api|GET /api/v1/admin
+  - api|GET /api/v1/admin/queue/jobs
+  - api|DELETE /api/v1/admin/queue/jobs
+  - api|GET /api/v1/info
+  - api|GET /api/v2/data-providers/remote/status
+findings:
+  - FA001|api|DELETE /api/v1/admin/queue/jobs
+limits:
+  - "calls ui->api: URLs to remote.example (libs/ui/src/lib/services/admin.service.ts:27) are not read as requests to api"
+chains:
+  - ui->api|GET /api/v1/admin
+  - ui->api|GET /api/v1/admin/queue/jobs
+  - ui->api|GET /api/v2/data-providers/remote/status
+  - client->api|GET /api/v1/info
+calls:
+  - ui->api|GET /api/v1/admin @ libs/ui/src/lib/services/admin.service.ts:16
+  - ui->api|GET /api/v1/admin/queue/jobs @ libs/ui/src/lib/services/admin.service.ts:20
+  - ui->api|GET /api/v2/data-providers/remote/status based @ libs/ui/src/lib/services/admin.service.ts:27
+  - client->api|GET /api/v1/info @ apps/client/src/main.ts:6
+descriptions:
+  - api none - NoneFound
+inventory:
+  components:
+    - folio package.json
+  routes:
+    - apps/api/src/app/admin/admin.controller.ts nest 3
+    - apps/api/src/app/info/info.controller.ts nest 1
+    - apps/api/src/app/data-providers/status.controller.ts nest 1
+  calls:
+    - apps/client/src/main.ts 1
+    - libs/ui/src/lib/services/admin.service.ts 1

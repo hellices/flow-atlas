@@ -432,6 +432,21 @@ export interface ReadContext {
   origin?: string;
   /** Collects where the configured prefix is put before a function's path parameter (`prefixing`). */
   prefixed?: Place[];
+  /** Collects the other hosts a URL's leading hole may name (`leadingHosts`), where the URL is still read. */
+  elsewhere?: Array<{ host: string; at: Place }>;
+}
+
+/**
+ * The hosts the branches of a conditional in a URL's leading hole name, `undefined` for a branch that names none
+ * (`${prod ? "https://x.example" : ""}/api`, or the same joined with `+`); empty when the hole is no such conditional.
+ * A branch that is not a literal may hold any host, so it is left out.
+ */
+function leadingHosts(node: ts.Node): { hosts: Array<string | undefined>; literal: boolean } {
+  const lead = ts.isTemplateExpression(node) && !node.head.text ? node.templateSpans[0]!.expression : isPlus(node) ? operands(node)[0] : undefined;
+  const choice = lead && unwrap(lead);
+  if (!choice || !ts.isConditionalExpression(choice)) return { hosts: [], literal: false };
+  const branches = [unwrap(choice.whenTrue), unwrap(choice.whenFalse)].filter((b) => ts.isStringLiteral(b) || ts.isNoSubstitutionTemplateLiteral(b));
+  return { hosts: branches.map((b) => hostOf((b as ts.StringLiteral).text)), literal: branches.length === 2 };
 }
 
 /**
@@ -441,7 +456,7 @@ export interface ReadContext {
 export const reachesTarget = (host: string | undefined, origin: string | undefined): boolean => host === undefined || isLoopback(host) || host === origin;
 
 export function callsFromTypeScript(file: string, text: string, spec: CallSource, context: ReadContext = {}): ReadCall[] {
-  const { spans, passed, origin, prefixed } = context;
+  const { spans, passed, origin, prefixed, elsewhere } = context;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
@@ -527,7 +542,12 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (whole) raw = urlText(node, 0);
     if (raw !== undefined) {
       const parsed = merged.has(node) ? undefined : requested(node, raw, true);
-      if (parsed) add(node, parsed, hostOf(raw));
+      // A host chosen in the leading hole is another server's, as in a whole conditional: the URL is a request to the
+      // target only where a branch names none of those hosts, and a limit names them.
+      const { hosts, literal } = parsed ? leadingHosts(node) : { hosts: [], literal: false };
+      const other = hosts.filter((h): h is string => h !== undefined && !reachesTarget(h, origin));
+      if (parsed) add(node, parsed, hostOf(raw) ?? (literal && other.length === hosts.length ? other[0] : undefined));
+      for (const host of other) elsewhere?.push({ host, at: { file, line: lineAt(node) } });
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
       if (whole) {
         for (const o of operands(node)) {
@@ -1225,9 +1245,11 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     // Offsets in the script body are not offsets in the template; no handler runs a template's script anyway.
     const inScript: Passed[] = [];
     const prefixed: Place[] = [];
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    const elsewhere: Array<{ host: string; at: Place }> = [];
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed, elsewhere })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
+    context.elsewhere?.push(...elsewhere.map((e) => ({ host: e.host, at: { file, line: e.at.line + shift } })));
     if (attribute("th:inline")?.toLowerCase() === "javascript") {
       for (const e of body.matchAll(/\[[[(]\s*@\{/g)) {
         const at = (e.index ?? 0) + e[0].length - 2;
@@ -1266,14 +1288,15 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
     const passed: Passed[] = [];
     const labels: Passed[] = [];
     const prefixed: Place[] = [];
+    const elsewhere: Array<{ host: string; at: Place }> = [];
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
       const read = /\.(c|m)?[tj]sx?$/.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed })
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, elsewhere })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed })
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, elsewhere })
           : callsFromText(file, text, spec, spans, labels);
       for (const c of read) {
         const { host, ...call } = c;
@@ -1284,6 +1307,7 @@ export function extractCalls(source: Source, config: Config, coverage: Coverage[
         // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
         out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
       }
+      for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
     const edge = `calls ${spec.from}->${spec.to}`;

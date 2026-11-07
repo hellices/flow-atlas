@@ -124,7 +124,9 @@ one call, which joins a base only when both branches do. Branches whose paths di
 put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
 absolute URL, in code of any language, is a request to the call source's target when its
 host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
-other host, a link to another site for one, is not read, and a limit names the host. A client's own helper that puts
+other host, a link to another site for one, is not read, and a limit names the host. A host chosen in a URL's leading
+hole (`` `${prod ? "https://other.example" : ""}/api/status` ``) is read as that conditional's branches would be: the
+URL is still a request where a branch names no other host, and the limit names the other one. A client's own helper that puts
 the configured `prefix` straight before a path it is given (`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built
 from that one parameter alone) is the prefix written once more, not a request: the paths passed to it are read where
 they are written, with the prefix, and a limit names where the helper was left out. A path with a hole

@@ -1,0 +1,4 @@
+{
+  "defaultProject": "api",
+  "targetDefaults": { "build": { "dependsOn": ["^build"] } }
+}
