@@ -38,7 +38,7 @@ describe("callPath", () => {
 describe("a path with a file extension", () => {
   it("is read only where a route serves it", () => {
     expect(callPath("/board.html?page=2")).toBeUndefined();
-    expect(callPath("/board.html?page=2", (p) => p === "/board.html")).toEqual({ path: "/board.html", based: false });
+    expect(callPath("/board.html?page=2", false, (p) => p === "/board.html")).toEqual({ path: "/board.html", based: false });
   });
 });
 
@@ -266,6 +266,7 @@ describe("routesFromTypeScript", () => {
       "async def add_endpoint(app, path):",
       "    add_endpoint(app, '/agent')",
       "add_endpoint(app, AGENT_PATH)",
+      "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
     const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);

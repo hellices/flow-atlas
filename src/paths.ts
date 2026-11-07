@@ -13,10 +13,12 @@ export interface CallPath {
 
 /**
  * Turns a string a call site builds into a request path, or rejects it.
- * A leading interpolation followed by `/` is taken as a base address (`${baseUrl}/orders`). A path ending in a file
- * extension names a file, unless `served` says a route of the target serves it (`@GetMapping("/vets.html")`).
+ * A leading interpolation followed by `/` is taken as a base address (`${baseUrl}/orders`).
+ * The root path `/` is read only with `root`, where the string's place makes it a request: anywhere else a lone `/` is
+ * a separator far more often than a URL. A path ending in a file extension names a file, unless `served` says a route
+ * of the target serves it (`@GetMapping("/vets.html")`).
  */
-export function callPath(text: string, served?: (path: string) => boolean): CallPath | undefined {
+export function callPath(text: string, root = false, served?: (path: string) => boolean): CallPath | undefined {
   let s = text.trim();
   let based = false;
   const lead = s.match(/^(?:\{\})+(?=\/)/);
@@ -31,6 +33,7 @@ export function callPath(text: string, served?: (path: string) => boolean): Call
     based = true;
   }
   s = s.split("?")[0]!.split("#")[0]!;
+  if (root && s === "/") return { path: "/", based };
   if (!s.startsWith("/") || s === "/" || s.startsWith("//")) return undefined;
   if (!PATHLIKE.test(s) || (FILE_EXT.test(s) && !served?.(s))) return undefined;
   if (s.split("/").filter(Boolean).every((seg) => seg === HOLE)) return undefined;

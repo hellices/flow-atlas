@@ -1,0 +1,92 @@
+case: |
+  A FastAPI backend in the shape of the full-stack template: an APIRouter per module with its own prefix, gathered in
+  one api_router that the application includes under a prefix from its settings, and a React client generated from
+  the OpenAPI document. Seen in a real run: no router prefix was read, so every route came back at the path its
+  decorator writes (`GET /`, `GET /{id}`), the routes of different routers collided, all of them were reported as
+  having no caller, and none of the client's calls, all under /api/v1, was matched, with no limit saying why.
+  A literal `APIRouter(prefix=...)` and a literal `include_router(..., prefix=...)` are now joined to the routes, through
+  the nested include and the imports that name the routers (`items.router` from `from app.api.routes import items`,
+  `utils_router` imported by name), as FastAPI serves them. The prefix held in the settings is not read; the
+  configuration declares where api_router is served (`mounts`, as for an Express router). A router included under a
+  prefix the code does not spell out (an f-string) and one included nowhere are not read, and a limit says so for each.
+surfaces:
+  - backend|GET /healthz
+  - backend|POST /api/v1/login/access-token
+  - backend|POST /api/v1/password-recovery/{email}
+  - backend|POST /api/v1/reset-password
+  - backend|GET /api/v1/users
+  - backend|POST /api/v1/users
+  - backend|GET /api/v1/users/me
+  - backend|PATCH /api/v1/users/me
+  - backend|DELETE /api/v1/users/me
+  - backend|POST /api/v1/users/signup
+  - backend|GET /api/v1/users/{user_id}
+  - backend|GET /api/v1/utils/health-check
+  - backend|GET /api/v1/items
+  - backend|POST /api/v1/items
+  - backend|GET /api/v1/items/{id}
+  - backend|PUT /api/v1/items/{id}
+  - backend|DELETE /api/v1/items/{id}
+  # admin.router carries no prefix; api/main.py includes it under /admin.
+  - backend|POST /api/v1/admin
+  # Included only where settings.ENVIRONMENT is "local"; which branch runs is decided at launch, and the code includes it.
+  - backend|POST /api/v1/private/users
+findings:
+  - FA001|backend|GET /healthz
+  - FA001|backend|POST /api/v1/admin
+limits:
+  - router in backend/app/api/routes/legacy.py is included nowhere in the route files
+  - backend/app/main.py:10 includes webhooks.router with a prefix the file does not spell out (f"{settings.API_V1_STR}/hooks")
+chains:
+  - frontend->backend|POST /api/v1/login/access-token
+  - frontend->backend|POST /api/v1/password-recovery/{email}
+  - frontend->backend|POST /api/v1/reset-password
+  - frontend->backend|GET /api/v1/users
+  - frontend->backend|POST /api/v1/users
+  - frontend->backend|GET /api/v1/users/me
+  - frontend->backend|PATCH /api/v1/users/me
+  - frontend->backend|DELETE /api/v1/users/me
+  - frontend->backend|POST /api/v1/users/signup
+  - frontend->backend|GET /api/v1/users/{user_id}
+  - frontend->backend|GET /api/v1/utils/health-check
+  - frontend->backend|GET /api/v1/items
+  - frontend->backend|POST /api/v1/items
+  - frontend->backend|GET /api/v1/items/{id}
+  - frontend->backend|PUT /api/v1/items/{id}
+  - frontend->backend|DELETE /api/v1/items/{id}
+  - frontend->backend|POST /api/v1/private/users
+descriptions:
+  - backend none - NoneFound
+calls:
+  - frontend->backend|POST /api/v1/login/access-token @ frontend/src/client/sdk.gen.ts:10
+  - frontend->backend|POST /api/v1/password-recovery/{email} @ frontend/src/client/sdk.gen.ts:18
+  - frontend->backend|POST /api/v1/reset-password @ frontend/src/client/sdk.gen.ts:26
+  - frontend->backend|GET /api/v1/users @ frontend/src/client/sdk.gen.ts:36
+  - frontend->backend|POST /api/v1/users @ frontend/src/client/sdk.gen.ts:44
+  - frontend->backend|GET /api/v1/users/me @ frontend/src/client/sdk.gen.ts:52
+  - frontend->backend|PATCH /api/v1/users/me @ frontend/src/client/sdk.gen.ts:60
+  - frontend->backend|DELETE /api/v1/users/me @ frontend/src/client/sdk.gen.ts:68
+  - frontend->backend|POST /api/v1/users/signup @ frontend/src/client/sdk.gen.ts:76
+  - frontend->backend|GET /api/v1/users/{user_id} @ frontend/src/client/sdk.gen.ts:84
+  - frontend->backend|GET /api/v1/utils/health-check @ frontend/src/client/sdk.gen.ts:94
+  - frontend->backend|GET /api/v1/items @ frontend/src/client/sdk.gen.ts:104
+  - frontend->backend|POST /api/v1/items @ frontend/src/client/sdk.gen.ts:112
+  - frontend->backend|GET /api/v1/items/{id} @ frontend/src/client/sdk.gen.ts:120
+  - frontend->backend|PUT /api/v1/items/{id} @ frontend/src/client/sdk.gen.ts:128
+  - frontend->backend|DELETE /api/v1/items/{id} @ frontend/src/client/sdk.gen.ts:136
+  - frontend->backend|POST /api/v1/private/users @ frontend/src/client/sdk.gen.ts:146
+inventory:
+  routes:
+    - backend/app/main.py fastapi 1
+    - backend/app/api/routes/admin.py fastapi 1
+    - backend/app/api/routes/items.py fastapi 5
+    - backend/app/api/routes/legacy.py fastapi 1
+    - backend/app/api/routes/login.py fastapi 3
+    - backend/app/api/routes/private.py fastapi 1
+    - backend/app/api/routes/users.py fastapi 7
+    - backend/app/api/routes/utils.py fastapi 1
+    - backend/app/api/routes/webhooks.py fastapi 1
+  # Inventory's shapes take an f-string that joins a value to a path for a request; the generated client's `url:`
+  # property is none of them.
+  calls:
+    - backend/app/main.py 1

@@ -100,7 +100,7 @@ function redirectCalls(surfaces: Surface[], redirects: Redirects): Array<{ call:
   const served = new Map([...byComponent].map(([component, routes]) => [component, serves(routes)]));
   for (const s of surfaces) {
     for (const r of redirects.get(s.id) ?? []) {
-      const parsed = callPath(r.path, served.get(s.component));
+      const parsed = callPath(r.path, false, served.get(s.component));
       if (!parsed) continue;
       const method = s.method === "HEAD" ? "HEAD" : ["GET", "POST"].includes(s.method) ? "GET" : "*";
       const key = `${s.component}|${method} ${parsed.path}@${r.at.file}:${r.at.line}`;
