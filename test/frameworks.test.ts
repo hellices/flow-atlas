@@ -83,6 +83,64 @@ function routeKeys(routes: Array<{ method: string; path: string }>, paths: (path
   return [...new Set(keys)].sort();
 }
 
+/** The hosts of public package registries and the code hosts lock files point at. */
+const PUBLIC_HOSTS = new Set([
+  "registry.npmjs.org",
+  "registry.yarnpkg.com",
+  "jsr.io",
+  "deno.land",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "index.crates.io",
+  "static.crates.io",
+  "crates.io",
+  "rubygems.org",
+  "repo.packagist.org",
+  "packagist.org",
+  "hex.pm",
+  "repo.hex.pm",
+  "pub.dev",
+  "pub.dartlang.org",
+  "proxy.golang.org",
+  "repo.maven.apache.org",
+  "repo1.maven.org",
+  "plugins.gradle.org",
+  "api.nuget.org",
+  "github.com",
+  "api.github.com",
+  "codeload.github.com",
+]);
+
+/** Directories a fixture's install or build writes, not committed. */
+const INSTALLED = new Set(["node_modules", ".venv", "target", "bin", "obj", ".next", "vendor", "deps", "_build", ".build", ".dart_tool", "__pycache__", "dist"]);
+
+/** Lock files and registry settings under a fixture. */
+function lockFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!INSTALLED.has(entry.name)) out.push(...lockFiles(path));
+    } else if (/(^|[.-])lock(\.json|\.yaml)?$|^requirements.*\.txt$|^Package\.resolved$|^\.npmrc$|^\.yarnrc(\.yml)?$|^bunfig\.toml$|^nuget\.config$|^pip\.conf$|^uv\.toml$|^config\.toml$/i.test(entry.name)) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+/** The hosts a lock file installs from: where each package is fetched, not the projects' home pages. */
+function lockHosts(file: string): string[] {
+  const text = readFileSync(file, "utf8");
+  if (file.endsWith("composer.lock")) {
+    const lock = JSON.parse(text) as Record<string, Array<{ dist?: { url?: string }; source?: { url?: string } }> | undefined>;
+    return [...(lock.packages ?? []), ...(lock["packages-dev"] ?? [])]
+      .flatMap((p) => [p.dist?.url, p.source?.url])
+      .flatMap((url) => (url && /^https?:\/\//.test(url) ? [new URL(url).hostname] : []));
+  }
+  const pattern = file.endsWith("package-lock.json") ? /"resolved":\s*"https?:\/\/([^/":]+)/g : /https?:\/\/([^/"'\s\]:,)]+)/g;
+  return [...text.matchAll(pattern)].map((m) => m[1]!.toLowerCase());
+}
+
 describe("routes as each framework serves them", () => {
   const board: string[] = [];
   for (const name of fixtures) {
@@ -103,15 +161,10 @@ describe("routes as each framework serves them", () => {
     });
   }
   it("lock files name no registry but the public ones", () => {
-    // A lock written through a registry mirror would send installs elsewhere to its hosts; each machine uses its own.
-    const hosts = new Set<string>();
-    for (const name of fixtures) {
-      const lock = join(root, name, "package-lock.json");
-      if (existsSync(lock)) for (const m of readFileSync(lock, "utf8").matchAll(/"resolved": "https?:\/\/([^/"]+)/g)) hosts.add(m[1]!);
-      const requirements = join(root, name, "requirements.txt");
-      if (existsSync(requirements)) for (const m of readFileSync(requirements, "utf8").matchAll(/https?:\/\/([^/\s]+)/g)) hosts.add(m[1]!);
-    }
-    expect([...hosts].filter((h) => h !== "registry.npmjs.org")).toEqual([]);
+    // A lock written through a registry mirror would send everyone's installs to its hosts. Only the file is named, so a
+    // host that must stay private does not reach a public log either.
+    const named = fixtures.flatMap((name) => lockFiles(join(root, name)).filter((file) => !lockHosts(file).every((h) => PUBLIC_HOSTS.has(h))));
+    expect(named.map((file) => file.slice(root.length + 1))).toEqual([]);
   });
   it.runIf(fixtures.length > 0)("prints the board", () => {
     console.log(["routes read per framework:", ...board.map((b) => `  ${b}`)].join("\n"));

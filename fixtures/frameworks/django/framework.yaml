@@ -1,6 +1,7 @@
 # How scripts/frameworks.mjs installs Django and Django REST framework and asks Django for the routes the application
 # serves. requirements.txt pins every package with its hashes and names no index, so each machine installs the same
 # files from the index it uses.
+toolchain: python
 docs:
   - https://docs.djangoproject.com/en/stable/topics/http/urls/
   - https://docs.djangoproject.com/en/stable/topics/http/decorators/

@@ -1,6 +1,7 @@
 # How scripts/frameworks.mjs installs ASP.NET Core and asks it for the routes the application serves. The shared
 # framework is the .NET 10 (LTS) runtime the SDK in use carries (global.json); the packages are locked in
 # packages.lock.json at its release, and `latest` takes the newest 10.x of them.
+toolchain: dotnet
 docs:
   - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/routing?view=aspnetcore-10.0
   - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/route-handlers?view=aspnetcore-10.0

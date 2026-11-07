@@ -1,4 +1,5 @@
 # How scripts/frameworks.mjs installs Fastify and asks it for the routes the application serves.
+toolchain: node
 docs:
   - https://fastify.dev/docs/latest/Reference/Routes/
   - https://fastify.dev/docs/latest/Reference/Plugins/

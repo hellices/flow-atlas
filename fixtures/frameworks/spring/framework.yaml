@@ -1,4 +1,5 @@
 # How scripts/frameworks.mjs installs Spring Boot and asks it for the routes the application serves.
+toolchain: java
 docs:
   - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
   - https://docs.spring.io/spring-framework/reference/web/webmvc-functional.html

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Asks each framework under fixtures/frameworks for the routes its application serves and writes them to routes.json.
 //
-//   node scripts/frameworks.mjs [name ...] [--check] [--latest]
+//   node scripts/frameworks.mjs [name ...] [--check [--keep]] [--latest]
+//   node scripts/frameworks.mjs --matrix
 //
 // --check   compare with the committed routes.json instead of writing it; exit 1 on a difference
+// --keep    with --check, write what the framework reports to routes.json all the same, for CI to hand back
 // --latest  install the framework's latest release first (the fixture's `latest` command) instead of its locked one
+// --matrix  print each fixture with its toolchain as a GitHub Actions matrix and exit
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,10 +18,21 @@ const root = fileURLToPath(new URL("../fixtures/frameworks", import.meta.url));
 const args = process.argv.slice(2);
 const check = args.includes("--check");
 const latest = args.includes("--latest");
+const keep = args.includes("--keep");
 const names = args.filter((a) => !a.startsWith("--"));
 const all = readdirSync(root, { withFileTypes: true })
   .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "framework.yaml")))
   .map((d) => d.name);
+if (args.includes("--matrix")) {
+  const include = all.map((fixture) => ({ fixture, toolchain: parse(readFileSync(join(root, fixture, "framework.yaml"), "utf8")).toolchain }));
+  const missing = include.filter((i) => typeof i.toolchain !== "string");
+  if (missing.length) {
+    console.error(`framework.yaml names no toolchain in ${missing.map((i) => i.fixture).join(", ")}`);
+    process.exit(2);
+  }
+  console.log(JSON.stringify({ include }));
+  process.exit(0);
+}
 const unknown = names.filter((n) => !all.includes(n));
 if (unknown.length) {
   console.error(`no framework fixture named ${unknown.join(", ")}; there are ${all.join(", ")}`);
@@ -49,12 +63,12 @@ for (const name of names.length ? names : all) {
   // One route a line, so a change shows as the lines of the routes it moves.
   const lines = result.routes.map((r) => `    ${JSON.stringify(r)}`).join(",\n");
   const text = `{\n  "framework": ${JSON.stringify(result.framework)},\n  "version": ${JSON.stringify(result.version)},\n  "routes": [\n${lines}\n  ]\n}\n`;
+  const committed = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { routes: [] };
+  if (!check || keep) writeFileSync(file, text);
   if (!check) {
-    writeFileSync(file, text);
     console.error(`   ${result.routes.length} routes, ${result.framework} ${result.version}`);
     continue;
   }
-  const committed = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { routes: [] };
   const key = (r) => `${r.method} ${r.path}`;
   const before = new Set(committed.routes.map(key));
   const now = new Set(result.routes.map(key));

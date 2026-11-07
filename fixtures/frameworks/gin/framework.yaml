@@ -1,4 +1,5 @@
 # How scripts/frameworks.mjs installs Gin and asks it for the routes the application serves.
+toolchain: go
 docs:
   - https://gin-gonic.com/en/docs/routing/
   - https://gin-gonic.com/en/docs/routing/http-method/

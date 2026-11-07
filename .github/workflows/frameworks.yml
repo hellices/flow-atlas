@@ -1,12 +1,14 @@
 name: frameworks
 
 # Installs each framework under fixtures/frameworks, asks it again for the routes its application serves and fails when
-# they differ from routes.json. Weekly, and on demand, it does so on each framework's latest release.
+# they differ from routes.json. Weekly, and on demand, it does so on each framework's latest release. A push to a
+# `frameworks/**` branch runs it too, and every run hands back what each framework reported (routes.json, and lock
+# files written on the way) as an artifact, for fixtures on a toolchain a contributor does not have installed.
 on:
   pull_request:
     paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   push:
-    branches: [main]
+    branches: [main, "frameworks/**"]
     paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   schedule:
     - cron: "17 4 * * 1"
@@ -21,28 +23,31 @@ permissions:
   contents: read
 
 jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: list
+        run: echo "matrix=$(node scripts/frameworks.mjs --matrix)" >> "$GITHUB_OUTPUT"
+
   routes:
     name: ${{ matrix.fixture }}
+    needs: fixtures
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { fixture: express, toolchain: node }
-          - { fixture: fastify, toolchain: node }
-          - { fixture: koa, toolchain: node }
-          - { fixture: hono, toolchain: node }
-          - { fixture: nest, toolchain: node }
-          - { fixture: nextjs, toolchain: node }
-          - { fixture: fastapi, toolchain: python }
-          - { fixture: flask, toolchain: python }
-          - { fixture: django, toolchain: python }
-          - { fixture: spring, toolchain: java }
-          - { fixture: aspnetcore, toolchain: dotnet }
-          - { fixture: gin, toolchain: go }
-          - { fixture: chi, toolchain: go }
-          - { fixture: nethttp, toolchain: go }
+      matrix: ${{ fromJSON(needs.fixtures.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -59,8 +64,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-          cache: maven
+          java-version: 21
       - if: matrix.toolchain == 'dotnet'
         uses: actions/setup-dotnet@v5
         with:
@@ -69,10 +73,46 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: stable
-          cache-dependency-path: fixtures/frameworks/*/go.sum
+          cache: false
+      - if: matrix.toolchain == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+      - if: matrix.toolchain == 'elixir'
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+      - if: matrix.toolchain == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer
+      - if: matrix.toolchain == 'ruby'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - if: matrix.toolchain == 'bun'
+        uses: oven-sh/setup-bun@v2
+      - if: matrix.toolchain == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - name: ask the framework for its routes and compare them with routes.json
         env:
           DOTNET_NOLOGO: 1
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
           LATEST: ${{ github.event_name == 'schedule' || inputs.latest == true }}
-        run: node scripts/frameworks.mjs ${{ matrix.fixture }} --check $([ "$LATEST" = true ] && echo --latest)
+        run: node scripts/frameworks.mjs ${{ matrix.fixture }} --check --keep $([ "$LATEST" = true ] && echo --latest)
+      - name: collect what the framework wrote
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          git status --porcelain --untracked-files=all -- "fixtures/frameworks/${{ matrix.fixture }}" | cut -c4- | while read -r f; do
+            [ -f "$f" ] && mkdir -p "$RUNNER_TEMP/out/$(dirname "$f")" && cp "$f" "$RUNNER_TEMP/out/$f"
+          done
+          ls -R "$RUNNER_TEMP/out" | head -50
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frameworks-${{ matrix.fixture }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
