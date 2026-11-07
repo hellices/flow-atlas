@@ -249,4 +249,15 @@ describe("files served from a directory", () => {
       ],
     });
   });
+
+  it("are named in a limit where FastAPI's frontend serves them", () => {
+    const main = 'app = FastAPI()\napp.include_router(api_router)\napp.frontend("/", directory=FRONTEND_DIR)\nrouter.frontend(path="/app", directory="dist", fallback="index.html")\n@app.get("/health")\ndef health(): ...';
+    expect(limitsOf({ "main.py": main }, ["fastapi"])).toEqual({
+      surfaces: ["api|GET /health"],
+      limits: [
+        "routes api: main.py:3 serves a frontend's files at / (app.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read",
+        "routes api: main.py:4 serves a frontend's files at /app (router.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read",
+      ],
+    });
+  });
 });

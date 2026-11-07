@@ -187,7 +187,9 @@ unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, 
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
 (and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
-is not read, and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+is not read, and a limit says so. `app.frontend("/", directory=...)` serves the files a frontend build put in a
+directory, and a fallback page for GET and HEAD, wherever no route matches: which paths answer depends on the build,
+so they are not read and a limit names the call. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
