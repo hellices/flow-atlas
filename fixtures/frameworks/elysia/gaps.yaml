@@ -1,0 +1,42 @@
+# Where atlas's reading differs from the routes Elysia serves. Remove an entry when atlas reads it right; the test fails
+# while a listed difference no longer occurs.
+missing:
+  - { route: "GET /", reason: "routes chained on `new Elysia()` (`new Elysia().get(path, h).post(...)`) are not read, and nothing says so" }
+  - { route: "GET /hi", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "GET /id/1", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "GET /id/{}", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "GET /id/{}/{}", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "GET /id/{**}", reason: "routes chained on `new Elysia()` are not read (here the wildcard `/id/*`), and nothing says so" }
+  - { route: "GET /id", reason: "routes chained on `new Elysia()` are not read (here the wildcard `/id/*`, which also takes `/id/`), and nothing says so" }
+  - { route: "GET /optional/{}", reason: "routes chained on `new Elysia()` are not read (here the optional `:id?`), and nothing says so" }
+  - { route: "GET /optional", reason: "routes chained on `new Elysia()` are not read (here the optional `:id?`, also served without it), and nothing says so" }
+  - { route: "GET /items", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "POST /items", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "PUT /items/{}", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "PATCH /items/{}", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "DELETE /items/{}", reason: "routes chained on `new Elysia()` are not read, and nothing says so" }
+  - { route: "M-SEARCH /m-search", reason: "a custom method registered with `.route(method, path)`, chained on `new Elysia()`, is not read, and nothing says so" }
+  - { route: "* /any", reason: "`.all(path)`, chained on `new Elysia()`, is not read, and nothing says so" }
+  - { route: "* /legacy", reason: "a handler mounted with `.mount(path, handler)` (served at the path and under it) is not read, and nothing says so" }
+  - { route: "* /legacy/{**}", reason: "a handler mounted with `.mount(path, handler)` is not read, and nothing says so" }
+  - { route: "POST /user/sign-in", reason: "a group's route (`.group(\"/user\", (app) => app.post(...))`) is read without the group's path, and nothing says so" }
+  - { route: "POST /user/sign-up", reason: "a group's route chained after its first one (`app.post(a).post(b)`) is not read, and nothing says so" }
+  - { route: "POST /user/profile", reason: "a group's route chained after its first one is not read, and nothing says so" }
+  - { route: "POST /account/rename", reason: "a group's route (a group with a guard) is read without the group's path, and nothing says so" }
+  - { route: "PUT /account/settings/{}", reason: "a nested group's route is read without either group's path, and nothing says so" }
+  - { route: "GET /api/users", reason: "routes chained on a plugin instance (`new Elysia({ prefix })`) are not read, nor its prefix and the group it is used in, and nothing says so" }
+  - { route: "POST /api/users", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
+  - { route: "GET /api/users/{}", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
+  - { route: "GET /version", reason: "routes chained on a plugin instance a function returns are not read, and nothing says so" }
+  - { route: "GET /health", reason: "routes chained on a named plugin instance are not read, and nothing says so" }
+  - { route: "GET /admin/dashboard", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
+  - { route: "DELETE /admin/cache", reason: "a group's route in a prefixed plugin is read without the group's path and the plugin's prefix, and nothing says so" }
+  - { route: "DELETE /admin/cache/{}", reason: "a group's route chained after its first one is not read, and nothing says so" }
+  - { route: "GET /admin/reports/{}", reason: "routes chained on a prefixed plugin used in another are not read, and nothing says so" }
+  - { route: "GET /admin/reports/{**}", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`), and nothing says so" }
+  - { route: "GET /admin/reports", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`, which also takes the prefix with `/`), and nothing says so" }
+extra:
+  - { route: "POST /sign-in", reason: "a group's route read without the group's path (`/user`)" }
+  - { route: "POST /rename", reason: "a group's route read without the group's path (`/account`)" }
+  - { route: "PUT /{}", reason: "a nested group's route read without the groups' paths (`/account/settings`)" }
+  - { route: "DELETE /", reason: "a group's route read without the group's path and the plugin's prefix (`/admin/cache`)" }

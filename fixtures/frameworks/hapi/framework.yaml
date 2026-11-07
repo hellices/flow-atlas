@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs hapi and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://hapi.dev/tutorials/en_us/routing
+  - https://hapi.dev/tutorials/en_us/plugins
+  - https://hapi.dev/api/21.x.x#path-parameters
+  - https://hapi.dev/api/21.x.x#server.table()
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund @hapi/hapi@latest
+oracle: node oracle.mjs
