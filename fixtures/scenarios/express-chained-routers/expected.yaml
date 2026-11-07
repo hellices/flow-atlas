@@ -5,6 +5,7 @@ case: |
   path, though every path in the chain is a literal; `router.use` returns the router, so the chain is the router. Now
   each controller's routes are served under /api, and the application's own GET / at the root. `atlas inventory`
   offered the root package.json's name for the component; Nx names the project in project.json, which it now reads.
+  The images `express.static` serves at the root were neither read nor named; a limit now names them.
 surfaces:
   - api|GET /
   - api|GET /api/labels
@@ -21,6 +22,8 @@ chains:
   - outside->api|GET /api/notes/{slug}
   - outside->api|DELETE /api/notes/{slug}
 calls: []
+limits:
+  - "routes api: src/main.ts:10 serves the files of a directory at / (express.static); their paths are not read"
 descriptions:
   - api none - NoneFound
 inventory:

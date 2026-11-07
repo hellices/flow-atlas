@@ -220,3 +220,33 @@ describe("inventory's route candidates", () => {
     ]);
   });
 });
+
+describe("files served from a directory", () => {
+  const limitsOf = (files: Record<string, string>, styles: string[]) => {
+    const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.{js,ts,py}"], styles }] });
+    const graph = scan(memory(files), config);
+    return { surfaces: graph.surfaces.map((s) => s.id), limits: graph.limits };
+  };
+
+  it("are named in a limit where express.static serves them, at the paths its mounts give", () => {
+    const app = [
+      'import express from "express";',
+      'import { static as serve } from "express";',
+      "const app = express();",
+      "const docs = express.Router();",
+      "app.use(express.static(__dirname + '/assets'));",
+      "app.use('/docs', docs);",
+      "docs.use('/files', express.static('public'), h);",
+      "app.use(prefix, serve('uploads'));",
+      "app.get('/health', h);",
+    ].join("\n");
+    expect(limitsOf({ "app.ts": app }, ["express"])).toEqual({
+      surfaces: ["api|GET /health"],
+      limits: [
+        "routes api: app.ts:5 serves the files of a directory at / (express.static); their paths are not read",
+        "routes api: app.ts:7 serves the files of a directory at /docs/files (express.static); their paths are not read",
+        "routes api: app.ts:8 serves the files of a directory at a path the code does not spell out (express.static); their paths are not read",
+      ],
+    });
+  });
+});

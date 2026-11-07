@@ -18,6 +18,11 @@ export interface Mounts {
   routerOf(file: string, id: ts.Identifier): string | undefined;
   /** The paths a router is served under, or undefined when one of its mounts is not read. */
   prefixes(router: string): string[] | undefined;
+  /**
+   * Where `file` mounts `express.static`, which serves the files of a directory: the line and the paths it is mounted
+   * at, undefined where a mount is not read.
+   */
+  statics(file: string): Array<{ line: number; paths: string[] | undefined }>;
 }
 
 const literal = (e: ts.Expression | undefined): string | undefined => {
@@ -92,6 +97,22 @@ function createsRouter(e: ts.Expression | undefined): boolean {
   return false;
 }
 
+/** Whether an expression calls express's static middleware: `express.static(dir)`, or `static` imported from express. */
+function servesStatic(e: ts.Expression): boolean {
+  const u = unwrap(e);
+  if (!ts.isCallExpression(u)) return false;
+  const callee = unwrap(u.expression);
+  if (ts.isIdentifier(callee)) {
+    const from = importOf(declarationOf(callee));
+    return from?.spec === "express" && from.name === "static";
+  }
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "static") return false;
+  const target = unwrap(callee.expression);
+  if (required(target) === "express") return true;
+  const from = ts.isIdentifier(target) ? importOf(declarationOf(target)) : undefined;
+  return from?.spec === "express" && (from.name === "default" || from.name === "*");
+}
+
 /** Whether a name is bound to an Express application: `express()` with `express` imported or required from "express". */
 function isExpressApp(id: ts.Identifier): boolean {
   const decl = declarationOf(id);
@@ -117,11 +138,13 @@ interface FileFacts {
   stars: string[];
   /** The router mounted: a name, a module's export taken from it (`routes.router`), or a router created in place. */
   uses: Array<{ receiver: ts.Expression; path: string | undefined; target: ts.Expression }>;
+  /** Where `express.static` is mounted. */
+  statics: Array<{ receiver: ts.Expression; path: string | undefined; line: number }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, exports: new Map(), stars: [], uses: [] };
+  const facts: FileFacts = { sf, exports: new Map(), stars: [], uses: [], statics: [] };
   const exported = (n: ts.Node): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
   /** A name, or a router created in place (`export default Router().use("/api", api)`). */
   const exportable = (e: ts.Expression): boolean => ts.isIdentifier(e) || chainRoot(e) !== undefined;
@@ -164,6 +187,11 @@ function factsOf(text: string, file: string): FileFacts {
       const pathless = first && (ts.isArrowFunction(first) || ts.isFunctionExpression(first));
       for (const arg of args) {
         const target = unwrap(arg);
+        if (servesStatic(target)) {
+          const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+          facts.statics.push({ receiver: unwrap(use), path: path ?? (pathless || target === first ? "/" : undefined), line });
+          continue;
+        }
         if (!ts.isIdentifier(target) && !(ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) && !chainRoot(target)) continue;
         facts.uses.push({ receiver: unwrap(use), path: path ?? (pathless || target === first ? "/" : undefined), target });
       }
@@ -266,8 +294,19 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     }
     return [...new Set(out)];
   };
+  const statics = (file: string): Array<{ line: number; paths: string[] | undefined }> => {
+    const out: Array<{ line: number; paths: string[] | undefined }> = [];
+    for (const s of facts.get(file)?.statics ?? []) {
+      const router = routerAt(file, s.receiver);
+      if (!router && !appAt(file, s.receiver)) continue;
+      const above = router ? prefixes(router, new Set()) : ["/"];
+      out.push({ line: s.line, paths: s.path === undefined || !above ? undefined : [...new Set(above.map((p) => joinRoute(p, s.path!)))] });
+    }
+    return out;
+  };
   return {
     routerOf: (file, id) => (facts.has(file) ? routerAt(file, id) : undefined),
     prefixes: (router) => prefixes(router, new Set()),
+    statics,
   };
 }

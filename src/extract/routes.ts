@@ -415,6 +415,11 @@ export function routesFromTypeScript(
   for (const name of unmounted) {
     limits?.push(`routes ${spec.component}: router ${name} in ${file} is mounted where the code gives no literal path; its routes are not read (declare it in mounts)`);
   }
+  // express.static answers with the files of a directory, and passes on what it does not hold: what it serves is the
+  // directory's content, not the code's.
+  for (const { line, paths } of mounts?.statics(file) ?? []) {
+    limits?.push(`routes ${spec.component}: ${file}:${line} serves the files of a directory at ${paths?.join(", ") ?? "a path the code does not spell out"} (express.static); their paths are not read`);
+  }
   return out;
 }
 
