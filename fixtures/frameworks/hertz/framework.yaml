@@ -1,0 +1,8 @@
+# How scripts/frameworks.mjs installs Hertz and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://www.cloudwego.io/docs/hertz/tutorials/basic-feature/route/
+  - https://www.cloudwego.io/docs/hertz/tutorials/basic-feature/middleware/basic-auth/
+setup: go mod download
+latest: go get github.com/cloudwego/hertz@latest && go mod tidy
+oracle: go run oracle.go

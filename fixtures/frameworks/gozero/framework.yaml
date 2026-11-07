@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs installs go-zero and asks it for the routes the application serves. The routes are
+# declared in items.api (and the api files it imports); internal/ is what `goctl api go -api items.api -dir .` writes
+# from them, committed as go-zero projects do.
+toolchain: go
+docs:
+  - https://go-zero.dev/reference/api-dsl/route-rule/
+  - https://go-zero.dev/reference/api-dsl/route-prefix/
+  - https://go-zero.dev/reference/api-dsl/route-group/
+  - https://go-zero.dev/reference/api-dsl/parameter/
+  - https://go-zero.dev/reference/api-dsl/import/
+  - https://go-zero.dev/reference/api-dsl/middleware/
+  - https://go-zero.dev/reference/api-dsl/jwt/
+  - https://go-zero.dev/reference/api-dsl/route-sse/
+setup: go mod download
+latest: go get github.com/zeromicro/go-zero@latest && go mod tidy
+oracle: go run oracle.go

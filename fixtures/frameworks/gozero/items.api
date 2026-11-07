@@ -1,0 +1,127 @@
+syntax = "v1"
+
+info (
+	title: "items api"
+	desc:  "routes in the shapes of go-zero's api language guide"
+)
+
+import "api/base.api"
+import "api/order.api"
+
+type (
+	PingResp {
+		Base
+		Pong string `json:"pong"`
+	}
+	UserPathReq {
+		Id int64 `path:"id"`
+	}
+	UserOrderReq {
+		Id      int64  `path:"id"`
+		OrderId string `path:"orderId"`
+	}
+	CreateUserReq {
+		Name string `json:"name"`
+	}
+	UpdateUserReq {
+		Id   int64  `path:"id"`
+		Name string `json:"name"`
+	}
+	SearchReq {
+		Name string `form:"name,optional"`
+	}
+	UserResp {
+		Base
+		Id   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	LoginReq {
+		Name     string `json:"name"`
+		Password string `json:"password"`
+	}
+	LoginResp {
+		Base
+		Token string `json:"token"`
+	}
+	EventMessage {
+		Data string `json:"data"`
+	}
+)
+
+service items-api {
+	@handler home
+	get / returns (PingResp)
+
+	@handler ping
+	get /ping returns (PingResp)
+
+	@handler login
+	post /user/login (LoginReq) returns (LoginResp)
+
+	@handler fooBarBazQux
+	get /foo/bar/baz-qux returns (PingResp)
+
+	@handler fooBarBaz123
+	get /foo/bar_baz/123 returns (PingResp)
+}
+
+@server (
+	prefix: /v1
+	group:  user
+)
+service items-api {
+	@handler listUsers
+	get /users (SearchReq) returns ([]UserResp)
+
+	@handler createUser
+	post /users (CreateUserReq) returns (UserResp)
+
+	@handler getUser
+	get /users/:id (UserPathReq) returns (UserResp)
+
+	@handler updateUser
+	put /users/:id (UpdateUserReq) returns (UserResp)
+
+	@handler patchUser
+	patch /users/:id (UpdateUserReq) returns (UserResp)
+
+	@handler deleteUser
+	delete /users/:id (UserPathReq)
+
+	@handler userOrder
+	get /users/:id/orders/:orderId (UserOrderReq) returns (OrderResp)
+}
+
+@server (
+	prefix: /v2
+	group:  userv2
+)
+service items-api {
+	@handler listUsersV2
+	get /users returns ([]UserResp)
+}
+
+@server (
+	prefix:     /admin
+	group:      admin
+	jwt:        Auth
+	middleware: AdminAuth
+)
+service items-api {
+	@handler dashboard
+	get /dashboard returns (PingResp)
+
+	@handler purgeCache
+	delete /cache
+}
+
+@server (
+	prefix: /api/v1
+	group:  event
+	sse:    true
+)
+service items-api {
+	@handler streamEvents
+	get /events returns (EventMessage)
+}
+
