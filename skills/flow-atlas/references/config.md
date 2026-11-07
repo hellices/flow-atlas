@@ -198,8 +198,9 @@ looks; a `@RestController` or `@ResponseBody` handler's string is its response, 
 `static final String` (Kotlin `const val`) the file declares, or what a private method of the handler's class returns
 when the handler returns its result and the class declares one method of that name. A name starting with `redirect:`
 is a redirect (Spring MVC's view resolution: the rest is the URL): it leads to a GET of that path, which the client
-that made the request sends next (a chain's `next`, `via redirect`), from a GET or POST route (after another method
-the client may keep it, so its method is `*`); the current request's URI variables (`{id}`) and any value appended in
+that made the request sends next (a chain's `next`, `via redirect`), from a GET or POST route (a HEAD from a HEAD
+route, which a GET mapping serves when no HEAD mapping fits; after another method the client may keep it, so its method
+is `*`); a Kotlin expression body's whole result is read, each branch of an `if` or `when` apart; the current request's URI variables (`{id}`) and any value appended in
 code are values, a relative URL is resolved against the route's path, and one starting with a value is named in a
 limit. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.

@@ -1402,8 +1402,9 @@ export function extractCalls(
           if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
           continue;
         }
-        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it.
-        out.push(spec.prefix && !call.based ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
+        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it, and so
+        // does one resolved against a page, whose route's path is whole.
+        out.push(spec.prefix && !call.based && call.page === undefined ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
       }
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);

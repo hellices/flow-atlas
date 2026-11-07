@@ -229,9 +229,10 @@ export interface ComponentEdge {
 
 /**
  * A reach edge from a route to the request its reply redirects to: the client that made the request follows it, so the
- * request is the client's, not a call the server makes.
+ * request is the client's, not a call the server makes. It is read as text; a call in a method named `redirect` is
+ * reached with other evidence.
  */
-export const isRedirect = (e: Edge): boolean => e.kind === "reach" && e.via === "redirect";
+export const isRedirect = (e: Edge): boolean => e.kind === "reach" && e.via === "redirect" && e.evidence === "text";
 
 export const surfaceId = (s: { component: string; method: string; path: string }): string =>
   `${s.component}|${s.method} ${s.path}`;

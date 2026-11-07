@@ -245,6 +245,71 @@ describe("chains of a server-rendered app", () => {
       "not followed: a Spring handler is followed to the template its view renders and the URL it redirects to; atlas reads neither here",
     );
   });
+
+  it("takes public routes that only redirect to each other as served outside, but not one a client's chain redirects to", () => {
+    const pages = {
+      "src/main/java/app/LoopController.java": [
+        "@Controller",
+        "class LoopController {",
+        '  @GetMapping("/loop") String loop() { return "redirect:/loop"; }',
+        '  @GetMapping("/ping") String ping() { return "redirect:/pong"; }',
+        '  @GetMapping("/pong") String pong() { return "redirect:/ping"; }',
+        '  @PostMapping("/save") String save() { return "redirect:/done"; }',
+        '  @GetMapping("/done") String done() { return "done"; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/save.html": '<form action="/save" method="post"></form>',
+    };
+    const open = normalizeConfig({ ...spring, publicSurfaces: ["server|GET /**"] });
+    const report = deriveChains(scan(memory(pages), open), open);
+    expect(report.chains.map((c) => [c.id, ...c.next.map((n) => n.chain)])).toEqual([
+      ["outside->server|GET /loop", "outside->server|GET /loop"],
+      ["outside->server|GET /ping", "outside->server|GET /pong"],
+      ["outside->server|GET /pong", "outside->server|GET /ping"],
+      ["web->server|GET /done"],
+      ["web->server|POST /save", "web->server|GET /done"],
+    ]);
+    expect(report.unchained).toEqual([]);
+  });
+
+  it("puts the configured prefix before a root-relative template URL, not before one resolved against a page's route", () => {
+    const pages = {
+      "src/main/java/app/TeamController.java": [
+        "@Controller",
+        '@RequestMapping("/api")',
+        "class TeamController {",
+        '  @GetMapping("/teams/new") String create() { return "teams/form"; }',
+        '  @PostMapping("/teams/new") String save() { return "teams/form"; }',
+        '  @GetMapping("/teams") String list() { return "teams/list"; }',
+        "}",
+      ].join("\n"),
+      "src/main/resources/templates/teams/form.html": '<form method="post"></form><a th:href="@{/teams}">all</a>',
+    };
+    const prefixed = normalizeConfig({ ...spring, calls: [{ ...spring.calls[0]!, prefix: "/api" }] });
+    const graph = scan(memory(pages), prefixed);
+    expect(graph.calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(["GET /api/teams", "POST /api/teams/new"]);
+  });
+
+  it("follows the redirect a HEAD route answers with a HEAD request, which Spring serves with a HEAD mapping or else a GET one", () => {
+    const pages = {
+      "src/main/java/app/Moved.java": [
+        "@Controller",
+        "class Moved {",
+        '  @RequestMapping(value = "/old", method = RequestMethod.HEAD) String old() { return "redirect:/new"; }',
+        '  @RequestMapping(value = "/gone", method = RequestMethod.HEAD) String gone() { return "redirect:/both"; }',
+        '  @GetMapping("/new") String fresh() { return "new"; }',
+        '  @GetMapping("/both") String both() { return "both"; }',
+        '  @RequestMapping(value = "/both", method = RequestMethod.HEAD) String bothHead() { return "both"; }',
+        "}",
+      ].join("\n"),
+    };
+    const graph = scan(memory(pages), spring);
+    const calls = new Map(graph.calls.map((c) => [c.id, c]));
+    expect(graph.edges.filter((e) => e.kind === "match").map((e) => `${calls.get(e.from)!.method} ${calls.get(e.from)!.path} -> ${e.to}`)).toEqual([
+      "HEAD /new -> server|GET /new",
+      "HEAD /both -> server|HEAD /both",
+    ]);
+  });
 });
 
 describe("chains of a synthetic graph", () => {
@@ -275,6 +340,11 @@ describe("chains of a synthetic graph", () => {
     const backward = deriveChains({ ...twice, edges: [...twice.edges].reverse() }, normalizeConfig({})).chains[0]!;
     expect(forward.edges.filter((e) => e.kind === "reach")).toHaveLength(2);
     expect([backward.weak, backward.digest]).toEqual([forward.weak, forward.digest]);
+  });
+
+  it("keeps the call of a method named redirect in its request; only a reply's redirect, read as text, starts another", () => {
+    const chain = deriveChains(graphOf(1, "redirect"), normalizeConfig({})).chains;
+    expect(chain.map((c) => [c.id, ...c.surfaces])).toEqual([["app->svc|GET /s0", "svc|GET /s0", "svc|GET /s1"]]);
   });
 
   it("names long chains apart however they are drafted", () => {

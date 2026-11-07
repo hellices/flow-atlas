@@ -236,8 +236,8 @@ outbound call its handler leads to (route → call): the handler's code makes th
 request sits in a method whose name the handler calls (`evidence: name`, `via` the method), or, for a Spring page, the
 request is in the template the handler's view name renders (`evidence: name`, `via view <name>`), or its reply
 redirects to the request (`evidence: text`, `via redirect`). A redirect's request is a call from the route's own
-component to itself, a GET of the URL after `redirect:`; it is the client's that made the request, so it is no
-component calling another (no FA003). A URL relative to its page (a page-relative Thymeleaf link, a form with no
+component to itself, a GET of the URL after `redirect:` (a HEAD from a HEAD route); it is the client's that made the
+request, so it is no component calling another (no FA003). A URL relative to its page (a page-relative Thymeleaf link, a form with no
 action) is read once for each path of the routes that render its template, and the call's `page` holds that path:
 only those routes reach it.
 
@@ -256,6 +256,8 @@ A reach edge to a call in the template a page renders (`via view <name>`) is not
 makes that call later. Those calls start chains of their own, and the page's chain lists them as `next`, which is where
 a journey's following step comes from. A redirect of the chain's root (`via redirect`) is followed by the entry that
 made the request, so its `next` is a chain of that entry, made when no call of the entry starts it (with no callers).
+A public surface reached only by redirects starts an `outside` chain unless a chain of a component's call redirects to
+it, so public routes that only redirect to each other are chained.
 
 | Field | Meaning |
 |---|---|

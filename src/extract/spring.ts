@@ -461,6 +461,72 @@ function statementEnd(masked: string, from: number, kotlin: boolean): number {
   return end;
 }
 
+/**
+ * Where a Kotlin expression from `from` (up to `limit`) ends, as a branch: at a `;`, a closing bracket or an `else`
+ * outside brackets, or at the end of a line that neither leaves it open (an operator) nor is continued by the next.
+ */
+function branchEnd(masked: string, from: number, limit: number): number {
+  let depth = 0;
+  for (let i = from; i < limit; i++) {
+    const c = masked[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) {
+      if (depth === 0) return i;
+      depth--;
+    } else if (depth > 0) continue;
+    else if (c === ";" || (/^else\b/.test(masked.slice(i, i + 5)) && !/[\w$]/.test(masked[i - 1] ?? ""))) return i;
+    else if (c === "\n") {
+      const line = masked.slice(masked.lastIndexOf("\n", i - 1) + 1, i).trim();
+      const next = /^\s*(\S{1,2})/.exec(masked.slice(i + 1, limit))?.[1] ?? "";
+      if (line && !/(?:[=,+\-*/(]|->|&&|\|\||\?:)$/.test(line) && !/^(\?\.|\?:|\.|&&|\|\|)/.test(next)) return i;
+    }
+  }
+  return limit;
+}
+
+/**
+ * The results of a Kotlin expression from `from` (up to `limit`), as ranges of `masked`, and where it ends: the whole
+ * expression, or for an `if` or `when`, the results of each branch. A branch that is a block is not read.
+ */
+function kotlinResults(masked: string, from: number, limit: number): { ranges: Array<readonly [number, number]>; end: number } {
+  let i = from;
+  while (i < limit && /\s/.test(masked[i]!)) i++;
+  const skip = (at: number) => at + (/^\s*/.exec(masked.slice(at, limit))?.[0].length ?? 0);
+  const keyword = /^(if|when)\b/.exec(masked.slice(i, limit))?.[1];
+  if (masked[i] === "{") return { ranges: [], end: (closing(masked, i) ?? limit - 1) + 1 };
+  if (keyword === "if") {
+    const open = skip(i + 2);
+    const close = masked[open] === "(" ? closing(masked, open) : undefined;
+    if (close === undefined || close >= limit) return { ranges: [], end: limit };
+    const then = kotlinResults(masked, close + 1, limit);
+    const other = skip(then.end);
+    if (!/^else\b/.test(masked.slice(other, limit))) return then;
+    const otherwise = kotlinResults(masked, other + 4, limit);
+    return { ranges: [...then.ranges, ...otherwise.ranges], end: otherwise.end };
+  }
+  if (keyword === "when") {
+    let open = skip(i + 4);
+    if (masked[open] === "(") open = skip((closing(masked, open) ?? limit) + 1);
+    const close = masked[open] === "{" ? closing(masked, open) : undefined;
+    if (close === undefined || close >= limit) return { ranges: [], end: limit };
+    const ranges: Array<readonly [number, number]> = [];
+    let depth = 0;
+    for (let k = open + 1; k < close; k++) {
+      const c = masked[k]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (depth === 0 && masked.startsWith("->", k)) {
+        const arm = kotlinResults(masked, k + 2, close);
+        ranges.push(...arm.ranges);
+        k = arm.end - 1;
+      }
+    }
+    return { ranges, end: close + 1 };
+  }
+  const end = branchEnd(masked, i, limit);
+  return { ranges: i < end ? [[i, end]] : [], end };
+}
+
 /** What a handler's reply leads to: the views it renders and the URLs it redirects to, by where each is written. */
 interface Replies {
   views: string[];
@@ -546,19 +612,17 @@ function replies(
     if (argument) take(argument, start + open + 1);
   }
   if (!strings) return out;
+  const results = (from: number, end: number) => {
+    // In Kotlin, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
+    const ranges = context.kotlin ? kotlinResults(masked, from, end).ranges : [[from, end] as const];
+    for (const [a, b] of ranges) if (code.slice(a, b).trim()) take(code.slice(a, b), start + a);
+  };
   if (code.trimStart().startsWith("{")) {
     for (const m of masked.matchAll(/\breturn\b/g)) {
       const from = (m.index ?? 0) + m[0].length;
-      const end = statementEnd(masked, from, context.kotlin);
-      if (code.slice(from, end).trim()) take(code.slice(from, end), start + from);
+      results(from, statementEnd(masked, from, context.kotlin));
     }
-  } else {
-    // In a Kotlin expression body, a branch's value is a result too: `= if (x) "a" else "b"`, `when { c -> "a" }`.
-    for (const m of code.matchAll(/(?:\breturn\s+|=\s*|\)\s*|\belse\s+|->\s*)("(?:[^"\\\n]|\\.)*")/g)) {
-      const at = (m.index ?? 0) + m[0].length - m[1]!.length;
-      if (masked[at] === '"') take(m[1]!, start + at);
-    }
-  }
+  } else results(1, code.length);
   return { views: [...new Set(out.views)], redirects: out.redirects, unread: out.unread };
 }
 

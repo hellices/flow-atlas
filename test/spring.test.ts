@@ -301,6 +301,39 @@ describe("Spring routes", () => {
     ]);
     expect(limits).toEqual(["routes server: Members.java:14 redirects to a URL the file does not spell out (\"redirect:\" + target); the request it leads to is not read"]);
   });
+
+  it("reads each whole result of a Kotlin expression body, branch by branch", () => {
+    const views: Views = new Map();
+    const limits: string[] = [];
+    const text = [
+      "@Controller",
+      "class Teams {",
+      "  companion object {",
+      '    const val FORM = "teams/form"',
+      "  }",
+      '  @GetMapping("/teams/new") fun create() = FORM',
+      '  @PostMapping("/teams/new") fun save(t: Team) = if (bad) FORM else "redirect:/teams/" + t.id',
+      '  @PostMapping("/teams/{id}") fun update(t: Team) = when {',
+      "    bad -> FORM",
+      '    else -> "redirect:/teams/" +',
+      '      t.id + "/members"',
+      "  }",
+      '  @GetMapping("/teams") fun list() = page()',
+      '  @GetMapping("/back") fun back(target: String) = "redirect:" + target',
+      '  @GetMapping("/one") fun one(id: Long) = "redirect:/teams/$id"',
+      '  private fun page() = "teams/list"',
+      "}",
+    ].join("\n");
+    routesFromSpring("Teams.kt", text, spec, views, undefined, limits);
+    expect([...views].map(([id, v]) => [id, v.names, v.redirects.map((r) => `${r.path} ${r.line}`)])).toEqual([
+      ["server|GET /teams/new", ["teams/form"], []],
+      ["server|POST /teams/new", ["teams/form"], ["/teams/{} 7"]],
+      ["server|POST /teams/{id}", ["teams/form"], ["/teams/{}/members 10"]],
+      ["server|GET /teams", ["teams/list"], []],
+      ["server|GET /one", [], ["/teams/{} 15"]],
+    ]);
+    expect(limits).toEqual(["routes server: Teams.kt:14 redirects to a URL the file does not spell out (\"redirect:\" + target); the request it leads to is not read"]);
+  });
 });
 
 describe("template calls", () => {

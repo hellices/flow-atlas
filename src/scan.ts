@@ -90,8 +90,8 @@ function renderedPages(surfaces: Surface[], executed: Map<string, Set<string>>):
 
 /**
  * The requests redirects lead to, one per place and path, with the routes whose replies send each. A browser follows
- * the 302 Spring's RedirectView sends with a GET when the request was a GET or a POST (Fetch, "HTTP-redirect fetch");
- * after any other method the client may keep it, so the method is not read.
+ * the 302 Spring's RedirectView sends with a GET when the request was a GET or a POST, and with a HEAD after a HEAD
+ * (Fetch, "HTTP-redirect fetch"); after any other method the client may keep it, so the method is not read.
  */
 function redirectCalls(surfaces: Surface[], redirects: Redirects): Array<{ call: ReadCall; from: string[] }> {
   const out = new Map<string, { call: ReadCall; from: string[] }>();
@@ -100,7 +100,7 @@ function redirectCalls(surfaces: Surface[], redirects: Redirects): Array<{ call:
     for (const r of redirects.get(s.id) ?? []) {
       const parsed = callPath(r.path, served);
       if (!parsed) continue;
-      const method = ["GET", "HEAD", "POST"].includes(s.method) ? "GET" : "*";
+      const method = s.method === "HEAD" ? "HEAD" : ["GET", "POST"].includes(s.method) ? "GET" : "*";
       const key = `${s.component}|${method} ${parsed.path}@${r.at.file}:${r.at.line}`;
       const entry = out.get(key) ?? out.set(key, { call: { from: s.component, to: s.component, method, path: parsed.path, based: false, at: r.at, evidence: "text" }, from: [] }).get(key)!;
       entry.from.push(s.id);

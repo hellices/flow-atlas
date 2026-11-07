@@ -71,10 +71,16 @@ export function deriveChains(graph: Graph, config: Pick<Config, "publicSurfaces"
       r.callers.push(c.id);
     }
   }
-  // A client outside the repository is assumed only for a public surface nothing in the repository calls.
-  const called = new Set(graph.edges.filter((e) => e.kind === "match" && index.calls.has(e.from)).map((e) => e.to));
+  // A client outside the repository is assumed only for a public surface nothing in the repository calls. A redirect
+  // calls a surface only for the client of a chain it answers: one leading from a request a component makes, maybe after
+  // other redirects. Public surfaces that only redirect to each other have no such client.
+  const called = new Set(graph.edges.filter((e) => e.kind === "match" && index.calls.has(e.from) && !redirects.has(e.from)).map((e) => e.to));
+  const redirectedTo = (s: string) =>
+    (index.out.get(s) ?? []).filter(isRedirect).flatMap((r) => (index.out.get(r.to) ?? []).filter((m) => m.kind === "match").map((m) => m.to));
+  const answered = new Set([...roots.values()].map((r) => r.root));
+  for (const s of answered) for (const t of redirectedTo(s)) answered.add(t);
   for (const s of graph.surfaces) {
-    if (isPublic(s.id) && !called.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
+    if (isPublic(s.id) && !called.has(s.id) && !answered.has(s.id)) roots.set(chainId("outside", s.id), { component: "outside", root: s.id, callers: [] });
   }
 
   const chains: Chain[] = [];
