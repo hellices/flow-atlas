@@ -4,7 +4,7 @@ import type { Call, Coverage, Draft, Place } from "../model.js";
 import { callPath, HOLE, hostOf, isLoopback, joinRoute, type CallPath } from "../paths.js";
 import { lineOf, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
-import { declarationOf, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
 
@@ -378,15 +378,6 @@ function fromOneParameter(e: ts.Expression): boolean {
 }
 
 const NEXT_ROUTERS = ["next/navigation", "next/router"];
-
-/** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
-function importedFrom(id: ts.Identifier, modules: string[]): string | undefined {
-  const d = declarationOf(id);
-  const spec = (n: ts.Node | undefined) => (n && ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined);
-  if (d && ts.isImportSpecifier(d) && modules.includes(spec(d.parent.parent.parent) ?? "")) return (d.propertyName ?? d.name).text;
-  if (d && ts.isImportClause(d) && modules.includes(spec(d.parent) ?? "")) return "default";
-  return undefined;
-}
 
 /** Whether an expression is Next.js's router: what `useRouter()` returns, or the `Router` `next/router` exports. */
 function isNextRouter(e: ts.Expression): boolean {

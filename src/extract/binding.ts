@@ -105,6 +105,15 @@ export function declarationOf(id: ts.Identifier): ts.Node | undefined {
   return undefined;
 }
 
+/** The name a binding imports from one of `modules` ("default" for a default import), or undefined. */
+export function importedFrom(id: ts.Identifier, modules: string[]): string | undefined {
+  const d = declarationOf(id);
+  const spec = (n: ts.Node | undefined) => (n && ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text : undefined);
+  if (d && ts.isImportSpecifier(d) && modules.includes(spec(d.parent.parent.parent) ?? "")) return (d.propertyName ?? d.name).text;
+  if (d && ts.isImportClause(d) && modules.includes(spec(d.parent) ?? "")) return "default";
+  return undefined;
+}
+
 /** Parentheses and type assertions (`as`, `satisfies`, `<T>`, `!`) around an expression, which change nothing at run time. */
 export function unwrap(e: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isTypeAssertionExpression(e) || ts.isNonNullExpression(e)) e = e.expression;

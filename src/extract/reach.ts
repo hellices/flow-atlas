@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { declarationOf, resolveModule, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, resolveModule, unwrap } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
@@ -16,8 +16,22 @@ function requestCallee(e: ts.Expression): boolean {
 
 /** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
 const LATER_PROPS = /^(?:href|src|srcSet|poster|action|formAction|on[A-Z]\w*)$/;
-/** The JSX props whose address a rendered page offers to request next: a link's and a form's (`href`, `action`, `formAction`). */
-const OFFERED_PROPS = /^(?:href|action|formAction)$/;
+/**
+ * Whether a JSX prop holds the address a link or a form the page renders goes to: the `href` of an `<a>` or `<area>`,
+ * the `action` of a `<form>` and the `formAction` of a `<button>` or `<input>` (HTML, Links and Form submission), and
+ * the `href` of Next.js's `<Link>` and the `action` of its `<Form>`, which render those (Next.js, Link and Form). A prop
+ * of another component holds whatever that component makes of it; a `<link>` loads a resource with the page.
+ */
+function offeredProp(attr: ts.JsxAttribute): boolean {
+  const name = attr.name.getText();
+  const tag = attr.parent.parent.tagName;
+  if (!ts.isIdentifier(tag)) return false;
+  const intrinsic = /^[a-z]/.test(tag.text) ? tag.text : undefined;
+  if (name === "href") return intrinsic === "a" || intrinsic === "area" || (!intrinsic && importedFrom(tag, ["next/link"]) === "default");
+  if (name === "action") return intrinsic === "form" || (!intrinsic && importedFrom(tag, ["next/form"]) === "default");
+  if (name === "formAction") return intrinsic === "button" || intrinsic === "input";
+  return false;
+}
 
 interface Parsed {
   sf: ts.SourceFile;
@@ -225,8 +239,8 @@ export class Reach {
    * `render`: the start is a server-rendered page. What runs while it renders is followed, prop values included; client
    * modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions passed as
    * props are left out: the browser makes those requests later. `offered` collects the `file@offset` of each address a
-   * link or a form the page renders holds (`href`, `action`, `formAction`), through a conditional's branches and a
-   * `const` it names: the requests the page offers to make next.
+   * link or a form the page renders holds (see `offeredProp`), through a comma's last operand, a conditional's branches
+   * and the `const`s it names: the requests the page offers to make next.
    */
   from(file: string, start: ts.Node, executed?: Set<string>, render = false, offered?: Set<string>): string[] {
     const names = new Set<string>();
@@ -301,17 +315,26 @@ export class Reach {
           // makeHandler while rendering. Only the value it ends in is the address: `(track(), "/next")` runs track,
           // and `ok() ? "/a" : "/b"` runs ok.
           const later = LATER_PROPS.test(name);
-          const offers = offered && OFFERED_PROPS.test(name) ? offered : undefined;
+          const offers = offered && offeredProp(n) ? offered : undefined;
           if (offers && n.initializer && ts.isStringLiteral(n.initializer)) offers.add(`${f}@${n.initializer.getStart(parsed.sf)}`);
-          const prop = (v: ts.Expression): void => {
-            if (offers) {
-              offers.add(`${f}@${v.getStart(parsed.sf)}`);
-              const held = ts.isIdentifier(v) ? declarationOf(v) : undefined;
-              if (held && ts.isVariableDeclaration(held) && held.initializer && held.parent.flags & ts.NodeFlags.Const) {
-                offers.add(`${f}@${held.initializer.getStart(parsed.sf)}`);
-                offers.add(`${f}@${unwrap(held.initializer).getStart(parsed.sf)}`);
-              }
+          // Each value the address may end in: past a comma's discarded left operand, into a conditional's branches and
+          // the initializer of a `const` it names. A conditional's own start stays too, where its branches are read as one.
+          const offer = (v: ts.Expression, through: Set<ts.Node>): void => {
+            const e = unwrap(v);
+            if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.CommaToken) return offer(e.right, through);
+            offers!.add(`${f}@${e.getStart(parsed.sf)}`);
+            if (ts.isConditionalExpression(e)) {
+              offer(e.whenTrue, through);
+              offer(e.whenFalse, through);
             }
+            const held = ts.isIdentifier(e) ? declarationOf(e) : undefined;
+            if (held && !through.has(held) && ts.isVariableDeclaration(held) && held.initializer && held.parent.flags & ts.NodeFlags.Const) {
+              through.add(held);
+              offer(held.initializer, through);
+            }
+          };
+          if (offers && value) offer(value, new Set());
+          const prop = (v: ts.Expression): void => {
             if (ts.isParenthesizedExpression(v)) return prop(v.expression);
             if (ts.isBinaryExpression(v) && v.operatorToken.kind === ts.SyntaxKind.CommaToken) {
               visit(v.left, false, true);

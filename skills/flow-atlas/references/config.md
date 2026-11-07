@@ -153,19 +153,23 @@ OPTIONS; those surfaces are `implicit`,
 reached only by a request that names the method, and no rule expects a caller for them. Metadata routes are read where
 Next.js fixes their paths: `robots.ts` at the root of `app/` serves `GET /robots.txt`, `manifest.ts` there `GET
 /manifest.webmanifest`, and `sitemap.ts` in any segment `GET <segment>/sitemap.xml` (`<segment>/sitemap/{id}.xml` when
-it exports `generateSitemaps`), each with the HEAD and OPTIONS Next.js answers. All three are `implicit`: crawlers
+it exports `generateSitemaps`, which the request runs too, to find the id asked for), each with the HEAD and OPTIONS
+Next.js answers. All three are `implicit`: crawlers
 fetch `/robots.txt` by RFC 9309 and the sitemaps it names, browsers the manifest Next.js links from every page's head,
 and no code of the app requests them, so no rule expects a caller; a call that fetches one still reaches it. An `icon`, `apple-icon`,
 `opengraph-image` or `twitter-image` file is served at a path Next.js generates, so it is not read and a limit names it.
-Files Next.js serves with no handler are `implicit` GET and HEAD surfaces, listed whatever the route `files` say (an
-`exclude` leaves them out): every file under `public/` at the component's directory, at its path from the root, and
-`favicon.ico`, `robots.txt`, `manifest.json`, `manifest.webmanifest` at the root of `app/` and `sitemap.xml` in any
-segment. A request whose method is not read reaches such a file's GET; no rule expects a caller for one. A path ending
+Files Next.js serves with no handler of the app's are `implicit` surfaces, listed whatever the route `files` say (an
+`exclude` leaves them out): every file under `public/` at the component's directory, at its path from the root as a
+request holds it (what the URL Standard percent-encodes in a path, and `%`, percent-encoded: `a b.pdf` is `a%20b.pdf`),
+answering GET and HEAD; and `favicon.ico`, `robots.txt`, `manifest.json`, `manifest.webmanifest` at the root of `app/`
+and `sitemap.xml` in any segment, answering GET, HEAD and OPTIONS through the route handler Next.js makes of them. A request whose method is not read reaches such a file's GET; no rule expects a caller for one. A path ending
 in an extension of a file kept in repositories (`.png`, `.svg`, `.json`, `.txt`, `.xml`, `.css` and the like) is no call
 in any language, being a file path far more often than a request, so a request for such a file is not read. As Next.js does, a
 request is matched to the most specific route path first (a public file or a static name, then `[x]`, then
 catch-alls), and a method that route lacks matches nothing else; a request with a value in its path (`/editor/${id}`)
-reaches each path down to the first that takes every value (`/editor/new` and `/editor/{id}`, not `/{slug}/**`). API routes under `pages/api` answer every method from their default export, written or
+reaches each path down to the first that takes every value (`/editor/new` and `/editor/{id}`, not `/{slug}/**`), less
+a path whose every request it shares with the call a more specific path takes (`/${section}/new` reaches `/editor/new`
+and `/{section}/new`, not `/editor/{id}`). API routes under `pages/api` answer every method from their default export, written or
 re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
 `pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
 the default export (a function component, also one named by `export { Page as default }` or re-exported from another
@@ -176,10 +180,11 @@ passed as props do not: a `<Link href>`, an `<a href>` or an address Next.js's r
 `redirect` from `next/navigation` keeps the method of the request it answers (`*`); each reaches
 the page it names as a request of its own. An App Router page renders inside the `layout` and `template` of its folder
 and of each folder above it up to `app/`, so what they run while rendering belongs to its request too. The addresses
-the links and forms of that server-rendered tree hold (`href`, `action`, `formAction`, written as a literal, in a
-conditional's branches or in a `const` they name) are what the page offers next (`via view <file>`), as a Spring
-template's are: they start chains of their own, which the page's chain lists as `next`. A client module's links, a
-Pages Router `_app` and what `notFound()` or an error renders are not read for it. Include `.tsx` in the route
+the links and forms of that server-rendered tree hold (the `href` of `<a>`, `<area>` and Next.js's `<Link>`, the
+`action` of `<form>` and Next.js's `<Form>`, the `formAction` of `<button>` and `<input>`; written as a literal, as the
+value a comma expression ends in, in a conditional's branches or in a `const` they name, through further `const`s) are what the page offers next (`via view <file>`), as a Spring
+template's are: they start chains of their own, which the page's chain lists as `next`. A client module's links, a prop
+of another component (what it renders from it is not read), a `<link>`, a Pages Router `_app` and what `notFound()` or an error renders are not read for it. Include `.tsx` in the route
 files to read them. The `matcher` of the `config` a `middleware` or `proxy` file exports names the paths it runs on,
 not requests. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
 format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb

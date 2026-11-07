@@ -80,12 +80,25 @@ describe("Next.js", () => {
       "lib/pwa.ts": 'export const load = () => fetch("/manifest.webmanifest");\nexport const any = () => request("/manifest.webmanifest");',
     });
     expect(targets(fetched.graph, "/manifest.webmanifest")).toEqual(["web|GET /manifest.webmanifest", "web|GET /manifest.webmanifest"]);
+    // A split sitemap's GET calls generateSitemaps to find the id asked for, then the default export.
+    const split = app({
+      "app/sitemap.ts": 'export async function generateSitemaps() { return fetch("/api/ids"); }\nexport default async function sitemap({ id }) { return fetch("/api/pages"); }',
+      "app/api/ids/route.ts": "export function GET() {}",
+      "app/api/pages/route.ts": "export function GET() {}",
+    });
+    const reaches = (id: string) =>
+      split.graph.edges.filter((e) => e.kind === "reach" && e.from === id).map((e) => split.graph.calls.find((c) => c.id === e.to)!.path).sort();
+    expect(reaches("web|GET /sitemap/{id}.xml")).toEqual(["/api/ids", "/api/pages"]);
+    expect(reaches("web|HEAD /sitemap/{id}.xml")).toEqual(["/api/ids", "/api/pages"]);
   });
 
-  it("serves the files of public/ and the metadata files of app/ as GET and HEAD with no handler", () => {
+  it("serves the files of public/ as GET and HEAD, and the metadata files of app/ with OPTIONS too, with no handler", () => {
     const rows: Array<[string, string | undefined]> = [
       ["public/favicon.ico", "/favicon.ico"],
-      ["public/images/a b.png", "/images/a b.png"],
+      // A file's name is written as a request holds it: what the URL standard percent-encodes in a path is encoded.
+      ["public/images/a b.png", "/images/a%20b.png"],
+      ["public/{x}/100%#?.json", "/%7Bx%7D/100%25%23%3F.json"],
+      ["public/fonts/inter@2x.ü.png", "/fonts/inter@2x.%C3%BC.png"],
       // public/ stays at the project's root when the code is under src/.
       ["src/public/x.png", undefined],
       ["app/favicon.ico", "/favicon.ico"],
@@ -97,8 +110,8 @@ describe("Next.js", () => {
       ["app/icon.png", undefined],
       ["app/_private/sitemap.xml", undefined],
     ];
-    expect(rows.map(([file]) => nextStaticFile(file, ""))).toEqual(rows.map(([, path]) => path));
-    expect(nextStaticFile("apps/web/public/logo.svg", "apps/web")).toBe("/logo.svg");
+    expect(rows.map(([file]) => nextStaticFile(file, "")?.path)).toEqual(rows.map(([, path]) => path));
+    expect(nextStaticFile("apps/web/public/logo.svg", "apps/web")).toEqual({ path: "/logo.svg", kind: "public" });
     expect(nextStaticFile("public/logo.svg", "apps/web")).toBeUndefined();
     const { config, graph } = app({
       "public/favicon.ico": "",
@@ -113,6 +126,21 @@ describe("Next.js", () => {
       "web|GET /favicon.ico true public/favicon.ico:1",
       "web|HEAD /favicon.ico true public/favicon.ico:1",
     ]);
+    // Next.js compiles a metadata file into a route handler, which answers OPTIONS by itself; public/ is served as files.
+    const served = app({
+      "app/favicon.ico": "",
+      "public/reports/annual report.pdf": "",
+      "lib/files.ts": 'export const options = () => fetch("/favicon.ico", { method: "OPTIONS" });\nexport const report = () => fetch("/reports/annual%20report.pdf");',
+    });
+    expect(served.graph.surfaces.map((s) => s.id).sort()).toEqual([
+      "web|GET /favicon.ico",
+      "web|GET /reports/annual%20report.pdf",
+      "web|HEAD /favicon.ico",
+      "web|HEAD /reports/annual%20report.pdf",
+      "web|OPTIONS /favicon.ico",
+    ]);
+    expect(targets(served.graph, "/favicon.ico")).toEqual(["web|OPTIONS /favicon.ico"]);
+    expect(targets(served.graph, "/reports/annual%20report.pdf")).toEqual(["web|GET /reports/annual%20report.pdf"]);
     // No rule expects a caller for a file no code names.
     expect(evaluate(graph, config).map((f) => f.key)).toEqual([]);
     // An excluded file is not served as far as atlas reads.
@@ -144,6 +172,15 @@ describe("Next.js", () => {
     expect(targets(graph, "/docs/{}")).toEqual(["web|GET /docs/{*slug}"]);
     // A public file is served before the route handler of the dynamic segment.
     expect(targets(graph, "/files/{}")).toEqual(["web|GET /files/report.pdf", "web|GET /files/{name}"]);
+    // A route all of whose requests from the call a more specific route takes is reached by none of them: the call
+    // reaches /editor/{id} only as /editor/new, which the static page serves.
+    const crossed = app({
+      "app/editor/new/page.tsx": "export default function New() { return null; }",
+      "app/editor/[id]/page.tsx": "export default function Edit() { return null; }",
+      "app/[section]/new/page.tsx": "export default function Add() { return null; }",
+      "lib/links.ts": "export const add = (section) => fetch(`/${section}/new`);",
+    });
+    expect(targets(crossed.graph, "/{}/new")).toEqual(["web|GET /editor/new", "web|GET /{section}/new"]);
   });
 
   it("reads no request in the matcher of a middleware or proxy", () => {
@@ -219,5 +256,33 @@ describe("Next.js", () => {
     // A HEAD response has no body, so it offers nothing; a page outside the group has only the root layout.
     expect(reached("web|HEAD /orders", true)).toEqual([]);
     expect(reached("web|GET /cart", true)).toEqual(["/ view app/layout.tsx static"]);
+  });
+
+  it("offers only what a link or a form holds: the address it ends in, through a const's branches", () => {
+    const { graph } = app({
+      "app/page.tsx": [
+        'import Link from "next/link";',
+        'import Form from "next/form";',
+        'import { Badge } from "../components/badge";',
+        'import { ClientLink } from "../components/client-link";',
+        "export default function Home({ ok }) {",
+        '  const back = ok ? "/cart" : "/login";',
+        "  const again = back;",
+        "  const x = y;",
+        "  const y = x;",
+        '  return <div><a href={("/ignored", "/next")}>n</a><Link href={again}>b</Link><Form action="/search" /><input formAction="/api/save" /><a href={x}>loop</a>',
+        '    <Badge href="/badge" /><ClientLink href="/client" /><link rel="preload" href="/fonts/inter.woff2" /></div>;',
+        "}",
+      ].join("\n"),
+      "components/badge.tsx": "export function Badge({ href }) { return <span>{href}</span>; }",
+      "components/client-link.tsx": '"use client";\nexport function ClientLink({ href }) { return <a href={href}>x</a>; }',
+    });
+    const offered = graph.edges
+      .filter((e) => e.kind === "reach" && e.from === "web|GET /" && offersNext(e))
+      .map((e) => graph.calls.find((c) => c.id === e.to)!.path)
+      .sort();
+    // A component's prop, a client component's included, is no link unless what it renders is read; a <link> loads a
+    // resource with the page; the left operand of a comma is discarded.
+    expect(offered).toEqual(["/api/save", "/cart", "/login", "/next", "/search"]);
   });
 });

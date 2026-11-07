@@ -345,7 +345,7 @@ describe("framework rules", () => {
 
   it("joins a page only to the requests it makes while rendering, not to a link on the same line", () => {
     const files = {
-      "app/one/page.tsx": 'export default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
+      "app/one/page.tsx": 'import Link from "next/link";\nexport default async function One() { const data = await fetch("/api/data"); return <Link href="/next">{data}</Link>; }',
       "app/next/page.tsx": "export default function Next() { return null; }",
       "app/api/data/route.ts": "export function GET() {}",
     };

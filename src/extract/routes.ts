@@ -160,20 +160,22 @@ function nextSegments(rest: string, app: boolean): string[] | undefined {
 }
 
 /**
- * The path Next.js serves a static file at, without a handler: a file under `public/` at the component's root, from the
- * base URL (Next.js, public Folder); and the metadata files written as files in `app/` (Next.js, Metadata Files):
- * `favicon.ico`, `robots.txt`, `manifest.json` and `manifest.webmanifest` at its root, `sitemap.xml` in any segment.
- * Undefined for any other file.
+ * The path Next.js serves a static file at, without a handler of the app's: a file under `public/` at the component's
+ * root, from the base URL (Next.js, public Folder); and the metadata files written as files in `app/` (Next.js,
+ * Metadata Files): `favicon.ico`, `robots.txt`, `manifest.json` and `manifest.webmanifest` at its root, `sitemap.xml` in
+ * any segment. Undefined for any other file. A public file's name is written as a request holds it: the characters the
+ * URL Standard's path percent-encode set holds, and `%`, percent-encoded; Next.js matches a request to the file both
+ * encoded and decoded (filesystem.ts, `encodeURIPath`).
  */
-export function nextStaticFile(file: string, root: string): string | undefined {
+export function nextStaticFile(file: string, root: string): { path: string; kind: "public" | "metadata" } | undefined {
   const inside = root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
   if (inside === undefined) return undefined;
-  if (inside.startsWith("public/")) return `/${inside.slice("public/".length)}`;
+  if (inside.startsWith("public/")) return { path: `/${inside.slice("public/".length).replace(/[\0- "#%<>?^`{}\x7F-\u{10FFFF}]/gu, encodeURIComponent)}`, kind: "public" };
   const meta = /^(?:src\/)?app\/((?:[^]*\/)?)(favicon\.ico|robots\.txt|manifest\.json|manifest\.webmanifest|sitemap\.xml)$/.exec(inside);
   if (!meta) return undefined;
-  if (meta[2] !== "sitemap.xml") return meta[1] ? undefined : `/${meta[2]}`;
+  if (meta[2] !== "sitemap.xml") return meta[1] ? undefined : { path: `/${meta[2]}`, kind: "metadata" };
   const segments = nextSegments(meta[1]!, true);
-  return segments && joinRoute(...segments, "sitemap.xml");
+  return segments && { path: joinRoute(...segments, "sitemap.xml"), kind: "metadata" };
 }
 
 /**
@@ -295,12 +297,13 @@ export function routesFromTypeScript(
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string; render?: boolean; offers?: boolean; wrappers?: Array<{ file: string; node: ts.Node }> } = {},
+    more: { implicit?: boolean; handlerFile?: string; render?: boolean; offers?: boolean; alongside?: Array<{ file: string; node: ts.Node }> } = {},
   ) => {
     const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: routeTemplate(joinRoute(path)) });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
     const offers = more.offers && offered ? (offered.get(id) ?? offered.set(id, new Set()).get(id)!) : undefined;
-    const starts = handler ? [{ file: more.handlerFile ?? file, node: handler }, ...(more.wrappers ?? [])] : [];
+    // `alongside`: what runs in the same request beside the handler (a page's layouts, a split sitemap's `generateSitemaps`).
+    const starts = handler ? [{ file: more.handlerFile ?? file, node: handler }, ...(more.alongside ?? [])] : [];
     out.push({
       id,
       component: spec.component,
@@ -330,7 +333,8 @@ export function routesFromTypeScript(
     limits?.push(`routes ${spec.component}: ${file} is a metadata image route, served at a path Next.js generates; it is not read`);
   } else if (next?.kind === "metadata") {
     // The default export makes the file, and Next.js serves it to GET; as for any route handler, it answers HEAD with
-    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`. Crawlers fetch
+    // that handler and OPTIONS by itself. `generateSitemaps` splits a sitemap into `sitemap/[id].xml`, and the handler
+    // Next.js generates calls it on each request to find the id asked for (next-metadata-route-loader). Crawlers fetch
     // robots.txt where RFC 9309 puts it and the sitemaps it names, and browsers the manifest the page's head links to:
     // none is requested by the app's own code, so each is implicit, as a file in public/ is.
     const statement =
@@ -341,8 +345,10 @@ export function routesFromTypeScript(
       const handler = found?.node ?? (ts.isExportAssignment(statement) ? statement.expression : statement);
       const split = next.path.endsWith("/sitemap.xml") && exportsValue(sf, "generateSitemaps");
       const path = split ? next.path.replace(/\.xml$/, "/{id}.xml") : next.path;
-      add("GET", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file });
-      add("HEAD", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file });
+      const ids = split ? reach?.exported(file, "generateSitemaps") : undefined;
+      const alongside = ids ? [ids] : [];
+      add("GET", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file, alongside });
+      add("HEAD", path, statement, handler, undefined, { implicit: true, handlerFile: found?.file, alongside });
       add("OPTIONS", path, statement, undefined, undefined, { implicit: true });
     }
   } else if (next?.kind === "page") {
@@ -372,8 +378,8 @@ export function routesFromTypeScript(
     // An App Router page renders inside the layouts and templates of its folders; the GET response holds the links and
     // forms they render, which the page offers to follow. HEAD answers with no body.
     const wrappers = reach && next.app !== undefined ? nextWrappers(file, next.app, reach) : [];
-    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, wrappers });
-    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, wrappers });
+    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, alongside: wrappers });
+    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, alongside: wrappers });
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
@@ -983,16 +989,18 @@ export function extractRoutes(
     }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
-  // What Next.js serves from files with no handler: public/ and the metadata files written as files. After the code, so
-  // a route a file also names keeps the handler's place.
+  // What Next.js serves from files with no handler of the app's: public/ as files, to GET and HEAD, and the metadata
+  // files written as files through a route handler it generates, which answers OPTIONS too (next-metadata-route-loader,
+  // auto-implement-methods). After the code, so a route a file also names keeps the handler's place.
   const skip = matcher(config.exclude);
   for (const component of new Set(config.routes.filter((r) => (r.styles ?? []).includes("next")).map((r) => r.component))) {
     const root = roots.get(component);
     if (root === undefined) continue;
     for (const file of source.list()) {
-      const path = skip(file) ? undefined : nextStaticFile(file, root);
-      if (path === undefined) continue;
-      for (const method of ["GET", "HEAD"]) {
+      const served = skip(file) ? undefined : nextStaticFile(file, root);
+      if (served === undefined) continue;
+      const { path } = served;
+      for (const method of served.kind === "metadata" ? ["GET", "HEAD", "OPTIONS"] : ["GET", "HEAD"]) {
         out.push({ id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true });
       }
     }
