@@ -8,4 +8,6 @@ class ListConverter(BaseConverter):
         return value.split(",")
 
     def to_url(self, values):
-        return ",".join(super().to_url(value) for value in values)
+        # Bound here: a generator expression has a scope of its own, where `super()` has no instance.
+        to_url = super().to_url
+        return ",".join(to_url(value) for value in values)
