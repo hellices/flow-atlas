@@ -125,7 +125,7 @@ export interface ApiDocument {
   location: string;
   /**
    * How it was found: committed, route, nest-swagger jsonDocumentUrl, nest-swagger default, fastify-swagger-ui,
-   * springdoc default, springdoc api-docs.path, springdoc group, springdoc group-configs.
+   * springdoc default, springdoc api-docs.path, springdoc group, springdoc group-configs, drf-spectacular urlconf.
    */
   convention: string;
   /** A served path that shows another served document, as a swagger UI's `uiConfig.url` does. */

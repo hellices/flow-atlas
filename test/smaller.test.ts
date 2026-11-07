@@ -174,3 +174,26 @@ describe("inventory's components in an Nx workspace", () => {
     expect(offered({ "package.json": JSON.stringify({ name: "web" }), "tools/project.json": project("tool") })).toEqual(["web  package.json"]);
   });
 });
+
+describe("inventory's served documents", () => {
+  const documents = (files: Record<string, string>) => inventory(memory(files), []).apiDocuments.map((d) => `${d.location} ${d.convention} ${d.at.file}:${d.at.line}`);
+
+  it("include drf-spectacular's schema view at the path its urlconf gives it", () => {
+    const urls = [
+      "from django.urls import include, path",
+      "from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView",
+      "",
+      "urlpatterns = [",
+      '    path("api/", include(router.urls), name="api"),',
+      '    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),',
+      "    path('api/schema.yaml', views.SpectacularYAMLAPIView.as_view()),",
+      '    path("api/schema/swagger-ui/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),',
+      '    # path("old/schema/", SpectacularAPIView.as_view()),',
+      "]",
+    ].join("\n");
+    expect(documents({ "backend/project/urls.py": urls })).toEqual([
+      "/api/schema/ drf-spectacular urlconf backend/project/urls.py:6",
+      "/api/schema.yaml drf-spectacular urlconf backend/project/urls.py:7",
+    ]);
+  });
+});

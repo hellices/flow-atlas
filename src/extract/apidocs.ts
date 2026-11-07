@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { ApiDescription, ApiDocument, Component, Surface } from "../model.js";
 import { joinRoute, routeTemplate } from "../paths.js";
 import { lineOf, matcher, select, type Source } from "../source.js";
+import { withoutComments } from "./calls.js";
 import { describedOperations, supportedVersion } from "./openapi.js";
 import { BUILD_FILE, springdocDocuments } from "./springdoc.js";
 
@@ -73,6 +74,21 @@ export function servedDocuments(file: string, text: string, component: string): 
     ts.forEachChild(n, visit);
   };
   visit(sf);
+  return out;
+}
+
+/**
+ * Where a Django urlconf serves drf-spectacular's document: `path("api/schema/", SpectacularAPIView.as_view())`, and
+ * the JSON and YAML views alike. The path is the one the urlconf gives, written as Django matches it (no leading `/`,
+ * the trailing one kept); a urlconf included under a prefix serves it behind that prefix, which is not read here.
+ */
+export function spectacularDocuments(file: string, text: string, component: string): ApiDocument[] {
+  const code = withoutComments(file, text);
+  const out: ApiDocument[] = [];
+  for (const m of code.matchAll(/\bpath\(\s*(["'])([^"'<>]*)\1\s*,\s*(?:[\w.]+\.)?Spectacular(?:JSON|YAML)?APIView\.as_view\(/g)) {
+    const at = { file, line: lineOf(text, m.index ?? 0) };
+    out.push({ component, kind: "served", location: `/${m[2]!}`, convention: "drf-spectacular urlconf", at, evidence: "text" });
+  }
   return out;
 }
 

@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { parse } from "yaml";
-import { DOCUMENT_FILE, documentStart, servedDocuments } from "./extract/apidocs.js";
+import { DOCUMENT_FILE, documentStart, servedDocuments, spectacularDocuments } from "./extract/apidocs.js";
 import { BUILD_FILE, springdocDocuments } from "./extract/springdoc.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -270,6 +270,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (!text) continue;
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
+    if (file.endsWith(".py") && text.includes("Spectacular")) apiDocuments.push(...spectacularDocuments(file, text, component));
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file)) continue;
       const hits = [...text.matchAll(re)].filter((m) => !accept || accept(m));

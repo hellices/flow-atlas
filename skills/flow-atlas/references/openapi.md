@@ -80,7 +80,7 @@ recipe below was run against the framework versions listed in the flow-atlas `fi
 | FastAPI | OpenAPI 3.1 | `python -c "import json; from app.main import app; print(json.dumps(app.openapi(), indent=2))" > openapi.json` |
 | Flask + flask-smorest | OpenAPI 3.x (`OPENAPI_VERSION`) | `json.dumps(api.spec.to_dict(), indent=2)` inside the app context |
 | Flask + flasgger | Swagger 2.0 | `app.test_client().get("/apispec_1.json").get_json()`; only routes with a YAML docstring are listed |
-| Django REST framework + drf-spectacular | OpenAPI 3.0 | `python manage.py spectacular --format openapi-json --file openapi.json` |
+| Django REST framework + drf-spectacular | OpenAPI 3.0 | `python manage.py spectacular --format openapi-json --file openapi.json`; `atlas inventory` lists the path a urlconf serves it at (`path("api/schema/", SpectacularAPIView.as_view())`, behind the prefix that urlconf is included at) |
 | NestJS + @nestjs/swagger | OpenAPI 3.0 | in a script: `NestFactory.create`, the same global prefix as `main.ts`, `SwaggerModule.createDocument(app, config)`, write it, `app.close()` |
 | Fastify + @fastify/swagger | Swagger 2.0 or OpenAPI 3.0 (by `openapi` option) | build the app, `await app.ready()`, write `app.swagger()` |
 | Spring Boot (MVC) + springdoc-openapi | OpenAPI 3.1 (3.0 by setting) | a `@SpringBootTest` with `@AutoConfigureMockMvc` whose `MockMvc` GETs each path and group `atlas inventory` lists (`/v3/api-docs` by default) and writes the body; set `springdoc.writer-with-default-pretty-printer=true` so `described` lines mean something |
