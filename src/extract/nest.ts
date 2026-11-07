@@ -50,7 +50,7 @@ export function versionsOf(e: ts.Expression): string[] | undefined {
 }
 
 /** A property of an object literal: undefined when it is not there, null when the literal does not spell it out. */
-const property = (o: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined | null => {
+export const property = (o: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined | null => {
   // A spread may set any property.
   if (o.properties.some(ts.isSpreadAssignment)) return null;
   for (const p of o.properties) {
@@ -100,11 +100,12 @@ const REQUEST_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIO
 /**
  * Reads the global prefix and versioning that `setGlobalPrefix` and `enableVersioning` calls in `texts` set, with
  * `declared` taking the place of the prefix. Every such call is taken as the application's; calls that disagree leave
- * it unknown. `limits` gets what is not read.
+ * it unknown, and a setting not spelled out agrees with no other. `limits` gets what is not read.
  */
 export function nestApp(texts: Map<string, string>, component: string, limits: string[], declared?: string): NestApp {
-  const prefixes: Array<{ where: string; args: string; value: string | undefined; exclude: NestApp["exclude"]; limits: string[] }> = [];
-  const versionings: Array<{ where: string; args: string; value: NonNullable<NestApp["versioning"]>; limits: string[] }> = [];
+  // `key` is what a call sets, to compare calls by.
+  const prefixes: Array<{ where: string; key: string; value: string | undefined; exclude: NestApp["exclude"]; limits: string[] }> = [];
+  const versionings: Array<{ where: string; key: string; value: NonNullable<NestApp["versioning"]>; limits: string[] }> = [];
   for (const [file, text] of texts) {
     if (!/\b(?:setGlobalPrefix|enableVersioning)\s*\(/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -112,7 +113,6 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
     const visit = (node: ts.Node): void => {
       const name = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
       const call = node as ts.CallExpression;
-      const args = name ? call.arguments.map((a) => a.getText(sf).replace(/\s+/g, " ")).join(", ") : "";
       if (name === "setGlobalPrefix") {
         const value = literalOf(call.arguments[0]);
         const own: string[] = [];
@@ -120,6 +120,7 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
           own.push(`routes ${component}: ${where(call)} sets a global prefix the file does not spell out (${short(call.arguments[0] ?? call, sf)}); the routes under it are not read (declare it in prefix)`);
         }
         const exclude: NestApp["exclude"] = [];
+        let unreadExclusion = false;
         const options = call.arguments[1] && unwrap(call.arguments[1]);
         const list = options && ts.isObjectLiteralExpression(options) ? property(options, "exclude") : undefined;
         const entries: ts.Expression[] = list && ts.isArrayLiteralExpression(unwrap(list)) ? [...(unwrap(list) as ts.ArrayLiteralExpression).elements] : list ? [list] : list === null ? [options!] : [];
@@ -135,12 +136,19 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
           const known = pattern && (!object || (verb && REQUEST_METHODS.has(verb) && property(object, "version") === undefined));
           if (known) exclude.push({ path: pattern, ...(verb && verb !== "ALL" ? { method: verb } : {}) });
           else {
+            unreadExclusion = true;
             own.push(
               `routes ${component}: ${where(entry)} excludes from the global prefix ${path === undefined ? "a path the file does not spell out" : !pattern ? "a pattern atlas does not read" : "an entry atlas does not read"} (${short(entry, sf)}); a route it excludes is read under the prefix`,
             );
           }
         }
-        prefixes.push({ where: where(call), args, value, exclude, limits: own });
+        const unknown = `unread at ${where(call)}`;
+        const key = JSON.stringify([
+          declared !== undefined ? null : (value ?? unknown),
+          exclude.map((e) => [e.path.source, e.method]),
+          unreadExclusion ? unknown : null,
+        ]);
+        prefixes.push({ where: where(call), key, value, exclude, limits: own });
       }
       if (name === "enableVersioning") {
         const options = call.arguments[0] && unwrap(call.arguments[0]);
@@ -157,18 +165,22 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
           if (kind && ["HEADER", "MEDIA_TYPE", "CUSTOM"].includes(kind)) value = { uri: false };
           else if (kind === "URI" && before !== undefined) value = { uri: true, prefix: before, defaults: versions === null ? "unread" : versions };
           if (value !== "unread" && value.uri && value.defaults === "unread") {
-            own.push(`routes ${component}: ${where(defaults!)} sets a default version the file does not spell out (${short(defaults!, sf)}); the routes that take it are not read`);
+            // An accessor or method gives no expression; the member is said instead.
+            const at = defaults ?? options.properties.find((p) => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === "defaultVersion") ?? options;
+            own.push(`routes ${component}: ${where(at)} sets a default version the file does not spell out (${short(at, sf)}); the routes that take it are not read`);
           }
         }
         if (value === "unread") own.push(`routes ${component}: ${where(call)} enables versioning the file does not spell out (${short(call.arguments[0]!, sf)}); the routes are not read`);
-        versionings.push({ where: where(call), args, value, limits: own });
+        const unknown = `unread at ${where(call)}`;
+        const key = value === "unread" ? unknown : JSON.stringify(value.uri && value.defaults === "unread" ? { ...value, defaults: unknown } : value);
+        versionings.push({ where: where(call), key, value, limits: own });
       }
       ts.forEachChild(node, visit);
     };
     visit(sf);
   }
   const app: NestApp = { prefix: declared ?? "", exclude: [] };
-  const differ = <T extends { where: string; args: string }>(calls: T[]) => new Set(calls.map((c) => c.args)).size > 1;
+  const differ = <T extends { key: string }>(calls: T[]) => new Set(calls.map((c) => c.key)).size > 1;
   if (differ(prefixes) || differ(versionings)) {
     const calls = differ(prefixes) ? prefixes : versionings;
     app.unknown = `${calls.map((c) => c.where).join(", ")} set ${calls === prefixes ? "the global prefix" : "versioning"} differently, and which application serves a controller is not read, so no route of the controllers is (name the application's bootstrap file in bootstrap)`;

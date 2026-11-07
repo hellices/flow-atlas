@@ -104,6 +104,67 @@ describe("FastAPI router prefixes", () => {
     });
   });
 
+  it("takes a name a function binds as its own, not the module's router", () => {
+    const files = {
+      "api/main.py": [
+        "from fastapi import FastAPI, APIRouter",
+        "app = FastAPI()",
+        "router = APIRouter()",
+        'app.include_router(router, prefix="/public")',
+        '@router.get("/a")',
+        "def a(): ...",
+        "def register(",
+        "    router,",
+        "):",
+        '    @router.get("/x")',
+        "    def x(): ...",
+        "def wire(app, router):",
+        '    app.include_router(router, prefix="/w")',
+        "def local():",
+        "    router = make_router()",
+        '    @router.get("/y")',
+        "    def y(): ...",
+        // A name bound in a nested function is that function's own.
+        "def factory():",
+        "    def inner():",
+        "        router = make_router()",
+        '    @router.get("/z")',
+        "    def z(): ...",
+        // The arguments of a call bind nothing.
+        "def mount_more():",
+        "    app.include_router(",
+        "        router=router,",
+        '        prefix="/more",',
+        "    )",
+      ].join("\n"),
+    };
+    expect(routes(files, { styles: ["fastapi"] })).toEqual({
+      ids: ["GET /public/a", "GET /more/a", "GET /x", "GET /y", "GET /public/z", "GET /more/z"],
+      limits: [
+        "routes api: api/main.py registers routes on router, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written",
+        "routes api: api/main.py:13 includes router, which atlas does not trace to an APIRouter of the route files",
+      ],
+    });
+  });
+
+  it("serves the StaticFiles an application mounts under where that application is mounted", () => {
+    const files = {
+      "api/main.py": 'from fastapi import FastAPI\nfrom .sub import app as sub\napp = FastAPI()\napp.mount("/v1", sub)\napp.mount("/assets", StaticFiles(directory="a"))\n',
+      "api/sub.py": 'from fastapi import FastAPI\napp = FastAPI()\napp.mount("/static", StaticFiles(directory="s"))\n',
+    };
+    expect(routes(files, { styles: ["fastapi"] })).toEqual({
+      ids: ["GET /assets/{path:path}", "HEAD /assets/{path:path}", "GET /v1/static/{path:path}", "HEAD /v1/static/{path:path}"],
+      limits: [],
+    });
+    const unread = { ...files, "api/main.py": "from fastapi import FastAPI\nfrom .sub import app as sub\napp = FastAPI()\napp.mount(settings.V1, sub)\n" };
+    expect(routes(unread, { styles: ["fastapi"] })).toEqual({
+      ids: [],
+      limits: [
+        "routes api: api/main.py:4 mounts sub at a path the file does not spell out (settings.V1); the routes of api/sub.py (app) are not read (declare where it is served in mounts)",
+      ],
+    });
+  });
+
   it("reads one file's routers alone, and a receiver it cannot trace at the paths written, with a limit", () => {
     const limits: string[] = [];
     const text = 'router = APIRouter(prefix="/a")\napp = FastAPI()\napp.include_router(router, prefix="/b")\n@router.get("")\ndef a(): ...\n@app.get("")\ndef b(): ...\n';
@@ -212,6 +273,46 @@ describe("NestJS global prefix and versioning", () => {
     expect(routes(outside, nest).ids[0]).toBe("GET /orders/{id}");
     expect(routes(outside, { ...nest, bootstrap: "server/main.ts" }).ids[0]).toBe("GET /api/orders/{id}");
     expect(routes(controllers, { ...nest, bootstrap: "server/main.ts" }).limits).toEqual(["routes api: the bootstrap file server/main.ts is not there"]);
+  });
+
+  it("says a default version an accessor gives is not read", () => {
+    const accessor = routes(bootstrap("  app.enableVersioning({ type: VersioningType.URI, get defaultVersion() { return config.version; } });"), nest);
+    expect(accessor.ids).toEqual(["GET /v2/orders", "POST /v1/orders", "POST /orders", "GET /health", "POST /health"]);
+    expect(accessor.limits).toEqual([
+      "routes api: api/src/main.ts:3 sets a default version the file does not spell out (get defaultVersion() { return config.version; }); the routes that take it are not read",
+    ]);
+  });
+
+  it("compares the settings of several bootstraps by their values", () => {
+    const named = (value: string) => `const globalPrefix = '${value}';\napp.setGlobalPrefix(globalPrefix);`;
+    const differ = routes({ ...controllers, "api/src/main.ts": named("api"), "api/src/admin.ts": named("admin") }, nest);
+    expect(differ.ids).toEqual([]);
+    expect(differ.limits).toEqual([
+      "routes api: api/src/main.ts:2, api/src/admin.ts:2 set the global prefix differently, and which application serves a controller is not read, so no route of the controllers is (name the application's bootstrap file in bootstrap)",
+    ]);
+    // A configured prefix takes the place of the ones the files set; the exclusions still have to agree.
+    expect(routes({ ...controllers, "api/src/main.ts": named("api"), "api/src/admin.ts": named("admin") }, { ...nest, prefix: "/api" }).ids[0]).toBe("GET /api/orders/{id}");
+    const same = routes({ ...controllers, "api/src/main.ts": named("api"), "api/src/admin.ts": "app.setGlobalPrefix('api');" }, nest);
+    expect([same.ids[0], same.limits]).toEqual(["GET /api/orders/{id}", []]);
+    const versions = routes(
+      { ...controllers, "api/src/main.ts": "const v = '1';\napp.enableVersioning({ type: VersioningType.URI, defaultVersion: v });", "api/src/admin.ts": "app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });" },
+      nest,
+    );
+    expect([versions.ids[0], versions.limits]).toEqual(["GET /v1/orders/{id}", []]);
+    // Two settings the files do not spell out are not taken as the same.
+    const unread = routes({ ...controllers, "api/src/main.ts": "app.setGlobalPrefix(PREFIX);", "api/src/admin.ts": "app.setGlobalPrefix(PREFIX);" }, nest);
+    expect(unread.limits).toEqual([
+      "routes api: api/src/main.ts:1, api/src/admin.ts:1 set the global prefix differently, and which application serves a controller is not read, so no route of the controllers is (name the application's bootstrap file in bootstrap)",
+    ]);
+  });
+
+  it("reads a controller version given by shorthand, and none where a spread may give it", () => {
+    const limits: string[] = [];
+    const app = { prefix: "", exclude: [], versioning: { uri: true as const, prefix: "v", defaults: ["1"] } };
+    const read = (text: string) => routesFromTypeScript("a.ts", text, { component: "c", files: [], styles: ["nest"] }, { limits, nest: app }).map((s) => s.path);
+    expect(read("const version = '2';\n@Controller({ path: 'orders', version })\nclass A {\n  @Get() a() {}\n}")).toEqual(["/v2/orders"]);
+    expect(read("@Controller({ path: 'o', ...opts })\nclass B {\n  @Get() a() {}\n  @Version('3') @Get('b') b() {}\n}")).toEqual(["/v3/o/b"]);
+    expect(limits).toEqual(["routes c: a.ts:1 gives a version the file does not spell out ({ path: 'o', ...opts }); its routes are not read"]);
   });
 
   it("gives a route a version the controller or method states, and none where it is not spelled out", () => {

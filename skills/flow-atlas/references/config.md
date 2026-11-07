@@ -155,9 +155,11 @@ utils_router`), and an include under a condition counts. A router whose prefix, 
 to the application, the file does not spell out (`settings.API_V1_STR`, an f-string, a `**` argument that may hold it), and one included nowhere in the
 route files, serves nothing atlas can place: its routes are not read, and one limit names the include or the router
 and the router files it leaves out. `mounts` gives the path a router file's routers serve their routes under, their own
-prefix included, in place of their includes; the routers included into them are read under it. A decorator on a
-receiver the files bind to no application or router (a function's parameter, a router made by a factory) is read at the
-path written, and a limit says so. A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
+prefix included, in place of their includes; the routers included into them are read under it. A StaticFiles mount
+is served under the prefixes of the application or router it is mounted on. A decorator on a receiver the files bind
+to no application or router (a function's parameter, a router made by a factory) is read at the path written, and a
+limit says so; a name a function binds (a parameter, or a name its body assigns to anything but `FastAPI()` or
+`APIRouter()`) is the function's own, not the file's router, in decorators and includes alike. A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
 /techniques/versioning), under the global prefix `setGlobalPrefix` sets, except those an `exclude` entry matches
 without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled as path-to-regexp 8 does: `:name`,
 `*name` and `{...}`), and with URI versioning (`enableVersioning()` or `type: VersioningType.URI`) after the prefix
@@ -165,7 +167,8 @@ without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled 
 `@Controller({ version })`, else `defaultVersion`; a list serves one path per version and `VERSION_NEUTRAL` none. An
 excluded route keeps its version. atlas reads those calls in the route files and the component's code (tests and the
 other excluded files left out), or in the `bootstrap` file the entry names; literals and `const`s of the file are read.
-Calls that disagree (two applications) leave the controllers' routes unread. A prefix, version or versioning option
+Calls that set different values (two applications) leave the controllers' routes unread; a setting not spelled out
+agrees with no other. A prefix, version or versioning option
 not spelled out leaves the routes it applies to unread, with a limit; an `exclude` entry not spelled out (built with
 `.map`, a template) or of other syntax is named in a limit, and the routes it might keep out are read under the
 prefix. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of

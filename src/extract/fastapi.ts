@@ -1,7 +1,7 @@
 import { posix } from "node:path";
 import { joinRoute } from "../paths.js";
 import { lineOf } from "../source.js";
-import { pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
+import { closingParen, pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
 
 /**
  * Where FastAPI routers are served. A route registered on an `APIRouter` is served at the router's `prefix` joined to
@@ -14,12 +14,15 @@ import { pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.
  * the `router` of `app/api/routes/items.py`, `from .utils import router as utils_router` the one it names.
  */
 export interface Routers {
-  /** What the name a decorator is written on refers to in a file: a router or an application (`file#name`), or none. */
-  receiver(file: string, name: string): string | undefined;
+  /**
+   * What the name a decorator is written on refers to in a file at offset `at`: a router or an application
+   * (`file#name`), or none, as where a function there binds the name to something else.
+   */
+  receiver(file: string, name: string, at?: number): string | undefined;
   /** The paths a router's routes are served under, its own prefix included ("" for an application); undefined when not read. */
   served(key: string): string[] | undefined;
-  /** Whether an expression a file mounts (`app.mount("/v1", sub)`) is an application or router of the files read. */
-  traced(file: string, expr: string): boolean;
+  /** Whether an expression a file mounts at `at` (`app.mount("/v1", sub)`) is an application or router of the files read. */
+  traced(file: string, expr: string, at?: number): boolean;
   /** Why the routers asked about were not read, one line per cause. */
   limits(component: string): string[];
 }
@@ -39,6 +42,72 @@ interface Facts {
   imports: Map<string, { module: string; member?: string }>;
   /** `include_router` calls, and `mount` calls, which serve what they mount under their path as an include does. */
   includes: Array<{ receiver: string; target: string; prefix: Value; at: number; verb: "includes" | "mounts" }>;
+  scopes: Scope[];
+}
+
+/** A function: where its body lies and the names it binds there, which hide the file's own. */
+interface Scope {
+  start: number;
+  end: number;
+  names: Set<string>;
+}
+
+/**
+ * The functions of a file, from its code: the names each binds are its parameters, and those its own body (not a nested
+ * function's) assigns, other than to an application or router, or takes in a `for`, `with` or `except` statement.
+ */
+function scopesOf(code: string): Scope[] {
+  // The bracket depth at each offset: a line inside a call's parentheses binds nothing.
+  const depth: number[] = [];
+  for (let i = 0, d = 0; i < code.length; i++) {
+    depth.push(d);
+    if ("([{".includes(code[i]!)) d++;
+    else if (")]}".includes(code[i]!)) d = Math.max(0, d - 1);
+  }
+  const scopes: Array<Scope & { indent: number }> = [];
+  for (const m of code.matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+\w+[ \t]*\(/gm)) {
+    if (depth[m.index ?? 0]) continue;
+    const open = (m.index ?? 0) + m[0].length;
+    const names = new Set(
+      pythonArgStarts(code, open)
+        .map((at) => /^\*{0,2}([A-Za-z_]\w*)/.exec(code.slice(at))?.[1])
+        .filter((n): n is string => !!n),
+    );
+    const start = code.indexOf(":", closingParen(code, open));
+    if (start < 0) continue;
+    // The body ends at the first line, outside brackets, indented no deeper than the `def`.
+    const indent = m[1]!.replace(/\t/g, "        ").length;
+    let end = code.length;
+    for (const line of code.slice(start).matchAll(/\n([ \t]*)\S/g)) {
+      const at = start + (line.index ?? 0) + 1;
+      if (!depth[at] && line[1]!.replace(/\t/g, "        ").length <= indent) {
+        end = at;
+        break;
+      }
+    }
+    scopes.push({ start: start + 1, end, names, indent });
+  }
+  const own = (scope: Scope, at: number) => !scopes.some((s) => s !== scope && s.start > scope.start && s.start <= at && at < s.end);
+  for (const scope of scopes) {
+    const body = code.slice(scope.start, scope.end);
+    const bind = (at: number, names: string) => {
+      if (depth[scope.start + at] || !own(scope, scope.start + at)) return;
+      for (const n of names.match(/[A-Za-z_]\w*/g) ?? []) scope.names.add(n);
+    };
+    for (const m of body.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=(?!=)[ \t]*(.*)/gm)) {
+      if (!/^(?:[A-Za-z_][\w.]*\.)?(?:FastAPI|APIRouter)[ \t]*\(/.test(m[2]!)) bind(m.index ?? 0, m[1]!);
+    }
+    for (const m of body.matchAll(/^[ \t]*(?:async[ \t]+)?for[ \t]+(.+?)[ \t]+in\b/gm)) bind(m.index ?? 0, m[1]!);
+    for (const m of body.matchAll(/^[ \t]*(?:(?:async[ \t]+)?with|except)\b.*/gm)) {
+      for (const as of m[0].matchAll(/\bas[ \t]+([A-Za-z_]\w*)/g)) bind(m.index ?? 0, as[1]!);
+    }
+  }
+  return scopes;
+}
+
+/** Whether a function around offset `at` binds `name`, so that it does not refer to the file's own. */
+function shadowed(scopes: Scope[], name: string, at: number): boolean {
+  return scopes.some((s) => s.start <= at && at < s.end && s.names.has(name));
 }
 
 /** A literal, or the text of an argument the file does not spell out. */
@@ -64,7 +133,7 @@ function keyword(text: string, code: string, from: number, name: string): Value 
 
 function factsOf(text: string): Facts {
   const code = pythonCode(text);
-  const facts: Facts = { routers: new Map(), imports: new Map(), includes: [] };
+  const facts: Facts = { routers: new Map(), imports: new Map(), includes: [], scopes: scopesOf(code) };
   // `app = FastAPI(...)`, `router: APIRouter = fastapi.APIRouter(prefix="/items")`, at any indentation.
   for (const m of code.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:[A-Za-z_][\w.]*\.)?(FastAPI|APIRouter)[ \t]*\(/gm)) {
     const name = m[1]!;
@@ -156,10 +225,16 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
     const module = moduleFile(file, imported.module);
     return module ? routerAt(module, imported.member, new Set([...seen, key])) : undefined;
   };
-  /** The router an `include_router` argument names: `router`, `utils_router` or `items.router` of an imported module. */
-  const included = (file: string, expr: string): string | undefined => {
+  /** What a name refers to at offset `at` of a file: none where a function there binds it. */
+  const receiver = (file: string, name: string, at?: number): string | undefined =>
+    at !== undefined && shadowed(facts.get(file)?.scopes ?? [], name, at) ? undefined : routerAt(file, name);
+  /**
+   * The router an `include_router` argument at offset `at` names: `router`, `utils_router` or `items.router` of an
+   * imported module.
+   */
+  const included = (file: string, expr: string, at?: number): string | undefined => {
     const m = /^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?$/.exec(expr);
-    if (!m) return undefined;
+    if (!m || (at !== undefined && shadowed(facts.get(file)?.scopes ?? [], m[1]!, at))) return undefined;
     if (!m[2]) return routerAt(file, m[1]!);
     const imported = facts.get(file)?.imports.get(m[1]!);
     const module = imported && moduleFile(file, imported.member ? submodule(imported.module, imported.member) : imported.module);
@@ -171,13 +246,13 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
   const unresolved: string[] = [];
   for (const [file, f] of facts) {
     for (const inc of f.includes) {
-      const child = included(file, inc.target);
+      const child = included(file, inc.target, inc.at);
       // A mount of anything else (StaticFiles, an application made elsewhere) is the route reader's to say.
       if (!child) {
         if (inc.verb === "includes") unresolved.push(`${file}:${lineOf(texts.get(file)!, inc.at)} includes ${inc.target}, which atlas does not trace to an APIRouter of the route files`);
         continue;
       }
-      (includes.get(child) ?? includes.set(child, []).get(child)!).push({ ...inc, parent: routerAt(file, inc.receiver), file });
+      (includes.get(child) ?? includes.set(child, []).get(child)!).push({ ...inc, parent: receiver(file, inc.receiver, inc.at), file });
     }
   }
 
@@ -213,8 +288,8 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
   };
 
   return {
-    receiver: (file, n) => routerAt(file, n),
-    traced: (file, expr) => included(file, expr) !== undefined,
+    receiver,
+    traced: (file, expr, at) => included(file, expr, at) !== undefined,
     served: (key) => {
       const s = servedAt(key, new Set());
       if ("paths" in s) return s.paths;

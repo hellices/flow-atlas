@@ -15,7 +15,7 @@ import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 import { declarationOf } from "./binding.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
-import { nestApp, nestPaths, versionsOf, type NestApp } from "./nest.js";
+import { nestApp, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -348,9 +348,10 @@ export function routesFromTypeScript(
           if (!bases) unread(call.args[0]!);
           for (const a of call.args) span(a);
           const options = call.args[0] && ts.isObjectLiteralExpression(call.args[0]) ? call.args[0] : undefined;
-          const given = options?.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && propertyName(p) === "version")?.initializer;
-          version = given && versioned ? (versionsOf(given) ?? null) : undefined;
-          if (version === null) unreadVersion(given!);
+          // `version: '2'` or `{ version }`; a spread or an accessor may give one the file does not spell out.
+          const given = options ? property(options, "version") : undefined;
+          version = given === undefined || !versioned ? undefined : given ? (versionsOf(given) ?? null) : null;
+          if (version === null) unreadVersion(given ?? options!);
         }
       }
       if (bases !== undefined) {
@@ -481,7 +482,7 @@ export function pythonCode(text: string): string {
 }
 
 /** The index of the `)` that closes the `(` before `from`, in code whose strings and comments are blanked. */
-function closingParen(code: string, from: number): number {
+export function closingParen(code: string, from: number): number {
   let depth = 1;
   for (let i = from; i < code.length; i++) {
     if ("([{".includes(code[i]!)) depth++;
@@ -675,7 +676,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const path = pathAt === undefined ? undefined : pythonStrings(text.slice(pathAt))?.value;
     if (path === undefined) continue;
     // An application serves at the root; a router under every prefix it is served at, or not at all where one is unknown.
-    const key = (routers ?? own!).receiver(file, m[1]!);
+    const key = (routers ?? own!).receiver(file, m[1]!, m.index ?? 0);
     const prefixes = key ? (routers ?? own!).served(key) : [""];
     // An empty path is the router's prefix itself; with no prefix FastAPI refuses it.
     if (!prefixes || (!path && prefixes.every((p) => joinRoute(p) === "/"))) continue;
@@ -685,11 +686,9 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     for (const prefix of prefixes) for (const method of methods ?? []) add(method, joinRoute(prefix, path), m.index ?? 0);
     if (!key && out.length > before) untraced.add(m[1]!);
   }
-  for (const name of untraced) {
-    limits?.push(`routes ${spec.component}: ${file} registers routes on ${name}, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written`);
-  }
   // Starlette's mount hands everything under its path to the mounted application, compiled as the path with
-  // `/{path:path}` joined. StaticFiles answers GET and HEAD; what another application serves is not read here.
+  // `/{path:path}` joined. StaticFiles answers GET and HEAD, under every prefix the receiver is served at; what another
+  // application serves is not read here.
   for (const m of fastapi ? code.matchAll(/\b(\w+)\.mount\(\s*/g) : []) {
     if (!receivers.has(m[1]!)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
@@ -706,12 +705,19 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     const app = keyword("app");
     const mounted = app ? app.at : positional.find((a) => a !== pathAt);
     if (mounted !== undefined && /^(?:app\s*=\s*)?(?:[\w.]+\.)?StaticFiles\s*\(/.test(code.slice(mounted))) {
-      add("GET", joinRoute(path, "{path:path}"), m.index ?? 0);
-      add("HEAD", joinRoute(path, "{path:path}"), m.index ?? 0, true);
-    } else if (mounted === undefined || !(routers ?? own!).traced(file, pythonArg(text, code, mounted).replace(/^app\s*=\s*/, ""))) {
+      const key = (routers ?? own!).receiver(file, m[1]!, m.index ?? 0);
+      if (!key) untraced.add(m[1]!);
+      for (const prefix of (key ? (routers ?? own!).served(key) : [""]) ?? []) {
+        add("GET", joinRoute(prefix, path, "{path:path}"), m.index ?? 0);
+        add("HEAD", joinRoute(prefix, path, "{path:path}"), m.index ?? 0, true);
+      }
+    } else if (mounted === undefined || !(routers ?? own!).traced(file, pythonArg(text, code, mounted).replace(/^app\s*=\s*/, ""), m.index ?? 0)) {
       // An application or router of the route files that it mounts is served under the mount with the routes read there.
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} mounts an application at ${path} whose routes are not read`);
     }
+  }
+  for (const name of untraced) {
+    limits?.push(`routes ${spec.component}: ${file} registers routes on ${name}, which atlas does not trace to a FastAPI application or APIRouter of the route files; they are read at the paths written`);
   }
   for (const c of spec.calls ?? []) {
     for (const m of code.matchAll(new RegExp(`(?<![\\w.])(?:\\w+\\.)?${escapeRegExp(c.name)}\\(`, "g"))) {
