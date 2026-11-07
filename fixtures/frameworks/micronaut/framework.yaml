@@ -1,0 +1,15 @@
+# How scripts/frameworks.mjs installs Micronaut and asks it for the routes the application serves.
+toolchain: java
+docs:
+  - https://docs.micronaut.io/4.10.x/http/#http-routing
+  - https://docs.micronaut.io/4.10.x/http/#http-clientAnnotation
+  - https://docs.micronaut.io/4.10.x/http/#http-staticResources
+  - https://docs.micronaut.io/4.10.x/core/#core-providedEndpoints
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest Micronaut 4 platform on Maven Central, in place of the pom's micronaut.version. Micronaut 5 needs Java 21
+# and is another fixture's matter.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dmicronaut.version=$(curl -fsS https://repo1.maven.org/maven2/io/micronaut/platform/micronaut-platform/maven-metadata.xml
+  | sed -n 's:.*<version>\(4\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java
