@@ -462,6 +462,44 @@ function statementEnd(masked: string, from: number, kotlin: boolean): number {
 }
 
 /**
+ * Whether the `return` at `at` of a block body (`masked` starts with its `{`) returns from the handler: no brace around
+ * it opens the body of a type declared or created in it, or of a function declared in it, or (in Java) of a lambda. A
+ * Kotlin lambda's `return` returns from the enclosing function; a Java switch rule's block (`case A -> {`) is the
+ * handler's.
+ */
+function handlerReturn(masked: string, at: number, kotlin: boolean): boolean {
+  const open: number[] = [];
+  for (let i = 0; i < at; i++) {
+    if (masked[i] === "{") open.push(i);
+    else if (masked[i] === "}") open.pop();
+  }
+  return open.slice(1).every((b) => {
+    const before = masked.slice(0, b).trimEnd();
+    // A type: `class X`, `object : Y`, `new X() {`, `record R(...)`.
+    if (/(?<![\w$.])(?:class|interface|enum)\s+[\w$][^{};=]*$/.test(before)) return false;
+    if (kotlin && /(?<![\w$.])object\b[^{};=]*$/.test(before)) return false;
+    if (before.endsWith(")")) {
+      const paren = openingParen(before, before.length - 1);
+      const head = before.slice(0, paren).trimEnd();
+      if (/\bnew\s+[\w$.]+(?:\s*<[^;{}()]*>)?$|\brecord\s+[\w$]+(?:\s*<[^;{}()]*>)?$/.test(head)) return false;
+    }
+    if (kotlin) return !/\bfun\b[^{};=]*$/.test(before);
+    // A Java lambda's block; a switch rule's starts with its label.
+    return !before.endsWith("->") || /(?:^|[;{}])\s*(?:case\b[^;{}]*|default\s*)->$/.test(before);
+  });
+}
+
+/** Where the `(` that the `)` at `close` closes opens, in masked code. */
+function openingParen(masked: string, close: number): number {
+  let depth = 0;
+  for (let i = close; i >= 0; i--) {
+    if (masked[i] === ")") depth++;
+    else if (masked[i] === "(" && --depth === 0) return i;
+  }
+  return 0;
+}
+
+/**
  * Where a Kotlin expression from `from` (up to `limit`) ends, as a branch: at a `;`, a closing bracket or an `else`
  * outside brackets, or at the end of a line that neither leaves it open (an operator) nor is continued by the next.
  */
@@ -619,6 +657,7 @@ function replies(
   };
   if (code.trimStart().startsWith("{")) {
     for (const m of masked.matchAll(/\breturn\b/g)) {
+      if (!handlerReturn(masked, m.index ?? 0, context.kotlin)) continue;
       const from = (m.index ?? 0) + m[0].length;
       results(from, statementEnd(masked, from, context.kotlin));
     }

@@ -302,6 +302,42 @@ describe("Spring routes", () => {
     expect(limits).toEqual(["routes server: Members.java:14 redirects to a URL the file does not spell out (\"redirect:\" + target); the request it leads to is not read"]);
   });
 
+  it("reads the returns of the handler, not of a lambda, an anonymous class or a local function in it", () => {
+    const views: Views = new Map();
+    const java = [
+      "@Controller",
+      "class Web {",
+      '  @GetMapping("/a") String a(boolean x) {',
+      '    Supplier<String> s = () -> { return "redirect:/unused"; };',
+      '    Callable<String> c = new Callable<>() { public String call() { return "other/view"; } };',
+      "    switch (x) {",
+      '      case true -> { return "redirect:/yes"; }',
+      "      default -> {}",
+      "    }",
+      '    if (x) { return "a/view"; }',
+      '    if (Foo.class.isInstance(object)) { return "redirect:/cast"; }',
+      '    return "redirect:/done";',
+      "  }",
+      "}",
+    ].join("\n");
+    routesFromSpring("Web.java", java, spec, views);
+    const kotlin = [
+      "@Controller",
+      "class K {",
+      '  @GetMapping("/k") fun k(items: List<Int>): String {',
+      '    fun helper(): String { return "redirect:/local" }',
+      '    items.forEach { if (it < 0) return "redirect:/negative" }',
+      '    return "k/view"',
+      "  }",
+      "}",
+    ].join("\n");
+    routesFromSpring("K.kt", kotlin, spec, views);
+    expect([...views].map(([id, v]) => [id, v.names, v.redirects.map((r) => r.path)])).toEqual([
+      ["server|GET /a", ["a/view"], ["/yes", "/cast", "/done"]],
+      ["server|GET /k", ["k/view"], ["/negative"]],
+    ]);
+  });
+
   it("reads each whole result of a Kotlin expression body, branch by branch", () => {
     const views: Views = new Map();
     const limits: string[] = [];
@@ -385,6 +421,12 @@ describe("template calls", () => {
   it("joins th:attrappend and th:attrprepend to the static value instead of replacing it", () => {
     const html = ['<a href="/base" th:attrappend="href=@{/suffix}">x</a>', '<a href="/tail" th:attrprepend="href=@{/head}">y</a>', '<a th:attrappend="href=@{/alone}">z</a>'].join("\n");
     expect(calls(html)).toEqual(["GET /base/suffix 1", "GET /head/tail 2"]);
+  });
+
+  it("joins a page-relative link to the static value, and resolves the joined URL when it is relative", () => {
+    const html = ['<a href="/accounts/" th:attrappend="href=@{\'edit\'}">x</a>', '<a href="/edit" th:attrprepend="href=@{items}">y</a>'].join("\n");
+    const read = callsFromTemplate("t.html", html, call, { pages: new Map([["t.html", ["/shop/list"]]]) });
+    expect(read.map((c) => `${c.method} ${c.path} ${c.at.line} ${c.page ?? "-"}`)).toEqual(["GET /accounts/edit 1 -", "GET /shop/items/edit 2 /shop/list"]);
   });
 
   it("reads link expressions only where Thymeleaf evaluates them as URLs", () => {

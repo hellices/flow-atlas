@@ -49,6 +49,8 @@ describe("resolveReference", () => {
     expect(resolveReference("/teams/{}/edit", "?page=2")).toBe("/teams/{}/edit?page=2");
     expect(resolveReference("/teams/{}/members/", "../board")).toBe("/teams/{}/board");
     expect(resolveReference("/teams", "./")).toBe("/");
+    expect(resolveReference("/a/b", "/x")).toBe("/x");
+    expect(resolveReference("/a/b", "/x/../y?q")).toBe("/y?q");
   });
 });
 

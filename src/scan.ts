@@ -95,10 +95,12 @@ function renderedPages(surfaces: Surface[], executed: Map<string, Set<string>>):
  */
 function redirectCalls(surfaces: Surface[], redirects: Redirects): Array<{ call: ReadCall; from: string[] }> {
   const out = new Map<string, { call: ReadCall; from: string[] }>();
+  const byComponent = new Map<string, Surface[]>();
+  for (const s of surfaces) (byComponent.get(s.component) ?? byComponent.set(s.component, []).get(s.component)!).push(s);
+  const served = new Map([...byComponent].map(([component, routes]) => [component, serves(routes)]));
   for (const s of surfaces) {
-    const served = serves(surfaces.filter((r) => r.component === s.component));
     for (const r of redirects.get(s.id) ?? []) {
-      const parsed = callPath(r.path, served);
+      const parsed = callPath(r.path, served.get(s.component));
       if (!parsed) continue;
       const method = s.method === "HEAD" ? "HEAD" : ["GET", "POST"].includes(s.method) ? "GET" : "*";
       const key = `${s.component}|${method} ${parsed.path}@${r.at.file}:${r.at.line}`;

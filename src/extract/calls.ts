@@ -1287,8 +1287,11 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
         const target = url === null ? null : linkTarget(url);
         if (target === null) context.unread?.push(at(a.at + i));
         const fixed = plain.get(name);
-        if (!target || target.relative || !fixed || !fixed.value.startsWith("/")) continue;
-        add(family[1] === "append" ? `${fixed.value}${target.path}` : `${target.path}${fixed.value}`, fixed.at, tag, name);
+        if (!target || !fixed) continue;
+        // The joined URL is read as a written one is: from the root, or relative to the page.
+        const joinedTarget = linkTarget(family[1] === "append" ? `${fixed.value}${target.path}` : `${target.path}${fixed.value}`);
+        if (joinedTarget?.relative) relative(joinedTarget.path, fixed.at, tag, name);
+        else if (joinedTarget) add(joinedTarget.path, fixed.at, tag, name);
       }
       if (!family) replaced.add(th);
       else if (!family[1]) for (const item of a.value.split(",")) {

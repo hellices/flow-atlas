@@ -229,7 +229,7 @@ Spring Boot leaves off. HTML gives a `data-*` value no meaning, so only the attr
 `dataUrls` (those the project's scripts request, as `data-api-url`) are read: any method, and one ending in `/` is a
 base the script appends a segment to. Only the exact `script` and `style` elements hold raw text. A plain
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
-their value to the plain one. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
+their value to the plain one, and a joined URL relative to the page is resolved as a page-relative link is. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
 
 Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without

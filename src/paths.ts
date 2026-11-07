@@ -60,15 +60,15 @@ export function isLoopback(host: string): boolean {
 
 /**
  * A relative reference resolved against the path of the page it is on, as RFC 3986 (section 5.2) resolves one: an empty
- * path is the page's own, any other replaces the page path's last segment, and `.` and `..` segments are removed. A
- * query or fragment after the path is kept.
+ * path is the page's own, one starting with `/` is the path itself, any other replaces the page path's last segment,
+ * and `.` and `..` segments are removed. A query or fragment after the path is kept.
  */
 export function resolveReference(page: string, reference: string): string {
   const end = reference.search(/[?#]/);
   const path = end < 0 ? reference : reference.slice(0, end);
   const rest = end < 0 ? "" : reference.slice(end);
   if (!path) return `${page}${rest}`;
-  const merged = `${page.slice(0, page.lastIndexOf("/") + 1)}${path}`.split("/").slice(1);
+  const merged = (path.startsWith("/") ? path : `${page.slice(0, page.lastIndexOf("/") + 1)}${path}`).split("/").slice(1);
   const out: string[] = [];
   merged.forEach((seg, i) => {
     const last = i === merged.length - 1;
