@@ -1,0 +1,13 @@
+---
+import Layout from "../components/Layout.astro";
+
+let sent = false;
+if (Astro.request.method === "POST") {
+  await Astro.request.formData().catch(() => undefined);
+  sent = true;
+}
+---
+<Layout title="Contact">
+  <form method="POST"><button>Send</button></form>
+  {sent && <p>Sent</p>}
+</Layout>
