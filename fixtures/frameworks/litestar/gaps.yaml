@@ -1,0 +1,9 @@
+# Where atlas's reading differs from the routes Litestar serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Litestar style: the handlers `@get`, `@post`, `@route` and the like register (on several paths at once),
+  the paths of the controllers and routers they sit in, routers nested and a controller registered on two of them,
+  `app.register`, the mounted ASGI application, the static files router and the OpenAPI pages Litestar serves under
+  /schema by itself are not read; a limit says the route files gave nothing ("4 files read, nothing extracted"), and
+  `atlas inventory` offers no route candidate for them. The `fastapi` style reads nothing here either: Litestar's
+  decorators are bare functions, not methods of a FastAPI application or router.

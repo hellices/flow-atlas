@@ -1,0 +1,33 @@
+{
+  "framework": "falcon",
+  "version": "4.4.0",
+  "routes": [
+    {"method":"GET","path":"/files","raw":"/files/{file_path:path}"},
+    {"method":"OPTIONS","path":"/files","raw":"/files/{file_path:path}"},
+    {"method":"GET","path":"/files/{**}","raw":"/files/{file_path:path}"},
+    {"method":"OPTIONS","path":"/files/{**}","raw":"/files/{file_path:path}"},
+    {"method":"GET","path":"/health"},
+    {"method":"OPTIONS","path":"/health"},
+    {"method":"GET","path":"/items"},
+    {"method":"OPTIONS","path":"/items"},
+    {"method":"POST","path":"/items"},
+    {"method":"DELETE","path":"/items/{}","raw":"/items/{item_id:int(min=1)}"},
+    {"method":"GET","path":"/items/{}","raw":"/items/{item_id:int(min=1)}"},
+    {"method":"OPTIONS","path":"/items/{}","raw":"/items/{item_id:int(min=1)}"},
+    {"method":"PUT","path":"/items/{}","raw":"/items/{item_id:int(min=1)}"},
+    {"method":"GET","path":"/orders/{}","raw":"/orders/{order_id:uuid}"},
+    {"method":"OPTIONS","path":"/orders/{}","raw":"/orders/{order_id:uuid}"},
+    {"method":"PATCH","path":"/orders/{}","raw":"/orders/{order_id:uuid}"},
+    {"method":"GET","path":"/ping"},
+    {"method":"OPTIONS","path":"/ping"},
+    {"method":"POST","path":"/ping"},
+    {"method":"GET","path":"/reports/{}","raw":"/reports/{day:dt('%Y-%m-%d')}"},
+    {"method":"OPTIONS","path":"/reports/{}","raw":"/reports/{day:dt('%Y-%m-%d')}"},
+    {"method":"GET","path":"/repos/{}/{}/compare/{}:{}...{}:{}","raw":"/repos/{org}/{repo}/compare/{usr0}:{branch0}...{usr1}:{branch1}"},
+    {"method":"OPTIONS","path":"/repos/{}/{}/compare/{}:{}...{}:{}","raw":"/repos/{org}/{repo}/compare/{usr0}:{branch0}...{usr1}:{branch1}"},
+    {"method":"*","path":"/static","raw":"/static/"},
+    {"method":"*","path":"/static/{**}","raw":"/static/"},
+    {"method":"GET","path":"/users/{}","raw":"/users/{username}"},
+    {"method":"OPTIONS","path":"/users/{}","raw":"/users/{username}"}
+  ]
+}
