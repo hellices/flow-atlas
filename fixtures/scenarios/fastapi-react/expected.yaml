@@ -44,6 +44,7 @@ chains:
   - outside->backend|GET /api/auth/callback
   - outside->backend|GET /api/health
   - web->backend|GET /api/reports
+  - web->backend|GET /api/reports/{filename:path}
   - web->backend|GET /api/auth/session
   - web->backend|GET /api/templates/{name}
   - web->backend|PUT /api/templates/{name}
