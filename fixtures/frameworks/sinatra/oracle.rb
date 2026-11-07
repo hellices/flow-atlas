@@ -1,11 +1,11 @@
 # Asks Sinatra which routes the application serves. config.ru is built by Rack as `rackup` builds it; each application
 # its `map` blocks mount (Rack's URLMap) is walked under its location. A Sinatra application dispatches a request through
 # `routes`, its class's table of [pattern, conditions, block] per verb (its superclasses' after), so that table is read:
-# each route's verb, and its Mustermann pattern spelled out as the URI templates Mustermann generates from it, one for
-# each optional part present or absent. Each template is requested through the whole application, and the route is
-# kept only when Sinatra runs that route's own block for it. A splat (`*`) takes the rest of the path, and its parent
-# where Sinatra dispatches `parent/` to it. Files under an application's public folder, which Sinatra serves itself
-# before any route, are routes too: each is requested and kept where Sinatra answers it from that file.
+# each route's verb, and each path its Mustermann pattern spells out, one for each optional part present or absent.
+# Each path is requested through the whole application, and the route is kept only when Sinatra runs that route's own
+# block for it. A splat (`*`) takes the rest of the path, and its parent where Sinatra dispatches `parent/` to it.
+# Files under an application's public folder, which Sinatra serves itself before any route, are routes too: each is
+# requested and kept where Sinatra answers it from that file.
 ENV["APP_ENV"] = ENV["RACK_ENV"] = "production"
 require "bundler/setup"
 require "json"
@@ -58,8 +58,32 @@ def mounted(app, location = "")
   end
 end
 
+# Every path a Mustermann pattern spells out, from the AST Mustermann parsed it into: one for each optional part present
+# or absent, `{name}` for a capture and `{+name}` for a splat. (Mustermann's own `to_templates` misspells an optional
+# group nested in another.)
+def spell_ast(node)
+  return node.map { |n| spell_ast(n) }.inject([""]) { |acc, alts| acc.product(alts).map(&:join) } if node.is_a?(Array)
+
+  case node.type
+  when :root, :group then spell_ast(node.payload)
+  when :separator, :char then [node.payload]
+  when :capture then ["{#{node.name}}"]
+  when :splat, :named_splat then ["{+#{node.name}}"]
+  when :optional then [*spell_ast(node.payload), ""]
+  when :with_look_ahead then spell_ast([node.head, *node.payload])
+  when :union then node.payload.flat_map { |n| spell_ast(n) }
+  else raise "unexpected #{node.type} in a route's pattern"
+  end
+end
+
+def templates(pattern)
+  return spell_ast(pattern.to_ast).uniq unless pattern.respond_to?(:patterns)
+
+  pattern.patterns.map { |p| templates(p) }.inject([""]) { |acc, alts| acc.product(alts).map(&:join) }
+end
+
 def canonical(path)
-  path = path.squeeze("/").chomp("/")
+  path = path.squeeze("/").chomp("/").gsub(/(?:\{\})+/, "{}")
   path.empty? ? "/" : path
 end
 
@@ -85,7 +109,7 @@ mounted(app).each do |location, klass|
     k.routes.each do |verb, signatures|
       signatures.each do |signature|
         pattern = signature[0]
-        pattern.to_templates.each do |template|
+        templates(pattern).each do |template|
           captures = template[0...(template.index(/\{\+\w+\}/) || template.size)].scan(/\{(\w+)\}/).length
           found = SAMPLES.repeated_permutation(captures).lazy.map { |values| spell(template, values) }.find do |_, path|
             request(app, verb, location + path).first.equal?(signature)

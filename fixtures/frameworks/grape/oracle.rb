@@ -1,10 +1,10 @@
 # Asks Grape which routes the application serves. `API.routes` is the table Grape compiles its router from: each
-# route's method (`*` for `route :any`), its version, and its path as the Mustermann pattern Grape matches with, the
-# prefix, the version segment, the namespaces and the format suffix included. The pattern is spelled out as the URI
-# templates Mustermann generates from it, one for each optional part present or absent, with `:version` as each version
-# the route serves (the only values Grape's router lets it take). Each template is requested through the application
-# config.ru runs, and the route is kept only when Grape's router dispatches that request to it (the `route_info` it
-# hands the endpoint). A splat takes the rest of the path, and its parent where Grape dispatches the parent to it.
+# route's method (`*` for `route :any`), its versions, and its path as the Mustermann pattern Grape matches with, the
+# prefix, the version segment, the namespaces and the format suffix included. Each path the pattern spells out, one for
+# each optional part present or absent and `:version` as each version the route serves (the only values Grape's router
+# lets it take), is requested through the application config.ru runs, and the route is kept only when Grape's router
+# dispatches that request to it (the `route_info` it hands the endpoint). A splat takes the rest of the path, and its
+# parent where Grape dispatches the parent to it.
 ENV["RACK_ENV"] = "production"
 require "bundler/setup"
 require "json"
@@ -33,8 +33,32 @@ def reaches?(app, route, method, path)
   got && (got.equal?(route) || key(got) == key(route))
 end
 
+# Every path a Mustermann pattern spells out, from the AST Mustermann parsed it into: one for each optional part present
+# or absent, `{name}` for a capture and `{+name}` for a splat. (Mustermann's own `to_templates` misspells an optional
+# group nested in another.)
+def spell_ast(node)
+  return node.map { |n| spell_ast(n) }.inject([""]) { |acc, alts| acc.product(alts).map(&:join) } if node.is_a?(Array)
+
+  case node.type
+  when :root, :group then spell_ast(node.payload)
+  when :separator, :char then [node.payload]
+  when :capture then ["{#{node.name}}"]
+  when :splat, :named_splat then ["{+#{node.name}}"]
+  when :optional then [*spell_ast(node.payload), ""]
+  when :with_look_ahead then spell_ast([node.head, *node.payload])
+  when :union then node.payload.flat_map { |n| spell_ast(n) }
+  else raise "unexpected #{node.type} in a route's pattern"
+  end
+end
+
+def templates(pattern)
+  return spell_ast(pattern.to_ast).uniq unless pattern.respond_to?(:patterns)
+
+  pattern.patterns.map { |p| templates(p) }.inject([""]) { |acc, alts| acc.product(alts).map(&:join) }
+end
+
 def canonical(path)
-  path = path.squeeze("/").chomp("/")
+  path = path.squeeze("/").chomp("/").gsub(/(?:\{\})+/, "{}")
   path.empty? ? "/" : path
 end
 
@@ -60,7 +84,7 @@ raise "routes Grape cannot tell apart: #{duplicates.inspect}" unless duplicates.
 all.each do |route|
   method = route.request_method
   versions = Array(route.version).map(&:to_s)
-  route.pattern.pattern.to_templates.each do |template|
+  templates(route.pattern.pattern).each do |template|
     (template.include?("{version}") ? versions : [nil]).each do |version|
       text = version ? template.gsub("{version}", version) : template
       captures = text[0...(text.index(/\{\+\w+\}/) || text.size)].scan(/\{(\w+)\}/).length
