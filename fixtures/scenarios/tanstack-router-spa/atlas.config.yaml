@@ -1,0 +1,10 @@
+components:
+  - { name: backend, path: backend }
+  - { name: frontend, path: frontend }
+routes:
+  - { component: backend, files: ["backend/app/**/*.py"], styles: [fastapi] }
+calls:
+  # Every source file of the frontend: the generated SDK, the routes, the hooks and the components.
+  - { from: frontend, to: backend, files: ["frontend/src/**/*.{ts,tsx}"] }
+origins:
+  backend: http://localhost:8000   # frontend/.env VITE_API_URL, the client's baseURL

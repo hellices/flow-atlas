@@ -214,6 +214,16 @@ export function inventory(source: Source, exclude: string[]): Inventory {
   const components = [...byDir.values()].sort((a, b) => a.path.localeCompare(b.path));
   uniqueNames(components);
 
+  // A file's package may use Next.js when the nearest package.json above it depends on next, or none says.
+  const packages = new Set(all.filter((f) => f === "package.json" || f.endsWith("/package.json")));
+  const mayUseNext = (file: string): boolean => {
+    for (let dir = dirname(file); ; dir = dirname(dir)) {
+      const manifest = dir === "." ? "package.json" : `${dir}/package.json`;
+      if (packages.has(manifest)) return dependsOn(source.read(manifest), "next");
+      if (dir === ".") return true;
+    }
+  };
+
   const code = select(source, [CODE], exclude);
   const routes: Inventory["routes"] = [];
   const calls: Inventory["calls"] = [];
@@ -230,7 +240,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const component = ownerOf(file, components);
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
     for (const { style, re, files, accept } of ROUTE_STYLES) {
-      if (!files.test(file)) continue;
+      if (!files.test(file) || (style === "next" && !mayUseNext(file))) continue;
       const hits = [...text.matchAll(re)].filter((m) => !accept || accept(m));
       if (!hits.length) continue;
       const first = hits[0]!;

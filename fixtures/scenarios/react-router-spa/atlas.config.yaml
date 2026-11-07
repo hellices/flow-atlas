@@ -1,0 +1,9 @@
+components:
+  - { name: frontend, path: frontend }
+  - { name: backend, path: backend }
+routes:
+  # drf-spectacular writes the document to backend/schema.yml; the handlers are the backend's Python.
+  - { component: backend, openapi: backend/schema.yml, files: ["backend/**/*.py"] }
+calls:
+  # The generated hey-api client (frontend/js/api/sdk.gen.ts) is created with no baseURL: no prefix.
+  - { from: frontend, to: backend, files: ["frontend/js/**/*.ts", "frontend/js/**/*.tsx"] }
