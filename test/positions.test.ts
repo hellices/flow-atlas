@@ -38,6 +38,7 @@ describe("the root path where a string is a request (#31)", () => {
       ['fetch("/?page=2");', ["GET /"]],
       // A link, a form target and a source: HTML's request attributes.
       ['const a = <a href="/">home</a>;', ["GET /"]],
+      // The method of a form in JSX is read for no path; the root is read as any other path there.
       ['const f = <form action="/" method="post" />;', ["* /"]],
       [next + 'const a = <Link href="/">home</Link>;', ["GET /"]],
       // A branch of a conditional is in the place of the conditional.
@@ -68,6 +69,9 @@ describe("the root path where a string is a request (#31)", () => {
       ['const parts = [];\nparts.push("/");', []],
       ['const location = useLocation();\nlocation.replace("/");', []],
       ['const x = { location: "/" };\nx.location.href = "/";', []],
+      // A fetch the code declares is its own function, not the global one.
+      ['function f(fetch) {\n  fetch("/");\n}', []],
+      ['const window = { fetch: log };\nwindow.fetch("/");', []],
     ]);
   });
 
@@ -130,8 +134,37 @@ describe("client-side routers (#34)", () => {
     ]);
   });
 
+  it("reads no request in a router imported as a namespace", () => {
+    rows([
+      ['import * as RR from "react-router";\nthrow RR.redirect("/login");', []],
+      ['import * as RR from "react-router";\nconst a = <RR.Link to="/users" />;', []],
+      ['import * as RR from "react-router";\nconst navigate = RR.useNavigate();\nnavigate("/settings");', []],
+      ['import * as RR from "react-router";\nthrow RR.redirectDocument("/login");', ["GET /login"]],
+      ['import * as TR from "@tanstack/react-router";\nconst navigate = TR.useNavigate();\nnavigate({ to: "/login" });', []],
+      ['import * as ui from "./ui";\nconst a = <ui.Link to="/about" />;', ["* /about"]],
+    ]);
+  });
+
+  it("reads a destination to another origin in a router's navigation, the root path too", () => {
+    rows([
+      [rr + 'const a = <Link to="http://localhost:8000/users" />;', ["* /users based"]],
+      [rr + 'const a = <Link to="http://localhost:8000/" />;', ["* / based"]],
+    ]);
+  });
+
   it("reads a navigation that loads the document as a GET to the server", () => {
     rows([
+      // Only the URL redirectDocument takes first; its response options are no request.
+      [rr + 'throw redirectDocument("/login", { headers: { "X-Trace": "/internal" } });', ["GET /login"]],
+      // Only the destination loads; the route navigated from and the search's values are the router's.
+      [tanstack + 'const navigate = useNavigate();\nnavigate({ from: "/items", to: "/logout", reloadDocument: true, search: { next: "/items" } });', ["GET /logout"]],
+      // reloadDocument set in a spread of a literal object, the last value set winning.
+      [rr + 'const a = <Link {...{ reloadDocument: true }} to="/logout" />;', ["GET /logout"]],
+      [rr + 'const a = <Link to="/" {...{ reloadDocument: true }} />;', ["GET /"]],
+      [rr + 'const a = <Link reloadDocument {...{ reloadDocument: false }} to="/users" />;', []],
+      [rr + 'const a = <Link {...{ to: "/logout", reloadDocument: true }} />;', ["GET /logout"]],
+      [tanstack + 'const navigate = useNavigate();\nnavigate({ to: "/logout", ...{ reloadDocument: true } });', ["GET /logout"]],
+      [tanstack + 'const navigate = useNavigate();\nnavigate({ reloadDocument: true, ...{ reloadDocument: false }, to: "/users" });', []],
       [rr + 'throw redirectDocument("/admin/login/");', ["GET /admin/login"]],
       [rr + "throw redirectDocument(`/admin/login/?next=${encodeURIComponent(next)}`);", ["GET /admin/login"]],
       [rr + 'const a = <Link to="/logout" reloadDocument>out</Link>;', ["GET /logout"]],

@@ -116,21 +116,23 @@ handed to a method that tests or cuts text (`startsWith`, `endsWith`, `includes`
 `split`, `replace` other than the window's `location.replace(url)` and Next.js's router's). The window's Location
 navigates with GET, as the HTML standard defines: `location.href = url` (also `window.location`, `document.location`,
 or the Location itself set), `location.assign(url)` and `location.replace(url)`. The root path `/` is read only where
-the string is in a request's place: the URL, the first argument, of fetch, of a call named after an HTTP method or of a
+the string is in a request's place: the URL, the first argument, of the global fetch, of a call named after an HTTP method or of a
 configured wrapper; a JSX `href`, `action`, `formAction` or `src`; a navigation of Next.js's router or of the window's
 Location; a branch of a conditional in one of those places. A lone `/` anywhere else is a separator, a join or a key,
 and is not read. A client-side router's navigations and route definitions are the app's own routes, which the router
-renders in the browser, and are no requests. React Router (imported from `react-router` or `react-router-dom`): the
+renders in the browser, and are no requests, the names imported one by one or as a namespace (`RR.Link`). React
+Router (imported from `react-router` or `react-router-dom`): the
 attributes of `Link`, `NavLink`, `Navigate` and `Route`; the arguments of `redirect`, `replace`, `useNavigate`,
-`createBrowserRouter`, `createHashRouter`, `createMemoryRouter` and `useRoutes`, through the objects and arrays written
-there; the function `useNavigate()` returns, and the `navigate` method of a router those create. TanStack Router
+`createBrowserRouter`, `createHashRouter`, `createMemoryRouter` and `useRoutes`, through the objects, arrays and spreads
+written there; the function `useNavigate()` returns, and the `navigate` method of a router those create. TanStack Router
 (imported from `@tanstack/react-router`): the attributes of `Link` and `Navigate`; the arguments of `createFileRoute`,
 `createLazyFileRoute`, `createRoute`, `redirect`, `useNavigate` and `getRouteApi`; the function `useNavigate()` returns
 and the `navigate` method of `useRouter()` or `createRouter()`; and the route tree its generator writes
 (`routeTree.gen.ts`, known by the `FileRoutesByPath` it declares in `@tanstack/react-router`), which holds no request.
 A call written there (a loader's `fetch`) still runs and is read. A navigation that loads the document instead is a
-GET: a `to` (or TanStack's `href`) beside `reloadDocument`, and React Router's `redirectDocument(url)`; an absolute URL
-to another origin is read as any absolute URL is. The same names imported from anywhere else are read as before. fetch, axios, ky, got and project wrappers take their URL first, so a path
+GET: a `to` (or TanStack's `href`) beside `reloadDocument` (the last one set, in a spread of an object literal too),
+while the navigation's other options stay the router's; and the URL React Router's `redirectDocument(url, init)` takes
+first. An absolute URL to another origin is read as any absolute URL is, its root path too. The same names imported from anywhere else are read as before. fetch, axios, ky, got and project wrappers take their URL first, so a path
 handed to a function after its first argument (`requireAsset(assets, id, "/devices")`) is not read unless a literal
 method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequest's `open(method, url)` or Angular's
 `request(method, url)` with the method held in a value, or a `redirect(status, url)`; the window's `open(url, target)`

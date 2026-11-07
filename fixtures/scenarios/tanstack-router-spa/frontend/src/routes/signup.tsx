@@ -9,7 +9,7 @@ export const Route = createFileRoute("/signup")({
 function SignUp() {
   const { signUpMutation } = useAuth()
   return (
-    <form onSubmit={(e) => signUpMutation.mutate(new FormData(e.currentTarget))}>
+    <form onSubmit={(e) => { e.preventDefault(); signUpMutation.mutate(new FormData(e.currentTarget)) }}>
       <RouterLink to="/login">Log in</RouterLink>
     </form>
   )

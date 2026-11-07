@@ -163,12 +163,13 @@ function operands(e: ts.Expression): ts.Expression[] {
 }
 
 /**
- * The root path `/` where a string is in a request's place (`requestPosition`); elsewhere a lone `/` is a separator far
+ * The root path `/` where a string is in a request's place (`requestPosition`), or names another origin where a client
+ * router takes a route (`<Link to="https://...">`), which the browser loads; elsewhere a lone `/` is a separator far
  * more often than a request.
  */
 function rootRequest(node: ts.Node, raw: string, wrappers: CallSource["wrappers"] = []): CallPath | undefined {
   const parsed = callPath(raw, true);
-  return parsed && requestPosition(node, wrappers) ? parsed : undefined;
+  return parsed && (requestPosition(node, wrappers) || (hostOf(raw) !== undefined && clientRoute(node) === "route")) ? parsed : undefined;
 }
 
 /**
@@ -187,8 +188,11 @@ function requestPosition(node: ts.Node, wrappers: CallSource["wrappers"] = []): 
   if (navigates(place.callee) || wrappers.some((w) => w.name === place.call.expression.getText().replace(/\s+/g, ""))) return true;
   if (VERBS.has(place.name.toLowerCase())) return true;
   const m = member(place.callee);
-  return place.name === "fetch" && (ts.isIdentifier(place.callee) || /^(window|globalThis|self)$/.test(m?.receiver.getText() ?? ""));
+  return place.name === "fetch" && (isGlobal(place.callee, FETCH) || (!!m && isGlobal(unwrap(m.receiver), FETCH_GLOBALS)));
 }
+
+const FETCH = new Set(["fetch"]);
+const FETCH_GLOBALS = new Set(["window", "globalThis", "self"]);
 
 /**
  * Whether a string is a URL the window's Location navigates to, as the HTML standard defines it: the argument of its
@@ -477,22 +481,27 @@ function importsRouter(sf: ts.SourceFile): boolean {
   return found;
 }
 
-/** The client router a binding is imported from, and the name it is exported as ("default" for a default import). */
-function routerImport(id: ts.Identifier): { router: ClientRouter; name: string } | undefined {
+/**
+ * The client router a name is imported from, and the name it is exported as ("default" for a default import): a binding
+ * imported by name, or a member of a namespace import (`RR.Link` after `import * as RR`).
+ */
+function routerImport(e: ts.Node): { router: ClientRouter; name: string } | undefined {
+  const m = ts.isPropertyAccessExpression(e) ? { receiver: e.expression, name: e.name.text } : undefined;
+  const id = m ? unwrap(m.receiver) : e;
+  if (!ts.isIdentifier(id)) return undefined;
   const d = declarationOf(id);
-  if (!d || !(ts.isImportSpecifier(d) || ts.isImportClause(d))) return undefined;
-  const declaration = ts.isImportSpecifier(d) ? d.parent.parent.parent : d.parent;
+  if (!d || !(m ? ts.isNamespaceImport(d) : ts.isImportSpecifier(d) || ts.isImportClause(d))) return undefined;
+  const declaration = ts.isImportSpecifier(d) ? d.parent.parent.parent : ts.isNamespaceImport(d) ? d.parent.parent : (d as ts.ImportClause).parent;
   const module = ts.isStringLiteral(declaration.moduleSpecifier) ? declaration.moduleSpecifier.text : "";
   const router = CLIENT_ROUTERS.find((r) => r.modules.includes(module));
-  return router && { router, name: ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : "default" };
+  return router && { router, name: m ? m.name : ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : "default" };
 }
 
 /** Whether an expression is a call of a router's navigator (`useNavigate()`, `useRouter()`). */
 function navigatorCall(e: ts.Expression | undefined): boolean {
   const call = e && unwrap(e);
   if (!call || !ts.isCallExpression(call)) return false;
-  const callee = unwrap(call.expression);
-  const imported = ts.isIdentifier(callee) ? routerImport(callee) : undefined;
+  const imported = routerImport(unwrap(call.expression));
   return !!imported && imported.router.navigators.includes(imported.name);
 }
 
@@ -512,33 +521,51 @@ function navigatorValue(e: ts.Expression): boolean {
 
 /** What a call is to a client router: a navigation or route definition ("route"), a document load, or neither. */
 function routerCall(callee: ts.Expression): "route" | "document" | undefined {
-  const m = member(callee);
-  if (m) return m.name === "navigate" && navigatorValue(unwrap(m.receiver)) ? "route" : undefined;
-  if (!ts.isIdentifier(callee)) return undefined;
   const imported = routerImport(callee);
   if (imported) return imported.router.documents.includes(imported.name) ? "document" : imported.router.functions.includes(imported.name) ? "route" : undefined;
-  return navigatorValue(callee) ? "route" : undefined;
+  const m = member(callee);
+  if (m) return m.name === "navigate" && navigatorValue(unwrap(m.receiver)) ? "route" : undefined;
+  return ts.isIdentifier(callee) && navigatorValue(callee) ? "route" : undefined;
 }
 
-/** Whether a navigation's options or a component's attributes set `reloadDocument`, to anything but `false`. */
+/**
+ * Whether a navigation's options or a component's attributes set `reloadDocument`, to anything but `false`: the last
+ * one set wins, in a spread of an object literal too.
+ */
 function reloads(props: ts.ObjectLiteralExpression | ts.JsxAttributes): boolean {
+  let reload = false;
   for (const p of props.properties) {
     if (ts.isJsxAttribute(p) && p.name.getText() === "reloadDocument") {
       const v = p.initializer && ts.isJsxExpression(p.initializer) ? p.initializer.expression : p.initializer;
-      return !v || unwrap(v).kind !== ts.SyntaxKind.FalseKeyword;
+      reload = !v || unwrap(v).kind !== ts.SyntaxKind.FalseKeyword;
+    } else if (ts.isPropertyAssignment(p) && keyOf(p) === "reloadDocument") reload = unwrap(p.initializer).kind !== ts.SyntaxKind.FalseKeyword;
+    else if (ts.isShorthandPropertyAssignment(p) && p.name.text === "reloadDocument") reload = true;
+    else if (ts.isSpreadAssignment(p) || ts.isJsxSpreadAttribute(p)) {
+      const spread = unwrap(p.expression);
+      if (ts.isObjectLiteralExpression(spread) && setsReload(spread)) reload = reloads(spread);
     }
-    if (ts.isPropertyAssignment(p) && keyOf(p) === "reloadDocument") return unwrap(p.initializer).kind !== ts.SyntaxKind.FalseKeyword;
-    if (ts.isShorthandPropertyAssignment(p) && p.name.text === "reloadDocument") return true;
   }
-  return false;
+  return reload;
+}
+
+/** Whether an object literal sets `reloadDocument`, itself or in a spread of another. */
+function setsReload(o: ts.ObjectLiteralExpression): boolean {
+  return o.properties.some((p) => {
+    if (ts.isSpreadAssignment(p)) {
+      const spread = unwrap(p.expression);
+      return ts.isObjectLiteralExpression(spread) && setsReload(spread);
+    }
+    return (ts.isPropertyAssignment(p) && keyOf(p) === "reloadDocument") || (ts.isShorthandPropertyAssignment(p) && p.name.text === "reloadDocument");
+  });
 }
 
 /**
  * What a string is to a client router (`CLIENT_ROUTERS`): "route" where it names one of the app's own routes, in an
- * attribute of the router's component or in the arguments of its function, through the objects and arrays written
- * there (a call or a function inside runs on its own); "document" where the navigation loads the document instead,
- * which the browser requests with GET: a `to` or `href` beside `reloadDocument`, or React Router's `redirectDocument`.
- * Undefined anywhere else, and in a file that imports no client router.
+ * attribute of the router's component or in the arguments of its function, through the objects, arrays and spreads
+ * written there (a call or a function inside runs on its own); "document" where the navigation loads the document
+ * instead, which the browser requests with GET: a `to` or `href` beside `reloadDocument`, or the URL React Router's
+ * `redirectDocument` takes first (its response options are the router's, as `redirect`'s are). Undefined anywhere
+ * else, and in a file that imports no client router.
  */
 function clientRoute(node: ts.Node): "route" | "document" | undefined {
   if (!importsRouter(node.getSourceFile())) return undefined;
@@ -551,21 +578,24 @@ function clientRoute(node: ts.Node): "route" | "document" | undefined {
       key = keyOf(parent);
       options = parent.parent;
       value = valuePlace(parent.parent);
+    } else if (ts.isSpreadAssignment(parent)) {
+      options = parent.parent;
+      value = valuePlace(parent.parent);
     } else if (ts.isArrayLiteralExpression(parent)) value = valuePlace(parent);
     else if (ts.isJsxExpression(parent)) value = parent;
     else break;
   }
   const holder = value.parent;
-  const reloaded = (props: ts.ObjectLiteralExpression | ts.JsxAttributes) => (!reloads(props) ? "route" : key === "to" || key === "href" ? "document" : undefined);
-  if (ts.isJsxAttribute(holder)) {
-    key = holder.name.getText();
-    const tag = holder.parent.parent.tagName;
-    const imported = ts.isIdentifier(tag) ? routerImport(tag) : undefined;
+  const reloaded = (props: ts.ObjectLiteralExpression | ts.JsxAttributes) => (reloads(props) && (key === "to" || key === "href") ? "document" : "route");
+  if (ts.isJsxAttribute(holder) || ts.isJsxSpreadAttribute(holder)) {
+    if (ts.isJsxAttribute(holder)) key = holder.name.getText();
+    const imported = routerImport(holder.parent.parent.tagName);
     return imported?.router.elements.includes(imported.name) ? reloaded(holder.parent) : undefined;
   }
   const place = argumentPlace(value);
   if (!place || !ts.isCallExpression(place.call)) return undefined;
   const call = routerCall(place.callee);
+  if (call === "document") return place.at === 0 && key === undefined ? "document" : "route";
   return call === "route" && options ? reloaded(options) : call;
 }
 
