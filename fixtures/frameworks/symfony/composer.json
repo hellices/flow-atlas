@@ -4,10 +4,10 @@
     "type": "project",
     "license": "MIT",
     "require": {
-        "php": "^8.2",
-        "symfony/console": "^7.4",
-        "symfony/framework-bundle": "^7.4",
-        "symfony/yaml": "^7.4"
+        "php": "^8.4",
+        "symfony/console": "^8.1",
+        "symfony/framework-bundle": "^8.1",
+        "symfony/yaml": "^8.1"
     },
     "autoload": {
         "psr-4": {
