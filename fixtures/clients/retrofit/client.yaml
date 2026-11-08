@@ -1,0 +1,17 @@
+# How scripts/frameworks.mjs runs the requests this app makes with Retrofit.
+toolchain: java
+docs:
+  - https://lysine.dev/retrofit/
+  - https://lysine.dev/retrofit/declarations/
+  - https://lysine.dev/retrofit/configuration/
+  - https://lysine.dev/retrofit/3.x/retrofit/retrofit2/Retrofit.Builder.html
+  - https://lysine.dev/retrofit/3.x/retrofit/retrofit2/http/HTTP.html
+  - https://lysine.dev/retrofit/3.x/retrofit/retrofit2/http/Url.html
+# Compiles the app, and the oracle against it.
+setup: mvn -q -B clean test-compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Retrofit on Maven Central, in place of the pom's retrofit.version.
+latest: >-
+  mvn -q -B -U clean test-compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dretrofit.version=$(curl -fsS https://repo1.maven.org/maven2/com/squareup/retrofit2/retrofit/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:target/test-classes:$(cat target/classpath.txt)" OracleKt

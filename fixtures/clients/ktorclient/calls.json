@@ -1,0 +1,22 @@
+{
+  "library": "Ktor client",
+  "version": "3.6.1",
+  "calls": [
+    {"method":"GET","path":"/api/v1/articles"},
+    {"method":"DELETE","path":"/api/v1/articles/{}","raw":"/api/v1/articles/7777777"},
+    {"method":"GET","path":"/api/v1/articles/{}","raw":"/api/v1/articles/7777777"},
+    {"method":"PUT","path":"/api/v1/articles/{}/edit","raw":"/api/v1/articles/7777777/edit"},
+    {"method":"POST","path":"/api/v1/articles/new"},
+    {"method":"POST","path":"/api/v1/auth/token"},
+    {"method":"GET","path":"/api/v1/orders/{}/items","raw":"/api/v1/orders/7777777/items"},
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"HEAD","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"POST","path":"/api/v1/users/{}/avatar","raw":"/api/v1/users/zzparamzz/avatar"},
+    {"method":"GET","path":"/health"}
+  ]
+}
