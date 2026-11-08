@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs runs the requests this app makes through the axios functions orval generates
+# (src/api/generated.ts, committed; `latest` generates them again with the latest orval and axios).
+toolchain: node
+docs:
+  - https://orval.dev/docs/guides/custom-axios
+  - https://orval.dev/docs/reference/configuration/output
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund orval@latest axios@latest && npm run -s generate
+oracle: npx tsc -p . && npx tsx oracle.ts

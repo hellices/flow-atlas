@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs runs the requests this app makes with openapi-fetch, typed by openapi-typescript.
+toolchain: node
+docs:
+  - https://openapi-ts.dev/openapi-fetch/
+  - https://openapi-ts.dev/openapi-fetch/api
+  - https://openapi-ts.dev/openapi-fetch/middleware-auth
+  - https://openapi-ts.dev/introduction
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund openapi-fetch@latest openapi-typescript@latest && npm run -s generate
+oracle: npx tsc -p . && npx tsx oracle.ts

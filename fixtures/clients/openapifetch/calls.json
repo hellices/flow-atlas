@@ -1,0 +1,17 @@
+{
+  "library": "openapi-fetch",
+  "version": "0.17.0",
+  "calls": [
+    {"method":"GET","path":"/api/v1/items"},
+    {"method":"OPTIONS","path":"/api/v1/items"},
+    {"method":"POST","path":"/api/v1/items"},
+    {"method":"DELETE","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"GET","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"HEAD","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"GET","path":"/api/v1/reports/{}","raw":"/api/v1/reports/7777777"},
+    {"method":"GET","path":"/api/v1/users/{}/items/{}","raw":"/api/v1/users/zzparamzz/items/zzparamzz"},
+    {"method":"GET","path":"/health"}
+  ]
+}

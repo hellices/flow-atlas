@@ -1,0 +1,14 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /health", reason: "a request's own `baseUrl` option (`client.GET(\"/health\", { baseUrl: \"/\" })`) is not read: the call source's prefix is put before its path, and nothing says so" }
+  - { call: "GET /api/v1/users/{}/items/{}", reason: "the method of a path-based client's call (`pathClient[\"/users/{userId}/items/{itemId}\"].GET(...)`, from `wrapAsPathBasedClient`) is not read: the path in brackets is read with `*`, and nothing says so" }
+extra:
+  - { call: "GET /api/v1/health", reason: "the request to /health read under the prefix its own `baseUrl` replaces" }
+  - { call: "* /api/v1/api/v1", reason: "the client's base URL (`createClient({ baseUrl: \"/api/v1/\" })`) is read as a request of its own, under the prefix it is" }
+  - { call: "* /api/v1/health", reason: "the keys of the `paths` interface openapi-typescript generates (src/api/v1.d.ts) are read as requests: a path in a type names no request" }
+  - { call: "* /api/v1/items", reason: "a key of the generated `paths` interface read as a request" }
+  - { call: "* /api/v1/items/{}", reason: "a key of the generated `paths` interface read as a request" }
+  - { call: "* /api/v1/items/{}/archive", reason: "a key of the generated `paths` interface read as a request, a path the app does not call" }
+  - { call: "* /api/v1/reports/{}", reason: "a key of the generated `paths` interface read as a request" }
+  - { call: "* /api/v1/users/{}/items/{}", reason: "a key of the generated `paths` interface read as a request, and the path-based client's call read with its method unread" }
