@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs runs the requests this app's API slices make with RTK Query.
+toolchain: node
+docs:
+  - https://redux.js.org/toolkit/rtk-query/api/createApi
+  - https://redux.js.org/toolkit/rtk-query/api/fetchBaseQuery
+  - https://redux.js.org/toolkit/rtk-query/usage/queries
+  - https://redux.js.org/toolkit/rtk-query/usage/mutations
+  - https://redux.js.org/toolkit/rtk-query/usage/infinite-queries
+  - https://redux.js.org/toolkit/rtk-query/usage/code-splitting
+  - https://redux.js.org/toolkit/rtk-query/usage/usage-without-react-hooks
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund @reduxjs/toolkit@latest
+oracle: npm run -s build && node oracle.mjs

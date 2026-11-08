@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # Each API slice's endpoints, under the base URL its fetchBaseQuery names.
+  - { from: client, to: api, files: ["src/services/api.ts", "src/services/users.ts"], prefix: /api }
+  - { from: client, to: api, files: ["src/services/reports.ts"], prefix: /api/v2/reports }

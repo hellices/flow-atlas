@@ -1,0 +1,19 @@
+{
+  "library": "RTK Query (@reduxjs/toolkit)",
+  "version": "2.13.0",
+  "calls": [
+    {"method":"GET","path":"/api/health"},
+    {"method":"GET","path":"/api/posts"},
+    {"method":"POST","path":"/api/posts"},
+    {"method":"DELETE","path":"/api/posts/{}","raw":"/api/posts/zzparamzz"},
+    {"method":"GET","path":"/api/posts/{}","raw":"/api/posts/zzparamzz"},
+    {"method":"PATCH","path":"/api/posts/{}","raw":"/api/posts/zzparamzz"},
+    {"method":"PUT","path":"/api/posts/{}","raw":"/api/posts/zzparamzz"},
+    {"method":"GET","path":"/api/posts/{}/comments","raw":"/api/posts/zzparamzz/comments"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"POST","path":"/api/users/{}/follow","raw":"/api/users/zzparamzz/follow"},
+    {"method":"GET","path":"/api/users/search"},
+    {"method":"POST","path":"/api/v2/reports/{}/export","raw":"/api/v2/reports/7777777/export"},
+    {"method":"GET","path":"/api/v2/reports/{}/summary","raw":"/api/v2/reports/7777777/summary"}
+  ]
+}
