@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs runs the requests this app makes with HTTPX. requirements.txt pins every package with its
+# hashes and names no index, so each machine installs the same files from the index it uses.
+toolchain: python
+docs:
+  - https://www.python-httpx.org/quickstart/
+  - https://www.python-httpx.org/advanced/clients/
+  - https://www.python-httpx.org/async/
+setup: uv venv -q --allow-existing && uv pip sync -q requirements.txt
+latest: uv venv -q --allow-existing && uv pip install -q --upgrade -r pyproject.toml
+oracle: .venv/bin/python oracle.py
