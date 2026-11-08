@@ -57,7 +57,15 @@ end
 
 def dispatched(method, path)
   env = Rack::MockRequest.env_for(path, method: method == "*" ? "GET" : method)
-  _, headers, = Rails.application.call(env)
+  begin
+    _, headers, = Rails.application.call(env)
+  rescue ActionController::RoutingError
+    # The application shows no exceptions: DebugExceptions raises the router's 404 (`x-cascade: pass`) as this error.
+    return nil
+  rescue StandardError
+    # An action that raises was dispatched to all the same.
+    return env["action_dispatch.route"]
+  end
   env["action_dispatch.route"] unless (headers["x-cascade"] || headers["X-Cascade"]) == "pass"
 end
 
@@ -68,6 +76,16 @@ end
 def confirm!(route, method, path)
   got = dispatched(method, path)
   raise "#{method} #{path} is dispatched to #{describe(got)}, not #{route.path.spec}" unless got.equal?(route)
+end
+
+# Each route's paths as written out, [method, canonical form], by the route; and a path to request for each.
+FORMS = Hash.new { |hash, route| hash[route] = [] }.compare_by_identity
+REQUEST_PATHS = []
+
+def record(out, route, verb, canonical_path, path, raw)
+  out << { method: verb, path: canonical_path, raw: raw }
+  FORMS[route] << [verb, canonical_path]
+  REQUEST_PATHS << (path.squeeze("/").chomp("/").then { |p| p.empty? ? "/" : p })
 end
 
 def internal?(route)
@@ -90,12 +108,12 @@ def walk(router_routes, prefixes, raw_prefix, out)
     joined.each do |c, p|
       verbs(route).each do |verb|
         confirm!(route, verb, p)
-        out << { method: verb, path: canonical(c), raw: raw }
+        record(out, route, verb, canonical(c), p, raw)
         next unless c.end_with?("/{**}")
 
         # The parent of a glob, where the router dispatches `parent/` to the same route.
         parent = p.delete_suffix("a/b")
-        out << { method: verb, path: canonical(c.delete_suffix("/{**}")), raw: raw } if dispatched(verb, parent).equal?(route)
+        record(out, route, verb, canonical(c.delete_suffix("/{**}")), parent, raw) if dispatched(verb, parent).equal?(route)
       end
     end
   end
@@ -103,4 +121,37 @@ end
 
 routes = []
 walk(Rails.application.routes.routes, [["", ""]], "", routes)
-puts JSON.generate({ framework: "rails", version: Rails.version, routes: routes })
+
+# Which of a route's paths a request took: the route is the one the router reports (`request.route`); this only picks
+# the one of its written-out forms (with or without an optional group) the request's path has the shape of, a
+# parameter being a segment without a `.` as Rails' default requirement for a parameter is.
+def form_of(route, method, path)
+  verb = verbs(route) == ["*"] ? "*" : method
+  path = path.chomp("/").then { |p| p.empty? ? "/" : p }
+  form = FORMS[route].find do |v, c|
+    next false unless v == verb
+
+    shape = c.split(/(\{\*\*\}|\{\})/).map { |part| { "{}" => "[^/.]+", "{**}" => ".+" }[part] || Regexp.escape(part) }.join
+    /\A#{shape}\z/.match?(path)
+  end
+  raise "#{method} #{path} is dispatched to #{describe(route)}, none of whose paths it has the shape of" unless form
+
+  "#{verb} #{form[1]}"
+end
+
+# Sample requests, and the route Rails dispatches each to: every route's sample path, also with a trailing `/`, and a
+# path no route takes, each with every method a route registers (HEAD and OPTIONS left out). Rails tries the routes in
+# the order they are drawn and takes the first that matches the path, the verb and the constraints; it matches a path
+# without its trailing `/` and redirects none. A request no route takes gets the router's 404 (`x-cascade: pass`) and
+# is dispatched to none. A `redirect(...)` route answers with a redirect of its own, but the request is dispatched to
+# that route, so it is recorded as such.
+methods = routes.map { |r| r[:method] }.uniq.reject { |m| %w[* HEAD OPTIONS].include?(m) }.sort
+samples = REQUEST_PATHS.uniq
+probes = (samples + samples.map { |s| s == "/" ? s : "#{s}/" } + ["/nowhere/value1"]).uniq.sort
+requests = probes.flat_map do |path|
+  methods.map do |method|
+    route = dispatched(method, path)
+    { method: method, path: path, route: route && form_of(route, method, path) }
+  end
+end
+puts JSON.generate({ framework: "rails", version: Rails.version, routes: routes, requests: requests })
