@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # Each module's client is configured with the API's base URL and a base path; the paths it requests are relative to it.
+  - { from: client, to: api, files: ["app/items.py"], prefix: /api/v1 }
+  - { from: client, to: api, files: ["app/accounts.py"], prefix: /api/v2 }
