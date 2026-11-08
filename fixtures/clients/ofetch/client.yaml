@@ -1,0 +1,6 @@
+# How scripts/frameworks.mjs installs ofetch and runs the requests this app makes with it.
+toolchain: node
+docs: https://github.com/unjs/ofetch/blob/main/README.md
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund ofetch@latest
+oracle: node oracle.mjs
