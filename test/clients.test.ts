@@ -32,7 +32,7 @@ interface Gaps {
 const root = fileURLToPath(new URL("../fixtures/clients", import.meta.url));
 const fixtures = existsSync(root)
   ? readdirSync(root, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "calls.json")))
+      .filter((d) => d.isDirectory())
       .map((d) => d.name)
   : [];
 
@@ -50,6 +50,7 @@ describe("calls as each client library sends them", () => {
   for (const name of fixtures) {
     it(name, () => {
       const dir = join(root, name);
+      expect(existsSync(join(dir, "calls.json")), `${name} has no calls.json; run node scripts/frameworks.mjs ${name}`).toBe(true);
       const sent = JSON.parse(readFileSync(join(dir, "calls.json"), "utf8")) as Calls;
       const gaps = (existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) as Gaps;
       const config = loadConfig(join(dir, "atlas.config.yaml"));
