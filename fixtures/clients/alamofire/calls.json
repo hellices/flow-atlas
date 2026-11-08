@@ -1,0 +1,17 @@
+{
+  "library": "Alamofire",
+  "version": "5.12.2",
+  "calls": [
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}/avatar","raw":"/api/v1/users/zzparamzz/avatar"},
+    {"method":"GET","path":"/api/v2/orders"},
+    {"method":"DELETE","path":"/api/v2/orders/{}","raw":"/api/v2/orders/7777777"},
+    {"method":"GET","path":"/api/v2/orders/{}","raw":"/api/v2/orders/7777777"},
+    {"method":"POST","path":"/api/v2/orders/{}/notes","raw":"/api/v2/orders/7777777/notes"}
+  ]
+}

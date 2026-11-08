@@ -1,0 +1,9 @@
+# How scripts/frameworks.mjs installs Alamofire and runs the requests this app makes with it. The package is in `app/`:
+# a root package in a directory named `alamofire` would take the identity of the Alamofire package it depends on.
+toolchain: swift
+docs:
+  - https://github.com/Alamofire/Alamofire/blob/master/Documentation/Usage.md
+  - https://github.com/Alamofire/Alamofire/blob/master/Documentation/AdvancedUsage.md
+setup: cd app && swift package resolve --force-resolved-versions
+latest: cd app && swift package update
+oracle: cd app && swift build -q --product Oracle >&2 && API_SERVER_URL="$RECORD_URL" swift run --skip-build Oracle
