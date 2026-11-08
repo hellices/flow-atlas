@@ -1,0 +1,20 @@
+{
+  "library": "resty",
+  "version": "2.17.2",
+  "calls": [
+    {"method":"GET","path":"/billing/v1/invoices/{}","raw":"/billing/v1/invoices/zzparamzz"},
+    {"method":"POST","path":"/billing/v1/invoices/{}/lines/{}/refund","raw":"/billing/v1/invoices/zzparamzz/lines/7777777/refund"},
+    {"method":"HEAD","path":"/health"},
+    {"method":"POST","path":"/sessions"},
+    {"method":"GET","path":"/users"},
+    {"method":"OPTIONS","path":"/users"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PUT","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/{}/avatars/{}","raw":"/users/zzparamzz/avatars/zzparamzz"},
+    {"method":"POST","path":"/users/{}/roles","raw":"/users/zzparamzz/roles"},
+    {"method":"GET","path":"/v2/reports/{}","raw":"/v2/reports/7777777"}
+  ]
+}

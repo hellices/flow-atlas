@@ -1,0 +1,26 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "HEAD /health", reason: "the method of `http.Head(base + \"/health\")` is not read when a value comes before the path in the URL argument, and nothing says so" }
+  - { call: "GET /users/{}", reason: "`http.Get(base + \"/users/\" + id)` is read without the value concatenated after the path and without its method (a value comes before the path), and nothing says so" }
+  - { call: "GET /users/search", reason: "the method of `http.Get(u.String())`, the URL built with `url.Parse(base + \"/users/search\")` and given a query, is not read, and nothing says so" }
+  - { call: "POST /users", reason: "the method of `http.Post(base+\"/users\", ...)` is not read when a value comes before the path in the URL argument, and nothing says so" }
+  - { call: "POST /sessions", reason: "`http.PostForm(base+\"/sessions\", values)` is not read as a POST, and nothing says so" }
+  - { call: "PUT /users/{}", reason: "a URL built with `url.JoinPath(base, \"users\", id)` is not read, nor the method `http.MethodPut` given to `http.NewRequestWithContext`, and nothing says so" }
+  - { call: "PATCH /users/{}", reason: "the method `http.MethodPatch` given to `http.NewRequestWithContext` before the URL is not read, and nothing says so" }
+  - { call: "DELETE /users/{}", reason: "the method `\"DELETE\"` given to `http.NewRequestWithContext` before the URL is not read, and `base+\"/users/\"+id` is read without the value after the path, and nothing says so" }
+  - { call: "GET /v2/reports/{}", reason: "the method of `http.Get(fmt.Sprintf(\"%s/v2/reports/%d\", base, year))` is not read: the path is `Sprintf`'s argument, not `Get`'s, and nothing says so" }
+  - { call: "GET /api/v1/invoices", reason: "the SDK client's paths are relative to its `BaseURL` (`\"invoices\"`, resolved by `BaseURL.Parse`) and a path without a leading `/` is not read, nor the method (`http.MethodGet`) given to the client's `newRequest`, and nothing says so" }
+  - { call: "POST /api/v1/invoices", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices\"`) is not read, nor the method `http.MethodPost` given to `newRequest`, and nothing says so" }
+  - { call: "GET /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`fmt.Sprintf(\"invoices/%v\", id)`) is not read, nor the method given to `newRequest`, and nothing says so" }
+  - { call: "PUT /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices/\"+id`) is not read, nor the method given to `newRequest`, and nothing says so" }
+  - { call: "DELETE /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices/\"+id`) is not read, nor the method given to `newRequest`, and nothing says so" }
+  - { call: "POST /api/v1/invoices/{}/lines/{}/refund", reason: "the SDK client's path relative to its `BaseURL` (`fmt.Sprintf(\"invoices/%v/lines/%d/refund\", ...)`) is not read, nor the method `\"POST\"` given to `newRequest`, and nothing says so" }
+extra:
+  - { call: "* /health", reason: "`http.Head(base + \"/health\")` read with its method unread" }
+  - { call: "* /users", reason: "`http.Get(base + \"/users/\" + id)`, `http.Post(base+\"/users\", ...)` and `base+\"/users/\"+id` read with their methods unread, the value after `/users/` left out" }
+  - { call: "* /users/search", reason: "the URL `url.Parse(base + \"/users/search\")` read with the method of the `http.Get` that sends it unread" }
+  - { call: "* /sessions", reason: "`http.PostForm(base+\"/sessions\", values)` read with its method unread" }
+  - { call: "* /users/{}", reason: "`fmt.Sprintf(\"%s/users/%s\", base, id)` read with its method (`http.MethodPatch`) unread" }
+  - { call: "* /v2/reports/{}", reason: "`fmt.Sprintf(\"%s/v2/reports/%d\", base, year)` read with the method of `http.Get` unread" }
+  - { call: "* /api/v1/api/v1", reason: "the billing client's base path (`\"/api/v1/\"` in `NewClient`) is read as a request, with the configured `prefix` put before it once more" }

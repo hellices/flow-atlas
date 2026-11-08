@@ -1,0 +1,25 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /users", reason: "the verb of a call on the line after its chain's `.` (`SetResult(result).` then `Get(\"/users\")`, as gofmt lays out resty's chains) is not read, and nothing says so" }
+  - { call: "GET /users/{}", reason: "the verb of a call on the line after its chain's `.` (`Get(\"/users/{id}\")`) is not read, and nothing says so" }
+  - { call: "POST /users", reason: "the verb of a call on the line after its chain's `.` (`Post(\"/users\")`) is not read, and nothing says so" }
+  - { call: "PUT /users/{}", reason: "the verb of a call on the line after its chain's `.` (`Put(\"/users/{id}\")`) is not read, and nothing says so" }
+  - { call: "PATCH /users/{}", reason: "the verb of a call on the line after its chain's `.` is not read, and `Patch(\"/users/\" + id)` is read without the value after the path, and nothing says so" }
+  - { call: "DELETE /users/{}", reason: "the method of `Delete(fmt.Sprintf(\"/users/%s\", id))` is not read: the path is `Sprintf`'s argument, not `Delete`'s, and nothing says so" }
+  - { call: "POST /users/{}/roles", reason: "the method of `Execute(resty.MethodPost, \"/users/{id}/roles\")` is not read, and nothing says so" }
+  - { call: "POST /sessions", reason: "the verb of a call on the line after its chain's `.` (`Post(\"/sessions\")`) is not read, and nothing says so" }
+  - { call: "GET /users/{}/avatars/{}", reason: "the verb of a call on the line after its chain's `.` (`Get(\"/users/{id}/avatars/{file}\")`) is not read, and nothing says so" }
+  - { call: "GET /v2/reports/{}", reason: "the client's own path parameter (`SetPathParam(\"version\", \"v2\")` on the client) is read as a request's argument (`/{version}/reports/{year}` as `/{}/reports/{}`), and the verb on the line after the chain's `.` is not read, and nothing says so" }
+  - { call: "GET /billing/v1/invoices/{}", reason: "the verb of a call on the line after its chain's `.` (`Get(\"/invoices/{invoiceId}\")`) is not read, and nothing says so" }
+  - { call: "POST /billing/v1/invoices/{}/lines/{}/refund", reason: "the method of `Execute(resty.MethodPost, fmt.Sprintf(...))` is not read, and nothing says so" }
+extra:
+  - { call: "* /users", reason: "`Get(\"/users\")`, `Post(\"/users\")` and `Patch(\"/users/\" + id)` read with their methods unread, the value after `/users/` left out" }
+  - { call: "* /users/{}", reason: "`Get(\"/users/{id}\")`, `Put(\"/users/{id}\")` and `Delete(fmt.Sprintf(\"/users/%s\", id))` read with their methods unread" }
+  - { call: "* /users/{}/roles", reason: "`Execute(resty.MethodPost, \"/users/{id}/roles\")` read with its method unread" }
+  - { call: "* /sessions", reason: "`Post(\"/sessions\")` read with its method unread" }
+  - { call: "* /users/{}/avatars/{}", reason: "`Get(\"/users/{id}/avatars/{file}\")` read with its method unread" }
+  - { call: "* /{}/reports/{}", reason: "`/{version}/reports/{year}` read with the client's own `version` path parameter as an argument, its method unread" }
+  - { call: "* /billing/v1/billing/v1", reason: "the billing client's base path (`gatewayURL + \"/billing/v1\"` in `SetBaseURL`) is read as a request, with the configured `prefix` put before it once more" }
+  - { call: "* /billing/v1/invoices/{}", reason: "`Get(\"/invoices/{invoiceId}\")` read with its method unread" }
+  - { call: "* /billing/v1/invoices/{}/lines/{}/refund", reason: "`Execute(resty.MethodPost, fmt.Sprintf(...))` read with its method unread" }
