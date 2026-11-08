@@ -1,0 +1,18 @@
+{
+  "library": "Spring WebClient",
+  "version": "7.0.10",
+  "calls": [
+    {"method":"GET","path":"/customers/{}/orders","raw":"/customers/zzparamzz/orders"},
+    {"method":"GET","path":"/orders"},
+    {"method":"POST","path":"/orders"},
+    {"method":"DELETE","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"GET","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"HEAD","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"OPTIONS","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"PATCH","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"PUT","path":"/orders/{}","raw":"/orders/7777777"},
+    {"method":"GET","path":"/orders/{}/invoice","raw":"/orders/7777777/invoice"},
+    {"method":"PUT","path":"/orders/{}/items/{}","raw":"/orders/7777777/items/zzparamzz"},
+    {"method":"POST","path":"/orders/{}/refunds","raw":"/orders/7777777/refunds"}
+  ]
+}
