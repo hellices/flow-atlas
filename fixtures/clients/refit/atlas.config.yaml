@@ -1,0 +1,6 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The Refit interfaces; their base address, Services:Api in appsettings.json, ends in /api.
+  - { from: client, to: api, files: ["src/App/Apis/**/*.cs"], prefix: /api }

@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs runs the requests this app makes with HttpClient through IHttpClientFactory. HttpClient is
+# the .NET 10 (LTS) runtime's the SDK in use carries (global.json); Microsoft.Extensions.Http and the generic host are
+# locked in packages.lock.json, and `latest` takes their newest 10.x release.
+toolchain: dotnet
+docs:
+  - https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory
+  - https://learn.microsoft.com/en-us/dotnet/fundamentals/networking/http/httpclient
+  - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-10.0
+  - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.baseaddress?view=net-10.0
+  - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.json.httpclientjsonextensions?view=net-10.0
+setup: dotnet restore --locked-mode
+latest: dotnet restore -p:ExtensionsVersion=10.* -p:NuGetLockFilePath=obj/latest.packages.lock.json
+oracle: dotnet build oracle --no-restore -nologo -v q 1>&2 && dotnet run --project oracle --no-build
