@@ -24,6 +24,7 @@ export default async function app(fastify) {
   fastify.get("/example/:userId/:secretToken", async (request) => request.params);
   fastify.get("/example/*", async (request) => request.params);
   fastify.get("/example/:file(^\\d+).png", async (request) => request.params);
+  fastify.get("/example/lang/:code(^[a-z]+)", async (request) => request.params);
   fastify.get("/example/near/:lat-:lng/radius/:r", async (request) => request.params);
   fastify.get("/example/at/:hour(^\\d{2})h:minute(^\\d{2})m", async (request) => request.params);
   fastify.get("/example/posts/:id?", async (request) => request.params);

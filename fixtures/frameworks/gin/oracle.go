@@ -123,5 +123,8 @@ func main() {
 			}
 		}
 	}
-	json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "gin", "version": version, "routes": routes})
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "gin", "version": version, "routes": routes}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

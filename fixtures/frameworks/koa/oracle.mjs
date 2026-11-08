@@ -4,6 +4,7 @@
 // own handler answers counts, so what is written is what the routers dispatch.
 import { METHODS, request } from "node:http";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import Koa from "koa";
 import Router from "@koa/router";
 import app from "./src/app.js";
@@ -30,26 +31,25 @@ for (const middleware of app.middleware) {
   }
 }
 
-/** The patterns an optional group `{...}` stands for: with it and without it (path-to-regexp 8). */
-function expand(pattern) {
-  const open = pattern.indexOf("{");
-  if (open < 0) return [pattern];
-  let depth = 0;
-  let close = open;
-  for (; close < pattern.length; close++) {
-    if (pattern[close] === "{") depth++;
-    else if (pattern[close] === "}" && --depth === 0) break;
+// The path-to-regexp @koa/router matches with: its own reading of a pattern's parameters, wildcards and groups.
+const require = createRequire(import.meta.url);
+const { parse, stringify, TokenData } = createRequire(require.resolve("@koa/router"))("path-to-regexp");
+
+/** The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. */
+function expand(tokens) {
+  let out = [[]];
+  for (const token of tokens) {
+    if (token.type === "group") {
+      const inner = expand(token.tokens);
+      out = out.flatMap((head) => [...inner.map((tail) => [...head, ...tail]), head]);
+    } else out = out.map((head) => [...head, token]);
   }
-  const head = pattern.slice(0, open);
-  const tail = pattern.slice(close + 1);
-  return [...expand(head + pattern.slice(open + 1, close) + tail), ...expand(head + tail)];
+  return out;
 }
 
-const NAME = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/u;
-const PARAM = new RegExp(`:${NAME.source}`, "gu");
-const WILD = new RegExp(`\\*${NAME.source}`, "gu");
-const canonical = (pattern) => pattern.replace(WILD, "{**}").replace(PARAM, "{}").replace(/\/+$/, "") || "/";
-const sample = (pattern) => pattern.replace(WILD, "rest/of/it").replace(PARAM, "value1");
+const write = (tokens, param, wildcard) => tokens.map((t) => (t.type === "param" ? param : t.type === "wildcard" ? wildcard : t.value)).join("");
+const canonical = (tokens) => write(tokens, "{}", "{**}").replace(/\/+$/, "") || "/";
+const sample = (tokens) => write(tokens, "value1", "rest/of/it");
 
 const server = app.listen(0);
 await new Promise((resolve) => server.once("listening", resolve));
@@ -68,16 +68,16 @@ const send = (method, path, host) =>
  * Whether @koa/router also dispatches a pattern ending in a wildcard when nothing follows its last `/`: asked of an
  * application whose one router holds that pattern alone, so another route cannot answer in its place.
  */
-async function takesParent(pattern) {
+async function takesParent(tokens) {
   const alone = new Koa();
   const router = new Router();
-  router.get(pattern, (ctx) => {
+  router.get(stringify(new TokenData(tokens)), (ctx) => {
     ctx.body = "alone";
   });
   alone.use(router.routes());
   const server = alone.listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
-  const response = await fetch(`http://127.0.0.1:${server.address().port}${sample(pattern).replace(/rest\/of\/it$/, "")}`);
+  const response = await fetch(`http://127.0.0.1:${server.address().port}${sample(tokens).replace(/rest\/of\/it$/, "")}`);
   const body = await response.text();
   server.close();
   return response.status === 200 && body === "alone";
@@ -85,14 +85,15 @@ async function takesParent(pattern) {
 
 const out = [];
 for (const r of routes) {
-  for (const pattern of expand(r.pattern)) {
+  for (const tokens of expand(parse(r.pattern).tokens)) {
+    const pattern = stringify(new TokenData(tokens));
     for (const method of r.methods) {
-      const answered = (await send(method === "*" ? "PATCH" : method, sample(pattern), r.host)) ?? "";
+      const answered = (await send(method === "*" ? "PATCH" : method, sample(tokens), r.host)) ?? "";
       if (!answered.split(/,\s*/).includes(r.id)) throw new Error(`${method} ${pattern} is answered by route ${answered || "none"}, not by route ${r.id} that registers it`);
-      out.push({ method, path: canonical(pattern), raw: pattern });
+      out.push({ method, path: canonical(tokens), raw: pattern });
       // A route that also takes its parent path with a trailing `/` is written as two: the parent, and `/{**}`.
-      if (canonical(pattern).endsWith("/{**}") && (await takesParent(pattern))) {
-        out.push({ method, path: canonical(pattern).slice(0, -"/{**}".length) || "/", raw: pattern });
+      if (canonical(tokens).endsWith("/{**}") && (await takesParent(tokens))) {
+        out.push({ method, path: canonical(tokens).slice(0, -"/{**}".length) || "/", raw: pattern });
       }
     }
   }

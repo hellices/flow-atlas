@@ -13,8 +13,22 @@ app.get("/users/:userId/books/:bookId", (req, res) => res.send(req.params));
 app.get("/flights/:from-:to", (req, res) => res.send(req.params));
 app.get("/plantae/:genus.:species", (req, res) => res.send(req.params));
 app.get("/files/*filepath", (req, res) => res.send(req.params.filepath));
-app.get("/about{/:section}", (req, res) => res.send(req.params.section ?? "about"));
+app.get("/about{/:section}", (req, res) => res.type("text").send(req.params.section ?? "about"));
 app.get(["/help", "/faq"], (req, res) => res.send("help"));
+
+// More than one callback, the first passing the request on; one answering with a route-level error handler
+// (expressjs.com/en/guide/error-handling.html); one answering with a redirect.
+app.get(
+  "/example/b",
+  (req, res, next) => next(),
+  (req, res) => res.send("Hello from B!"),
+);
+app.get(
+  "/example/e",
+  (req, res, next) => next(new Error("not ready")),
+  (err, req, res, next) => res.status(503).send(err.message),
+);
+app.get("/home", (req, res) => res.redirect(301, "/"));
 
 app
   .route("/book")
