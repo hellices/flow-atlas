@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs runs the requests this app makes through the SDK @hey-api/openapi-ts generates
+# (src/client, committed; `latest` generates it again with the latest release).
+toolchain: node
+docs:
+  - https://heyapi.dev/docs/openapi/typescript/get-started
+  - https://heyapi.dev/docs/openapi/typescript/clients/fetch
+  - https://heyapi.dev/docs/openapi/typescript/plugins/sdk
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund @hey-api/openapi-ts@latest && npm run -s generate
+oracle: npx tsc -p . && npx tsx oracle.ts

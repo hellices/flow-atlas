@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The functions orval generates and the app's code that calls them; the axios instance's base URL
+  # (src/api/mutator/custom-instance.ts) is the prefix.
+  - { from: client, to: api, files: ["src/**/*.ts"], prefix: /api/v1 }
