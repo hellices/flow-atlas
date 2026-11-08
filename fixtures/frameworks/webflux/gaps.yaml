@@ -69,3 +69,10 @@ extra:
   - { route: "DELETE /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
   - { route: "GET /library/resources/ima?e.png", reason: "the path without its `/api` prefix, and its `?` wildcard read as literal text" }
   - { route: "GET /library/resources/*.png", reason: "the path without its `/api` prefix, and its `*` wildcard read as literal text" }
+dispatch:
+  - { request: "POST /owners/1/faq/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/faq/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /owners/1/help/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/help/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PATCH /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }

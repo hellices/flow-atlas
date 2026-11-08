@@ -68,3 +68,10 @@ extra:
   - { route: "PUT /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
   - { route: "POST /pets", reason: "the path without the `/api` prefix the controller is served under" }
   - { route: "GET /pets/{}", reason: "the path without the `/api` prefix the controller is served under" }
+dispatch:
+  - { request: "POST /faq/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/faq/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /help/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/help/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PATCH /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }

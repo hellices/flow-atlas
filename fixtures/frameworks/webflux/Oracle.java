@@ -33,11 +33,13 @@ import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import org.springframework.web.reactive.function.server.support.RouterFunctionMapping;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.reactive.handler.AbstractUrlHandlerMapping;
 import org.springframework.web.reactive.resource.ResourceWebHandler;
 import org.springframework.web.reactive.result.method.AbstractHandlerMethodMapping;
 import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 /**
  * Asks Spring WebFlux which routes the application serves: it starts the application (on a random port), takes the
@@ -45,7 +47,8 @@ import org.springframework.web.util.pattern.PathPattern;
  * public API: the RequestMappingInfo of each handler method (annotated controllers, explicit registrations, the
  * actuator's endpoints), the URL patterns of the URL handler mappings (static resources), and the router function of
  * WebFlux.fn through RouterFunctions.Visitor, each route of which is then confirmed by a request the router function
- * answers with a handler. A mapping of another kind fails the oracle rather than being left out.
+ * answers with a handler. A mapping of another kind fails the oracle rather than being left out. Last, sample requests
+ * are sent through the DispatcherHandler, each recorded with the route it dispatched it to.
  *
  *   java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java
  */
@@ -54,15 +57,24 @@ public class Oracle {
 	record Route(String method, String raw) {
 	}
 
+	record Request(String method, String path, String route) {
+	}
+
+	/** The resource lookups of router functions (`RouterFunctions.resources`), by the pattern each serves. */
+	static final Map<String, Function<ServerRequest, reactor.core.publisher.Mono<Resource>>> LOOKUPS = new java.util.LinkedHashMap<>();
+
 	public static void main(String[] args) throws Exception {
 		PrintStream stdout = System.out;
 		System.setOut(System.err);
 		ConfigurableApplicationContext context = new SpringApplicationBuilder(Application.class).run(
 				"--server.port=0", "--spring.main.banner-mode=off", "--logging.level.root=WARN");
 		List<Route> routes = new ArrayList<>();
+		List<Request> requests;
 		try {
-			List<HandlerMapping> mappings = context.getBean(DispatcherHandler.class).getHandlerMappings();
+			DispatcherHandler dispatcher = context.getBean(DispatcherHandler.class);
+			List<HandlerMapping> mappings = dispatcher.getHandlerMappings();
 			for (HandlerMapping mapping : mappings) read(mapping, routes);
+			requests = dispatch(dispatcher, routes);
 		}
 		finally {
 			SpringApplication.exit(context);
@@ -74,6 +86,13 @@ public class Oracle {
 			if (i > 0) json.append(',');
 			json.append("{\"method\":").append(quote(r.method())).append(",\"path\":").append(quote(canonical(r.raw())))
 					.append(",\"raw\":").append(quote(r.raw())).append('}');
+		}
+		json.append("],\"requests\":[");
+		for (int i = 0; i < requests.size(); i++) {
+			Request r = requests.get(i);
+			if (i > 0) json.append(',');
+			json.append("{\"method\":").append(quote(r.method())).append(",\"path\":").append(quote(r.path()))
+					.append(",\"route\":").append(r.route() == null ? "null" : quote(r.route())).append('}');
 		}
 		stdout.println(json.append("]}"));
 		System.exit(0);
@@ -100,6 +119,92 @@ public class Oracle {
 		else {
 			throw new IllegalStateException("no reading for the handler mapping " + mapping.getClass().getName());
 		}
+	}
+
+	/**
+	 * Sample requests, and the route WebFlux dispatches each to: every route's sample path, also with a trailing `/`, and
+	 * a path no route takes, each with every method a route registers, sent through the DispatcherHandler. The route is
+	 * told by the pattern the handler mapping that took the request exposes (BEST_MATCHING_PATTERN_ATTRIBUTE: the handler
+	 * method's mapping, the URL handler's pattern, the router function's matching pattern). No handler, a 405 from the
+	 * handler chosen, or a route that does not serve the method (see `route`), is no route.
+	 */
+	static List<Request> dispatch(DispatcherHandler dispatcher, List<Route> routes) {
+		Set<String> methods = new TreeSet<>();
+		Set<String> samples = new TreeSet<>();
+		for (Route r : routes) {
+			if (!List.of("*", "HEAD", "OPTIONS").contains(r.method())) methods.add(r.method());
+			String path = probe(r.raw()).replaceAll("/+$", "");
+			samples.add(path.isEmpty() ? "/" : path);
+		}
+		Set<String> probes = new TreeSet<>(samples);
+		for (String path : samples) if (!path.equals("/")) probes.add(path + "/");
+		probes.add("/nowhere/value1");
+		List<Request> out = new ArrayList<>();
+		for (String path : probes) {
+			for (String method : methods) {
+				// The application makes the API version optional (WebConfiguration), which the guide says uses the most recent
+				// version; WebFlux 7.0 instead maps a request with no version to no handler of a mapping that versions
+				// (ApiVersionStrategy.resolveParseAndValidateApiVersion completes empty, and getHandler maps that empty
+				// result), leaving every such request to the static resources. The samples carry that version, as the guide has it.
+				MockServerHttpRequest.BodyBuilder builder = MockServerHttpRequest.method(HttpMethod.valueOf(method), path).header("API-Version", "1.2");
+				MockServerHttpRequest http = method.equals("GET") || method.equals("DELETE") ? builder.build()
+						: builder.contentType(org.springframework.http.MediaType.APPLICATION_JSON).body("{}");
+				MockServerWebExchange exchange = MockServerWebExchange.from(http);
+				// Errors reach the WebExceptionHandlers past the DispatcherHandler: a status is taken from the exception.
+				Throwable error = dispatcher.handle(exchange).then(reactor.core.publisher.Mono.<Throwable>empty())
+						.onErrorResume(reactor.core.publisher.Mono::just).block();
+				int status = error instanceof ResponseStatusException ex ? ex.getStatusCode().value()
+						: exchange.getResponse().getStatusCode() == null ? 200 : exchange.getResponse().getStatusCode().value();
+				Object pattern = exchange.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+				// A router function's resources expose no pattern: theirs is the lookup that finds the resource served.
+				Object handler = exchange.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE);
+				if (pattern == null && handler != null && handler.getClass().getSimpleName().equals("ResourceHandlerFunction")) {
+					ServerRequest request = exchange.getAttribute(RouterFunctions.REQUEST_ATTRIBUTE);
+					List<String> found = new ArrayList<>();
+					LOOKUPS.forEach((raw, lookup) -> {
+						if (lookup.apply(request).blockOptional().isPresent()) found.add(raw);
+					});
+					if (found.size() != 1) throw new IllegalStateException(method + " " + path + " is served by the resources of " + found);
+					pattern = found.get(0);
+				}
+				String raw = pattern instanceof PathPattern p ? p.getPatternString() : pattern == null ? null : pattern.toString();
+				out.add(new Request(method, path, raw == null || status == 405 ? null : route(routes, method, path, raw)));
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * The route of `routes` the pattern that took a request stands for: the pattern, or, where it ends in a segment that
+	 * takes the rest of the path and the request has nothing after its last `/`, its parent; a router function's nest
+	 * route with no path of its own takes what its nest's pattern leaves (`/teams/**`).
+	 */
+	static String route(List<Route> routes, String method, String path, String raw) {
+		PathPatternParser parser = PathPatternParser.defaultInstance;
+		PathPattern pattern = parser.parse(raw);
+		String trimmed = path.replaceAll("/+$", "");
+		String parent = parent(raw);
+		String taken;
+		if (pattern.matches(PathContainer.parsePath(path))) {
+			boolean bare = parent != null && parser.parse(parent.isEmpty() ? "/" : parent).matches(PathContainer.parsePath(trimmed.isEmpty() ? "/" : trimmed));
+			taken = bare ? (parent.isEmpty() ? "/" : parent) : raw;
+		}
+		else {
+			PathPattern.PathRemainingMatchInfo start = pattern.matchStartOfPath(PathContainer.parsePath(path));
+			if (start == null) throw new IllegalStateException(method + " " + path + " is dispatched to " + raw + ", which does not match it");
+			taken = start.getPathRemaining().value().replaceAll("/+$", "").isEmpty() ? raw : raw.replaceAll("/+$", "") + "/**";
+		}
+		boolean any = false;
+		boolean own = false;
+		for (Route r : routes) {
+			if (!r.raw().equals(taken)) continue;
+			any |= r.method().equals("*");
+			own |= r.method().equals(method);
+		}
+		// A URL handler mapping chooses its handler by path alone: a resource handler that took a method it does not
+		// serve answers it with an error (404 for a missing file before 405), so no route took the request.
+		if (!any && !own) return null;
+		return (any ? "*" : method) + " " + canonical(taken);
 	}
 
 	/**
@@ -315,6 +420,7 @@ public class Oracle {
 			int arrow = description.indexOf(" -> ");
 			if (arrow < 0) throw new IllegalStateException("no reading for the resource lookup " + description);
 			String raw = description.substring(0, arrow);
+			LOOKUPS.put(raw, lookup);
 			String parent = parent(raw);
 			for (String method : List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")) {
 				if (!confirm(method, raw, true)) continue;
@@ -353,6 +459,53 @@ public class Oracle {
 		for (String seg : raw.split("/", -1)) {
 			if (seg.equals("**") || (seg.startsWith("{*") && seg.endsWith("}"))) segments.add("hello.txt");
 			else segments.add(replaceVariables(seg, "1", "1"));
+		}
+		String path = String.join("/", segments);
+		return path.startsWith("/") ? path : "/" + path;
+	}
+
+	/**
+	 * A request path a pattern matches, to send as a sample: `1` for a variable, the first of a few values its regex
+	 * matches for a variable with one, `1` for a `*` or `?` wildcard, `hello.txt` for the rest of the path.
+	 */
+	static String probe(String raw) {
+		List<String> segments = new ArrayList<>();
+		for (String seg : raw.split("/", -1)) {
+			if (seg.equals("**") || (seg.startsWith("{*") && seg.endsWith("}"))) {
+				segments.add("hello.txt");
+				continue;
+			}
+			StringBuilder out = new StringBuilder();
+			for (int i = 0; i < seg.length(); i++) {
+				char c = seg.charAt(i);
+				if (c == '{') {
+					int depth = 0;
+					int j = i;
+					for (; j < seg.length(); j++) {
+						if (seg.charAt(j) == '{') depth++;
+						else if (seg.charAt(j) == '}' && --depth == 0) break;
+					}
+					String variable = seg.substring(i + 1, j);
+					int colon = variable.indexOf(':');
+					String value = "1";
+					if (colon >= 0) {
+						String regex = variable.substring(colon + 1);
+						value = null;
+						for (String candidate : List.of("1", "value", "1.0.0", ".txt")) {
+							if (candidate.matches(regex)) {
+								value = candidate;
+								break;
+							}
+						}
+						if (value == null) throw new IllegalStateException("no sample value for " + variable);
+					}
+					out.append(value);
+					i = j;
+				}
+				else if (c == '*' || c == '?') out.append('1');
+				else out.append(c);
+			}
+			segments.add(out.toString());
 		}
 		String path = String.join("/", segments);
 		return path.startsWith("/") ? path : "/" + path;
