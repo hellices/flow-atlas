@@ -98,6 +98,8 @@
     {"method":"GET","path":"/profile.{}","raw":"/profile(.:format)"},
     {"method":"PATCH","path":"/profile.{}","raw":"/profile(.:format)"},
     {"method":"PUT","path":"/profile.{}","raw":"/profile(.:format)"},
+    {"method":"GET","path":"/retired","raw":"/retired(.:format)"},
+    {"method":"GET","path":"/retired.{}","raw":"/retired(.:format)"},
     {"method":"GET","path":"/revisions/{}","raw":"/revisions/:id(.:format)"},
     {"method":"GET","path":"/revisions/{}.{}","raw":"/revisions/:id(.:format)"},
     {"method":"GET","path":"/search","raw":"/search(.:format)"},
