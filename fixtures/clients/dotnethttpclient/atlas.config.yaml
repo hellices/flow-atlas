@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The base addresses in appsettings.json: the typed clients' Services:Api, and the named "reports" client's Services:Reports.
+  - { from: client, to: api, files: ["src/App/Clients/UsersClient.cs", "src/App/Clients/ProjectsClient.cs"], prefix: /api }
+  - { from: client, to: api, files: ["src/App/Clients/ReportsService.cs"], prefix: /api/v2 }
