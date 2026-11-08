@@ -15,6 +15,7 @@ urlpatterns = [
     re_path(r"^comments/(?:page-(?P<page_number>\d+)/)?$", views.comments),
     path("drafts/<uuid:draft_id>/", views.draft),
     path("files/<path:file_path>", views.download),
+    path("subscribe/", views.subscribe),
     path("tags/<str:tag>/", views.tag, {"feed": False}),
     path("tags/<str:tag>/feed/", views.tag, {"feed": True}),
     path("posts/", views.PostList.as_view(), name="post-list"),

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
 
@@ -17,6 +18,7 @@ import org.springframework.boot.SpringBootVersion;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.server.PathContainer;
 import org.springframework.http.converter.HttpMessageConverter;
@@ -139,10 +141,29 @@ public class Oracle {
 		return last.equals("**") || (last.startsWith("{*") && last.endsWith("}")) ? raw.substring(0, slash) : null;
 	}
 
-	/** One way through a predicate: the methods it takes (null for any) and the path pattern it matches (null for any). */
-	record Way(Set<String> methods, String path) {
+	/**
+	 * One way through a predicate: the methods it takes (null for any), the path pattern it matches (null for any), and
+	 * the headers and query parameters a request needs to match it, which narrow the requests a route takes, not its path.
+	 */
+	record Way(Set<String> methods, String path, Map<String, String> headers, Map<String, String> params) {
 
-		static final Way ANY = new Way(null, null);
+		static final Way ANY = new Way(null, null, Map.of(), Map.of());
+
+		static Way methods(Set<String> methods) {
+			return new Way(methods, null, Map.of(), Map.of());
+		}
+
+		static Way path(String path) {
+			return new Way(null, path, Map.of(), Map.of());
+		}
+
+		static Way header(String name, String value) {
+			return new Way(null, null, Map.of(name, value), Map.of());
+		}
+
+		static Way param(String name, String value) {
+			return new Way(null, null, Map.of(), Map.of(name, value));
+		}
 
 		Way and(Way other) {
 			Set<String> m = methods;
@@ -152,14 +173,23 @@ public class Oracle {
 				m.retainAll(other.methods);
 			}
 			if (path != null && other.path != null) throw new IllegalStateException("two paths in one predicate: " + path + ", " + other.path);
-			return new Way(m, path != null ? path : other.path);
+			return new Way(m, path != null ? path : other.path, merged(headers, other.headers), merged(params, other.params));
 		}
 
 		/** Within a nest, the nested predicate's path is matched against the rest of the path its parent matched. */
 		Way nest(Way inner) {
-			Way joined = new Way(methods, null).and(new Way(inner.methods, null));
+			Way joined = new Way(methods, null, headers, params).and(new Way(inner.methods, null, inner.headers, inner.params));
 			String p = path == null ? inner.path : inner.path == null ? path : path + inner.path;
-			return new Way(joined.methods, p);
+			return new Way(joined.methods, p, joined.headers, joined.params);
+		}
+
+		static Map<String, String> merged(Map<String, String> a, Map<String, String> b) {
+			Map<String, String> out = new TreeMap<>(a);
+			b.forEach((name, value) -> {
+				String before = out.putIfAbsent(name, value);
+				if (before != null && !before.equals(value)) throw new IllegalStateException("two values of " + name + ": " + before + ", " + value);
+			});
+			return out;
 		}
 	}
 
@@ -176,25 +206,26 @@ public class Oracle {
 			public void method(Set<HttpMethod> methods) {
 				Set<String> names = new TreeSet<>();
 				for (HttpMethod m : methods) names.add(m.name());
-				leaf(new Way(names, null));
+				leaf(Way.methods(names));
 			}
 
 			public void path(String pattern) {
-				leaf(new Way(null, pattern));
+				leaf(Way.path(pattern));
 			}
 
-			// Media types, headers, parameters, versions and extensions narrow which requests match, not the route.
+			// Media types and parameters narrow which requests match, not the route; the confirming request carries them.
+			// A list of media types (`[a, b]`) is met by its first. Versions and extensions are left to the request.
 			@SuppressWarnings("removal")
 			public void pathExtension(String extension) {
 				leaf(Way.ANY);
 			}
 
 			public void header(String name, String value) {
-				leaf(Way.ANY);
+				leaf(Way.header(name, value.startsWith("[") ? value.substring(1, value.length() - 1).split(", ")[0] : value));
 			}
 
 			public void param(String name, String value) {
-				leaf(Way.ANY);
+				leaf(Way.param(name, value));
 			}
 
 			public void version(String version) {
@@ -289,9 +320,9 @@ public class Oracle {
 				Set<String> methods = way.methods() == null ? Set.of("*") : way.methods();
 				String parent = parent(raw);
 				for (String method : methods) {
-					if (!confirm(method, raw, false)) throw new IllegalStateException("the router function routes no " + method + " " + raw);
+					if (!confirm(method, raw, way)) throw new IllegalStateException("the router function routes no " + method + " " + raw);
 					routes.add(new Route(method, raw));
-					if (parent != null && (confirm(method, parent, false) || confirm(method, parent + "/", false))) {
+					if (parent != null && (confirm(method, parent, way) || confirm(method, parent + "/", way))) {
 						routes.add(new Route(method, parent.isEmpty() ? "/" : parent));
 					}
 				}
@@ -310,9 +341,9 @@ public class Oracle {
 			String raw = description.substring(0, arrow);
 			String parent = parent(raw);
 			for (String method : List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")) {
-				if (!confirm(method, raw, true)) continue;
+				if (!confirm(method, raw, null)) continue;
 				routes.add(new Route(method, raw));
-				if (parent != null && (confirm(method, parent, true) || confirm(method, parent + "/", true))) {
+				if (parent != null && (confirm(method, parent, null) || confirm(method, parent + "/", null))) {
 					routes.add(new Route(method, parent.isEmpty() ? "/" : parent));
 				}
 			}
@@ -326,11 +357,18 @@ public class Oracle {
 		}
 
 		/**
-		 * Routes a request for the pattern through the whole router function: true when it is routed to a handler (for a
-		 * resource, one that serves the method rather than answering 405).
+		 * Routes a request for the pattern, with the headers and parameters of the way through the route's predicate,
+		 * through the whole router function: true when it is routed to a handler (for a resource, way null, one that
+		 * serves the method rather than answering 405).
 		 */
-		private boolean confirm(String method, String raw, boolean resource) {
+		private boolean confirm(String method, String raw, Way way) {
+			boolean resource = way == null;
 			MockHttpServletRequest servlet = new MockHttpServletRequest(method.equals("*") ? "GET" : method, sample(raw));
+			if (way != null) {
+				way.headers().forEach(servlet::addHeader);
+				way.params().forEach(servlet::addParameter);
+				if (way.headers().containsKey(HttpHeaders.CONTENT_TYPE)) servlet.setContentType(way.headers().get(HttpHeaders.CONTENT_TYPE));
+			}
 			ServletRequestPathUtils.parseAndCache(servlet);
 			List<HttpMessageConverter<?>> converters = List.of(new StringHttpMessageConverter());
 			ServerRequest request = ServerRequest.create(servlet, converters);
@@ -347,12 +385,17 @@ public class Oracle {
 		}
 	}
 
-	/** A request path a pattern matches: `1` for a variable, and `hello.txt` (a file the fixture ships) for the rest. */
+	static final List<String> VALUES = List.of("1", "abc", "a-b", "value1", "00000000-0000-0000-0000-000000000001");
+
+	/**
+	 * A request path a pattern matches: for a variable `1`, or the first of a few values its regex takes, and
+	 * `hello.txt` (a file the fixture ships) for the rest.
+	 */
 	static String sample(String raw) {
 		List<String> segments = new ArrayList<>();
 		for (String seg : raw.split("/", -1)) {
 			if (seg.equals("**") || (seg.startsWith("{*") && seg.endsWith("}"))) segments.add("hello.txt");
-			else segments.add(replaceVariables(seg, "1", "1"));
+			else segments.add(replaceVariables(seg, Oracle::value, "1"));
 		}
 		String path = String.join("/", segments);
 		return path.startsWith("/") ? path : "/" + path;
@@ -366,15 +409,27 @@ public class Oracle {
 		List<String> segments = new ArrayList<>();
 		for (String seg : raw.split("/", -1)) {
 			if (seg.equals("**") || (seg.startsWith("{*") && seg.endsWith("}"))) segments.add("{**}");
-			else segments.add(replaceVariables(seg, "{}", "{}"));
+			else segments.add(replaceVariables(seg, variable -> "{}", "{}"));
 		}
 		String path = String.join("/", segments).replaceAll("/+$", "");
 		if (!path.startsWith("/")) path = "/" + path;
 		return path;
 	}
 
-	/** A segment with each `{...}` variable (braces in its regex balanced) replaced, and each `*` or `?` wildcard. */
-	static String replaceVariables(String segment, String variable, String wildcard) {
+	/** A value for a variable (`name` or `name:regex`, as written between its braces) that its regex takes, if any. */
+	static String value(String variable) {
+		int colon = variable.indexOf(':');
+		if (colon < 0) return VALUES.get(0);
+		String regex = variable.substring(colon + 1);
+		return VALUES.stream().filter(v -> v.matches(regex)).findFirst()
+				.orElseThrow(() -> new IllegalStateException("none of " + VALUES + " is a value of {" + variable + "}"));
+	}
+
+	/**
+	 * A segment with each `{...}` variable (braces in its regex balanced) replaced by what `variable` makes of the text
+	 * between its braces, and each `*` or `?` wildcard by `wildcard`.
+	 */
+	static String replaceVariables(String segment, Function<String, String> variable, String wildcard) {
 		StringBuilder out = new StringBuilder();
 		for (int i = 0; i < segment.length(); i++) {
 			char c = segment.charAt(i);
@@ -385,7 +440,7 @@ public class Oracle {
 					if (segment.charAt(j) == '{') depth++;
 					else if (segment.charAt(j) == '}' && --depth == 0) break;
 				}
-				out.append(variable);
+				out.append(variable.apply(segment.substring(i + 1, Math.min(j, segment.length()))));
 				i = j;
 			}
 			else if (c == '*' || c == '?') out.append(wildcard);

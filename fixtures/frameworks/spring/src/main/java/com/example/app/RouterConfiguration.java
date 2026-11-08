@@ -3,6 +3,8 @@ package com.example.app;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.web.servlet.function.RequestPredicates.GET;
 import static org.springframework.web.servlet.function.RequestPredicates.accept;
+import static org.springframework.web.servlet.function.RequestPredicates.contentType;
+import static org.springframework.web.servlet.function.RequestPredicates.param;
 import static org.springframework.web.servlet.function.RouterFunctions.route;
 
 import org.springframework.context.annotation.Bean;
@@ -38,6 +40,16 @@ public class RouterConfiguration {
 						.PUT("/{id}", handler::createPerson)
 						.DELETE("/{id}", handler::createPerson))
 				.filter((request, next) -> next.handle(request))
+				.build();
+	}
+
+	/** Routes a request reaches only with a query parameter, with a Content-Type, or with a variable its regex takes. */
+	@Bean
+	public RouterFunction<ServerResponse> searchRoutes(PeopleHandler handler) {
+		return route()
+				.GET("/search", param("type", "person"), handler::listPeople)
+				.POST("/imports", contentType(APPLICATION_JSON), handler::createPerson)
+				.GET("/tags/{tag:[a-z]+}", request -> ServerResponse.ok().body(request.pathVariable("tag")))
 				.build();
 	}
 

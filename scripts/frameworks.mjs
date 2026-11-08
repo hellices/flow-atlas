@@ -4,7 +4,7 @@
 //   node scripts/frameworks.mjs [name ...] [--check [--keep]] [--latest]
 //   node scripts/frameworks.mjs --matrix [name ...]
 //
-// --check   compare with the committed routes.json instead of writing it; exit 1 on a difference
+// --check   compare with the committed routes.json instead of writing it; exit 1 on a difference (a route's raw included)
 // --keep    with --check, write what the framework reports to routes.json all the same, for CI to hand back
 // --latest  install the framework's latest release first (the fixture's `latest` command) instead of its locked one
 // --matrix  print each fixture (or each named one present) with its toolchain as a GitHub Actions matrix and exit
@@ -69,7 +69,8 @@ for (const name of names.length ? names : all) {
     console.error(`   ${result.routes.length} routes, ${result.framework} ${result.version}`);
     continue;
   }
-  const key = (r) => `${r.method} ${r.path}`;
+  // The framework's own spelling counts too: routes.json records it.
+  const key = (r) => `${r.method} ${r.path}${r.raw !== undefined && r.raw !== r.path ? ` (${r.raw})` : ""}`;
   const before = new Set(committed.routes.map(key));
   const now = new Set(result.routes.map(key));
   const gone = [...before].filter((k) => !now.has(k));

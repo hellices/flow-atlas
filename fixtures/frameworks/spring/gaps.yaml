@@ -40,6 +40,9 @@ missing:
   - { route: "DELETE /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "PUT /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /search", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "POST /imports", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
+  - { route: "GET /tags/{}", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
   - { route: "GET /user/{}", reason: "a handler method registered with `RequestMappingHandlerMapping.registerMapping` is not read, and nothing says so" }
   - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
   - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }

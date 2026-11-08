@@ -17,6 +17,8 @@ missing:
   - { route: "GET /profile", reason: "path-to-regexp 8's optional group `{/:id}` is read as literal text, not as two paths" }
   - { route: "GET /profile/{}", reason: "path-to-regexp 8's optional group `{/:id}` is read as literal text, not as two paths" }
   - { route: "GET /files/{**}", reason: "path-to-regexp 8's wildcard `*path` is read as literal text" }
+  - { route: "GET /downloads/{}", reason: "path-to-regexp 8's parameter with a quoted name (`:\"file-name\"`) is read as literal text" }
+  - { route: "GET /archive/{**}", reason: "path-to-regexp 8's wildcard with a quoted name (`*\"rest-path\"`) is read as literal text" }
   - { route: "GET /api/users", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
   - { route: "GET /api/users/{}", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
   - { route: "GET /api/posts", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
@@ -32,3 +34,5 @@ extra:
   - { route: "GET /items", reason: "a route read without its router's prefixes (`/api/v:version/legacy`)" }
   - { route: "GET /profile{/:id}", reason: "the optional group read as literal text" }
   - { route: "GET /files/*path", reason: "the wildcard read as literal text" }
+  - { route: "GET /downloads/:\"file-name\"", reason: "the quoted parameter read as literal text" }
+  - { route: "GET /archive/*\"rest-path\"", reason: "the quoted wildcard read as literal text" }
