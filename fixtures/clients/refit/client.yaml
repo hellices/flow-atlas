@@ -1,0 +1,15 @@
+# How scripts/frameworks.mjs runs the requests this app's Refit interfaces declare. Refit runs on the .NET 10 (LTS)
+# runtime the SDK in use carries (global.json); Refit, its HttpClientFactory registration and the generic host are
+# locked in packages.lock.json, and `latest` takes the newest stable Refit with the newest 10.x host.
+toolchain: dotnet
+docs:
+  - https://www.reactiveui.net/documentation/refit/
+  - https://www.reactiveui.net/documentation/refit/requests/routes/
+  - https://www.reactiveui.net/documentation/refit/requests/queries/
+  - https://www.reactiveui.net/documentation/refit/requests/headers/
+  - https://www.reactiveui.net/documentation/refit/requests/multipart/
+  - https://www.reactiveui.net/documentation/refit/clients/dependency-injection/
+  - https://github.com/reactiveui/refit/blob/main/README.md
+setup: dotnet restore --locked-mode
+latest: dotnet restore -p:RefitVersion=* -p:ExtensionsVersion=10.* -p:NuGetLockFilePath=obj/latest.packages.lock.json
+oracle: dotnet build oracle --no-restore -nologo -v q 1>&2 && dotnet run --project oracle --no-build

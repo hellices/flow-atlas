@@ -1,0 +1,4 @@
+api:
+  base-url: http://localhost:8081
+billing:
+  url: http://localhost:8082

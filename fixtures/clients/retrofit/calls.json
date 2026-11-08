@@ -1,0 +1,22 @@
+{
+  "library": "Retrofit",
+  "version": "3.0.0",
+  "calls": [
+    {"method":"POST","path":"/analytics/v2/events"},
+    {"method":"GET","path":"/analytics/v2/reports/{}","raw":"/analytics/v2/reports/7777777"},
+    {"method":"GET","path":"/api/v1/{}","raw":"/api/v1/zzparamzz"},
+    {"method":"POST","path":"/api/v1/auth/token"},
+    {"method":"GET","path":"/api/v1/groups/{}/users","raw":"/api/v1/groups/7777777/users"},
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"HEAD","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}/photo","raw":"/api/v1/users/zzparamzz/photo"},
+    {"method":"GET","path":"/api/v1/users/{}/repos","raw":"/api/v1/users/zzparamzz/repos"},
+    {"method":"DELETE","path":"/api/v1/users/{}/sessions","raw":"/api/v1/users/zzparamzz/sessions"},
+    {"method":"GET","path":"/health"}
+  ]
+}

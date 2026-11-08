@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs builds the app's networking code on Foundation's URLSession and runs the requests it makes.
+# Foundation is the toolchain's (FoundationNetworking on Linux), so its version is the Swift toolchain's.
+toolchain: swift
+docs:
+  - https://developer.apple.com/documentation/foundation/fetching-website-data-into-memory
+  - https://developer.apple.com/documentation/foundation/uploading-data-to-a-website
+  - https://developer.apple.com/documentation/foundation/urlsession/data(for:delegate:)
+  - https://developer.apple.com/documentation/foundation/urlrequest
+  - https://developer.apple.com/documentation/foundation/urlcomponents
+  - https://developer.apple.com/documentation/foundation/url/appendingpathcomponent(_:)
+  - https://developer.apple.com/documentation/foundation/url/appending(path:directoryhint:)
+setup: swift --version
+latest: swift --version
+oracle: cd app && swift build -q --product Oracle >&2 && SWIFT_VERSION="$(swift --version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -1)" swift run --skip-build Oracle

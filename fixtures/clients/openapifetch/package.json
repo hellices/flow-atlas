@@ -1,0 +1,16 @@
+{
+  "name": "openapifetch-calls",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript openapi.yaml -o src/api/v1.d.ts"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

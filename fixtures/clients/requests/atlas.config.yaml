@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  - { from: client, to: api, files: ["app/users.py", "app/orders.py"] }
+  # The session in app/projects.py joins each path to the API's /api/v2/ base.
+  - { from: client, to: api, files: ["app/projects.py"], prefix: /api/v2 }

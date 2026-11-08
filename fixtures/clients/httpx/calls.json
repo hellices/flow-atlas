@@ -1,0 +1,22 @@
+{
+  "library": "httpx",
+  "version": "0.28.1",
+  "calls": [
+    {"method":"GET","path":"/api/v1/items"},
+    {"method":"OPTIONS","path":"/api/v1/items"},
+    {"method":"POST","path":"/api/v1/items"},
+    {"method":"DELETE","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"GET","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"HEAD","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/items/{}","raw":"/api/v1/items/zzparamzz"},
+    {"method":"POST","path":"/api/v1/items/{}/move","raw":"/api/v1/items/zzparamzz/move"},
+    {"method":"PUT","path":"/api/v1/items/{}/tags/{}","raw":"/api/v1/items/zzparamzz/tags/zzparamzz"},
+    {"method":"GET","path":"/api/v2/accounts"},
+    {"method":"POST","path":"/api/v2/accounts"},
+    {"method":"DELETE","path":"/api/v2/accounts/{}","raw":"/api/v2/accounts/zzparamzz"},
+    {"method":"GET","path":"/api/v2/accounts/{}","raw":"/api/v2/accounts/zzparamzz"},
+    {"method":"GET","path":"/api/v2/accounts/{}/statements/{}","raw":"/api/v2/accounts/zzparamzz/statements/7777777"},
+    {"method":"GET","path":"/health"}
+  ]
+}

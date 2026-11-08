@@ -1,0 +1,19 @@
+{
+  "library": "@angular/common/http",
+  "version": "22.2.4",
+  "calls": [
+    {"method":"POST","path":"/api/orders/{}/cancel","raw":"/api/orders/zzparamzz/cancel"},
+    {"method":"GET","path":"/api/orders/{}/items","raw":"/api/orders/zzparamzz/items"},
+    {"method":"PUT","path":"/api/orders/{}/note","raw":"/api/orders/zzparamzz/note"},
+    {"method":"GET","path":"/api/orders/search"},
+    {"method":"GET","path":"/api/users"},
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}/avatar","raw":"/api/users/zzparamzz/avatar"},
+    {"method":"GET","path":"/api/v2/reports/{}","raw":"/api/v2/reports/7777777"},
+    {"method":"POST","path":"/api/v2/reports/{}/export","raw":"/api/v2/reports/7777777/export"}
+  ]
+}

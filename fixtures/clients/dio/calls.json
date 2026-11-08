@@ -1,0 +1,16 @@
+{
+  "library": "dio",
+  "version": "5.11.1",
+  "calls": [
+    {"method":"GET","path":"/api/v1/orders/{}/items","raw":"/api/v1/orders/zzparamzz/items"},
+    {"method":"QUERY","path":"/api/v1/products/search"},
+    {"method":"GET","path":"/api/v1/users"},
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/billing/v2/invoices/{}","raw":"/billing/v2/invoices/7777777"},
+    {"method":"POST","path":"/billing/v2/invoices/{}/payments","raw":"/billing/v2/invoices/7777777/payments"}
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "library": "requests",
+  "version": "2.34.2",
+  "calls": [
+    {"method":"GET","path":"/api/v2/projects"},
+    {"method":"POST","path":"/api/v2/projects"},
+    {"method":"DELETE","path":"/api/v2/projects/{}","raw":"/api/v2/projects/zzparamzz"},
+    {"method":"GET","path":"/api/v2/projects/{}","raw":"/api/v2/projects/zzparamzz"},
+    {"method":"PUT","path":"/api/v2/projects/{}","raw":"/api/v2/projects/zzparamzz"},
+    {"method":"POST","path":"/api/v2/projects/{}/archive","raw":"/api/v2/projects/zzparamzz/archive"},
+    {"method":"GET","path":"/orders"},
+    {"method":"DELETE","path":"/orders/{}","raw":"/orders/zzparamzz"},
+    {"method":"GET","path":"/orders/{}","raw":"/orders/zzparamzz"},
+    {"method":"POST","path":"/orders/{}/cancel","raw":"/orders/zzparamzz/cancel"},
+    {"method":"POST","path":"/orders/import"},
+    {"method":"GET","path":"/reports/{}","raw":"/reports/7777777"},
+    {"method":"GET","path":"/users"},
+    {"method":"OPTIONS","path":"/users"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"HEAD","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PUT","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/{}/avatar","raw":"/users/zzparamzz/avatar"},
+    {"method":"PATCH","path":"/users/{}/status","raw":"/users/zzparamzz/status"}
+  ]
+}

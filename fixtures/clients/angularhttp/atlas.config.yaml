@@ -1,0 +1,8 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The services' requests; environment.ts names the API's base URL, which the interceptor puts before a path alone.
+  - { from: client, to: api, files: ["src/app/**/*.service.ts"], prefix: /api }
+origins:
+  api: http://localhost:3000

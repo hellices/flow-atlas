@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs axios and runs the requests this app makes with it.
+toolchain: node
+docs:
+  - https://axios-http.com/docs/api_intro
+  - https://axios-http.com/docs/instance
+  - https://axios-http.com/docs/req_config
+  - https://axios-http.com/docs/interceptors
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund axios@latest
+oracle: node oracle.mjs

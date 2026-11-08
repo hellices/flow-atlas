@@ -1,0 +1,8 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /health", reason: "the axios option a call passes to a generated function (`getHealth({ baseURL: location.origin })`) is not read: the call source's prefix is put before the generated function's path, and nothing says so" }
+extra:
+  - { call: "GET /api/v1/health", reason: "the request to /health read under the prefix the call's own `baseURL` replaces" }
+  - { call: "POST /api/v1/items/{}/archive", reason: "every function orval generates is read as a request, whether or not the app calls it (atlas recognizes only @hey-api/openapi-ts's generated files); `archiveItem` is called nowhere, and the scan says nothing (references/config.md does)" }
+  - { call: "* /api/v1/api/v1", reason: "the axios instance's base URL (`Axios.create({ baseURL: \"/api/v1\" })` in the mutator) is read as a request of its own, under the prefix it is" }

@@ -1,0 +1,20 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # Each ofetch instance's base path (src/http.js): `api` /api, `catalog` /catalog/v1. ofetch, its instances and
+  # `.raw` send GET unless the options say otherwise, as fetch does.
+  - from: client
+    to: api
+    files: ["src/users.js"]
+    prefix: /api
+    wrappers: [{ name: api, defaultMethod: GET }, { name: api.raw, defaultMethod: GET }]
+  - from: client
+    to: api
+    files: ["src/catalog.js"]
+    prefix: /catalog/v1
+    wrappers: [{ name: catalog, defaultMethod: GET }]
+  - from: client
+    to: api
+    files: ["src/session.js"]
+    wrappers: [{ name: $fetch, defaultMethod: GET }]

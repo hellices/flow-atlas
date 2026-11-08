@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  - { from: client, to: api, files: ["src/main/java/com/example/client/RepoApi.java"] }
+  # Clients.java targets AdminApi at the base URL with /admin after it.
+  - { from: client, to: api, files: ["src/main/java/com/example/client/AdminApi.java"], prefix: /admin }

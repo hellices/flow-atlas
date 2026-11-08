@@ -1,0 +1,20 @@
+{
+  "library": "ofetch",
+  "version": "1.5.1",
+  "calls": [
+    {"method":"GET","path":"/api/search"},
+    {"method":"GET","path":"/api/users"},
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}/avatar","raw":"/api/users/zzparamzz/avatar"},
+    {"method":"POST","path":"/auth/login"},
+    {"method":"POST","path":"/auth/logout"},
+    {"method":"GET","path":"/auth/session"},
+    {"method":"GET","path":"/catalog/v1/products"},
+    {"method":"GET","path":"/catalog/v1/products/{}","raw":"/catalog/v1/products/zzparamzz"},
+    {"method":"POST","path":"/catalog/v1/products/{}/reviews","raw":"/catalog/v1/products/zzparamzz/reviews"}
+  ]
+}

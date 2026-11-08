@@ -1,0 +1,16 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /api/v1/users", reason: "a URL that starts with a Swift interpolation (`\"\\(baseURL)/users\"`) is not read, nor the GET `AF.request` sends without a `method:`, and nothing says so" }
+  - { call: "GET /api/v1/users/{}", reason: "a URL with Swift interpolations in it (`\"\\(baseURL)/users/\\(id)\"`) is not read, and nothing says so" }
+  - { call: "POST /api/v1/users", reason: "a URL that starts with a Swift interpolation is not read, nor the method in `method: .post`, and nothing says so" }
+  - { call: "PUT /api/v1/users/{}", reason: "a URL with Swift interpolations in it is not read, nor the method in `method: .put`, and nothing says so" }
+  - { call: "PATCH /api/v1/users/{}", reason: "a URL with Swift interpolations in it is not read, nor the method in `method: .patch`, and nothing says so" }
+  - { call: "DELETE /api/v1/users/{}", reason: "a path concatenated before a value (`baseURL + \"/users/\" + id`) is read without the value, and the method in `method: .delete` is not read, and nothing says so" }
+  - { call: "GET /api/v1/users/{}/avatar", reason: "a path appended to a `URL` without a leading `/` (`appendingPathComponent(\"users/\\(id)/avatar\")`) is not read, and nothing says so" }
+  - { call: "GET /api/v2/orders", reason: "a router's routes (`URLRequestConvertible`: a path without a leading `/` in `path`, the method in `method`, joined in `asURLRequest`) are not read, and nothing says so" }
+  - { call: "GET /api/v2/orders/{}", reason: "a router's routes are not read, and nothing says so" }
+  - { call: "POST /api/v2/orders/{}/notes", reason: "a router's routes are not read, and nothing says so" }
+  - { call: "DELETE /api/v2/orders/{}", reason: "a router's routes are not read, and nothing says so" }
+extra:
+  - { call: "* /api/v1/users", reason: "`AF.request(baseURL + \"/users/\" + id, method: .delete)` read with its method unread and without the value after the path" }

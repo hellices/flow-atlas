@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs runs the requests this app's services make with Angular's HttpClient.
+toolchain: node
+docs:
+  - https://angular.dev/guide/http/setup
+  - https://angular.dev/guide/http/making-requests
+  - https://angular.dev/guide/http/interceptors
+  - https://angular.dev/guide/di/dependency-injection-providers
+  - https://angular.dev/tools/cli/environments
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund "@angular/core@>=22" "@angular/common@>=22" "@angular/compiler@>=22"
+oracle: npm run -s build && node oracle.mjs

@@ -1,0 +1,21 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /api/v1/users", reason: "a Retrofit interface's relative URL (`@GET(\"users\")`, resolved after the base URL's path) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "GET /api/v1/users/{}", reason: "a Retrofit interface's relative URL (`@GET(\"users/{id}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "POST /api/v1/users", reason: "a Retrofit interface's relative URL (`@POST(\"users\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "PUT /api/v1/users/{}", reason: "a Retrofit interface's relative URL (`@PUT(\"users/{id}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "PATCH /api/v1/users/{}", reason: "a Retrofit interface's relative URL (`@PATCH(\"users/{id}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "DELETE /api/v1/users/{}", reason: "a Retrofit interface's relative URL (`@DELETE(\"users/{id}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "HEAD /api/v1/users/{}", reason: "a Retrofit interface's relative URL (`@HEAD(\"users/{id}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "DELETE /api/v1/users/{}/sessions", reason: "`@HTTP(method = \"DELETE\", path = \"users/{id}/sessions\", hasBody = true)` is not read: neither its relative path nor its method, and nothing says so" }
+  - { call: "GET /api/v1/groups/{}/users", reason: "a Retrofit interface's relative URL (`@GET(\"groups/{groupId}/users\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "POST /api/v1/auth/token", reason: "a Retrofit interface's relative URL (`@FormUrlEncoded @POST(\"auth/token\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "PUT /api/v1/users/{}/photo", reason: "a Retrofit interface's relative URL (`@Multipart @PUT(\"users/{id}/photo\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "GET /api/v1/users/{}/repos", reason: "a Retrofit interface's relative URL (`@GET(\"users/{id}/repos\")`, a method returning `Call`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "GET /api/v1/{}", reason: "a `@GET` whose URL is the method's `@Url` argument, resolved against the base URL, is not read, and nothing says so" }
+  - { call: "GET /analytics/v2/reports/{}", reason: "a Retrofit interface's relative URL (`@GET(\"reports/{year}\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "POST /analytics/v2/events", reason: "a Retrofit interface's relative URL (`@POST(\"events\")`) is not read, nor the method its annotation names, and nothing says so" }
+  - { call: "GET /health", reason: "`@GET(\"/health\")` replaces the base URL's path, as Retrofit resolves a URL that starts with `/`; atlas puts the configured prefix before it and reads no method from the annotation, and nothing says so" }
+extra:
+  - { call: "* /api/v1/health", reason: "`@GET(\"/health\")` read with the configured prefix the request does not carry, and without the annotation's method" }
