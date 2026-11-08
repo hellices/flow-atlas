@@ -171,7 +171,9 @@ scenario there before it is fixed; tests for anything else cover framework rules
 [`fixtures/frameworks`](fixtures/frameworks/README.md) holds an application for each of 58 frameworks (Node, Bun, Python,
 JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart ones: from Express, Next.js, FastAPI, Django, Spring Boot and
 ASP.NET Core to Phoenix, Rails, Laravel, Axum and Vapor), each with the routes the framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
-The `frameworks` workflow installs each framework and checks those routes again, weekly on its latest release.
+[`fixtures/clients`](fixtures/clients/README.md) does the same for calls: code on each client library, with the
+requests it sends when run against a server that records them. The `frameworks` workflow installs each framework and
+library and checks those routes and requests again, weekly on its latest release.
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 

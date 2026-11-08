@@ -1,15 +1,17 @@
 name: frameworks
 
 # Installs each framework under fixtures/frameworks, asks it again for the routes its application serves and fails when
-# they differ from routes.json. Weekly, and on demand, it does so on each framework's latest release. A push to a
-# `frameworks/**` branch runs it too, and every run hands back what each framework reported (routes.json, and lock
-# files written on the way) as an artifact, for fixtures on a toolchain a contributor does not have installed.
+# they differ from routes.json; runs the code of each client library under fixtures/clients again and fails when the
+# requests it sends differ from calls.json. Weekly, and on demand, it does so on each one's latest release. A push to a
+# `frameworks/**` branch runs the fixtures it changes, and every run hands back what each fixture reported (routes.json
+# or calls.json, and lock files written on the way) as an artifact, for fixtures on a toolchain a contributor does not
+# have installed.
 on:
   pull_request:
-    paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
+    paths: ["fixtures/frameworks/**", "fixtures/clients/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   push:
     branches: [main, "frameworks/**"]
-    paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
+    paths: ["fixtures/frameworks/**", "fixtures/clients/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -53,7 +55,7 @@ jobs:
               if [ -z "$best" ] || [ "$n" -lt "$best" ]; then best=$n; base=$ref; fi
             done
             echo "changes since $base"
-            names=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD -- fixtures/frameworks | cut -d/ -f3 | sort -u | tr '\n' ' ')
+            names=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD -- fixtures/frameworks fixtures/clients | cut -d/ -f3 | sort -u | tr '\n' ' ')
             [ -n "$names" ] || names=none
           fi
           echo "matrix=$(node scripts/frameworks.mjs --matrix $names)" >> "$GITHUB_OUTPUT"
@@ -130,7 +132,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/out"
-          git status --porcelain --untracked-files=all -- "fixtures/frameworks/${{ matrix.fixture }}" | cut -c4- | while read -r f; do
+          git status --porcelain --untracked-files=all -- "fixtures/frameworks/${{ matrix.fixture }}" "fixtures/clients/${{ matrix.fixture }}" | cut -c4- | while read -r f; do
             [ -f "$f" ] && mkdir -p "$RUNNER_TEMP/out/$(dirname "$f")" && cp "$f" "$RUNNER_TEMP/out/$f"
           done
           ls -R "$RUNNER_TEMP/out" | head -50

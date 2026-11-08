@@ -1,0 +1,6 @@
+components:
+  - { name: web, path: . }
+  - { name: api, path: server }
+calls:
+  # The app's own helper around fetch in src/projects.js sends GET as fetch does.
+  - { from: web, to: api, files: ["src/**/*.js"], wrappers: [{ name: request, defaultMethod: GET }] }

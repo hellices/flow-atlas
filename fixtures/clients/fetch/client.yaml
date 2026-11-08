@@ -1,0 +1,6 @@
+# How scripts/frameworks.mjs runs the requests this app makes with the Fetch API.
+toolchain: node
+docs: https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch
+setup: node --version
+latest: node --version
+oracle: node oracle.mjs
