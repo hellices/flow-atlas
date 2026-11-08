@@ -1,0 +1,12 @@
+{
+  "surfaces": [],
+  "calls": [
+    "frontend->backend|GET / @ frontend/js/components/TopNav.tsx:11",
+    "frontend->backend|GET /admin/login @ frontend/js/loaders/users.ts:20"
+  ],
+  "edges": [],
+  "findings": [],
+  "limits": [
+    "routes backend: 31 files read, nothing extracted"
+  ]
+}
