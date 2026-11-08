@@ -40,3 +40,23 @@ extra:
   - { route: "POST /rename", reason: "a group's route read without the group's path (`/account`)" }
   - { route: "PUT /{}", reason: "a nested group's route read without the groups' paths (`/account/settings`)" }
   - { route: "DELETE /", reason: "a group's route read without the group's path and the plugin's prefix (`/admin/cache`)" }
+dispatch:
+  # No route takes these (Elysia answers 404); atlas sends them to the surfaces it reads without their groups' paths
+  # (listed under `extra`).
+  - { request: "DELETE /", reason: "a surface the framework does not serve: atlas reaches `DELETE /`, the `/admin` plugin's `/cache` group route read without the group's path and the plugin's prefix; Elysia serves it at `/admin/cache/` only" }
+  - { request: "PUT /callback", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /callback/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /health", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /health/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /hi", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /hi/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /id", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /id/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /items", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /items/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /m-search", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /m-search/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /optional", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /optional/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /version", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
+  - { request: "PUT /version/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }

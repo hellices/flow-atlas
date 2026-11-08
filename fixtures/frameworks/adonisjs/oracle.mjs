@@ -30,9 +30,13 @@ const importer = (filePath) => import(filePath.startsWith("./") || filePath.star
 
 class Answered {
   async handle(ctx, next) {
-    await next();
-    ctx.response.header("x-route", ctx.route.pattern);
-    ctx.response.header("x-route-methods", ctx.route.methods.join(","));
+    // Also when the handler throws (a controller's 404), so the error a route answers with still names it.
+    try {
+      await next();
+    } finally {
+      ctx.response.header("x-route", ctx.route.pattern);
+      ctx.response.header("x-route-methods", ctx.route.methods.join(","));
+    }
   }
 }
 
@@ -58,7 +62,11 @@ const ask = (method, path) =>
   new Promise((resolve, reject) => {
     const req = httpRequest({ ...origin, method, path }, (res) => {
       res.resume();
-      res.on("end", () => resolve(res.headers["x-route"] ? { pattern: res.headers["x-route"], methods: res.headers["x-route-methods"].split(",") } : undefined));
+      res.on("end", () => {
+        if (res.headers["x-route"]) resolve({ pattern: res.headers["x-route"], methods: res.headers["x-route-methods"].split(",") });
+        else if (res.statusCode === 404) resolve(undefined);
+        else reject(new Error(`${method} ${path} is answered with ${res.statusCode} by no route`));
+      });
     });
     req.on("error", reject);
     req.end();
@@ -86,13 +94,18 @@ function* samples(pattern) {
 const answeredBy = (answer, route, method) => answer?.pattern === route.pattern && answer.methods.includes(method);
 
 const out = [];
+const tried = new Set();
 for (const route of routes) {
   for (const method of route.methods) {
     for (const pattern of expand(route.pattern)) {
       let answer;
+      tried.add(samples(pattern).next().value);
       for (const path of samples(pattern)) {
         answer = await ask(method, path);
-        if (answeredBy(answer, route, method)) break;
+        if (answeredBy(answer, route, method)) {
+          tried.add(path);
+          break;
+        }
       }
       if (!answeredBy(answer, route, method)) {
         throw new Error(`${method} ${pattern} is answered by ${answer ? answer.pattern : "no route"}, not by ${route.pattern} that registers it`);
@@ -101,12 +114,41 @@ for (const route of routes) {
       // A wildcard that also takes its parent path with a trailing `/` is written as two: the parent, and `/{**}`.
       if (pattern.endsWith("/*")) {
         const parent = samples(pattern).next().value.replace(/rest\/of\/it$/, "");
+        tried.add(parent);
         if (answeredBy(await ask(method, parent), route, method)) out.push({ method, path: canonical(pattern).slice(0, -"/{**}".length) || "/", raw: route.pattern });
       }
     }
   }
 }
 
+// Sample requests, and the route AdonisJS dispatches each to: every route's sample path (each param `value1`) and,
+// where a matcher refuses that, the path that confirmed the route above, also with a trailing `/`, and a path no route
+// takes, each with every method a route registers. A route is told by `ctx.route`; its path is the one of the forms
+// written above for it (`:id?` with and without the param, `*` and its parent) whose shape the request has. A redirect
+// route (`router.on(path).redirect...`) is a route the application registers, answering with its own handler, so a
+// request it takes is written as dispatched to it.
+const written = new Map();
+for (const r of out) written.set(r.raw, [...(written.get(r.raw) ?? []), r.path].filter((p, i, all) => all.indexOf(p) === i));
+const shape = (path) => new RegExp(`^${path.split("/").map((s) => (s === "{}" ? "[^/]+" : s === "{**}" ? ".+" : s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/")}$`);
+const methods = [...new Set(routes.flatMap((r) => r.methods))].filter((m) => m !== "HEAD" && m !== "OPTIONS").sort();
+const bare = [...tried].map((p) => p.replace(/\/+$/, "") || "/");
+const probes = [...new Set([...bare, ...bare.map((p) => (p === "/" ? p : `${p}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const answer = await ask(method, path);
+    if (answer === undefined) {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    if (!answer.methods.includes(method)) throw new Error(`${method} ${path} is answered by ${answer.pattern}, which takes ${answer.methods.join(", ")}`);
+    const forms = written.get(answer.pattern) ?? [];
+    const form = forms.find((f) => shape(f).test(path.replace(/\/+$/, "") || "/"));
+    if (form === undefined) throw new Error(`${method} ${path} is answered by ${answer.pattern}, none of whose forms (${forms.join(", ")}) it has`);
+    requests.push({ method, path, route: `${method} ${form}` });
+  }
+}
+
 const version = JSON.parse(readFileSync(new URL("node_modules/@adonisjs/core/package.json", import.meta.url), "utf8")).version;
-console.log(JSON.stringify({ framework: "adonisjs", version, routes: out }));
+console.log(JSON.stringify({ framework: "adonisjs", version, routes: out, requests }));
 process.exit(0);
