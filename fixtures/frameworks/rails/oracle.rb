@@ -57,7 +57,15 @@ end
 
 def dispatched(method, path)
   env = Rack::MockRequest.env_for(path, method: method == "*" ? "GET" : method)
-  _, headers, = Rails.application.call(env)
+  begin
+    _, headers, = Rails.application.call(env)
+  rescue ActionController::RoutingError
+    # The application shows no exceptions: DebugExceptions raises the router's 404 (`x-cascade: pass`) as this error.
+    return nil
+  rescue StandardError
+    # An action that raises was dispatched to all the same.
+    return env["action_dispatch.route"]
+  end
   env["action_dispatch.route"] unless (headers["x-cascade"] || headers["X-Cascade"]) == "pass"
 end
 
