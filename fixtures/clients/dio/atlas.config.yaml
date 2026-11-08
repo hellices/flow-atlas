@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # Each Dio's base path (`baseUrl`) is the prefix of the paths its repository requests.
+  - { from: client, to: api, files: ["lib/data/user_repository.dart"], prefix: /api/v1 }
+  - { from: client, to: api, files: ["lib/data/billing_repository.dart"], prefix: /billing }

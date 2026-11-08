@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # UsersAPI's base URL is the server's with `api/v1` appended.
+  - { from: client, to: api, files: ["app/Sources/Client/UsersAPI.swift"], prefix: /api/v1 }
+  - { from: client, to: api, files: ["app/Sources/Client/StoreAPI.swift"] }

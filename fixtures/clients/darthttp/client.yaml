@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs installs package:http and runs the requests this app makes with it.
+toolchain: dart
+docs:
+  - https://pub.dev/packages/http
+  - https://pub.dev/documentation/http/latest/http/http-library.html
+  - https://pub.dev/documentation/http/latest/http/Client-class.html
+  - https://pub.dev/documentation/http/latest/http/Request-class.html
+  - https://api.dart.dev/dart-core/Uri/Uri.http.html
+setup: dart pub get --enforce-lockfile
+latest: dart pub upgrade --major-versions http
+oracle: dart oracle.dart

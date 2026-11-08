@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # UsersService's base URL is the API's origin with `/api` after it.
+  - { from: client, to: api, files: ["lib/data/users_service.dart"], prefix: /api }
+  - { from: client, to: api, files: ["lib/data/catalog_api.dart"] }
