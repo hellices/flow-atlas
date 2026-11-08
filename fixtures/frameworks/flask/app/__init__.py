@@ -47,6 +47,12 @@ def create_app():
     def delete_user(username):
         return f"deleted {username}"
 
+    # Added after `/user/<username>`, and still matched first: Werkzeug tries a static part before a variable in the
+    # same position, whatever order the rules were added in.
+    @app.get("/user/me")
+    def show_current_user():
+        return "the signed-in user"
+
     @app.route("/post/<int:post_id>")
     def show_post(post_id):
         return f"Post {post_id}"
