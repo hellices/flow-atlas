@@ -76,7 +76,12 @@ for (const r of out) forms.set(r.raw, [...new Set([...(forms.get(r.raw) ?? []), 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const shape = (path: string) =>
   new RegExp(`^${path.split("/").map((s) => (s === "{}" ? "[^/]+" : s === "{**}" ? ".+" : escape(s))).join("/")}$`);
-const methods = [...new Set(routes.map((r) => r.method).filter((m) => m !== "ALL" && m !== "HEAD" && m !== "OPTIONS"))].sort();
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map<string, Set<string>>();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r: { method: string; path: string }) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path)!.has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path)!.size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
 // A wildcard's parent (`/id/` for `/id/*`) is a sample path too.
 const samples = [
   ...new Set(

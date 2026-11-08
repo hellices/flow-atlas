@@ -123,16 +123,22 @@ public class Oracle {
 
 	/**
 	 * Sample requests, and the route WebFlux dispatches each to: every route's sample path, also with a trailing `/`, and
-	 * a path no route takes, each with every method a route registers, sent through the DispatcherHandler. The route is
+	 * a path no route takes, each with every method a route registers (see `methodsAt`), sent through the DispatcherHandler. The route is
 	 * told by the pattern the handler mapping that took the request exposes (BEST_MATCHING_PATTERN_ATTRIBUTE: the handler
 	 * method's mapping, the URL handler's pattern, the router function's matching pattern). No handler, a 405 from the
 	 * handler chosen, or a route that does not serve the method (see `route`), is no route.
 	 */
 	static List<Request> dispatch(DispatcherHandler dispatcher, List<Route> routes) {
+		// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a
+		// GET and the OPTIONS beside another method of the same path, which the framework answers by itself.
+		Map<String, Set<String>> methodsAt = new java.util.HashMap<>();
+		for (Route r : routes) methodsAt.computeIfAbsent(canonical(r.raw()), p -> new TreeSet<>()).add(r.method());
 		Set<String> methods = new TreeSet<>();
 		Set<String> samples = new TreeSet<>();
 		for (Route r : routes) {
-			if (!List.of("*", "HEAD", "OPTIONS").contains(r.method())) methods.add(r.method());
+			Set<String> beside = methodsAt.get(canonical(r.raw()));
+			boolean answered = (r.method().equals("HEAD") && beside.contains("GET")) || (r.method().equals("OPTIONS") && beside.size() > 1);
+			if (!r.method().equals("*") && !answered) methods.add(r.method());
 			String path = probe(r.raw()).replaceAll("/+$", "");
 			samples.add(path.isEmpty() ? "/" : path);
 		}

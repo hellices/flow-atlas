@@ -60,19 +60,12 @@ type request struct {
 
 // dispatched is the route Gin dispatches the request to, as it reports it, and the value of its catch-all, if any.
 // Gin answers a path that only matches with (without) a trailing `/` with a redirect to the path a route takes
-// (RedirectTrailingSlash, on by default: "the client is redirected to /foo"), so the request is the redirect target's.
+// (RedirectTrailingSlash, on by default: "the client is redirected to /foo") by itself, running no handler, as
+// Starlette's and Django's slash redirects are: the request is no route's, though the redirect leads to one.
 func dispatched(engine *gin.Engine, method, path string) (string, string) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, httptest.NewRequest(method, path, nil))
-	if route := w.Header().Get("X-Route"); route != "" {
-		return route, w.Header().Get("X-Rest")
-	}
-	if w.Code == http.StatusMovedPermanently || w.Code == http.StatusTemporaryRedirect {
-		if to := w.Header().Get("Location"); to != path && strings.TrimRight(to, "/") == strings.TrimRight(path, "/") {
-			return dispatched(engine, method, to)
-		}
-	}
-	return "", ""
+	return w.Header().Get("X-Route"), w.Header().Get("X-Rest")
 }
 
 func main() {
@@ -143,14 +136,24 @@ func main() {
 	}
 
 	// Sample requests: every route's sample path, also with a trailing `/`, and a path no route takes, each with every
-	// method a route registers. A catch-all that took the request with nothing after its `/` is its parent's route.
+	// method a route registers, HEAD and OPTIONS only where a route registers them on their own (the compared form
+	// leaves out the HEAD beside a GET and the OPTIONS beside another method of the same path). A catch-all that took
+	// the request with nothing after its `/` is its parent's route.
+	methodsAt := map[string]map[string]bool{}
+	for _, r := range routes {
+		if methodsAt[r.Path] == nil {
+			methodsAt[r.Path] = map[string]bool{}
+		}
+		methodsAt[r.Path][r.Method] = true
+	}
 	anyMethod := map[string]bool{}
 	var registered []string
 	samples := map[string]bool{"/nowhere/value1": true}
 	for _, r := range routes {
+		beside := (r.Method == http.MethodHead && methodsAt[r.Path][http.MethodGet]) || (r.Method == http.MethodOptions && len(methodsAt[r.Path]) > 1)
 		if r.Method == "*" {
 			anyMethod[r.Raw] = true
-		} else if r.Method != http.MethodHead && r.Method != http.MethodOptions && !contains(registered, r.Method) {
+		} else if !beside && !contains(registered, r.Method) {
 			registered = append(registered, r.Method)
 		}
 		s := strings.TrimRight(sample(r.Raw), "/")

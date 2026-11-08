@@ -76,10 +76,14 @@ public static class RouteOracle
             return 1;
         }
         // Sample requests: every route's sample path, also with a trailing `/`, and a path no route takes, each with every
-        // method a route registers. The route is that of the endpoint the routing middleware chose (`GetEndpoint()`); none,
-        // or an endpoint of no route in the table (the 405 endpoint routing answers a method no endpoint of the path takes),
-        // is no route.
-        var verbs = read.Select(r => r.Method).Where(m => m is not ("*" or "HEAD" or "OPTIONS")).Distinct().Order(StringComparer.Ordinal).ToList();
+        // method a route registers, HEAD and OPTIONS only where a route registers them on their own (the compared form
+        // leaves out the HEAD beside a GET and the OPTIONS beside another method of the same path). The route is that of
+        // the endpoint the routing middleware chose (`GetEndpoint()`); none, or an endpoint of no route in the table (the
+        // 405 endpoint routing answers a method no endpoint of the path takes), is no route.
+        var methodsAt = read.GroupBy(r => r.Path).ToDictionary(g => g.Key, g => g.Select(r => r.Method).ToHashSet());
+        var verbs = read
+            .Where(r => r.Method != "*" && !(r.Method == "HEAD" && methodsAt[r.Path].Contains("GET")) && !(r.Method == "OPTIONS" && methodsAt[r.Path].Count > 1))
+            .Select(r => r.Method).Distinct().Order(StringComparer.Ordinal).ToList();
         var requests = new List<object>();
         foreach (var path in samples)
         {

@@ -186,7 +186,12 @@ try {
   // path no route takes, each with every method a route registers. A route is told by what Next's router matched the
   // request to (matched.cjs: a route's page, a public file, a build asset, the image optimizer); it took the request if
   // it answers that method, and Next refused it otherwise (404, 405). Its path is the one of its paths that fits.
-  const methods = [...new Set(out.map((r) => r.method))].filter((m) => !["*", "HEAD", "OPTIONS"].includes(m)).sort();
+  // HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+  // and the OPTIONS beside another method of the same path, which the framework answers by itself.
+  const methodsAt = new Map();
+  for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+  const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+  const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
   const samples = [...new Set(out.map((r) => r.path.replace(/\{\*\*\}/g, "rest/of/it").replace(/\{\}/g, "value1")))];
   const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
   const fits = (pattern, path) => {

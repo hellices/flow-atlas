@@ -5,7 +5,6 @@ in; `iter_rules()` yields every rule with the methods it answers."""
 import json
 import re
 from importlib.metadata import version
-from urllib.parse import urlsplit
 
 from flask import request
 from werkzeug.routing import AnyConverter
@@ -51,10 +50,9 @@ def sample(rule) -> str:
 # matched for the request (none where it raised 404, 405 or a redirect; a view's own answer, a 404 for a missing file
 # included, is its rule's). Werkzeug orders the rules by their own weights, static parts before variables, whatever
 # order they were added in.
-# A branch rule (`/projects/`) asked for without its trailing `/` is answered with a 308 to the path with it appended
-# (`strict_slashes`); Flask documents that path as the canonical URL of the same endpoint ("Unique URLs / Redirection
-# Behavior" in its quickstart), so the request is recorded as dispatched to the rule the redirect reaches. Any other
-# redirect is no rule's.
+# A branch rule (`/projects/`) asked for without its trailing `/` is answered by Werkzeug's map itself with a 308 to the
+# path with it appended (`strict_slashes`, raised as RequestRedirect before any rule is bound), as Starlette's and
+# Django's slash redirects are: the request is no rule's, though the redirect leads to one.
 rules = list(app.url_map.iter_rules())
 
 
@@ -66,7 +64,20 @@ def tag(response):
 
 
 client = app.test_client()
-methods = sorted({r["method"] for r in routes} - {"HEAD", "OPTIONS", "*"})
+# HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+# and the OPTIONS beside another method of the same path, which the framework answers by itself.
+methods_at: dict[str, set[str]] = {}
+for r in routes:
+    methods_at.setdefault(r["path"], set()).add(r["method"])
+methods = sorted(
+    {
+        r["method"]
+        for r in routes
+        if r["method"] != "*"
+        and not (r["method"] == "HEAD" and "GET" in methods_at[r["path"]])
+        and not (r["method"] == "OPTIONS" and len(methods_at[r["path"]]) > 1)
+    }
+)
 samples = {sample(rule) for rule in rules}
 probes = sorted(samples | {s if s == "/" else s + "/" for s in samples} | {"/nowhere/value1"})
 keys = {f"{r['method']} {r['path']}" for r in routes}
@@ -74,8 +85,6 @@ requests = []
 for path in probes:
     for method in methods:
         response = client.open(path, method=method)
-        if response.status_code == 308 and urlsplit(response.headers["Location"]).path == path + "/":
-            response = client.open(path + "/", method=method)
         index = response.headers.get("x-rule")
         if index is None:
             requests.append({"method": method, "path": path, "route": None})

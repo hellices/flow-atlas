@@ -124,7 +124,20 @@ async def endpoint_of(method: str, path: str):
 # A path no route takes, but would with its trailing `/` added or removed, is answered by the router itself with a 307
 # to that path (`redirect_slashes`, on by default), which writes no endpoint: Starlette and FastAPI document it as a
 # redirect to the other path, not as the route that path reaches, so the request is no route's.
-methods = sorted({r["method"] for r in routes} - {"HEAD", "OPTIONS", "*"})
+# HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+# and the OPTIONS beside another method of the same path, which the framework answers by itself.
+methods_at: dict[str, set[str]] = {}
+for r in routes:
+    methods_at.setdefault(r["path"], set()).add(r["method"])
+methods = sorted(
+    {
+        r["method"]
+        for r in routes
+        if r["method"] != "*"
+        and not (r["method"] == "HEAD" and "GET" in methods_at[r["path"]])
+        and not (r["method"] == "OPTIONS" and len(methods_at[r["path"]]) > 1)
+    }
+)
 samples = {sample(r) for r in routes}
 probes = sorted(samples | {s if s == "/" else s + "/" for s in samples} | {"/nowhere/value1"})
 keys = {f"{r['method']} {r['path']}" for r in routes}

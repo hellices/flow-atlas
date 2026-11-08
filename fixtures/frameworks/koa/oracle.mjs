@@ -106,7 +106,12 @@ for (const r of routes) {
 // with (not `strict`, so a trailing `/` is taken). `router.redirect` registers a route of its own, whose handler
 // answers with the redirect: such a request is that route's. `allowedMethods()` answers a method no route at the path
 // takes (405, 501) by itself: no route.
-const methods = [...new Set(routes.flatMap((r) => r.methods).filter((m) => m !== "*" && m !== "HEAD"))].sort();
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
 const samples = [...new Set(routes.flatMap((r) => expand(parse(r.pattern).tokens).map((t) => sample(t).replace(/\/+$/, "") || "/")))];
 const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
 const requests = [];

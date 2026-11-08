@@ -131,11 +131,13 @@ async function recordCalls(f, command) {
  * request once by method and path, its route a key of routes.json or null.
  */
 function writeDispatch(f, out) {
+  const keys = new Set(out.routes.map((r) => `${r.method} ${r.path}`));
   const seen = new Map();
   for (const r of out.requests) {
     if (typeof r.method !== "string" || typeof r.path !== "string" || !(r.route === null || typeof r.route === "string")) {
       throw new Error(`a request needs a method, a path and a route or null: ${JSON.stringify(r)}`);
     }
+    if (r.route !== null && !keys.has(r.route)) throw new Error(`${r.method} ${r.path} is dispatched to ${r.route}, which is no route the oracle printed`);
     const key = `${r.method} ${r.path}`;
     const known = seen.get(key);
     if (known && known.route !== r.route) throw new Error(`${key} is dispatched to ${known.route} and to ${r.route}`);

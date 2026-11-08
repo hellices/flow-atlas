@@ -16,6 +16,7 @@ missing:
   - { route: "GET /apple-icon.png", reason: "a metadata image written as a file (`app/apple-icon.png`) is not read, and nothing says so" }
   - { route: "GET /_next/static/{**}", reason: "the build's assets Next.js serves by itself are not a surface" }
   - { route: "* /_next/image", reason: "the image optimizer Next.js serves by itself (`next/image`) is not a surface" }
+  - { route: "GET /api/catalog/{}", reason: "the catch-all `[...path]` is read as a parameter with `**` after it (`/api/catalog/{path}/**`), which beside the parameter route `[id]` compares as one route of one segment or more" }
 extra:
   - { route: "GET /blog/{}", reason: "the page read as GET alone" }
   - { route: "GET /photos/{}", reason: "the page read as GET alone" }
@@ -35,6 +36,8 @@ dispatch:
   - { request: "GET /about/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
   - { request: "GET /api/auth/rest/of/it/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
   - { request: "GET /api/auth/session/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
+  - { request: "GET /api/catalog/rest/of/it/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
+  - { request: "GET /api/catalog/value1/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
   - { request: "GET /api/files/rest/of/it/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
   - { request: "GET /api/health/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }
   - { request: "GET /api/hello/", reason: "trailing slash: Next.js redirects a path with a trailing slash to the one without (308, next.config.js trailingSlash) before any route takes it; atlas matches it to the route at that path" }

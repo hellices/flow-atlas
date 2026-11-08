@@ -265,7 +265,20 @@ found = leaves(get_resolver().url_patterns, "", [], [])
 by_raw: dict[str, list[dict]] = {}
 for r in routes:
     by_raw.setdefault(r["raw"], []).append(r)
-methods_sent = sorted({r["method"] for r in routes} - {"HEAD", "OPTIONS", "*"})
+# HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+# and the OPTIONS beside another method of the same path, which the framework answers by itself.
+methods_at: dict[str, set[str]] = {}
+for r in routes:
+    methods_at.setdefault(r["path"], set()).add(r["method"])
+methods_sent = sorted(
+    {
+        r["method"]
+        for r in routes
+        if r["method"] != "*"
+        and not (r["method"] == "HEAD" and "GET" in methods_at[r["path"]])
+        and not (r["method"] == "OPTIONS" and len(methods_at[r["path"]]) > 1)
+    }
+)
 probe_paths = {s for _, _, raw in found for s in samples(raw.removeprefix("^"))}
 probes = sorted(probe_paths | {s if s == "/" else s + "/" for s in probe_paths} | {"/nowhere/value1"})
 keys = {f"{r['method']} {r['path']}" for r in routes}

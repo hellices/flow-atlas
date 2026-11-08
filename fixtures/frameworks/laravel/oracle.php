@@ -118,21 +118,34 @@ foreach ($listed as $entry) {
 
 /*
  * Sample requests, and the route Laravel dispatches each to: every route's sample path, also with a trailing `/`, and a
- * path no route takes, each with every method a route registers (HEAD and OPTIONS left out), sent through the HTTP
- * kernel. The route is the one the router reports matching (`RouteMatched`); its path is the route's form without the
- * trailing optional parameters the request left out. A request no route takes (404) or that only routes for other
- * methods take (405) is dispatched to none; the fallback route takes what no other GET route does. A `Route::redirect`
- * route answers with a redirect of its own, but the request is dispatched to that route, so it is recorded as such.
- * Laravel matches a request's path without its trailing `/`, and redirects none.
+ * path no route takes, each with every method a route registers, HEAD and OPTIONS only where a route registers them on
+ * their own (the compared form leaves out the HEAD beside a GET and the OPTIONS beside another method of the same
+ * path), sent through the HTTP kernel. The route is the one the router reports matching (`RouteMatched`); its path is
+ * the route's form without the trailing optional parameters the request left out. A request no route takes (404) or
+ * that only routes for other methods take (405) is dispatched to none, and so is an OPTIONS request the router answers
+ * itself, with a route it makes up to answer with the methods other routes of the path take (`getRouteForMethods`);
+ * the fallback route takes what no other GET route does. A `Route::redirect` route answers with a redirect of its own,
+ * but the request is dispatched to that route, so it is recorded as such. Laravel matches a request's path without its
+ * trailing `/`, and redirects none.
  */
 $keys = array_flip(array_map(fn ($r) => $r['method'].' '.$r['path'], $routes));
-$methods = array_values(array_unique(array_filter(array_column($routes, 'method'), fn ($m) => ! in_array($m, ['*', 'HEAD', 'OPTIONS'], true))));
+$methodsAt = [];
+foreach ($routes as $r) {
+    $methodsAt[$r['path']][$r['method']] = true;
+}
+$methods = array_values(array_unique(array_map(fn ($r) => $r['method'], array_filter(
+    $routes,
+    fn ($r) => $r['method'] !== '*'
+        && ! ($r['method'] === 'HEAD' && isset($methodsAt[$r['path']]['GET']))
+        && ! ($r['method'] === 'OPTIONS' && count($methodsAt[$r['path']]) > 1),
+))));
 sort($methods);
 $samples = array_values(array_unique($samples));
 $probes = array_unique([...$samples, ...array_map(fn ($s) => $s === '/' ? $s : $s.'/', $samples), '/nowhere/value1']);
 sort($probes);
 
 $http = $app->make(HttpKernel::class);
+$held = $app['router']->getRoutes()->getRoutes();
 $matched = null;
 $app['events']->listen(RouteMatched::class, function (RouteMatched $event) use (&$matched) {
     $matched = [$event->route, $event->route->originalParameters()];
@@ -144,7 +157,7 @@ foreach ($probes as $path) {
         $request = Request::create($path, $method);
         $response = $http->handle($request);
         $http->terminate($request, $response);
-        if ($matched === null) {
+        if ($matched === null || ! in_array($matched[0], $held, true)) {
             $requests[] = ['method' => $method, 'path' => $path, 'route' => null];
             continue;
         }

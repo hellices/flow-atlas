@@ -228,7 +228,13 @@ describe("routes as each framework serves them", () => {
       const config = loadConfig(join(dir, "atlas.config.yaml"));
       const graph = scan(new WorktreeSource(dir), config, { root: dir, requested: "WORKTREE" });
       const dispatch = JSON.parse(readFileSync(join(dir, "dispatch.json"), "utf8")) as Dispatch;
-      const differences = dispatchDifferences(graph, config, dispatch, new Set(routeKeys(graph.surfaces, canonicalPaths)));
+      const served = JSON.parse(readFileSync(join(dir, "routes.json"), "utf8")) as { routes: Array<{ method: string; path: string }> };
+      const keys = new Set(served.routes.map((r) => `${r.method} ${r.path}`));
+      expect(dispatch.requests.filter((r) => r.route !== null && !keys.has(r.route))).toEqual([]);
+      // Each surface's own key, as a target is told below: a parameter route beside a catch-all one, which the routes
+      // compare as one route of one segment or more, is a route atlas reads all the same.
+      const read = new Set(graph.surfaces.flatMap((s) => routeKeys([s], canonicalPaths)));
+      const differences = dispatchDifferences(graph, config, dispatch, read);
       expect(differences).toEqual((gaps.dispatch ?? []).map((g) => g.request).sort());
     });
   }

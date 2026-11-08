@@ -129,7 +129,12 @@ function keyOf(r, method, params) {
 // requests carry no `Accept-Version`, so the version-constrained `/versioned` routes take none of them. Fastify
 // redirects no request: a path with a trailing `/` is a 404 unless a route takes it, as a prefixed plugin's `/` route
 // does (registered as both `/api` and `/api/`, the documented `prefixTrailingSlash: "both"`, one route).
-const methods = [...new Set(out.map((r) => r.method).filter((m) => m !== "*" && m !== "HEAD"))].sort();
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
 // A wildcard's parent path (written without its `/{**}`) is sampled without the rest.
 const parent = (r) => r.raw?.endsWith("*") && !r.path.endsWith("/{**}");
 const samples = [...new Set(out.map((r) => (parent(r) ? sample(r.raw).slice(0, -"rest/of/it".length) : sample(r.raw ?? r.path)).replace(/\/+$/, "") || "/"))];

@@ -59,9 +59,12 @@ def dispatched(method, path)
   env = Rack::MockRequest.env_for(path, method: method == "*" ? "GET" : method)
   begin
     _, headers, = Rails.application.call(env)
-  rescue ActionController::RoutingError
-    # The application shows no exceptions: DebugExceptions raises the router's 404 (`x-cascade: pass`) as this error.
-    return nil
+  rescue ActionController::RoutingError => e
+    # The application shows no exceptions: DebugExceptions raises the router's 404 (`x-cascade: pass`) as this error,
+    # with the route last tried left in the env. The same error raised by an action is that action's route's.
+    return nil if e.backtrace_locations&.first&.path&.end_with?("action_dispatch/middleware/debug_exceptions.rb")
+
+    return env["action_dispatch.route"]
   rescue StandardError
     # An action that raises was dispatched to all the same.
     return env["action_dispatch.route"]
@@ -140,12 +143,19 @@ def form_of(route, method, path)
 end
 
 # Sample requests, and the route Rails dispatches each to: every route's sample path, also with a trailing `/`, and a
-# path no route takes, each with every method a route registers (HEAD and OPTIONS left out). Rails tries the routes in
-# the order they are drawn and takes the first that matches the path, the verb and the constraints; it matches a path
-# without its trailing `/` and redirects none. A request no route takes gets the router's 404 (`x-cascade: pass`) and
-# is dispatched to none. A `redirect(...)` route answers with a redirect of its own, but the request is dispatched to
-# that route, so it is recorded as such.
-methods = routes.map { |r| r[:method] }.uniq.reject { |m| %w[* HEAD OPTIONS].include?(m) }.sort
+# path no route takes, each with every method a route registers, HEAD and OPTIONS only where a route registers them on
+# their own (the compared form leaves out the HEAD beside a GET and the OPTIONS beside another method of the same path).
+# Rails tries the routes in the order they are drawn and takes the first that matches the path, the verb and the
+# constraints; it matches a path without its trailing `/` and redirects none. A request no route takes gets the
+# router's 404 (`x-cascade: pass`) and is dispatched to none. A `redirect(...)` route answers with a redirect of its
+# own, but the request is dispatched to that route, so it is recorded as such.
+methods_at = Hash.new { |hash, path| hash[path] = Set.new }
+routes.each { |r| methods_at[r[:path]] << r[:method] }
+methods = routes.reject do |r|
+  r[:method] == "*" ||
+    (r[:method] == "HEAD" && methods_at[r[:path]].include?("GET")) ||
+    (r[:method] == "OPTIONS" && methods_at[r[:path]].size > 1)
+end.map { |r| r[:method] }.uniq.sort
 samples = REQUEST_PATHS.uniq
 probes = (samples + samples.map { |s| s == "/" ? s : "#{s}/" } + ["/nowhere/value1"]).uniq.sort
 requests = probes.flat_map do |path|
