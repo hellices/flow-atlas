@@ -5,10 +5,10 @@ name: repositories
 # same pull request (ATLAS_UPDATE_SNAPSHOTS=1 pnpm vitest run test/repositories.test.ts).
 on:
   pull_request:
-    paths: ["src/**", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
+    paths: ["src/**", "package.json", "pnpm-lock.yaml", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
   push:
     branches: [main]
-    paths: ["src/**", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
+    paths: ["src/**", "package.json", "pnpm-lock.yaml", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
   workflow_dispatch:
 
 permissions:

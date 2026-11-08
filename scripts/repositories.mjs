@@ -4,7 +4,7 @@
 //
 //   node scripts/repositories.mjs [name ...]
 //
-// Only that commit is fetched (depth 1). A checkout already at the commit is kept.
+// Only that commit is fetched (depth 1). A checkout already at the commit is kept, with any change in it dropped.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,7 +35,12 @@ for (const name of names.length ? names : all) {
   }
   const dir = join(root, ".repos", name);
   if (existsSync(join(dir, ".git")) && git(dir, "rev-parse", "HEAD") === commit) {
-    console.error(`${name}: at ${commit.slice(0, 7)}`);
+    // A file changed or added in the checkout would be scanned with the commit's: put it back as committed.
+    if (git(dir, "status", "--porcelain", "--untracked-files=all")) {
+      git(dir, "reset", "-q", "--hard");
+      git(dir, "clean", "-q", "-fdx");
+      console.error(`${name}: at ${commit.slice(0, 7)}, local changes dropped`);
+    } else console.error(`${name}: at ${commit.slice(0, 7)}`);
     continue;
   }
   mkdirSync(dir, { recursive: true });

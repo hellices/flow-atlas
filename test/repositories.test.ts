@@ -61,6 +61,9 @@ describe("what atlas reads in pinned public repositories", () => {
       const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
       const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8", env }).trim();
       expect(head, `.repos/${name} is not at the pinned commit; run node scripts/repositories.mjs`).toBe(commit);
+      // atlas reads the working tree: a file changed or added there would be read with the commit's.
+      const changed = execFileSync("git", ["-C", dir, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8", env }).trim();
+      expect(changed, `.repos/${name} has changes of its own; run node scripts/repositories.mjs`).toBe("");
       const actual = snapshotOf(dir, join(fixtures, name, "atlas.config.yaml"));
       const file = join(fixtures, name, "snapshot.json");
       if (update) writeFileSync(file, written(actual));
