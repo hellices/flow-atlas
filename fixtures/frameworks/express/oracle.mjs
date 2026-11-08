@@ -4,6 +4,7 @@
 import express from "express";
 import { METHODS } from "node:http";
 import { createRequire } from "node:module";
+import { match } from "path-to-regexp";
 
 const { Route, Router } = express;
 const routes = [];
@@ -112,7 +113,29 @@ for (const r of walk(app.router, "", [])) {
     out.push({ method: r.method, path: canonical(pattern), raw: pattern });
   }
 }
+// Sample requests, and the route Express dispatches each to: every route's sample path, also with a trailing `/`, and
+// a path no route takes, each with every method a route registers. A route is told by the handler that answered; its
+// path is the one of its (expanded) patterns that matches the request.
+const registered = walk(app.router, "", []);
+const methods = [...new Set(registered.map((r) => r.method).filter((m) => m !== "*"))].sort();
+const samples = [...new Set(registered.flatMap((r) => expand(r.pattern).map((p) => sample(p).replace(/\/+$/, "") || "/")))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const response = await fetch(base + path, { method });
+    const id = response.headers.get("x-route");
+    if (id === null) {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    const routes = registered.filter((r) => r.id === id);
+    const pattern = routes.flatMap((r) => expand(r.pattern)).find((p) => match(p.replace(/\/+$/, "") || "/", { decode: false })(path));
+    if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${id}, none of whose patterns matches it`);
+    requests.push({ method, path, route: `${routes[0].method === "*" ? "*" : method} ${canonical(pattern)}` });
+  }
+}
 server.close();
 
 const version = createRequire(import.meta.url)("express/package.json").version;
-console.log(JSON.stringify({ framework: "express", version, routes: out }));
+console.log(JSON.stringify({ framework: "express", version, routes: out, requests }));

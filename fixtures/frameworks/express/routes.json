@@ -24,6 +24,7 @@
     {"method":"PUT","path":"/users/{}","raw":"/users/:id"},
     {"method":"GET","path":"/users/{}/books/{}","raw":"/users/:userId/books/:bookId"},
     {"method":"GET","path":"/users/{}/posts","raw":"/users/:userId/posts/"},
-    {"method":"GET","path":"/users/{}/posts/{}","raw":"/users/:userId/posts/:postId"}
+    {"method":"GET","path":"/users/{}/posts/{}","raw":"/users/:userId/posts/:postId"},
+    {"method":"GET","path":"/users/me"}
   ]
 }
