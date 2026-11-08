@@ -30,3 +30,17 @@ extra:
   - { route: "GET /example/near/:lat-:lng/radius/{}", reason: "parameters within a segment read as literal text" }
   - { route: "GET /example/at/:hour(^\\d{})h:minute(^\\d{})m", reason: "regexp parameters within a segment read as literal text (the regexps' `{2}` compared as parameters)" }
   - { route: "POST /name::verb", reason: "the escaped colon read as two colons" }
+dispatch:
+  - { request: "DELETE /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "GET /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "PATCH /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "POST /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "PUT /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "QUERY /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
+  - { request: "GET /status/", reason: "trailing slash: Fastify treats `/status/` as another path than `/status` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/status`" }
+  - { request: "GET /example/", reason: "trailing slash: `/example/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId`; atlas matches it as `/example`" }
+  - { request: "GET /example/12/", reason: "trailing slash: `/example/12/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12`" }
+  - { request: "GET /example/12.png/", reason: "trailing slash: `/example/12.png/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12.png`" }
+  - { request: "GET /example/posts/", reason: "trailing slash: `/example/posts/` is a path of its own, whose empty last segment find-my-way gives the optional parameter of `/example/posts/:id?`; atlas matches it as `/example/posts`" }
+  - { request: "GET /example/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/:userId` takes it; atlas also matches the wildcard `/example/*` and the misread `/example/:file(^\\d+).png`" }
+  - { request: "GET /example/posts/12", reason: "find-my-way's match order (static before parameter): `/example/posts/:id?` takes it; atlas also matches `/example/:userId/:secretToken`" }

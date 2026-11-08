@@ -6,7 +6,11 @@ import { METHODS, request } from "node:http";
 import { readFileSync } from "node:fs";
 import Koa from "koa";
 import Router from "@koa/router";
+import { createRequire } from "node:module";
 import app from "./src/app.js";
+
+// The path-to-regexp @koa/router itself matches with.
+const { match } = createRequire(createRequire(import.meta.url).resolve("@koa/router"))("path-to-regexp");
 
 const routes = [];
 for (const middleware of app.middleware) {
@@ -19,6 +23,8 @@ for (const middleware of app.middleware) {
     if (layer.opts.pathAsRegExp) throw new Error(`a route is a regular expression, which a path cannot write: ${layer.path}`);
     const id = String(routes.length);
     // The route's own handler is its last function; the ones before it are middleware (`router.param` among them).
+    // The layers of an array of paths share one stack: each gets its own, so the tag tells them apart.
+    layer.stack = [...layer.stack];
     const handler = layer.stack.at(-1);
     layer.stack[layer.stack.length - 1] = function (ctx, next) {
       ctx.append("x-route", id);
@@ -97,8 +103,34 @@ for (const r of routes) {
     }
   }
 }
+// Sample requests, and the route the routers dispatch each to: every route's sample path, also with a trailing `/`, and
+// a path no route takes, each with every method a route registers. A route is told by the handler that answered; its
+// path is the one of its (expanded) patterns that matches the request, with path-to-regexp, which @koa/router matches
+// with (not `strict`, so a trailing `/` is taken). `router.redirect` registers a route of its own, whose handler
+// answers with the redirect: such a request is that route's. `allowedMethods()` answers a method no route at the path
+// takes (405, 501) by itself: no route.
+const methods = [...new Set(routes.flatMap((r) => r.methods).filter((m) => m !== "*" && m !== "HEAD"))].sort();
+const samples = [...new Set(routes.flatMap((r) => expand(r.pattern).map((p) => sample(p).replace(/\/+$/, "") || "/")))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const answered = (await send(method, path)) ?? "";
+    if (answered === "") {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    // A route whose handler hands the request on (`next`) leaves the answer to the next one; none here does.
+    const ids = answered.split(/,\s*/);
+    if (ids.length > 1) throw new Error(`${method} ${path} is answered by routes ${answered}`);
+    const r = routes[Number(ids[0])];
+    const pattern = expand(r.pattern).find((p) => match(p.replace(/\/+$/, "") || "/", { decode: false })(path));
+    if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${r.id}, none of whose patterns matches it`);
+    requests.push({ method, path, route: `${r.methods[0] === "*" ? "*" : method} ${canonical(pattern)}` });
+  }
+}
 server.close();
 
 // @koa/router exports no package.json.
 const version = JSON.parse(readFileSync(new URL("node_modules/@koa/router/package.json", import.meta.url), "utf8")).version;
-console.log(JSON.stringify({ framework: "@koa/router", version, routes: out }));
+console.log(JSON.stringify({ framework: "@koa/router", version, routes: out, requests }));
