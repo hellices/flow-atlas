@@ -112,6 +112,9 @@
     {"method":"GET","path":"/user/{}","raw":"/user/<username>"},
     {"method":"HEAD","path":"/user/{}","raw":"/user/<username>"},
     {"method":"OPTIONS","path":"/user/{}","raw":"/user/<username>"},
-    {"method":"PUT","path":"/user/{}","raw":"/user/<username>"}
+    {"method":"PUT","path":"/user/{}","raw":"/user/<username>"},
+    {"method":"GET","path":"/user/me"},
+    {"method":"HEAD","path":"/user/me"},
+    {"method":"OPTIONS","path":"/user/me"}
   ]
 }
