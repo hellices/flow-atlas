@@ -1,0 +1,15 @@
+# How scripts/frameworks.mjs runs the requests this application makes with Spring's WebClient.
+toolchain: java
+docs:
+  - https://docs.spring.io/spring-framework/reference/web/webflux-webclient.html
+  - https://docs.spring.io/spring-framework/reference/web/webflux-webclient/client-builder.html
+  - https://docs.spring.io/spring-framework/reference/web/webflux-webclient/client-retrieve.html
+  - https://docs.spring.io/spring-framework/reference/web/webflux-webclient/client-exchange.html
+  - https://docs.spring.io/spring-boot/reference/io/rest-client.html#io.rest-client.webclient
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Spring Boot on Maven Central, in place of the pom's spring-boot.version.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dspring-boot.version=$(curl -fsS https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-dependencies/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java

@@ -1,0 +1,21 @@
+{
+  "library": "Spring RestTemplate",
+  "version": "7.0.10",
+  "calls": [
+    {"method":"POST","path":"/accounts"},
+    {"method":"DELETE","path":"/accounts/{}","raw":"/accounts/7777777"},
+    {"method":"GET","path":"/accounts/{}","raw":"/accounts/7777777"},
+    {"method":"HEAD","path":"/accounts/{}","raw":"/accounts/7777777"},
+    {"method":"PATCH","path":"/accounts/{}","raw":"/accounts/7777777"},
+    {"method":"PUT","path":"/accounts/{}","raw":"/accounts/7777777"},
+    {"method":"GET","path":"/accounts/{}/limits/{}","raw":"/accounts/7777777/limits/zzparamzz"},
+    {"method":"GET","path":"/accounts/{}/roles","raw":"/accounts/7777777/roles"},
+    {"method":"DELETE","path":"/accounts/{}/sessions","raw":"/accounts/7777777/sessions"},
+    {"method":"POST","path":"/accounts/registrations"},
+    {"method":"GET","path":"/accounts/search"},
+    {"method":"GET","path":"/invoices"},
+    {"method":"DELETE","path":"/invoices/{}","raw":"/invoices/zzparamzz"},
+    {"method":"GET","path":"/invoices/{}","raw":"/invoices/7777777"},
+    {"method":"POST","path":"/invoices/{}/payments","raw":"/invoices/7777777/payments"}
+  ]
+}
