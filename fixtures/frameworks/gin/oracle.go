@@ -197,7 +197,10 @@ func main() {
 			}
 		}
 	}
-	json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "gin", "version": version, "routes": routes, "requests": requests})
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "gin", "version": version, "routes": routes, "requests": requests}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
 func contains(list []string, s string) bool {

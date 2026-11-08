@@ -9,8 +9,9 @@ public static class ApiClients
 {
     public const string Reports = "reports";
 
-    // The clients' base addresses come from configuration (appsettings.json, or the environment: Services__Api). Each
-    // ends in `/`, so a relative URI without a leading `/` is resolved under the base address's path.
+    // The clients' base addresses come from configuration (appsettings.json, or the environment: Services__Api for the
+    // typed clients, Services__Reports for the named one). Each ends in `/`, so a relative URI without a leading `/` is
+    // resolved under the base address's path.
     public static IServiceCollection AddApiClients(this IServiceCollection services, IConfiguration configuration)
     {
         // Typed clients: each gets an HttpClient configured here in its constructor.

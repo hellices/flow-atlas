@@ -1,11 +1,12 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"example.com/nethttproutes/app"
 )
 
 func main() {
-	http.ListenAndServe(":8080", app.New())
+	log.Fatal(http.ListenAndServe(":8080", app.New()))
 }

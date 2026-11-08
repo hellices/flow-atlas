@@ -1,6 +1,6 @@
 from django.http import HttpResponse
 from django.views import View
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 
 def special_case_2003(request):
@@ -12,7 +12,7 @@ def year_archive(request, year):
 
 
 def month_archive(request, year, month):
-    return HttpResponse(f"archive {year}-{month}")
+    return HttpResponse(f"archive {year:04d}-{month:02d}")
 
 
 def article_detail(request, year, month, slug):
@@ -25,7 +25,12 @@ def comments(request, page_number=None):
 
 @require_http_methods(["GET", "POST"])
 def draft(request, draft_id):
-    return HttpResponse(f"draft {draft_id}")
+    return HttpResponse(f"draft {draft_id.hex}")
+
+
+@require_POST
+async def subscribe(request):
+    return HttpResponse("subscribed")
 
 
 def download(request, file_path):

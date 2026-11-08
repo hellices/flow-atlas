@@ -127,7 +127,10 @@ class UserRemoteDataSource(private val client: OkHttpClient, config: ApiConfig) 
             override fun onFailure(call: Call, e: IOException) = onResult(Result.failure(e))
 
             override fun onResponse(call: Call, response: Response) {
-                response.use { onResult(Result.success(it.body.string())) }
+                response.use {
+                    if (!it.isSuccessful) onResult(Result.failure(IOException("Unexpected code $it")))
+                    else onResult(Result.success(it.body.string()))
+                }
             }
         })
     }

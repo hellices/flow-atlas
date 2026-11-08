@@ -86,9 +86,7 @@ public class OrderClient {
 	public Mono<Boolean> orderExists(long id) {
 		return this.webClient.head()
 			.uri("/orders/{id}", id)
-			.retrieve()
-			.toBodilessEntity()
-			.map((response) -> response.getStatusCode().is2xxSuccessful());
+			.exchangeToMono((response) -> response.releaseBody().thenReturn(response.statusCode().is2xxSuccessful()));
 	}
 
 	public Flux<Order> customerOrders(String customerId) {

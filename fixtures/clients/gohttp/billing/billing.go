@@ -79,6 +79,8 @@ func (c *Client) do(req *http.Request, v any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		// Read to EOF so that the transport can reuse the connection.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		return fmt.Errorf("%s %s: %s", req.Method, req.URL, resp.Status)
 	}
 	if v == nil {

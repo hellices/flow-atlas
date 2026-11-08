@@ -3,9 +3,10 @@ name: frameworks
 # Installs each framework under fixtures/frameworks, asks it again for the routes its application serves and fails when
 # they differ from routes.json; runs the code of each client library under fixtures/clients again and fails when the
 # requests it sends differ from calls.json. Weekly, and on demand, it does so on each one's latest release. A push to a
-# `frameworks/**` branch runs the fixtures it changes, and every run hands back what each fixture reported (routes.json
-# or calls.json, and lock files written on the way) as an artifact, for fixtures on a toolchain a contributor does not
-# have installed.
+# `frameworks/**` branch runs the fixtures it changes, and every run hands back, as an artifact, what each fixture
+# reported (its routes.json or calls.json, and dispatch.json where it has one, whether or not they changed) and every
+# other file the run changed or added (lock files written on the way), for fixtures on a toolchain a contributor does
+# not have installed.
 on:
   pull_request:
     paths: ["fixtures/frameworks/**", "fixtures/clients/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
@@ -128,12 +129,19 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
           LATEST: ${{ github.event_name == 'schedule' || inputs.latest == true }}
         run: node scripts/frameworks.mjs ${{ matrix.fixture }} --check --keep $([ "$LATEST" = true ] && echo --latest)
+      # What the fixture reported, written back by --keep, is handed back as it stands: git lists it only when it
+      # differs from the committed file.
       - name: collect what the framework wrote
         if: always()
+        env:
+          FIXTURE: ${{ matrix.fixture }}
         run: |
           mkdir -p "$RUNNER_TEMP/out"
-          git status --porcelain --untracked-files=all -- "fixtures/frameworks/${{ matrix.fixture }}" "fixtures/clients/${{ matrix.fixture }}" | cut -c4- | while read -r f; do
-            [ -f "$f" ] && mkdir -p "$RUNNER_TEMP/out/$(dirname "$f")" && cp "$f" "$RUNNER_TEMP/out/$f"
+          keep() { [ -f "$1" ] && mkdir -p "$RUNNER_TEMP/out/$(dirname "$1")" && cp "$1" "$RUNNER_TEMP/out/$1"; return 0; }
+          for dir in "fixtures/frameworks/$FIXTURE" "fixtures/clients/$FIXTURE"; do
+            [ -d "$dir" ] || continue
+            for f in routes.json calls.json dispatch.json; do keep "$dir/$f"; done
+            git status --porcelain --untracked-files=all -- "$dir" | cut -c4- | while read -r f; do keep "$f"; done
           done
           ls -R "$RUNNER_TEMP/out" | head -50
       - if: always()

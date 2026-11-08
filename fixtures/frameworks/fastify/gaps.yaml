@@ -17,6 +17,7 @@ missing:
   - { route: "GET /example", reason: "Fastify's wildcard `*` also takes the path with nothing after its `/`; atlas reads `*` as one segment" }
   - { route: "GET /example/{**}", reason: "Fastify's wildcard `*` takes the rest of the path, slashes included; atlas reads `*` as one segment" }
   - { route: "GET /example/{}.png", reason: "a parameter with a regexp (`:file(^\\d+)`) followed by text is read as literal text" }
+  - { route: "GET /example/lang/{}", reason: "a parameter with a regexp (`:code(^[a-z]+)`) is read as literal text" }
   - { route: "GET /example/near/{}-{}/radius/{}", reason: "parameters that share a segment (`:lat-:lng`) are read as literal text" }
   - { route: "GET /example/at/{}h{}m", reason: "parameters with regexps that share a segment with text (`:hour(^\\d{2})h:minute(^\\d{2})m`) are read as literal text" }
   - { route: "GET /example/posts", reason: "an optional last parameter (`:id?`) is read as the path with the parameter only, not also without it" }
@@ -27,6 +28,7 @@ extra:
   - { route: "GET /dashboard", reason: "a nested prefixed plugin's route read without its prefixes (`/api/admin`)" }
   - { route: "PATCH /settings/{}", reason: "a nested prefixed plugin's route read without its prefixes (`/api/admin`)" }
   - { route: "GET /example/:file(^\\d+).png", reason: "a regexp parameter read as literal text" }
+  - { route: "GET /example/lang/:code(^[a-z]+)", reason: "a regexp parameter read as literal text" }
   - { route: "GET /example/near/:lat-:lng/radius/{}", reason: "parameters within a segment read as literal text" }
   - { route: "GET /example/at/:hour(^\\d{})h:minute(^\\d{})m", reason: "regexp parameters within a segment read as literal text (the regexps' `{2}` compared as parameters)" }
   - { route: "POST /name::verb", reason: "the escaped colon read as two colons" }

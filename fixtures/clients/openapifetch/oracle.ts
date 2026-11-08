@@ -30,6 +30,8 @@ const args: Record<string, unknown[]> = {
   getUserItem: [ARG, ARG],
   getReport: [ARG_NUMBER],
 };
+const unexported = Object.keys(args).filter((name) => !(name in items));
+if (unexported.length) throw new Error(`not exported: ${unexported.join(", ")}`);
 for (const [name, call] of Object.entries(items)) {
   if (!args[name]) throw new Error(`no arguments for ${name}`);
   try {

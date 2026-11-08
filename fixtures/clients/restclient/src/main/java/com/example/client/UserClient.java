@@ -75,10 +75,7 @@ public class UserClient {
 	public boolean emailTaken(String email) {
 		return this.restClient.head()
 			.uri("/users/emails/{email}", email)
-			.retrieve()
-			.toBodilessEntity()
-			.getStatusCode()
-			.is2xxSuccessful();
+			.exchange((request, response) -> response.getStatusCode().is2xxSuccessful());
 	}
 
 	public String userPosts(String userId) {

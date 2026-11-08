@@ -4,7 +4,6 @@
 import express from "express";
 import { METHODS } from "node:http";
 import { createRequire } from "node:module";
-import { match } from "path-to-regexp";
 
 const { Route, Router } = express;
 const routes = [];
@@ -42,12 +41,23 @@ for (const method of ["all", ...METHODS.map((m) => m.toLowerCase())]) {
   const register = Route.prototype[method];
   Route.prototype[method] = function (...handlers) {
     const id = this.id;
-    const tagged = handlers.flat(Infinity).map(
-      (fn) =>
-        function (req, res, next) {
-          res.setHeader("x-route", id);
-          return fn.call(this, req, res, next);
-        },
+    // The mark stays only on a response the handler sends: passing the request on takes it off again.
+    const mark = (res, next) => {
+      res.setHeader("x-route", id);
+      return (...args) => {
+        if (!res.headersSent && res.getHeader("x-route") === id) res.removeHeader("x-route");
+        return next(...args);
+      };
+    };
+    // Express tells an error handler by its four parameters, so one keeps them.
+    const tagged = handlers.flat(Infinity).map((fn) =>
+      fn.length === 4
+        ? function (err, req, res, next) {
+            return fn.call(this, err, req, res, mark(res, next));
+          }
+        : function (req, res, next) {
+            return fn.call(this, req, res, mark(res, next));
+          },
     );
     return register.apply(this, tagged);
   };
@@ -76,41 +86,37 @@ function walk(router, prefix, out) {
   return out;
 }
 
-/** The patterns an optional group `{...}` stands for: with it and without it. */
-function expand(pattern) {
-  const open = pattern.indexOf("{");
-  if (open < 0) return [pattern];
-  let depth = 0;
-  let close = open;
-  for (; close < pattern.length; close++) {
-    if (pattern[close] === "{") depth++;
-    else if (pattern[close] === "}" && --depth === 0) break;
+// The path-to-regexp Express's router matches with: its own reading of a pattern's parameters, wildcards and groups.
+const require = createRequire(import.meta.url);
+const { match, parse, stringify, TokenData } = createRequire(createRequire(require.resolve("express")).resolve("router"))("path-to-regexp");
+
+/** The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. */
+function expand(tokens) {
+  let out = [[]];
+  for (const token of tokens) {
+    if (token.type === "group") {
+      const inner = expand(token.tokens);
+      out = out.flatMap((head) => [...inner.map((tail) => [...head, ...tail]), head]);
+    } else out = out.map((head) => [...head, token]);
   }
-  const head = pattern.slice(0, open);
-  const tail = pattern.slice(close + 1);
-  return [...expand(head + pattern.slice(open + 1, close) + tail), ...expand(head + tail)];
+  return out;
 }
 
-const NAME = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/u;
-const PARAM = new RegExp(`:${NAME.source}`, "gu");
-const WILD = new RegExp(`\\*${NAME.source}`, "gu");
-
-const canonical = (pattern) => {
-  const path = pattern.replace(WILD, "{**}").replace(PARAM, "{}").replace(/\/+$/, "");
-  return path || "/";
-};
-const sample = (pattern) => pattern.replace(WILD, "rest/of/it").replace(PARAM, "value1");
+const write = (tokens, param, wildcard) => tokens.map((t) => (t.type === "param" ? param : t.type === "wildcard" ? wildcard : t.value)).join("");
+const canonical = (tokens) => write(tokens, "{}", "{**}").replace(/\/+$/, "") || "/";
+const sample = (tokens) => write(tokens, "value1", "rest/of/it");
 
 const server = app.listen(0);
 await new Promise((resolve) => server.once("listening", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const out = [];
 for (const r of walk(app.router, "", [])) {
-  for (const pattern of expand(r.pattern)) {
-    const response = await fetch(base + sample(pattern), { method: r.method === "*" ? "PATCH" : r.method });
+  for (const tokens of expand(parse(r.pattern).tokens)) {
+    const pattern = stringify(new TokenData(tokens));
+    const response = await fetch(base + sample(tokens), { method: r.method === "*" ? "PATCH" : r.method, redirect: "manual" });
     const answered = response.headers.get("x-route");
     if (answered !== r.id) throw new Error(`${r.method} ${pattern} is answered by route ${answered}, not by route ${r.id} that registers it`);
-    out.push({ method: r.method, path: canonical(pattern), raw: pattern });
+    out.push({ method: r.method, path: canonical(tokens), raw: pattern });
   }
 }
 // Sample requests, and the route Express dispatches each to: every route's sample path, also with a trailing `/`, and
@@ -118,19 +124,21 @@ for (const r of walk(app.router, "", [])) {
 // path is the one of its (expanded) patterns that matches the request.
 const registered = walk(app.router, "", []);
 const methods = [...new Set(registered.map((r) => r.method).filter((m) => m !== "*"))].sort();
-const samples = [...new Set(registered.flatMap((r) => expand(r.pattern).map((p) => sample(p).replace(/\/+$/, "") || "/")))];
+const samples = [...new Set(registered.flatMap((r) => expand(parse(r.pattern).tokens).map((t) => sample(t).replace(/\/+$/, "") || "/")))];
 const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
 const requests = [];
 for (const path of probes) {
   for (const method of methods) {
-    const response = await fetch(base + path, { method });
+    const response = await fetch(base + path, { method, redirect: "manual" });
     const id = response.headers.get("x-route");
     if (id === null) {
       requests.push({ method, path, route: null });
       continue;
     }
     const routes = registered.filter((r) => r.id === id);
-    const pattern = routes.flatMap((r) => expand(r.pattern)).find((p) => match(p.replace(/\/+$/, "") || "/", { decode: false })(path));
+    const pattern = routes
+      .flatMap((r) => expand(parse(r.pattern).tokens))
+      .find((t) => match(stringify(new TokenData(t)).replace(/\/+$/, "") || "/", { decode: false })(path));
     if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${id}, none of whose patterns matches it`);
     requests.push({ method, path, route: `${routes[0].method === "*" ? "*" : method} ${canonical(pattern)}` });
   }
