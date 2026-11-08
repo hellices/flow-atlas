@@ -54,3 +54,12 @@ missing:
 extra:
   - { route: "GET /docs/{}/{}", reason: "the wildcard `*` read as one segment" }
   - { route: "GET /files/{}", reason: "the wildcard `*` read as one segment" }
+dispatch:
+  # A param's matcher (`.where(param, matcher)`) refuses a value it does not take, and the router then looks further
+  # or answers 404 (docs.adonisjs.com/guides/basics/routing#custom-matchers): no route takes these.
+  - { request: "GET /accounts/value1", reason: "param matcher: `.where('accountId', router.matchers.uuid())` refuses `value1`, so AdonisJS answers 404; atlas matches `/accounts/:accountId` with any value" }
+  - { request: "GET /accounts/value1/", reason: "param matcher: `.where('accountId', router.matchers.uuid())` refuses `value1`, so AdonisJS answers 404; atlas matches `/accounts/:accountId` with any value" }
+  - { request: "GET /invoices/value1", reason: "param matcher: `.where('id', router.matchers.number())` refuses `value1`, so AdonisJS answers 404; atlas matches `/invoices/:id` with any value" }
+  - { request: "GET /invoices/value1/", reason: "param matcher: `.where('id', router.matchers.number())` refuses `value1`, so AdonisJS answers 404; atlas matches `/invoices/:id` with any value" }
+  - { request: "GET /invoices/value1/lines/value1", reason: "param matcher: `.where('id', router.matchers.number())` and the regex matcher on `line` refuse `value1`, so AdonisJS answers 404; atlas matches `/invoices/:id/lines/:line` with any value" }
+  - { request: "GET /invoices/value1/lines/value1/", reason: "param matcher: `.where('id', router.matchers.number())` and the regex matcher on `line` refuse `value1`, so AdonisJS answers 404; atlas matches `/invoices/:id/lines/:line` with any value" }
