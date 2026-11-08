@@ -1,0 +1,19 @@
+{
+  "library": "OkHttp",
+  "version": "5.5.1",
+  "calls": [
+    {"method":"POST","path":"/api/auth/token"},
+    {"method":"GET","path":"/api/orders/{}/items","raw":"/api/orders/7777777/items"},
+    {"method":"GET","path":"/api/search"},
+    {"method":"GET","path":"/api/users"},
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"HEAD","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"POST","path":"/api/users/{}/avatar","raw":"/api/users/zzparamzz/avatar"},
+    {"method":"POST","path":"/api/users/{}/refresh","raw":"/api/users/zzparamzz/refresh"},
+    {"method":"GET","path":"/health"}
+  ]
+}

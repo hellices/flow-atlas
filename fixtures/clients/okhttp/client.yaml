@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs runs the requests this app makes with OkHttp.
+toolchain: java
+docs:
+  - https://lysine.dev/okhttp/
+  - https://lysine.dev/okhttp/recipes/
+  - https://lysine.dev/okhttp/features/calls/
+  - https://lysine.dev/okhttp/features/interceptors/
+  - https://lysine.dev/okhttp/5.x/okhttp/okhttp3/-http-url/index.html
+# Compiles the app, and the oracle against it.
+setup: mvn -q -B clean test-compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of OkHttp on Maven Central, in place of the pom's okhttp.version.
+latest: >-
+  mvn -q -B -U clean test-compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dokhttp.version=$(curl -fsS https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp-bom/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9]*\.[0-9]*\.[0-9]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:target/test-classes:$(cat target/classpath.txt)" OracleKt
