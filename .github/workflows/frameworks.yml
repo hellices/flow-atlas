@@ -122,7 +122,7 @@ jobs:
         run: swift --version
       - if: matrix.toolchain == 'dart'
         uses: dart-lang/setup-dart@v1
-      - name: ask the framework for its routes and compare them with routes.json
+      - name: ask the framework or the client again and compare with routes.json or calls.json
         env:
           DOTNET_NOLOGO: 1
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
