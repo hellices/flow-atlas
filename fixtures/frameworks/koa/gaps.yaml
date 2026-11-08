@@ -32,3 +32,10 @@ extra:
   - { route: "GET /items", reason: "a route read without its router's prefixes (`/api/v:version/legacy`)" }
   - { route: "GET /profile{/:id}", reason: "the optional group read as literal text" }
   - { route: "GET /files/*path", reason: "the wildcard read as literal text" }
+dispatch:
+  - { request: "GET /reports/latest", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
+  - { request: "GET /reports/latest/", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
+  - { request: "GET /dashboard", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
+  - { request: "GET /dashboard/", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
+  - { request: "GET /users", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
+  - { request: "GET /users/", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
