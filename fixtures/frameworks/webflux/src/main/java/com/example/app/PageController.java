@@ -8,7 +8,10 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 import reactor.core.publisher.Mono;
 
-/** A plain `@Controller`: the `/api` prefix, which only `@RestController` types take, does not apply. */
+/**
+ * A plain `@Controller`: the `/api` prefix, which only `@RestController` types take, does not apply. `/pets/new` beside
+ * `/pets/{petId}`: the more specific pattern wins, whatever the order of the methods.
+ */
 @Controller
 @RequestMapping("/owners/{ownerId}")
 public class PageController {
@@ -17,6 +20,12 @@ public class PageController {
 	@ResponseBody
 	public Mono<String> findPet(@PathVariable String ownerId, @PathVariable String petId) {
 		return Mono.just(ownerId + "/" + petId);
+	}
+
+	@GetMapping("/pets/new")
+	@ResponseBody
+	public Mono<String> newPet(@PathVariable String ownerId) {
+		return Mono.just(ownerId + "/new");
 	}
 
 	@RequestMapping(path = {"/help", "/faq"}, method = {RequestMethod.GET, RequestMethod.POST})

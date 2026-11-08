@@ -29,6 +29,8 @@ func Register(router *gin.Engine) {
 	router.GET("/user/:name", user)
 	router.GET("/user/:name/*action", userAction)
 	router.POST("/user/:name/*action", userAction)
+	// Exact routes are resolved before param routes, regardless of the order they were defined.
+	router.GET("/user/groups", groups)
 
 	router.Any("/anything", anything)
 	router.Handle(http.MethodPost, "/handled", handled)
@@ -83,6 +85,7 @@ func patching(c *gin.Context)   { ok(c) }
 func head(c *gin.Context)       { c.Status(http.StatusOK) }
 func options(c *gin.Context)    { c.Status(http.StatusOK) }
 func user(c *gin.Context)       { c.String(http.StatusOK, "Hello %s", c.Param("name")) }
+func groups(c *gin.Context)     { ok(c) }
 func userAction(c *gin.Context) { c.String(http.StatusOK, c.Param("name")+" is "+c.Param("action")) }
 func anything(c *gin.Context)   { ok(c) }
 func handled(c *gin.Context)    { ok(c) }

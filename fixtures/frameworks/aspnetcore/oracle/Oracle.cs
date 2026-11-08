@@ -2,7 +2,8 @@
 // (WebApplicationFactory, no socket), and its routes are read from the route table the framework dispatches with: the
 // EndpointDataSource the routing middleware matches requests against (minimal APIs, route groups, controllers,
 // conventional routes, static assets). A pattern with optional parameters or default values serves a path for each
-// way of leaving them out; each path is confirmed by a request the framework dispatches to that endpoint.
+// way of leaving them out; each path is confirmed by a request the framework dispatches to that endpoint. Last, sample
+// requests are sent, each recorded with the route of the endpoint the routing middleware chose for it.
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.AspNetCore.Routing.Template;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -42,6 +44,8 @@ public static class RouteOracle
         var table = factory.Services.GetRequiredService<EndpointDataSource>();
 
         var routes = new List<object>();
+        var read = new List<(RouteEndpoint Endpoint, List<List<RoutePatternPart>> Variant, string Method, string Path)>();
+        var samples = new SortedSet<string>(StringComparer.Ordinal) { "/nowhere/value1" };
         var failures = new List<string>();
         foreach (var endpoint in table.Endpoints.OfType<RouteEndpoint>())
         {
@@ -53,8 +57,14 @@ public static class RouteOracle
                 var path = "/" + string.Join("/", variant.Select(segment => string.Concat(segment.Select(part => Canonical(pattern, part))))).Trim('/');
                 foreach (var method in methods)
                 {
-                    if (await Confirm(client, dispatched, policies, pattern, variant, method, endpoint))
+                    if (await Confirm(client, dispatched, policies, pattern, variant, method, endpoint) is { } sample)
+                    {
                         routes.Add(new { method, path, raw = pattern.RawText });
+                        read.Add((endpoint, variant, method, path));
+                        var trimmed = sample.TrimEnd('/');
+                        samples.Add(trimmed == "" ? "/" : trimmed);
+                        if (trimmed != "") samples.Add(trimmed + "/");
+                    }
                     else
                         failures.Add($"{method} {path} ({pattern.RawText}, {endpoint.DisplayName})");
                 }
@@ -65,8 +75,33 @@ public static class RouteOracle
             Console.Error.WriteLine("no request dispatched to these routes of the table:\n  " + string.Join("\n  ", failures));
             return 1;
         }
+        // Sample requests: every route's sample path, also with a trailing `/`, and a path no route takes, each with every
+        // method a route registers. The route is that of the endpoint the routing middleware chose (`GetEndpoint()`); none,
+        // or an endpoint of no route in the table (the 405 endpoint routing answers a method no endpoint of the path takes),
+        // is no route.
+        var verbs = read.Select(r => r.Method).Where(m => m is not ("*" or "HEAD" or "OPTIONS")).Distinct().Order(StringComparer.Ordinal).ToList();
+        var requests = new List<object>();
+        foreach (var path in samples)
+        {
+            foreach (var method in verbs)
+            {
+                var hit = await Dispatch(client, dispatched, method, path);
+                var candidates = hit is RouteEndpoint endpoint ? read.Where(r => Same(endpoint, r.Endpoint)).ToList() : [];
+                if (candidates.Count == 0)
+                {
+                    requests.Add(new { method, path, route = (string?)null });
+                    continue;
+                }
+                // The endpoint's pattern stands for a path for each way of leaving its optional parts out: the request's is
+                // the first (fullest) whose template matches it with a value for each parameter it keeps.
+                var variant = candidates.Select(r => r.Variant).Distinct().FirstOrDefault(v => Matches(candidates[0].Endpoint.RoutePattern, v, path))
+                    ?? throw new InvalidOperationException($"{method} {path} is dispatched to {hit!.DisplayName}, none of whose paths matches it");
+                var route = candidates.First(r => r.Variant == variant);
+                requests.Add(new { method, path, route = $"{(route.Method == "*" ? "*" : method)} {route.Path}" });
+            }
+        }
         var version = typeof(WebApplication).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
-        Console.WriteLine(JsonSerializer.Serialize(new { framework = "aspnetcore", version, routes }));
+        Console.WriteLine(JsonSerializer.Serialize(new { framework = "aspnetcore", version, routes, requests }));
         return 0;
     }
 
@@ -119,7 +154,35 @@ public static class RouteOracle
         return required is null || string.Equals(required, Convert.ToString(fallback), StringComparison.OrdinalIgnoreCase);
     }
 
-    static async Task<bool> Confirm(HttpClient client, ConcurrentDictionary<string, Endpoint?> dispatched, ParameterPolicyFactory policies,
+    static async Task<Endpoint?> Dispatch(HttpClient client, ConcurrentDictionary<string, Endpoint?> dispatched, string method, string path)
+    {
+        var id = Guid.NewGuid().ToString();
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        request.Headers.Add(RequestId, id);
+        try { using var _ = await client.SendAsync(request); }
+        catch (Exception) { /* the handler failed on the sample; the route was still dispatched */ }
+        return dispatched.TryRemove(id, out var hit) ? hit : null;
+    }
+
+    /// <summary>Whether the variant's template (its parameters without constraints or defaults) matches the path, a value for each.</summary>
+    static bool Matches(RoutePattern pattern, List<List<RoutePatternPart>> variant, string path)
+    {
+        var text = string.Join("/", variant.Select(segment => string.Concat(segment.Select(part => part switch
+        {
+            RoutePatternParameterPart parameter when Required(pattern, parameter) is { } value => value,
+            RoutePatternParameterPart { IsCatchAll: true } parameter => $"{{*{parameter.Name}}}",
+            RoutePatternParameterPart parameter => $"{{{parameter.Name}}}",
+            RoutePatternLiteralPart literal => literal.Content.Replace("{", "{{").Replace("}", "}}"),
+            RoutePatternSeparatorPart separator => separator.Content,
+            _ => throw new InvalidOperationException($"no template for {part}"),
+        })))).TrimEnd('/');
+        var template = TemplateParser.Parse(text);
+        var values = new RouteValueDictionary();
+        return new TemplateMatcher(template, new RouteValueDictionary()).TryMatch(path, values)
+            && template.Parameters.All(p => values.TryGetValue(p.Name!, out var v) && !string.IsNullOrEmpty(Convert.ToString(v)));
+    }
+
+    static async Task<string?> Confirm(HttpClient client, ConcurrentDictionary<string, Endpoint?> dispatched, ParameterPolicyFactory policies,
         RoutePattern pattern, List<List<RoutePatternPart>> variant, string method, RouteEndpoint endpoint)
     {
         var parameters = variant.SelectMany(s => s).OfType<RoutePatternParameterPart>().Where(p => Required(pattern, p) is null).ToList();
@@ -139,10 +202,10 @@ public static class RouteOracle
                 request.Headers.Add(RequestId, id);
                 try { using var _ = await client.SendAsync(request); }
                 catch (Exception) { /* the handler failed on the sample; the route was still dispatched */ }
-                if (dispatched.TryRemove(id, out var hit) && Same(hit, endpoint)) return true;
+                if (dispatched.TryRemove(id, out var hit) && Same(hit, endpoint)) return path;
             }
         }
-        return false;
+        return null;
     }
 
     /// <summary>

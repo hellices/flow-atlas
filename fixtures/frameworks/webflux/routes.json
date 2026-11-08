@@ -45,6 +45,7 @@
     {"method":"GET","path":"/owners/{}/help","raw":"/owners/{ownerId}/help"},
     {"method":"POST","path":"/owners/{}/help","raw":"/owners/{ownerId}/help"},
     {"method":"GET","path":"/owners/{}/pets/{}","raw":"/owners/{ownerId}/pets/{petId}"},
+    {"method":"GET","path":"/owners/{}/pets/new","raw":"/owners/{ownerId}/pets/new"},
     {"method":"*","path":"/owners/{}/ping","raw":"/owners/{ownerId}/ping"},
     {"method":"GET","path":"/people"},
     {"method":"POST","path":"/people"},

@@ -35,6 +35,7 @@
     {"method":"POST","path":"/user/{}","raw":"/user/:name/"},
     {"method":"GET","path":"/user/{}/{**}","raw":"/user/:name/*action"},
     {"method":"POST","path":"/user/{}/{**}","raw":"/user/:name/*action"},
+    {"method":"GET","path":"/user/groups"},
     {"method":"POST","path":"/v1/login"},
     {"method":"POST","path":"/v1/read"},
     {"method":"POST","path":"/v1/submit"},
