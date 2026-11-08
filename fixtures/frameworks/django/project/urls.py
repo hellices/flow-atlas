@@ -1,7 +1,7 @@
 # The routes of Django's URL dispatcher guide (docs.djangoproject.com/en/stable/topics/http/urls/): path converters, a
 # custom converter, regular expressions with a nested optional group, included URLconfs with namespaces, an included
-# list with captured parameters, extra options, class-based views, the admin, Django REST framework's routers and
-# views, and the media files Django serves while DEBUG is on.
+# list with captured parameters, extra options, class-based and async views, the admin, Django REST framework's routers
+# and views, and the media files Django serves while DEBUG is on.
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin

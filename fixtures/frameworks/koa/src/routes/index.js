@@ -40,6 +40,13 @@ router.get("/profile{/:id}", (ctx) => {
 router.get("/files/*path", (ctx) => {
   ctx.body = { path: ctx.params.path };
 });
+// path-to-regexp 8 takes a name that is no JavaScript identifier in quotes.
+router.get('/downloads/:"file-name"', (ctx) => {
+  ctx.body = { file: ctx.params["file-name"] };
+});
+router.get('/archive/*"rest-path"', (ctx) => {
+  ctx.body = { path: ctx.params["rest-path"] };
+});
 router.get(["/people", "/persons"], (ctx) => {
   ctx.body = [];
 });

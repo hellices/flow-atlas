@@ -1,11 +1,12 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"example.com/chiroutes/app"
 )
 
 func main() {
-	http.ListenAndServe(":3333", app.New())
+	log.Fatal(http.ListenAndServe(":3333", app.New()))
 }

@@ -29,7 +29,10 @@ const expand = (url) => {
   return optional ? [`${optional[1]}/:${optional[2]}`, optional[1] || "/"] : [url];
 };
 
-/** find-my-way's syntax, segment by segment: `::` is a colon, `:name` and `:name(regexp)` a parameter, a last `*` the rest. */
+/**
+ * find-my-way's syntax, segment by segment: `::` is a colon, `:name` and `:name(regexp)` a parameter, a last `*` the
+ * rest. `param` is what a parameter becomes, or a function of its regexp (undefined for none) giving that.
+ */
 function read(pattern, param, rest) {
   let out = "";
   for (let i = 0; i < pattern.length; i++) {
@@ -40,21 +43,32 @@ function read(pattern, param, rest) {
     } else if (c === ":") {
       i++;
       while (i < pattern.length && /[\w$]/.test(pattern[i])) i++;
+      let regexp;
       if (pattern[i] === "(") {
+        const start = i + 1;
         for (let depth = 0; i < pattern.length; i++) {
           if (pattern[i] === "\\") i++;
           else if (pattern[i] === "(") depth++;
           else if (pattern[i] === ")" && --depth === 0) break;
         }
+        regexp = pattern.slice(start, i);
       } else i--;
-      out += param;
+      out += typeof param === "function" ? param(regexp) : param;
     } else if (c === "*" && i === pattern.length - 1) out += rest;
     else out += c;
   }
   return out;
 }
+const VALUES = ["12", "abc", "value1", "a-b", "00000000-0000-0000-0000-000000000001"];
+/** A value for a parameter: one its regexp takes whole, when it has one. */
+const value = (regexp) => {
+  if (regexp === undefined) return VALUES[0];
+  const found = VALUES.find((v) => new RegExp(`^(?:${regexp})$`).test(v));
+  if (found === undefined) throw new Error(`none of ${VALUES.join(", ")} is a value of the parameter (${regexp})`);
+  return found;
+};
 const canonical = (pattern) => read(pattern, "{}", "{**}").replace(/\/+$/, "") || "/";
-const sample = (pattern) => read(pattern, "12", "rest/of/it");
+const sample = (pattern) => read(pattern, value, "rest/of/it");
 
 /**
  * Whether find-my-way also dispatches a pattern ending in a wildcard when nothing follows its last `/`: asked of an

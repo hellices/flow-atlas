@@ -27,30 +27,31 @@ const controllers = new Set();
 for (const module of app.get(ModulesContainer).values())
   for (const wrapper of module.controllers.values()) controllers.add(wrapper.name);
 
-const NAME = /[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/u;
-const PARAM = new RegExp(`:${NAME.source}`, "gu");
-const WILD = new RegExp(`\\*${NAME.source}`, "gu");
+// The path-to-regexp the Express router Nest registers on matches with: its own reading of a pattern's parameters,
+// wildcards and groups.
+const require = createRequire(import.meta.url);
+const from = (...names) => names.reduce((at, name) => createRequire(at).resolve(name), require.resolve("@nestjs/platform-express"));
+const { parse, stringify, TokenData } = createRequire(from("express", "router"))("path-to-regexp");
 
 /**
- * The patterns an optional group `{...}` stands for: with it and without it. Nest serves `abcd/*` as `abcd/{*path}`,
- * which also takes `abcd/` with nothing after it; both patterns are requested below, so that route is written as two.
+ * The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. Nest
+ * serves `abcd/*` as `abcd/{*path}`, which also takes `abcd/` with nothing after it; both patterns are requested below,
+ * so that route is written as two.
  */
-function expand(pattern) {
-  const open = pattern.indexOf("{");
-  if (open < 0) return [pattern];
-  let depth = 0;
-  let close = open;
-  for (; close < pattern.length; close++) {
-    if (pattern[close] === "{") depth++;
-    else if (pattern[close] === "}" && --depth === 0) break;
+function expand(tokens) {
+  let out = [[]];
+  for (const token of tokens) {
+    if (token.type === "group") {
+      const inner = expand(token.tokens);
+      out = out.flatMap((head) => [...inner.map((tail) => [...head, ...tail]), head]);
+    } else out = out.map((head) => [...head, token]);
   }
-  const head = pattern.slice(0, open);
-  const tail = pattern.slice(close + 1);
-  return [...expand(head + pattern.slice(open + 1, close) + tail), ...expand(head + tail)];
+  return out;
 }
 
-const canonical = (pattern) => pattern.replace(WILD, "{**}").replace(PARAM, "{}").replace(/\/+$/, "") || "/";
-const sample = (pattern) => pattern.replace(WILD, "rest/of/it").replace(PARAM, "value1");
+const write = (tokens, param, wildcard) => tokens.map((t) => (t.type === "param" ? param : t.type === "wildcard" ? wildcard : t.value)).join("");
+const canonical = (tokens) => write(tokens, "{}", "{**}").replace(/\/+$/, "") || "/";
+const sample = (tokens) => write(tokens, "value1", "rest/of/it");
 
 const routes = [];
 const stack = app.getHttpAdapter().getInstance().router.stack;
@@ -80,12 +81,13 @@ await app.listen(0, "127.0.0.1");
 const base = await app.getUrl();
 const out = [];
 for (const r of routes) {
-  for (const pattern of expand(r.pattern)) {
-    const response = await fetch(base.replace("[::1]", "127.0.0.1") + sample(pattern), { method: r.method === "*" ? "PATCH" : r.method });
+  for (const tokens of expand(parse(r.pattern).tokens)) {
+    const pattern = stringify(new TokenData(tokens));
+    const response = await fetch(base.replace("[::1]", "127.0.0.1") + sample(tokens), { method: r.method === "*" ? "PATCH" : r.method });
     const answered = response.headers.get("x-route");
     if (answered !== r.id || !response.ok)
       throw new Error(`${r.method} ${pattern} is answered by route ${answered} with ${response.status}, not by route ${r.id} (${r.handler})`);
-    out.push({ method: r.method, path: canonical(pattern), raw: pattern });
+    out.push({ method: r.method, path: canonical(tokens), raw: pattern });
   }
 }
 await app.close();

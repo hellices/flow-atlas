@@ -128,15 +128,36 @@ function lockFiles(dir: string): string[] {
   return out;
 }
 
+/**
+ * The host a fetch URL names: a URL's (`https://`, `ssh://`, `git://`, `git+ssh://`, ...) or an scp-like one's
+ * (`git@host:org/repo.git`). A URL it cannot read is returned whole, which is no public host, so the check fails on it
+ * rather than passing it over.
+ */
+function fetchHost(url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (host) return host;
+    } catch {
+      return url;
+    }
+  }
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)/.exec(url);
+  return scp ? scp[1]!.toLowerCase() : url;
+}
+
+/** The hosts a composer.lock fetches its packages from: each package's `dist` and `source` URL. */
+function composerHosts(text: string): string[] {
+  const lock = JSON.parse(text) as Record<string, Array<{ dist?: { url?: string }; source?: { url?: string } }> | undefined>;
+  return [...(lock.packages ?? []), ...(lock["packages-dev"] ?? [])]
+    .flatMap((p) => [p.dist?.url, p.source?.url])
+    .flatMap((url) => (url ? [fetchHost(url)] : []));
+}
+
 /** The hosts a lock file installs from: where each package is fetched, not the projects' home pages. */
 function lockHosts(file: string): string[] {
   const text = readFileSync(file, "utf8");
-  if (file.endsWith("composer.lock")) {
-    const lock = JSON.parse(text) as Record<string, Array<{ dist?: { url?: string }; source?: { url?: string } }> | undefined>;
-    return [...(lock.packages ?? []), ...(lock["packages-dev"] ?? [])]
-      .flatMap((p) => [p.dist?.url, p.source?.url])
-      .flatMap((url) => (url && /^https?:\/\//.test(url) ? [new URL(url).hostname] : []));
-  }
+  if (file.endsWith("composer.lock")) return composerHosts(text);
   const pattern = file.endsWith("package-lock.json") ? /"resolved":\s*"https?:\/\/([^/":]+)/g : /https?:\/\/([^/"'\s\]:,)]+)/g;
   // A comment a tool writes at the top of its lock (pub's links to its docs) installs nothing.
   const installs = text.replace(/^\s*#.*$/gm, "");
@@ -169,6 +190,19 @@ describe("routes as each framework serves them", () => {
     const all = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
     const named = all.flatMap((name) => lockFiles(join(root, name)).filter((file) => !lockHosts(file).every((h) => PUBLIC_HOSTS.has(h))));
     expect(named.map((file) => file.slice(root.length + 1))).toEqual([]);
+  });
+  it("reads the host of each URL a composer.lock fetches from", () => {
+    const lock = (...urls: string[]) => JSON.stringify({ packages: urls.map((url) => ({ source: { url } })), "packages-dev": [] });
+    expect(composerHosts(lock("https://api.github.com/repos/a/b/zipball/1", "git@gitlab.example.com:org/repo.git"))).toEqual([
+      "api.github.com",
+      "gitlab.example.com",
+    ]);
+    expect(composerHosts(lock("ssh://git@gitlab.example.com/org/repo.git", "git://gitlab.example.com/org/repo.git"))).toEqual([
+      "gitlab.example.com",
+      "gitlab.example.com",
+    ]);
+    // Read or not, a URL that names no public host fails the check.
+    expect(composerHosts(lock("../packages/local")).every((h) => PUBLIC_HOSTS.has(h))).toBe(false);
   });
   it.runIf(fixtures.length > 0)("prints the board", () => {
     console.log(["routes read per framework:", ...board.map((b) => `  ${b}`)].join("\n"));

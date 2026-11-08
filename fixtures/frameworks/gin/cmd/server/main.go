@@ -1,7 +1,11 @@
 package main
 
-import "example.com/ginroutes/app"
+import (
+	"log"
+
+	"example.com/ginroutes/app"
+)
 
 func main() {
-	app.New().Run(":8080")
+	log.Fatal(app.New().Run(":8080"))
 }

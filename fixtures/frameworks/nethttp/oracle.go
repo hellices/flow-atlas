@@ -107,5 +107,8 @@ func main() {
 	}
 
 	version := strings.TrimPrefix(runtime.Version(), "go")
-	json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "net/http", "version": version, "routes": routes})
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"framework": "net/http", "version": version, "routes": routes}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
