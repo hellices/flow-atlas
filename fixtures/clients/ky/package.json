@@ -1,0 +1,8 @@
+{
+  "name": "ky-calls",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ky": "^2.2.0"
+  }
+}

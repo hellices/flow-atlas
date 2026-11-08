@@ -1,0 +1,6 @@
+# How scripts/frameworks.mjs installs Ky and runs the requests this app makes with it.
+toolchain: node
+docs: https://github.com/sindresorhus/ky/blob/main/readme.md
+setup: npm ci --silent --no-audit --no-fund
+latest: npm install --silent --no-save --no-audit --no-fund ky@latest
+oracle: node oracle.mjs

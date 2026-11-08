@@ -1,0 +1,8 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # Each Ky instance's prefix or base path (src/http.js): `api` /api, `admin` /api/admin, `search` /search.
+  - { from: client, to: api, files: ["src/users.js"], prefix: /api }
+  - { from: client, to: api, files: ["src/admin.js"], prefix: /api/admin }
+  - { from: client, to: api, files: ["src/search.js"], prefix: /search }
