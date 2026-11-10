@@ -1,0 +1,30 @@
+{
+  "surfaces": [
+    "api|DELETE /api/articles/{slug}",
+    "api|DELETE /api/articles/{slug}/comments/{id}",
+    "api|DELETE /api/articles/{slug}/favorite",
+    "api|DELETE /api/profiles/{username}/follow",
+    "api|GET /",
+    "api|GET /api/articles",
+    "api|GET /api/articles/feed",
+    "api|GET /api/articles/{slug}",
+    "api|GET /api/articles/{slug}/comments",
+    "api|GET /api/profiles/{username}",
+    "api|GET /api/tags",
+    "api|GET /api/user",
+    "api|POST /api/articles",
+    "api|POST /api/articles/{slug}/comments",
+    "api|POST /api/articles/{slug}/favorite",
+    "api|POST /api/profiles/{username}/follow",
+    "api|POST /api/users",
+    "api|POST /api/users/login",
+    "api|PUT /api/articles/{slug}",
+    "api|PUT /api/user"
+  ],
+  "calls": [],
+  "edges": [],
+  "findings": [],
+  "limits": [
+    "routes api: src/main.ts:19 serves the files of a directory at / (express.static); their paths are not read"
+  ]
+}

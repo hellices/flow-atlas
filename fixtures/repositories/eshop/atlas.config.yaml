@@ -1,0 +1,32 @@
+# .NET Aspire solution (src/eShop.AppHost/AppHost.cs wires the services): ASP.NET Core minimal API services, the Blazor
+# web app and its component library, the webhook client, and the MAUI apps. atlas reads no C# routes; Catalog.API
+# commits the OpenAPI documents it generates at build (OpenApiDocumentsDirectory in Catalog.API.csproj), the other
+# services none. C# is read as text.
+components:
+  - { name: catalog-api, path: src/Catalog.API }
+  - { name: ordering-api, path: src/Ordering.API }
+  - { name: webhooks-api, path: src/Webhooks.API }
+  - { name: webapp, path: src/WebApp }
+  - { name: webapp-components, path: src/WebAppComponents }
+  - { name: webhook-client, path: src/WebhookClient }
+  - { name: hybrid-app, path: src/HybridApp }
+  - { name: client-app, path: src/ClientApp }
+routes:
+  # API versions 1.0 and 2.0 (src/Catalog.API/Apis/CatalogApi.cs), one document each.
+  - { component: catalog-api, openapi: src/Catalog.API/Catalog.API.json, files: ["src/Catalog.API/**/*.cs"] }
+  - { component: catalog-api, openapi: src/Catalog.API/Catalog.API_v2.json, files: ["src/Catalog.API/**/*.cs"] }
+calls:
+  # The web app's HttpClients have the services' Aspire names as base addresses (src/WebApp/Extensions/Extensions.cs);
+  # Program.cs forwards /product-images/{id} to catalog-api's picture route.
+  - { from: webapp, to: catalog-api, files: ["src/WebApp/Program.cs"] }
+  - { from: webapp, to: ordering-api, files: ["src/WebApp/Services/**/*.cs"] }
+  - { from: webapp-components, to: catalog-api, files: ["src/WebAppComponents/Services/**/*.cs"] }
+  - { from: webhook-client, to: webhooks-api, files: ["src/WebhookClient/Services/**/*.cs"] }
+  # The MAUI apps reach catalog-api and ordering-api through the mobile BFF, a YARP proxy that strips its
+  # /catalog-api prefix (src/eShop.AppHost/Extensions.cs), or the gateway endpoints of the settings (ClientApp).
+  - { from: hybrid-app, to: catalog-api, files: ["src/HybridApp/Services/**/*.cs"] }
+  - { from: client-app, to: catalog-api, files: ["src/ClientApp/Services/Catalog/**/*.cs", "src/ClientApp/Services/FixUri/**/*.cs"] }
+  - { from: client-app, to: ordering-api, files: ["src/ClientApp/Services/Order/**/*.cs"] }
+openapi:
+  # Both documents describe the operations the two versions share; the latest is the description.
+  catalog-api: src/Catalog.API/Catalog.API_v2.json

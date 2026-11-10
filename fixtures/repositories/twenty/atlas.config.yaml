@@ -1,0 +1,15 @@
+# Nx monorepo: the NestJS server (GraphQL at /graphql and /metadata through GraphQLModule, REST controllers) and the
+# React front.
+components:
+  - { name: server, path: packages/twenty-server }
+  - { name: front, path: packages/twenty-front }
+routes:
+  # No global prefix; controllers name their paths with the ApiPath enum of packages/twenty-shared.
+  - { component: server, files: ["packages/twenty-server/src/**/*.controller.ts"], styles: [nest] }
+calls:
+  # The front requests the server at REACT_APP_SERVER_BASE_URL, the server's origin (packages/twenty-front/src/config/
+  # index.ts): Apollo for GraphQL, REST_API_BASE_URL for REST (modules/apollo), fetch and redirects elsewhere, spread
+  # over the modules, so the whole source is listed.
+  - { from: front, to: server, files: ["packages/twenty-front/src/**/*.ts", "packages/twenty-front/src/**/*.tsx"] }
+# Storybook stories, their mocks and the test helpers (msw handlers) are not the app.
+exclude: ["**/__stories__/**", "**/__mocks__/**", "packages/twenty-front/src/testing/**"]

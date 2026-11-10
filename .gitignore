@@ -11,3 +11,4 @@ fixtures/frameworks/**/obj/
 fixtures/frameworks/**/.next/
 fixtures/frameworks/**/__pycache__/
 fixtures/frameworks/**/vendor/
+.repos/

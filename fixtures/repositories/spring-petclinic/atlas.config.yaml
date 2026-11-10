@@ -1,0 +1,12 @@
+# One Spring Boot MVC application; its server-rendered Thymeleaf templates are its only client.
+components:
+  - { name: server, path: src/main/java }
+  - { name: web, path: src/main/resources }
+routes:
+  - { component: server, files: ["src/main/java/**/*.java"], styles: [spring] }
+calls:
+  # Spring Boot's default Thymeleaf prefix classpath:/templates/; links are context-relative (@{/...}).
+  - { from: web, to: server, files: ["src/main/resources/templates/**/*.html"] }
+publicSurfaces:
+  # VetController: @GetMapping({ "/vets" }) @ResponseBody, JSON/XML for clients outside the repository.
+  - "server|GET /vets"

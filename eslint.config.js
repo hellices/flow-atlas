@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   // Fixtures are other repositories' code, read by the tests, not this project's.
-  { ignores: ["dist/**", "fixtures/**", "node_modules/**"] },
+  { ignores: ["dist/**", "fixtures/**", "node_modules/**", ".repos/**"] },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
