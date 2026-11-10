@@ -1,0 +1,18 @@
+# One package: the Koa server (server/, with the plugins' server parts) and the React app (app/).
+components:
+  - { name: server, path: server }
+  - { name: app, path: app }
+routes:
+  # @koa/router routers, read with the express style on the receiver `router`. server/services/web.ts mounts the API
+  # application under /api (server/routes/api/index.ts, which takes in the plugins' Hook.API routers at "/"), the auth
+  # routes under /auth (with the plugins' Hook.AuthProvider routers), /oauth and /mcp; server/routes/index.ts at the root.
+  - { component: server, files: ["server/routes/api/**/*.ts", "plugins/*/server/api/**/*.ts"], styles: [express], receivers: [router], prefix: /api }
+  - { component: server, files: ["server/routes/auth/**/*.ts", "plugins/*/server/auth/**/*.ts"], styles: [express], receivers: [router], prefix: /auth }
+  - { component: server, files: ["server/routes/oauth/**/*.ts"], styles: [express], receivers: [router], prefix: /oauth }
+  - { component: server, files: ["server/routes/mcp/**/*.ts"], styles: [express], receivers: [router], prefix: /mcp }
+  - { component: server, files: ["server/routes/index.ts", "server/routes/discovery/**/*.ts"], styles: [express], receivers: [router] }
+calls:
+  # The app's ApiClient (app/utils/ApiClient.ts) puts its baseUrl "/api" before each path; client.post and client.get
+  # send POST and GET, their second argument being the body, not an init, so they are no fetch wrappers. Stores,
+  # models, scenes and components call it, so the app's source is listed.
+  - { from: app, to: server, files: ["app/**/*.ts", "app/**/*.tsx"], prefix: /api }

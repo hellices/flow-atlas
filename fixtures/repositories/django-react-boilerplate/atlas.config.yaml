@@ -1,0 +1,9 @@
+# Django REST framework backend, React frontend. atlas does not read Django's URLconfs; the OpenAPI document
+# drf-spectacular writes is generated, not committed, so the backend's routes are not read here.
+components:
+  - { name: frontend, path: frontend }
+  - { name: backend, path: backend }
+routes:
+  - { component: backend, files: ["backend/**/*.py"] }
+calls:
+  - { from: frontend, to: backend, files: ["frontend/js/**/*.ts", "frontend/js/**/*.tsx"] }

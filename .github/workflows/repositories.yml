@@ -1,0 +1,34 @@
+name: repositories
+
+# Fetches each public repository under fixtures/repositories at its pinned commit and fails when what atlas reads there
+# differs from the repository's snapshot.json. A change to atlas's reading that is meant updates the snapshots in the
+# same pull request (ATLAS_UPDATE_SNAPSHOTS=1 pnpm vitest run test/repositories.test.ts).
+on:
+  pull_request:
+    paths: ["src/**", "package.json", "pnpm-lock.yaml", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
+  push:
+    branches: [main]
+    paths: ["src/**", "package.json", "pnpm-lock.yaml", "fixtures/repositories/**", "test/repositories.test.ts", "scripts/repositories.mjs", ".github/workflows/repositories.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: fetch the pinned repositories
+        run: node scripts/repositories.mjs
+      - name: compare what atlas reads with the snapshots
+        run: pnpm vitest run test/repositories.test.ts

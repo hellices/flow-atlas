@@ -173,6 +173,9 @@ JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart ones: from Express, Next.
 ASP.NET Core to Phoenix, Rails, Laravel, Axum and Vapor), each with the routes the framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
 The `frameworks` workflow installs each framework and checks those routes again, weekly on its latest release.
 
+[`fixtures/repositories`](fixtures/repositories/README.md) pins public repositories at a commit with what atlas read
+there; the `repositories` workflow fetches them and fails when a change moves any of it.
+
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 
 ```bash
