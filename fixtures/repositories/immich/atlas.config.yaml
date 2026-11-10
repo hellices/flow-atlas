@@ -1,0 +1,33 @@
+# pnpm workspace: the NestJS server, the SvelteKit web app, the Flutter app (Dart, read as text) and the TypeScript SDK
+# oazapfts generates from the server's document (packages/sdk, which the web app and the CLI import as @immich/sdk).
+# The machine-learning service (FastAPI) the server calls is left out.
+components:
+  - { name: server, path: server }
+  - { name: web, path: web }
+  - { name: mobile, path: mobile }
+  - { name: sdk, path: packages/sdk }
+routes:
+  # Controllers under the global prefix "api" server/src/app.common.ts sets; its exclusions (excludePaths) are a
+  # constant of server/src/constants.ts. The maintenance worker serves its controller through the same configureExpress.
+  - component: server
+    files: ["server/src/controllers/**/*.ts", "server/src/maintenance/**/*.controller.ts"]
+    styles: [nest]
+    bootstrap: server/src/app.common.ts
+calls:
+  # The generated client: its paths are relative to defaults.baseUrl, "/api" (packages/sdk/src/fetch-client.ts), and
+  # each request goes through oazapfts.fetchJson, fetchText or fetchBlob, which take the URL first and an init second
+  # and send GET when the init sets no method (@oazapfts/runtime).
+  - from: sdk
+    to: server
+    files: ["packages/sdk/src/fetch-client.ts"]
+    prefix: /api
+    wrappers:
+      - { name: oazapfts.fetchJson, defaultMethod: GET }
+      - { name: oazapfts.fetchText, defaultMethod: GET }
+      - { name: oazapfts.fetchBlob, defaultMethod: GET }
+  # The web app's requests outside the SDK: URLs built on the SDK's getBaseUrl() ("/api") or by createUrl, which puts
+  # it before the path (web/src/lib/utils.ts).
+  - { from: web, to: server, files: ["web/src/lib/**/*.ts"], prefix: /api }
+  # The app's serverEndpoint is the server URL with /api (mobile/lib/services/api.service.dart); its requests go
+  # through the generated Dart client (mobile/generated/openapi, not committed) or join paths to that endpoint.
+  - { from: mobile, to: server, files: ["mobile/lib/**/*.dart"], prefix: /api }

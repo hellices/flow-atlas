@@ -1,0 +1,11 @@
+# Nx monorepo: the NestJS API, the Angular client and its library of HttpClient services.
+components:
+  - { name: api, path: apps/api }
+  - { name: client, path: apps/client }
+  - { name: ui, path: libs/ui }
+routes:
+  # Controllers under the global prefix and URI versioning apps/api/src/main.ts sets.
+  - { component: api, files: ["apps/api/src/**/*.controller.ts"], styles: [nest] }
+calls:
+  - { from: ui, to: api, files: ["libs/ui/src/lib/services/**/*.ts"] }
+  - { from: client, to: api, files: ["apps/client/src/app/services/**/*.ts", "apps/client/src/main.ts"] }

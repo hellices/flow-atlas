@@ -1,0 +1,9 @@
+# One Express API (the RealWorld backend), its routers chained and mounted under /api; no client in the repository.
+components:
+  - { name: api, path: . }
+routes:
+  - { component: api, files: ["src/**/*.ts"], styles: [express] }
+publicSurfaces:
+  # The RealWorld spec's endpoints are for frontends outside the repository; GET / is the "API is running" probe.
+  - "api|* /api/**"
+  - "api|GET /"

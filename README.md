@@ -167,6 +167,9 @@ through a BFF handler's port call to a service, and that SARIF and Arazzo output
 on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
 scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
 
+[`fixtures/repositories`](fixtures/repositories/README.md) pins public repositories at a commit with what atlas read
+there; the `repositories` workflow fetches them and fails when a change moves any of it.
+
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 
 ```bash

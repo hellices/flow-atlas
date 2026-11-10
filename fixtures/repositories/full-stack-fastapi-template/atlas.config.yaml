@@ -1,0 +1,15 @@
+# FastAPI backend, React app on a client @hey-api/openapi-ts generated (frontend/src/client).
+components:
+  - { name: backend, path: backend }
+  - { name: frontend, path: frontend }
+routes:
+  - component: backend
+    files: ["backend/app/**/*.py"]
+    styles: [fastapi]
+    # main.py includes api_router under settings.API_V1_STR, "/api/v1" in app/core/config.py.
+    mounts:
+      "backend/app/api/main.py": /api/v1
+calls:
+  # main.tsx sets the client's baseURL to VITE_API_URL, an origin (frontend/.env); the generated paths start with
+  # /api/v1. The app's own code calls the generated SDK.
+  - { from: frontend, to: backend, files: ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"] }
