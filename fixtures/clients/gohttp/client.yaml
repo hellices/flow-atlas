@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs runs the requests this app makes with Go's net/http client. net/http comes with the Go
+# toolchain, so there is nothing to install: its release is the Go the workflow sets up, the latest stable one. The
+# users package reads its service's URL from the environment, as the app is configured.
+toolchain: go
+docs:
+  - https://pkg.go.dev/net/http
+  - https://pkg.go.dev/net/url#JoinPath
+setup: go version >&2
+latest: go version >&2
+oracle: USERS_API_URL="$RECORD_URL" go run oracle.go

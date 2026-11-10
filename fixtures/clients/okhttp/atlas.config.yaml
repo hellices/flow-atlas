@@ -1,0 +1,6 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The base URL comes from the build's configuration (ApiConfig); its path is the prefix.
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/*RemoteDataSource.kt"], prefix: /api }

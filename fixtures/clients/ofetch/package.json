@@ -1,0 +1,8 @@
+{
+  "name": "ofetch-calls",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ofetch": "^1.5.1"
+  }
+}

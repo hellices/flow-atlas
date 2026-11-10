@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs runs the requests this app makes with Requests. requirements.txt pins every package with
+# its hashes and names no index, so each machine installs the same files from the index it uses.
+toolchain: python
+docs:
+  - https://requests.readthedocs.io/en/latest/user/quickstart/
+  - https://requests.readthedocs.io/en/latest/user/advanced/
+  - https://toolbelt.readthedocs.io/en/latest/sessions.html
+setup: uv venv -q --allow-existing && uv pip sync -q requirements.txt
+latest: uv venv -q --allow-existing && uv pip install -q --upgrade -r pyproject.toml
+oracle: .venv/bin/python oracle.py

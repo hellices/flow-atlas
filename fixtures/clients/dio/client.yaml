@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs dio and runs the requests this app makes with it.
+toolchain: dart
+docs:
+  - https://pub.dev/packages/dio
+  - https://pub.dev/documentation/dio/latest/dio/Dio-class.html
+  - https://pub.dev/documentation/dio/latest/dio/BaseOptions-class.html
+  - https://pub.dev/documentation/dio/latest/dio/Interceptor-class.html
+setup: dart pub get --enforce-lockfile
+latest: dart pub upgrade --major-versions dio
+oracle: dart oracle.dart

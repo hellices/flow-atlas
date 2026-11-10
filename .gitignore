@@ -4,11 +4,19 @@ dist/
 coverage/
 # Framework fixtures install their framework next to the app.
 fixtures/frameworks/**/.venv/
+fixtures/clients/**/.venv/
 fixtures/frameworks/**/target/
+fixtures/clients/**/target/
 fixtures/frameworks/**/bin/Debug/
+fixtures/clients/**/bin/Debug/
 fixtures/frameworks/**/bin/Release/
+fixtures/clients/**/bin/Release/
 fixtures/frameworks/**/obj/
+fixtures/clients/**/obj/
 fixtures/frameworks/**/.next/
+fixtures/clients/**/.next/
 fixtures/frameworks/**/__pycache__/
+fixtures/clients/**/__pycache__/
 fixtures/frameworks/**/vendor/
+fixtures/clients/**/vendor/
 .repos/

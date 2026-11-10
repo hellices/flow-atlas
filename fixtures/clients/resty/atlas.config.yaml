@@ -1,0 +1,7 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  - { from: client, to: api, files: ["api/users.go"] }
+  # The billing client's base URL is the gateway's with /billing/v1 after it.
+  - { from: client, to: api, files: ["api/billing.go"], prefix: /billing/v1 }

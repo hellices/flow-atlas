@@ -1,17 +1,18 @@
 name: frameworks
 
 # Installs each framework under fixtures/frameworks, asks it again for the routes its application serves and fails when
-# they differ from routes.json. Weekly, and on demand, it does so on each framework's latest release. A push to a
-# `frameworks/**` branch runs it too, and every run hands back, as an artifact, what each fixture reported (its
-# routes.json, and calls.json or dispatch.json where it has one, whether or not they changed) and every other file
-# the run changed or added (lock files written on the way), for fixtures on a toolchain a contributor does not have
-# installed.
+# they differ from routes.json; runs the code of each client library under fixtures/clients again and fails when the
+# requests it sends differ from calls.json. Weekly, and on demand, it does so on each one's latest release. A push to a
+# `frameworks/**` branch runs the fixtures it changes, and every run hands back, as an artifact, what each fixture
+# reported (its routes.json or calls.json, and dispatch.json where it has one, whether or not they changed) and every
+# other file the run changed or added (lock files written on the way), for fixtures on a toolchain a contributor does
+# not have installed.
 on:
   pull_request:
-    paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
+    paths: ["fixtures/frameworks/**", "fixtures/clients/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   push:
     branches: [main, "frameworks/**"]
-    paths: ["fixtures/frameworks/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
+    paths: ["fixtures/frameworks/**", "fixtures/clients/**", "scripts/frameworks.mjs", ".github/workflows/frameworks.yml"]
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -55,7 +56,7 @@ jobs:
               if [ -z "$best" ] || [ "$n" -lt "$best" ]; then best=$n; base=$ref; fi
             done
             echo "changes since $base"
-            names=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD -- fixtures/frameworks | cut -d/ -f3 | sort -u | tr '\n' ' ')
+            names=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD -- fixtures/frameworks fixtures/clients | cut -d/ -f3 | sort -u | tr '\n' ' ')
             [ -n "$names" ] || names=none
           fi
           echo "matrix=$(node scripts/frameworks.mjs --matrix $names)" >> "$GITHUB_OUTPUT"
@@ -122,7 +123,7 @@ jobs:
         run: swift --version
       - if: matrix.toolchain == 'dart'
         uses: dart-lang/setup-dart@v1
-      - name: ask the framework for its routes and compare them with routes.json
+      - name: ask the framework or the client again and compare with routes.json or calls.json
         env:
           DOTNET_NOLOGO: 1
           DOTNET_CLI_TELEMETRY_OPTOUT: 1

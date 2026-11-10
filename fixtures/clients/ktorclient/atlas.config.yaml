@@ -1,0 +1,6 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The client's default request takes its base URL from the build's configuration (ApiConfig); its path is the prefix.
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/*Service.kt"], prefix: /api/v1 }

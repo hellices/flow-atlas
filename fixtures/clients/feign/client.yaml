@@ -1,0 +1,12 @@
+# How scripts/frameworks.mjs runs the requests this application makes with OpenFeign (plain Feign, no Spring Cloud).
+toolchain: java
+docs:
+  - https://github.com/OpenFeign/feign/blob/master/README.md
+  - https://github.com/OpenFeign/feign/tree/master/java11
+setup: mvn -q -B clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+# The latest release of Feign on Maven Central, in place of the pom's feign.version.
+latest: >-
+  mvn -q -B -U clean compile dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+  -Dfeign.version=$(curl -fsS https://repo1.maven.org/maven2/io/github/openfeign/feign-core/maven-metadata.xml
+  | sed -n 's:.*<version>\([0-9][0-9.]*\)</version>.*:\1:p' | sort -V | tail -1)
+oracle: java -cp "target/classes:$(cat target/classpath.txt)" -Dapi.base-url="$RECORD_URL" Oracle.java

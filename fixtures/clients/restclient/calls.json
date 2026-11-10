@@ -1,0 +1,23 @@
+{
+  "library": "Spring RestClient",
+  "version": "7.0.10",
+  "calls": [
+    {"method":"GET","path":"/projects"},
+    {"method":"POST","path":"/projects"},
+    {"method":"DELETE","path":"/projects/{}","raw":"/projects/7777777"},
+    {"method":"GET","path":"/projects/{}","raw":"/projects/7777777"},
+    {"method":"PATCH","path":"/projects/{}","raw":"/projects/7777777"},
+    {"method":"PUT","path":"/projects/{}","raw":"/projects/7777777"},
+    {"method":"POST","path":"/projects/{}/members/{}","raw":"/projects/7777777/members/zzparamzz"},
+    {"method":"GET","path":"/users"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/7777777"},
+    {"method":"GET","path":"/users/{}","raw":"/users/7777777"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/7777777"},
+    {"method":"PUT","path":"/users/{}","raw":"/users/7777777"},
+    {"method":"GET","path":"/users/{}/avatar","raw":"/users/7777777/avatar"},
+    {"method":"GET","path":"/users/{}/posts","raw":"/users/zzparamzz/posts"},
+    {"method":"GET","path":"/users/{}/settings","raw":"/users/7777777/settings"},
+    {"method":"HEAD","path":"/users/emails/{}","raw":"/users/emails/zzparamzz"}
+  ]
+}

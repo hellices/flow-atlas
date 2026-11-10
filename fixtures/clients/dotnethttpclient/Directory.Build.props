@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- The packages the projects use: IHttpClientFactory and the generic host, at the release of the .NET 10 runtime. -->
+    <ExtensionsVersion Condition="'$(ExtensionsVersion)' == ''">10.0.14</ExtensionsVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

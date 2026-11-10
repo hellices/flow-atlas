@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /health", reason: "an SDK call's own `baseUrl` option (`getHealth({ baseUrl: location.origin })`) is not read: the call source's prefix is put before the generated function's path, and nothing says so" }
+extra:
+  - { call: "GET /api/v1/health", reason: "the request to /health read under the prefix the call's own `baseUrl` replaces" }

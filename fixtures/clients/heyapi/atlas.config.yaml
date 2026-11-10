@@ -1,0 +1,6 @@
+components:
+  - { name: client, path: . }
+  - { name: api, path: server }
+calls:
+  # The generated SDK and the app's code that calls it; the client's base URL (src/hey-api.ts) is the prefix.
+  - { from: client, to: api, files: ["src/client/sdk.gen.ts", "src/api/**/*.ts"], prefix: /api/v1 }

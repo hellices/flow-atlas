@@ -1,0 +1,21 @@
+{
+  "library": "HttpClient with IHttpClientFactory (Microsoft.Extensions.Http)",
+  "version": "10.0.14",
+  "calls": [
+    {"method":"GET","path":"/api/orders/{}/items","raw":"/api/orders/zzparamzz/items"},
+    {"method":"GET","path":"/api/projects"},
+    {"method":"PATCH","path":"/api/projects/{}","raw":"/api/projects/zzparamzz"},
+    {"method":"POST","path":"/api/projects/{}/archive","raw":"/api/projects/zzparamzz/archive"},
+    {"method":"POST","path":"/api/projects/{}/files","raw":"/api/projects/zzparamzz/files"},
+    {"method":"GET","path":"/api/users"},
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/7777777"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/7777777"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/7777777"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/7777777"},
+    {"method":"GET","path":"/api/v2/reports/{}","raw":"/api/v2/reports/7777777"},
+    {"method":"HEAD","path":"/api/v2/reports/{}","raw":"/api/v2/reports/7777777"},
+    {"method":"POST","path":"/api/v2/reports/{}/export","raw":"/api/v2/reports/7777777/export"},
+    {"method":"GET","path":"/health"}
+  ]
+}

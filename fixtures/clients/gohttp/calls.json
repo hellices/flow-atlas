@@ -1,0 +1,21 @@
+{
+  "library": "net/http",
+  "version": "1.26.5",
+  "calls": [
+    {"method":"GET","path":"/api/v1/invoices"},
+    {"method":"POST","path":"/api/v1/invoices"},
+    {"method":"DELETE","path":"/api/v1/invoices/{}","raw":"/api/v1/invoices/zzparamzz"},
+    {"method":"GET","path":"/api/v1/invoices/{}","raw":"/api/v1/invoices/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/invoices/{}","raw":"/api/v1/invoices/zzparamzz"},
+    {"method":"POST","path":"/api/v1/invoices/{}/lines/{}/refund","raw":"/api/v1/invoices/zzparamzz/lines/7777777/refund"},
+    {"method":"HEAD","path":"/health"},
+    {"method":"POST","path":"/sessions"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"PUT","path":"/users/{}","raw":"/users/zzparamzz"},
+    {"method":"GET","path":"/users/search"},
+    {"method":"GET","path":"/v2/reports/{}","raw":"/v2/reports/7777777"}
+  ]
+}

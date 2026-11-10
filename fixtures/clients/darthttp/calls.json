@@ -1,0 +1,17 @@
+{
+  "library": "http",
+  "version": "1.6.0",
+  "calls": [
+    {"method":"POST","path":"/api/users"},
+    {"method":"DELETE","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"PUT","path":"/api/users/{}","raw":"/api/users/zzparamzz"},
+    {"method":"GET","path":"/api/users/{}/avatar","raw":"/api/users/zzparamzz/avatar"},
+    {"method":"GET","path":"/catalog/items"},
+    {"method":"GET","path":"/catalog/items/{}","raw":"/catalog/items/7777777"},
+    {"method":"PATCH","path":"/catalog/items/{}","raw":"/catalog/items/7777777"},
+    {"method":"POST","path":"/catalog/items/{}/reviews","raw":"/catalog/items/7777777/reviews"},
+    {"method":"DELETE","path":"/catalog/items/{}/reviews/{}","raw":"/catalog/items/7777777/reviews/zzparamzz"}
+  ]
+}

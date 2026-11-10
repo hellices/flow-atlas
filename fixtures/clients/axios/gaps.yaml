@@ -1,0 +1,12 @@
+# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { call: "GET /billing/v2/customers/{}/invoices", reason: "the path a request interceptor puts before each URL of an instance (`request.url = `/v2${request.url}``) is not put before that instance's calls, and nothing says so" }
+  - { call: "GET /billing/v2/invoices/{}", reason: "the path a request interceptor puts before each URL of an instance is not put before that instance's calls, and nothing says so" }
+  - { call: "POST /billing/v2/invoices/{}/payments", reason: "the path a request interceptor puts before each URL of an instance is not put before that instance's calls, and nothing says so" }
+  - { call: "GET /version", reason: "a request config with no `method` (`axios.request({ baseURL, url })`) is read with its method unread, though axios sends GET, and nothing says so" }
+extra:
+  - { call: "GET /billing/customers/{}/invoices", reason: "read without the `/v2` the billing instance's interceptor puts before it" }
+  - { call: "GET /billing/invoices/{}", reason: "read without the `/v2` the billing instance's interceptor puts before it" }
+  - { call: "POST /billing/invoices/{}/payments", reason: "read without the `/v2` the billing instance's interceptor puts before it" }
+  - { call: "* /version", reason: "axios's default method, GET, is not read for a request config that states none" }

@@ -1,0 +1,15 @@
+{
+  "library": "URLSession (Foundation)",
+  "version": "6.4",
+  "calls": [
+    {"method":"POST","path":"/api/v1/users"},
+    {"method":"DELETE","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PATCH","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"PUT","path":"/api/v1/users/{}","raw":"/api/v1/users/zzparamzz"},
+    {"method":"GET","path":"/api/v1/users/{}/avatar","raw":"/api/v1/users/zzparamzz/avatar"},
+    {"method":"GET","path":"/store/orders/{}","raw":"/store/orders/7777777"},
+    {"method":"POST","path":"/store/orders/{}/cancel","raw":"/store/orders/7777777/cancel"},
+    {"method":"GET","path":"/store/products"}
+  ]
+}

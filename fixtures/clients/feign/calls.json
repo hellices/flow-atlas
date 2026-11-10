@@ -1,0 +1,17 @@
+{
+  "library": "OpenFeign",
+  "version": "13.17",
+  "calls": [
+    {"method":"GET","path":"/admin/members/{}","raw":"/admin/members/7777777"},
+    {"method":"DELETE","path":"/admin/members/{}/sessions","raw":"/admin/members/7777777/sessions"},
+    {"method":"POST","path":"/admin/members/{}/suspension","raw":"/admin/members/7777777/suspension"},
+    {"method":"DELETE","path":"/repos/{}/{}","raw":"/repos/zzparamzz/zzparamzz"},
+    {"method":"GET","path":"/repos/{}/{}","raw":"/repos/zzparamzz/zzparamzz"},
+    {"method":"PATCH","path":"/repos/{}/{}","raw":"/repos/zzparamzz/zzparamzz"},
+    {"method":"HEAD","path":"/repos/{}/{}/collaborators/{}","raw":"/repos/zzparamzz/zzparamzz/collaborators/zzparamzz"},
+    {"method":"PUT","path":"/repos/{}/{}/topics","raw":"/repos/zzparamzz/zzparamzz/topics"},
+    {"method":"GET","path":"/search/repositories"},
+    {"method":"POST","path":"/user/repos"},
+    {"method":"GET","path":"/users/{}/repos","raw":"/users/zzparamzz/repos"}
+  ]
+}
