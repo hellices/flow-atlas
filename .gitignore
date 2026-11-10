@@ -19,3 +19,4 @@ fixtures/frameworks/**/__pycache__/
 fixtures/clients/**/__pycache__/
 fixtures/frameworks/**/vendor/
 fixtures/clients/**/vendor/
+.repos/
