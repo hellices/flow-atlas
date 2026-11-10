@@ -20,6 +20,8 @@ for (const middleware of app.middleware) {
     if (layer.opts.pathAsRegExp) throw new Error(`a route is a regular expression, which a path cannot write: ${layer.path}`);
     const id = String(routes.length);
     // The route's own handler is its last function; the ones before it are middleware (`router.param` among them).
+    // The layers of an array of paths share one stack: each gets its own, so the tag tells them apart.
+    layer.stack = [...layer.stack];
     const handler = layer.stack.at(-1);
     layer.stack[layer.stack.length - 1] = function (ctx, next) {
       ctx.append("x-route", id);
@@ -33,7 +35,7 @@ for (const middleware of app.middleware) {
 
 // The path-to-regexp @koa/router matches with: its own reading of a pattern's parameters, wildcards and groups.
 const require = createRequire(import.meta.url);
-const { parse, stringify, TokenData } = createRequire(require.resolve("@koa/router"))("path-to-regexp");
+const { match, parse, stringify, TokenData } = createRequire(require.resolve("@koa/router"))("path-to-regexp");
 
 /** The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. */
 function expand(tokens) {
@@ -98,8 +100,39 @@ for (const r of routes) {
     }
   }
 }
+// Sample requests, and the route the routers dispatch each to: every route's sample path, also with a trailing `/`, and
+// a path no route takes, each with every method a route registers. A route is told by the handler that answered; its
+// path is the one of its (expanded) patterns that matches the request, with path-to-regexp, which @koa/router matches
+// with (not `strict`, so a trailing `/` is taken). `router.redirect` registers a route of its own, whose handler
+// answers with the redirect: such a request is that route's. `allowedMethods()` answers a method no route at the path
+// takes (405, 501) by itself: no route.
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
+const samples = [...new Set(routes.flatMap((r) => expand(parse(r.pattern).tokens).map((t) => sample(t).replace(/\/+$/, "") || "/")))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const answered = (await send(method, path)) ?? "";
+    if (answered === "") {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    // A route whose handler hands the request on (`next`) leaves the answer to the next one; none here does.
+    const ids = answered.split(/,\s*/);
+    if (ids.length > 1) throw new Error(`${method} ${path} is answered by routes ${answered}`);
+    const r = routes[Number(ids[0])];
+    const pattern = expand(parse(r.pattern).tokens).find((t) => match(stringify(new TokenData(t)).replace(/\/+$/, "") || "/", { decode: false })(path));
+    if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${r.id}, none of whose patterns matches it`);
+    requests.push({ method, path, route: `${r.methods[0] === "*" ? "*" : method} ${canonical(pattern)}` });
+  }
+}
 server.close();
 
 // @koa/router exports no package.json.
 const version = JSON.parse(readFileSync(new URL("node_modules/@koa/router/package.json", import.meta.url), "utf8")).version;
-console.log(JSON.stringify({ framework: "@koa/router", version, routes: out }));
+console.log(JSON.stringify({ framework: "@koa/router", version, routes: out, requests }));

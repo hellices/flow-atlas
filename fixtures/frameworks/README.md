@@ -18,6 +18,19 @@ The `frameworks` workflow installs each framework, reruns its oracle and fails w
 `routes.json`; once a week it does so on the frameworks' latest releases, so a change in how a framework serves its
 routes shows before a user meets it.
 
+## Where a request goes
+
+An oracle may also print sample requests, written to `dispatch.json`: each a method and a concrete path (`/users/me`,
+`/users/value1/`), with the route the framework dispatched it to, as a key of `routes.json`, or `null` where no route
+took it. The samples are every route's sample path, the same with a trailing `/`, a path no route takes, each with
+every method the routes register, HEAD and OPTIONS only where a route registers one on its own (the form below leaves
+out the HEAD beside a GET and the OPTIONS beside another method), so they include the requests several routes could
+take. A redirect the framework answers by itself (a trailing `/` added or removed) is no route's. The test sends each
+through atlas's matcher, as a call with that literal path: a request to a route atlas reads must reach that surface
+alone, and a request no route took must reach none. A request to a route atlas does not read is a missing route
+already and is not compared. `gaps.yaml` lists the requests atlas matches otherwise under `dispatch`, each
+`{ request: "METHOD /path", reason }`.
+
 ## The form both sides are compared in
 
 - A parameter is `{}`, wherever it stands in a segment (`/flights/{}-{}`), and so is a wildcard within a segment

@@ -11,6 +11,7 @@ docs:
   - https://nextjs.org/docs/app/api-reference/file-conventions/metadata
   - https://nextjs.org/docs/app/api-reference/file-conventions/public-folder
   - https://nextjs.org/docs/app/api-reference/file-conventions/src-folder
+  - https://nextjs.org/docs/app/api-reference/config/next-config-js/trailingSlash
   - https://nextjs.org/docs/pages/building-your-application/routing/pages-and-layouts
   - https://nextjs.org/docs/pages/building-your-application/routing/dynamic-routes
   - https://nextjs.org/docs/pages/building-your-application/routing/api-routes

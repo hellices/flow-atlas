@@ -14,6 +14,7 @@ fastify.addHook("onRoute", (route) => {
   const handler = route.handler;
   route.handler = function (request, reply) {
     reply.header("x-route", id);
+    reply.header("x-params", JSON.stringify(request.params ?? {}));
     return handler.call(this, request, reply);
   };
 });
@@ -105,7 +106,52 @@ for (const r of registered) {
     }
   }
 }
+
+/** A request as a client sends it, with a JSON body for the methods that take one (see above). */
+const injected = (method, url) =>
+  method === "GET" || method === "HEAD" ? { method, url } : { method, url, payload: "{}", headers: { "content-type": "application/json" } };
+
+/**
+ * The route key a request reached, from Fastify's own report of the route that answered (its `url`) and the parameters
+ * find-my-way matched: an optional last parameter left out is the path without it, and a wildcard that took nothing
+ * is its parent path.
+ */
+function keyOf(r, method, params) {
+  const optional = /^(.*)\/:([^/?]+)\?$/.exec(r.url);
+  const pattern = optional ? (params[optional[2]] === undefined ? optional[1] || "/" : `${optional[1]}/:${optional[2]}`) : r.url;
+  const key = canonical(pattern);
+  const every = fastify.supportedMethods.every((m) => [r.method].flat().includes(m));
+  return `${every ? "*" : method} ${params["*"] === "" && key.endsWith("/{**}") ? key.slice(0, -"/{**}".length) || "/" : key}`;
+}
+
+// Sample requests, and the route Fastify dispatches each to: every route's sample path, also with a trailing `/`, and
+// a path no route takes, each with every method a route registers. A route is told by the handler that answered. The
+// requests carry no `Accept-Version`, so the version-constrained `/versioned` routes take none of them. Fastify
+// redirects no request: a path with a trailing `/` is a 404 unless a route takes it, as a prefixed plugin's `/` route
+// does (registered as both `/api` and `/api/`, the documented `prefixTrailingSlash: "both"`, one route).
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
+// A wildcard's parent path (written without its `/{**}`) is sampled without the rest.
+const parent = (r) => r.raw?.endsWith("*") && !r.path.endsWith("/{**}");
+const samples = [...new Set(out.map((r) => (parent(r) ? sample(r.raw).slice(0, -"rest/of/it".length) : sample(r.raw ?? r.path)).replace(/\/+$/, "") || "/"))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const response = await fastify.inject(injected(method, path));
+    const id = response.headers["x-route"];
+    if (id === undefined) {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    requests.push({ method, path, route: keyOf(registered[Number(id)], method, JSON.parse(response.headers["x-params"])) });
+  }
+}
 await fastify.close();
 
 const version = createRequire(import.meta.url)("fastify/package.json").version;
-console.log(JSON.stringify({ framework: "fastify", version, routes: out }));
+console.log(JSON.stringify({ framework: "fastify", version, routes: out, requests }));

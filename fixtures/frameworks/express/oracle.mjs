@@ -88,7 +88,7 @@ function walk(router, prefix, out) {
 
 // The path-to-regexp Express's router matches with: its own reading of a pattern's parameters, wildcards and groups.
 const require = createRequire(import.meta.url);
-const { parse, stringify, TokenData } = createRequire(createRequire(require.resolve("express")).resolve("router"))("path-to-regexp");
+const { match, parse, stringify, TokenData } = createRequire(createRequire(require.resolve("express")).resolve("router"))("path-to-regexp");
 
 /** The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. */
 function expand(tokens) {
@@ -119,7 +119,31 @@ for (const r of walk(app.router, "", [])) {
     out.push({ method: r.method, path: canonical(tokens), raw: pattern });
   }
 }
+// Sample requests, and the route Express dispatches each to: every route's sample path, also with a trailing `/`, and
+// a path no route takes, each with every method a route registers. A route is told by the handler that answered; its
+// path is the one of its (expanded) patterns that matches the request.
+const registered = walk(app.router, "", []);
+const methods = [...new Set(registered.map((r) => r.method).filter((m) => m !== "*"))].sort();
+const samples = [...new Set(registered.flatMap((r) => expand(parse(r.pattern).tokens).map((t) => sample(t).replace(/\/+$/, "") || "/")))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const response = await fetch(base + path, { method, redirect: "manual" });
+    const id = response.headers.get("x-route");
+    if (id === null) {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    const routes = registered.filter((r) => r.id === id);
+    const pattern = routes
+      .flatMap((r) => expand(parse(r.pattern).tokens))
+      .find((t) => match(stringify(new TokenData(t)).replace(/\/+$/, "") || "/", { decode: false })(path));
+    if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${id}, none of whose patterns matches it`);
+    requests.push({ method, path, route: `${routes[0].method === "*" ? "*" : method} ${canonical(pattern)}` });
+  }
+}
 server.close();
 
 const version = createRequire(import.meta.url)("express/package.json").version;
-console.log(JSON.stringify({ framework: "express", version, routes: out }));
+console.log(JSON.stringify({ framework: "express", version, routes: out, requests }));

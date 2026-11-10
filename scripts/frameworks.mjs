@@ -10,7 +10,9 @@
 // --latest  install the latest release first (the fixture's `latest` command) instead of the locked one
 // --matrix  print each fixture (or each named one present) with its toolchain as a GitHub Actions matrix and exit
 //
-// A framework fixture's oracle prints {framework, version, routes}. A client fixture's oracle makes every request its
+// A framework fixture's oracle prints {framework, version, routes}, and may add `requests`: sample requests, each
+// {method, path} with a concrete path and the route the framework dispatched it to (`route`, "METHOD /path" in the form
+// of routes.json, or null where none took it), written to dispatch.json. A client fixture's oracle makes every request its
 // code makes once, against the recording server whose base URL it gets as RECORD_URL, with the value ARG (or the
 // number ARG_NUMBER) for each path argument, and prints {library, version}; the requests the server receives are the
 // calls, each argument written `{}`.
@@ -124,6 +126,44 @@ async function recordCalls(f, command) {
   }
 }
 
+/**
+ * Writes dispatch.json from an oracle's sample requests, or compares with it under --check; whether it differs. Each
+ * request once by method and path, its route a key of routes.json or null.
+ */
+function writeDispatch(f, out) {
+  const keys = new Set(out.routes.map((r) => `${r.method} ${r.path}`));
+  const seen = new Map();
+  for (const r of out.requests) {
+    if (typeof r.method !== "string" || typeof r.path !== "string" || !(r.route === null || typeof r.route === "string")) {
+      throw new Error(`a request needs a method, a path and a route or null: ${JSON.stringify(r)}`);
+    }
+    if (r.route !== null && !keys.has(r.route)) throw new Error(`${r.method} ${r.path} is dispatched to ${r.route}, which is no route the oracle printed`);
+    const key = `${r.method} ${r.path}`;
+    const known = seen.get(key);
+    if (known && known.route !== r.route) throw new Error(`${key} is dispatched to ${known.route} and to ${r.route}`);
+    seen.set(key, { method: r.method, path: r.path, route: r.route });
+  }
+  const entries = [...seen.values()].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
+  const file = join(f.dir, "dispatch.json");
+  const text = `{\n  "framework": ${JSON.stringify(out.framework)},\n  "version": ${JSON.stringify(out.version)},\n  "requests": [\n${entries.map((r) => `    ${JSON.stringify(r)}`).join(",\n")}\n  ]\n}\n`;
+  const committed = existsSync(file) ? readFileSync(file, "utf8") : "";
+  if (!check || keep) writeFileSync(file, text);
+  if (!check) {
+    console.error(`   ${entries.length} sample requests`);
+    return false;
+  }
+  const key = (r) => `${r.method} ${r.path} -> ${r.route}`;
+  const before = new Set(committed ? JSON.parse(committed).requests.map(key) : []);
+  const now = new Set(entries.map(key));
+  const gone = [...before].filter((x) => !now.has(x));
+  const added = [...now].filter((x) => !before.has(x));
+  if (!gone.length && !added.length) return false;
+  console.error(`   ${out.framework} ${out.version} dispatches requests otherwise than dispatch.json records:`);
+  for (const x of gone) console.error(`   - ${x}`);
+  for (const x of added) console.error(`   + ${x}`);
+  return true;
+}
+
 let failed = false;
 for (const f of names.length ? all.filter((g) => names.includes(g.name)) : all) {
   const k = KINDS[f.kind];
@@ -135,6 +175,9 @@ for (const f of names.length ? all.filter((g) => names.includes(g.name)) : all) 
       ? await recordCalls(f, spec.oracle)
       : JSON.parse(execSync(spec.oracle, { cwd: f.dir, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 }));
   const result = { by: out[k.by], version: out.version, entries: settled(out[k.list]) };
+  if (f.kind === "framework" && out.requests !== undefined) {
+    failed = writeDispatch(f, out) || failed;
+  }
   const file = join(f.dir, k.file);
   // One entry a line, so a change shows as the lines of the entries it moves.
   const lines = result.entries.map((r) => `    ${JSON.stringify(r)}`).join(",\n");

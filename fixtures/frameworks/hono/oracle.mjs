@@ -14,6 +14,7 @@ const root = new Hono();
 root.use("*", async (c, next) => {
   await next();
   c.header("x-route", String(root.routes.indexOf(matchedRoutes(c)[c.req.routeIndex])));
+  c.header("x-params", JSON.stringify(c.req.param() ?? {}));
 });
 root.route("/", app);
 
@@ -58,24 +59,62 @@ async function takesParent(pattern) {
 }
 
 const out = [];
+/** Each route's sample path (the one it answered), and its wildcard's parent path where it takes that. */
+const probed = new Set();
 for (const r of routes) {
   const method = r.method === "ALL" ? "*" : r.method;
   for (const pattern of expand(r.pattern)) {
     let answered;
+    let sent;
     for (const path of samples(pattern)) {
       const response = await root.request(path, { method: method === "*" ? "PATCH" : method });
       answered = response.headers.get("x-route");
+      sent = path;
       if (answered === r.id) break;
     }
     if (answered !== r.id) throw new Error(`${method} ${pattern} is answered by route ${answered}, not by route ${r.id} that registers it`);
+    probed.add(sent.replace(/\/+$/, "") || "/");
     out.push({ method, path: canonical(pattern), raw: pattern });
     // A route that also takes its parent path with a trailing `/` is written as two: the parent, and `/{**}`.
     if (canonical(pattern).endsWith("/{**}") && (await takesParent(pattern))) {
       out.push({ method, path: canonical(pattern).slice(0, -"/{**}".length) || "/", raw: pattern });
+      probed.add(sent.replace(/\/?rest\/of\/it$/, "") || "/");
     }
+  }
+}
+
+/**
+ * The route key a request reached, from the route Hono reports answering it (`matchedRoutes`) and the parameters it
+ * matched (`c.req.param()`): an optional last parameter left out is the path without it, and a wildcard that took
+ * nothing is its parent path.
+ */
+function keyOf(r, method, path, params) {
+  const optional = /^(.*)\/:([^/{?]+)\?$/.exec(r.pattern);
+  const pattern = optional ? (params[optional[2]] === undefined ? optional[1] || "/" : `${optional[1]}/:${optional[2]}`) : r.pattern;
+  let key = canonical(pattern);
+  if (key.endsWith("/{**}")) {
+    const parent = key.slice(0, -"/{**}".length);
+    const at = new RegExp(`^${parent.split("{}").map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^/]+")}/?$`);
+    if (at.test(path)) key = parent || "/";
+  }
+  return `${r.method === "ALL" ? "*" : method} ${key}`;
+}
+
+// Sample requests, and the route Hono dispatches each to: every route's sample path, also with a trailing `/`, and a
+// path no route takes, each with every method a route registers. A route is told by Hono's report of the route that
+// answered; a request only middleware saw (Hono's 404) is no route's. Hono is strict by default: a path with a
+// trailing `/` is another path, which the fallback `get("*")` takes for GET, and nothing redirects.
+const methods = [...new Set(out.map((r) => r.method).filter((m) => m !== "*"))].sort();
+const probes = [...new Set([...probed, ...[...probed].map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const response = await root.request(path, { method });
+    const r = routes.find((x) => x.id === response.headers.get("x-route"));
+    requests.push({ method, path, route: r ? keyOf(r, method, path, JSON.parse(response.headers.get("x-params"))) : null });
   }
 }
 
 // hono exports no package.json.
 const version = JSON.parse(readFileSync(new URL("node_modules/hono/package.json", import.meta.url), "utf8")).version;
-console.log(JSON.stringify({ framework: "hono", version, routes: out }));
+console.log(JSON.stringify({ framework: "hono", version, routes: out, requests }));

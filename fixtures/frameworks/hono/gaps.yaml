@@ -27,3 +27,12 @@ extra:
   - { route: "GET /status", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
   - { route: "PATCH /settings/{}", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
   - { route: "GET /post/:date{}/:title{}", reason: "regexp parameters read as literal text (their regexps' braces compared as parameters)" }
+dispatch:
+  - { request: "DELETE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "PATCH /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "POST /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "PURGE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "PUT /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "QUERY /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
+  - { request: "GET /endpoint", reason: "mount path (see `extra`): atlas also matches the extra `GET /{}`, the `/book` group's `/:id` read without its mount path, which Hono serves at `/book/:id` only" }
+  - { request: "GET /hello", reason: "mount path (see `extra`): atlas also matches the extra `GET /{}`, the `/book` group's `/:id` read without its mount path, which Hono serves at `/book/:id` only" }

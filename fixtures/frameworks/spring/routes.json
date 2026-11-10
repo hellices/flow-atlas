@@ -44,6 +44,7 @@
     {"method":"GET","path":"/memos/{}","raw":"/memos/{id}"},
     {"method":"GET","path":"/memos/{**}","raw":"/memos/**"},
     {"method":"GET","path":"/owners/{}/pets/{}","raw":"/owners/{ownerId}/pets/{petId}"},
+    {"method":"GET","path":"/owners/{}/pets/new","raw":"/owners/{ownerId}/pets/new"},
     {"method":"GET","path":"/people"},
     {"method":"POST","path":"/people"},
     {"method":"GET","path":"/people/{}","raw":"/people/{id}"},

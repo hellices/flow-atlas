@@ -31,7 +31,7 @@ for (const module of app.get(ModulesContainer).values())
 // wildcards and groups.
 const require = createRequire(import.meta.url);
 const from = (...names) => names.reduce((at, name) => createRequire(at).resolve(name), require.resolve("@nestjs/platform-express"));
-const { parse, stringify, TokenData } = createRequire(from("express", "router"))("path-to-regexp");
+const { match, parse, stringify, TokenData } = createRequire(from("express", "router"))("path-to-regexp");
 
 /**
  * The patterns a pattern stands for, each a list of tokens: an optional group `{...}` with it and without it. Nest
@@ -90,7 +90,32 @@ for (const r of routes) {
     out.push({ method: r.method, path: canonical(tokens), raw: pattern });
   }
 }
+// Sample requests, and the route Nest dispatches each to: every route's sample path, also with a trailing `/`, and a
+// path no route takes, each with every method a route registers. A route is told by the Express route whose handler
+// answered (Nest's own 404 is no route's); its path is the one of its (expanded) patterns that matches the request.
+// Express 5 matches without regard to a trailing `/` (`strict` off) and redirects none.
+const methods = [...new Set(routes.map((r) => r.method).filter((m) => m !== "*"))].sort();
+const samples = [...new Set(routes.flatMap((r) => expand(parse(r.pattern).tokens).map((t) => sample(t).replace(/\/+$/, "") || "/")))];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const response = await fetch(base.replace("[::1]", "127.0.0.1") + path, { method, redirect: "manual" });
+    await response.arrayBuffer();
+    const id = response.headers.get("x-route");
+    if (id === null) {
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    const answered = routes.filter((r) => r.id === id);
+    const pattern = answered
+      .flatMap((r) => expand(parse(r.pattern).tokens))
+      .find((t) => match(stringify(new TokenData(t)).replace(/\/+$/, "") || "/", { decode: false })(path));
+    if (pattern === undefined) throw new Error(`${method} ${path} is answered by route ${id}, none of whose patterns matches it`);
+    requests.push({ method, path, route: `${answered[0].method === "*" ? "*" : method} ${canonical(pattern)}` });
+  }
+}
 await app.close();
 
 const version = createRequire(import.meta.url)("@nestjs/core/package.json").version;
-console.log(JSON.stringify({ framework: "nestjs", version, routes: out }));
+console.log(JSON.stringify({ framework: "nestjs", version, routes: out, requests }));

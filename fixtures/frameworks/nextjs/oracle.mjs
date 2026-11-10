@@ -4,7 +4,8 @@
 // module which methods it exports. `next start` then serves the build, and each route is requested where the
 // manifest's own regexes give the request to that route: it counts under the methods Next answers, neither refusing
 // them (405) nor finding nothing (404). Files of `public/`, the build's assets and the image optimizer, which Next serves without a route of the
-// app's, are listed from the directory and the manifests that name them, and requested the same way.
+// app's, are listed from the directory and the manifests that name them, and requested the same way. Sample requests
+// are then sent to every route's path, and each recorded with the route Next's own routing matched it to (matched.cjs).
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -86,7 +87,7 @@ const port = await new Promise((resolve) => {
     probe.close(() => resolve(port));
   });
 });
-const server = spawn(process.execPath, [next, "start", "-p", String(port), "-H", "127.0.0.1"], { cwd: dir, env, stdio: ["ignore", "ignore", "inherit"] });
+const server = spawn(process.execPath, ["--require", join(dir, "matched.cjs"), next, "start", "-p", String(port), "-H", "127.0.0.1"], { cwd: dir, env, stdio: ["ignore", "ignore", "inherit"] });
 const base = `http://127.0.0.1:${port}`;
 
 async function request(method, path) {
@@ -103,6 +104,7 @@ async function answered(path) {
 }
 
 const out = [];
+const requests = [];
 try {
   for (let i = 0; ; i++) {
     try {
@@ -179,9 +181,74 @@ try {
   // The image optimizer of next/image, at the path images-manifest gives.
   const optimizer = `${images.path}?url=${encodeURIComponent("/apple-icon.png")}&w=${images.imageSizes[0]}&q=75`;
   for (const method of await answered(optimizer)) out.push({ method, path: images.path, raw: images.path });
+
+  // Sample requests, and the route Next dispatches each to: every route's sample path, also with a trailing `/`, and a
+  // path no route takes, each with every method a route registers. A route is told by what Next's router matched the
+  // request to (matched.cjs: a route's page, a public file, a build asset, the image optimizer); it took the request if
+  // it answers that method, and Next refused it otherwise (404, 405). Its path is the one of its paths that fits.
+  // HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+  // and the OPTIONS beside another method of the same path, which the framework answers by itself.
+  const methodsAt = new Map();
+  for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+  const own = (r) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path).has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path).size > 1);
+  const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
+  const samples = [...new Set(out.map((r) => r.path.replace(/\{\*\*\}/g, "rest/of/it").replace(/\{\}/g, "value1")))];
+  const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+  const fits = (pattern, path) => {
+    const want = segmentsOf(pattern);
+    const have = segmentsOf(path);
+    if (want.at(-1) === "{**}") return have.length >= want.length && want.slice(0, -1).every((s, i) => s === "{}" || s === have[i]);
+    return have.length === want.length && want.every((s, i) => s === "{}" || s === have[i]);
+  };
+  const rawOf = ({ type, itemPath }) => {
+    if (type === "appFile" || type === "pageFile") return itemPath;
+    if (type === "publicFolder") return `public${itemPath}`;
+    if (type === "nextStaticFolder") return "/_next/static/*";
+    if (type === "nextImage") return images.path;
+    throw new Error(`Next matched a request to ${type} ${itemPath}, which is not a route the oracle lists`);
+  };
+  for (const path of probes) {
+    for (const method of methods) {
+      const response = await fetch(base + path, { method, redirect: "manual", body: method === "GET" ? undefined : "{}" });
+      await response.arrayBuffer();
+      const { status, headers } = response;
+      const at = `${method} ${path} (${status})`;
+      if (status >= 300 && status < 400) {
+        // Next redirects a path with a trailing slash to the one without (next.config.js, trailingSlash: "By default
+        // Next.js will redirect URLs with trailing slashes to their counterpart without a trailing slash"): its router
+        // answers before any route, and the docs name the target as another URL, not the same route.
+        if (headers.get("location") !== path.replace(/\/+$/, "")) throw new Error(`${at} redirects to ${headers.get("location")}`);
+        requests.push({ method, path, route: null });
+        continue;
+      }
+      const matched = headers.get("x-oracle-matched-output");
+      if (matched === null) {
+        if (status !== 404) throw new Error(`${at} is answered without a route Next matched`);
+        requests.push({ method, path, route: null });
+        continue;
+      }
+      const output = JSON.parse(matched);
+      const raw = rawOf(output);
+      const refused = status === 404 || status === 405;
+      const rendered = headers.get("x-oracle-matched-route");
+      if (!refused && rendered !== null && rendered !== output.itemPath) throw new Error(`${at} is matched to ${output.itemPath} and rendered by ${rendered}`);
+      const candidates = out.filter((r) => r.raw === raw);
+      const pattern = candidates.map((r) => r.path).find((p) => fits(p, path));
+      if (pattern === undefined) throw new Error(`${at} is matched to ${raw}, none of whose paths fits it`);
+      const route = candidates.find((r) => r.path === pattern && (r.method === method || r.method === "*"));
+      if (route === undefined) {
+        if (!refused) throw new Error(`${at} is answered by ${raw}, which does not take ${method}`);
+        requests.push({ method, path, route: null });
+        continue;
+      }
+      // An API route's handler takes every method and may refuse one itself.
+      if (refused && !(["appFile", "pageFile"].includes(output.type) && describe(raw).kind === "PAGES_API")) throw new Error(`${at} is refused by ${raw}, which takes ${method}`);
+      requests.push({ method, path, route: `${route.method} ${pattern}` });
+    }
+  }
 } finally {
   server.kill();
 }
 
 const version = require("next/package.json").version;
-console.log(JSON.stringify({ framework: "next", version, routes: out }));
+console.log(JSON.stringify({ framework: "next", version, routes: out, requests }));

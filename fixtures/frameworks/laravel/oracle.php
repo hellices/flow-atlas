@@ -9,7 +9,9 @@
  */
 
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Events\RouteMatched;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 
@@ -46,54 +48,130 @@ function sample(?string $regex): string
     throw new RuntimeException("no sample value for the constraint {$regex}");
 }
 
+/** A path of the route in the canonical form: a parameter whose constraint takes a slash is the rest of the path. */
+function canonical(Route $route, string $path): string
+{
+    return preg_replace_callback('/\{(\w+)\??\}/', fn ($m) => takes($route->wheres[$m[1]] ?? '[^/]+', 'a/b') ? '{**}' : '{}', $path);
+}
+
+/** A path of the route with each parameter filled with a value it takes. */
+function concrete(Route $route, string $path): string
+{
+    return $path === '' ? '/' : preg_replace_callback('/\{(\w+)\??\}/', fn ($m) => takes($route->wheres[$m[1]] ?? '[^/]+', 'a/b') ? 'a/b' : sample($route->wheres[$m[1]] ?? null), $path);
+}
+
 /**
- * The paths a route serves in the canonical form, each with a request path the route's matcher accepts. A parameter
- * whose constraint takes a slash is the rest of the path (`{**}`); a trailing parameter the route serves without (an
- * optional one, `{name?}`, or a rest one that takes nothing) gives the path without it as well.
+ * The paths a route serves, each as [canonical form, a request path the route's matcher accepts]. A trailing parameter
+ * the route serves without (an optional one, `{name?}`, or a rest one that takes nothing) gives the path without it as
+ * well.
  *
- * @return list<string>
+ * @return list<array{string, string}>
  */
-function paths(Route $route, string $method): array
+function forms(Route $route, string $method): array
 {
     $uri = '/'.ltrim($route->uri(), '/');
-    $param = '/\{(\w+)\??\}/';
-    $canonical = fn (string $path) => preg_replace_callback($param, fn ($m) => takes($route->wheres[$m[1]] ?? '[^/]+', 'a/b') ? '{**}' : '{}', $path);
-    $concrete = fn (string $path) => preg_replace_callback($param, fn ($m) => takes($route->wheres[$m[1]] ?? '[^/]+', 'a/b') ? 'a/b' : sample($route->wheres[$m[1]] ?? null), $path);
-    $served = fn (string $path) => $route->matches(Request::create($path === '' ? '/' : $concrete($path), $method === '*' ? 'GET' : $method));
+    $served = fn (string $path) => $route->matches(Request::create(concrete($route, $path), $method === '*' ? 'GET' : $method));
 
     if (! $served($uri)) {
-        throw new RuntimeException("route {$method} {$uri} does not take ".$concrete($uri));
+        throw new RuntimeException("route {$method} {$uri} does not take ".concrete($route, $uri));
     }
-    $out = [$canonical($uri)];
+    $out = [[canonical($route, $uri), concrete($route, $uri)]];
     // The same path without its last parameter, and without the separator before it.
     for ($path = $uri; preg_match('/[\/.\-]?\{\w+\??\}$/', $path, $m); ) {
         $path = substr($path, 0, -strlen($m[0]));
         if (! $served($path)) {
             break;
         }
-        $out[] = $path === '' ? '/' : $canonical($path);
+        $out[] = [$path === '' ? '/' : canonical($route, $path), concrete($route, $path)];
     }
 
     return $out;
 }
 
+/** The methods a route is listed under: `*` for one that takes every verb the router knows. */
+function methodsOf(Route $route): array
+{
+    $methods = $route->methods();
+    // `Route::any` (and `Route::redirect`) registers every verb the router knows: a route for any method.
+    if (array_diff(Router::$verbs, $methods) === [] && array_diff($methods, Router::$verbs) === []) {
+        return ['*'];
+    }
+
+    return $methods;
+}
+
 $routes = [];
+$samples = [];
 foreach ($listed as $entry) {
     $route = $collection[($entry['domain'] ?? '').' '.$entry['method'].' '.$entry['uri']]
         ?? throw new RuntimeException("route:list lists {$entry['method']} {$entry['uri']}, which the router does not hold");
     if (($entry['domain'] ?? null) !== null) {
         continue;
     }
-    $methods = explode('|', $entry['method']);
-    // `Route::any` (and `Route::redirect`) registers every verb the router knows: a route for any method.
-    if (array_diff(Router::$verbs, $methods) === [] && array_diff($methods, Router::$verbs) === []) {
-        $methods = ['*'];
-    }
-    foreach ($methods as $method) {
-        foreach (paths($route, $method) as $path) {
+    foreach (methodsOf($route) as $method) {
+        foreach (forms($route, $method) as [$path, $request]) {
             $routes[] = ['method' => $method, 'path' => $path, 'raw' => $entry['uri']];
+            $samples[] = $request;
         }
     }
 }
 
-echo json_encode(['framework' => 'laravel', 'version' => $app->version(), 'routes' => $routes], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";
+/*
+ * Sample requests, and the route Laravel dispatches each to: every route's sample path, also with a trailing `/`, and a
+ * path no route takes, each with every method a route registers, HEAD and OPTIONS only where a route registers them on
+ * their own (the compared form leaves out the HEAD beside a GET and the OPTIONS beside another method of the same
+ * path), sent through the HTTP kernel. The route is the one the router reports matching (`RouteMatched`); its path is
+ * the route's form without the trailing optional parameters the request left out. A request no route takes (404) or
+ * that only routes for other methods take (405) is dispatched to none, and so is an OPTIONS request the router answers
+ * itself, with a route it makes up to answer with the methods other routes of the path take (`getRouteForMethods`);
+ * the fallback route takes what no other GET route does. A `Route::redirect` route answers with a redirect of its own,
+ * but the request is dispatched to that route, so it is recorded as such. Laravel matches a request's path without its
+ * trailing `/`, and redirects none.
+ */
+$keys = array_flip(array_map(fn ($r) => $r['method'].' '.$r['path'], $routes));
+$methodsAt = [];
+foreach ($routes as $r) {
+    $methodsAt[$r['path']][$r['method']] = true;
+}
+$methods = array_values(array_unique(array_map(fn ($r) => $r['method'], array_filter(
+    $routes,
+    fn ($r) => $r['method'] !== '*'
+        && ! ($r['method'] === 'HEAD' && isset($methodsAt[$r['path']]['GET']))
+        && ! ($r['method'] === 'OPTIONS' && count($methodsAt[$r['path']]) > 1),
+))));
+sort($methods);
+$samples = array_values(array_unique($samples));
+$probes = array_unique([...$samples, ...array_map(fn ($s) => $s === '/' ? $s : $s.'/', $samples), '/nowhere/value1']);
+sort($probes);
+
+$http = $app->make(HttpKernel::class);
+$held = $app['router']->getRoutes()->getRoutes();
+$matched = null;
+$app['events']->listen(RouteMatched::class, function (RouteMatched $event) use (&$matched) {
+    $matched = [$event->route, $event->route->originalParameters()];
+});
+$requests = [];
+foreach ($probes as $path) {
+    foreach ($methods as $method) {
+        $matched = null;
+        $request = Request::create($path, $method);
+        $response = $http->handle($request);
+        $http->terminate($request, $response);
+        if ($matched === null || ! in_array($matched[0], $held, true)) {
+            $requests[] = ['method' => $method, 'path' => $path, 'route' => null];
+            continue;
+        }
+        [$route, $parameters] = $matched;
+        $uri = '/'.ltrim($route->uri(), '/');
+        while (preg_match('/[\/.\-]?\{(\w+)\??\}$/', $uri, $m) && ! isset($parameters[$m[1]])) {
+            $uri = substr($uri, 0, -strlen($m[0]));
+        }
+        $key = (methodsOf($route) === ['*'] ? '*' : $method).' '.($uri === '' ? '/' : canonical($route, $uri));
+        if (! isset($keys[$key])) {
+            throw new RuntimeException("{$method} {$path} is dispatched to {$key}, which is not a route listed");
+        }
+        $requests[] = ['method' => $method, 'path' => $path, 'route' => $key];
+    }
+}
+
+echo json_encode(['framework' => 'laravel', 'version' => $app->version(), 'routes' => $routes, 'requests' => $requests], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";

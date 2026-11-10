@@ -67,5 +67,46 @@ for (const r of routes) {
   }
 }
 
+// Sample requests, and the route Elysia dispatches each to: every route's sample path (and its optional parts' paths,
+// and a wildcard's parent), also with a trailing `/`, and a path no route takes, each with every method a route registers. A route is told by
+// `context.route`, the path Elysia matched, with the method of the request (or `*` where that path takes any); its path
+// is the one of the forms written above for it whose shape the request has. A request no route took is Elysia's 404.
+const forms = new Map<string, string[]>();
+for (const r of out) forms.set(r.raw, [...new Set([...(forms.get(r.raw) ?? []), r.path])]);
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const shape = (path: string) =>
+  new RegExp(`^${path.split("/").map((s) => (s === "{}" ? "[^/]+" : s === "{**}" ? ".+" : escape(s))).join("/")}$`);
+// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+// and the OPTIONS beside another method of the same path, which the framework answers by itself.
+const methodsAt = new Map<string, Set<string>>();
+for (const r of out) methodsAt.set(r.path, new Set([...(methodsAt.get(r.path) ?? []), r.method]));
+const own = (r: { method: string; path: string }) => r.method !== "*" && !(r.method === "HEAD" && methodsAt.get(r.path)!.has("GET")) && !(r.method === "OPTIONS" && methodsAt.get(r.path)!.size > 1);
+const methods = [...new Set(out.filter(own).map((r) => r.method))].sort();
+// A wildcard's parent (`/id/` for `/id/*`) is a sample path too.
+const samples = [
+  ...new Set(
+    routes.flatMap((r) =>
+      expand(r.path).flatMap((p) => [sample(p), ...(p.endsWith("/*") ? [sample(p).replace(/rest\/of\/it$/, "")] : [])]).map((p) => p.replace(/\/+$/, "") || "/"),
+    ),
+  ),
+];
+const probes = [...new Set([...samples, ...samples.map((s) => (s === "/" ? s : `${s}/`)), "/nowhere/value1"])].sort();
+const requests: Array<{ method: string; path: string; route: string | null }> = [];
+for (const path of probes) {
+  for (const method of methods) {
+    const { response, route } = await request(root, method, path);
+    if (route === undefined) {
+      if (response.status !== 404) throw new Error(`${method} ${path} is answered with ${response.status} by no route`);
+      requests.push({ method, path, route: null });
+      continue;
+    }
+    const any = routes.some((r) => r.path === route && r.method === "ALL");
+    if (!any && !routes.some((r) => r.path === route && r.method === method)) throw new Error(`${method} ${path} is answered by ${route}, which takes no ${method}`);
+    const form = (forms.get(route) ?? []).find((f) => shape(f).test(path.replace(/\/+$/, "") || "/"));
+    if (form === undefined) throw new Error(`${method} ${path} is answered by ${route}, none of whose forms it has`);
+    requests.push({ method, path, route: `${any ? "*" : method} ${form}` });
+  }
+}
+
 const version = JSON.parse(readFileSync(new URL("node_modules/elysia/package.json", import.meta.url), "utf8")).version;
-console.log(JSON.stringify({ framework: "elysia", version, routes: out }));
+console.log(JSON.stringify({ framework: "elysia", version, routes: out, requests }));

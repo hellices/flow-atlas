@@ -24,6 +24,7 @@ import org.springframework.http.server.PathContainer;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.DispatcherServlet;
 import org.springframework.web.servlet.HandlerMapping;
@@ -50,6 +51,7 @@ import org.springframework.web.util.pattern.PathPatternParser;
  * controller, the actuator's endpoints), the URL patterns of the URL handler mappings (static resources), and the
  * router function of WebMvc.fn through RouterFunctions.Visitor, each route of which is then confirmed by a request the
  * router function answers with a handler. A mapping of another kind fails the oracle rather than being left out.
+ * Last, sample requests are sent through the DispatcherServlet, each recorded with the route it dispatched it to.
  *
  *   java -cp "target/classes:$(cat target/classpath.txt)" Oracle.java
  */
@@ -58,17 +60,27 @@ public class Oracle {
 	record Route(String method, String raw) {
 	}
 
+	record Request(String method, String path, String route) {
+	}
+
+	/** The resource lookups of router functions (`RouterFunctions.resources`), by the pattern each serves. */
+	static final Map<String, Function<ServerRequest, Optional<Resource>>> LOOKUPS = new java.util.LinkedHashMap<>();
+
 	public static void main(String[] args) throws Exception {
 		PrintStream stdout = System.out;
 		System.setOut(System.err);
 		ConfigurableApplicationContext context = new SpringApplicationBuilder(Application.class).run(
 				"--server.port=0", "--spring.main.banner-mode=off", "--logging.level.root=WARN",
+				"--logging.level.org.springframework.web.servlet.mvc.support=ERROR",
 				"--spring.mvc.servlet.load-on-startup=1");
 		List<Route> routes = new ArrayList<>();
+		List<Request> requests;
 		try {
-			List<HandlerMapping> mappings = context.getBean(DispatcherServlet.class).getHandlerMappings();
+			DispatcherServlet servlet = context.getBean(DispatcherServlet.class);
+			List<HandlerMapping> mappings = servlet.getHandlerMappings();
 			if (mappings == null) throw new IllegalStateException("the DispatcherServlet has not been initialized");
 			for (HandlerMapping mapping : mappings) read(mapping, routes);
+			requests = dispatch(servlet, routes);
 		}
 		finally {
 			SpringApplication.exit(context);
@@ -80,6 +92,13 @@ public class Oracle {
 			if (i > 0) json.append(',');
 			json.append("{\"method\":").append(quote(r.method())).append(",\"path\":").append(quote(canonical(r.raw())))
 					.append(",\"raw\":").append(quote(r.raw())).append('}');
+		}
+		json.append("],\"requests\":[");
+		for (int i = 0; i < requests.size(); i++) {
+			Request r = requests.get(i);
+			if (i > 0) json.append(',');
+			json.append("{\"method\":").append(quote(r.method())).append(",\"path\":").append(quote(r.path()))
+					.append(",\"route\":").append(r.route() == null ? "null" : quote(r.route())).append('}');
 		}
 		stdout.println(json.append("]}"));
 		System.exit(0);
@@ -111,6 +130,97 @@ public class Oracle {
 		else if (!mapping.getClass().getName().endsWith("WelcomePageNotAcceptableHandlerMapping")) {
 			throw new IllegalStateException("no reading for the handler mapping " + mapping.getClass().getName());
 		}
+	}
+
+	/**
+	 * Sample requests, and the route Spring MVC dispatches each to: every route's sample path, also with a trailing `/`,
+	 * and a path no route takes, each with every method a route registers (see `methodsAt`), sent through the DispatcherServlet. The route
+	 * is told by the pattern the handler mapping that took the request exposes (BEST_MATCHING_PATTERN_ATTRIBUTE: the
+	 * handler method's mapping, the URL handler's pattern, the router function's matching pattern). No handler, a 405 from
+	 * the handler chosen, or a route that does not serve the method (see `route`), is no route.
+	 */
+	static List<Request> dispatch(DispatcherServlet servlet, List<Route> routes) throws Exception {
+		// HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a
+		// GET and the OPTIONS beside another method of the same path, which the framework answers by itself.
+		Map<String, Set<String>> methodsAt = new java.util.HashMap<>();
+		for (Route r : routes) methodsAt.computeIfAbsent(canonical(r.raw()), p -> new TreeSet<>()).add(r.method());
+		Set<String> methods = new TreeSet<>();
+		Set<String> samples = new TreeSet<>();
+		for (Route r : routes) {
+			Set<String> beside = methodsAt.get(canonical(r.raw()));
+			boolean answered = (r.method().equals("HEAD") && beside.contains("GET")) || (r.method().equals("OPTIONS") && beside.size() > 1);
+			if (!r.method().equals("*") && !answered) methods.add(r.method());
+			String path = sample(r.raw()).replaceAll("/+$", "");
+			samples.add(path.isEmpty() ? "/" : path);
+		}
+		Set<String> probes = new TreeSet<>(samples);
+		for (String path : samples) if (!path.equals("/")) probes.add(path + "/");
+		probes.add("/nowhere/value1");
+		List<Request> out = new ArrayList<>();
+		for (String path : probes) {
+			for (String method : methods) {
+				MockHttpServletRequest request = new MockHttpServletRequest(servlet.getServletContext(), method, path);
+				if (!method.equals("GET") && !method.equals("DELETE")) {
+					request.setContentType("application/json");
+					request.setContent("{}".getBytes());
+				}
+				MockHttpServletResponse response = new MockHttpServletResponse();
+				try {
+					servlet.service(request, response);
+				}
+				catch (jakarta.servlet.ServletException ex) {
+					// An exception no resolver handled: the route was still the one that took the request.
+				}
+				Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+				// A router function's resources expose no pattern: theirs is the lookup that finds the resource served.
+				Object handler = request.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE);
+				if (pattern == null && handler != null && handler.getClass().getSimpleName().equals("ResourceHandlerFunction")) {
+					ServerRequest serverRequest = (ServerRequest) request.getAttribute(RouterFunctions.REQUEST_ATTRIBUTE);
+					List<String> found = new ArrayList<>();
+					LOOKUPS.forEach((raw, lookup) -> {
+						if (lookup.apply(serverRequest).isPresent()) found.add(raw);
+					});
+					if (found.size() != 1) throw new IllegalStateException(method + " " + path + " is served by the resources of " + found);
+					pattern = found.get(0);
+				}
+				String route = pattern == null || response.getStatus() == 405 ? null : route(routes, method, path, pattern.toString());
+				out.add(new Request(method, path, route));
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * The route of `routes` the pattern that took a request stands for: the pattern, or, where it ends in a segment that
+	 * takes the rest of the path and the request has nothing after its last `/`, its parent; a router function's nest
+	 * route with no path of its own takes what its nest's pattern leaves (`/teams/**`).
+	 */
+	static String route(List<Route> routes, String method, String path, String raw) {
+		PathPattern pattern = PathPatternParser.defaultInstance.parse(raw);
+		String trimmed = path.replaceAll("/+$", "");
+		String parent = parent(raw);
+		String taken;
+		if (pattern.matches(PathContainer.parsePath(path))) {
+			boolean bare = parent != null && PathPatternParser.defaultInstance.parse(parent.isEmpty() ? "/" : parent)
+					.matches(PathContainer.parsePath(trimmed.isEmpty() ? "/" : trimmed));
+			taken = bare ? (parent.isEmpty() ? "/" : parent) : raw;
+		}
+		else {
+			PathPattern.PathRemainingMatchInfo start = pattern.matchStartOfPath(PathContainer.parsePath(path));
+			if (start == null) throw new IllegalStateException(method + " " + path + " is dispatched to " + raw + ", which does not match it");
+			taken = start.getPathRemaining().value().replaceAll("/+$", "").isEmpty() ? raw : raw.replaceAll("/+$", "") + "/**";
+		}
+		boolean any = false;
+		boolean own = false;
+		for (Route r : routes) {
+			if (!r.raw().equals(taken)) continue;
+			any |= r.method().equals("*");
+			own |= r.method().equals(method);
+		}
+		// A URL handler mapping chooses its handler by path alone: a resource handler that took a method it does not
+		// serve answers it with an error (404 for a missing file before 405), so no route took the request.
+		if (!any && !own) return null;
+		return (any ? "*" : method) + " " + canonical(taken);
 	}
 
 	/** A URL handler's methods: those a WebContentGenerator (a resource handler, a view controller) supports, else any. */
@@ -346,6 +456,7 @@ public class Oracle {
 			int arrow = description.indexOf(" -> ");
 			if (arrow < 0) throw new IllegalStateException("no reading for the resource lookup " + description);
 			String raw = description.substring(0, arrow);
+			LOOKUPS.put(raw, lookup);
 			String parent = parent(raw);
 			for (String method : List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")) {
 				if (!confirm(method, raw, null)) continue;
@@ -392,7 +503,7 @@ public class Oracle {
 		}
 	}
 
-	static final List<String> VALUES = List.of("1", "abc", "a-b", "value1", "00000000-0000-0000-0000-000000000001");
+	static final List<String> VALUES = List.of("1", "abc", "a-b", "value1", "00000000-0000-0000-0000-000000000001", "1.0.0", ".txt");
 
 	/**
 	 * A request path a pattern matches: for a variable `1`, or the first of a few values its regex takes, and

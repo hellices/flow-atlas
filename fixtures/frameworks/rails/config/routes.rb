@@ -47,6 +47,7 @@ Rails.application.routes.draw do
 
   get "about", to: "pages#about"
   get "pages/:slug", to: "pages#show", as: :page
+  get "retired", to: "pages#retired"
   match "search", to: "search#query", via: [:get, :post]
   match "webhooks/:source", to: "webhooks#receive", via: :all
   get "archive(/:year(/:month))", to: "archive#index", constraints: { year: /\d{4}/, month: /\d{2}/ }

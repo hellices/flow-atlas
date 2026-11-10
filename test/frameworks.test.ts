@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, type Config } from "../src/config.js";
+import { matchCalls, rankedComponents } from "../src/match.js";
+import type { Call, Graph } from "../src/model.js";
 import { scan } from "../src/scan.js";
 import { WorktreeSource } from "../src/source.js";
 
@@ -26,6 +28,14 @@ interface Gaps {
   missing?: Array<{ route: string; reason: string }>;
   /** Surfaces atlas reads that the framework does not serve. */
   extra?: Array<{ route: string; reason: string }>;
+  /** Sample requests atlas matches to other routes than the framework dispatches them to. */
+  dispatch?: Array<{ request: string; reason: string }>;
+}
+
+interface Dispatch {
+  framework: string;
+  version: string;
+  requests: Array<{ method: string; path: string; route: string | null }>;
 }
 
 const root = fileURLToPath(new URL("../fixtures/frameworks", import.meta.url));
@@ -164,6 +174,36 @@ function lockHosts(file: string): string[] {
   return [...installs.matchAll(pattern)].map((m) => m[1]!.toLowerCase());
 }
 
+/**
+ * The sample requests atlas matches otherwise than the framework dispatched them, each `METHOD /path`: a request to a
+ * route atlas reads must reach that surface alone, and one no route took must reach none. A request to a route atlas
+ * does not read is a missing route already, not compared here.
+ */
+function dispatchDifferences(graph: Graph, config: Config, dispatch: Dispatch, read: Set<string>): string[] {
+  const component = config.routes[0]?.component ?? "";
+  const compared = dispatch.requests.filter((r) => r.route === null || read.has(r.route));
+  const calls: Call[] = compared.map((r, i) => ({
+    id: `probe->${component}|${r.method} ${r.path}@dispatch.json:${i + 1}`,
+    from: "probe",
+    to: component,
+    method: r.method,
+    path: r.path.replace(/\/+$/, "") || "/",
+    based: false,
+    ...(r.path.length > 1 && r.path.endsWith("/") ? { slash: true as const } : {}),
+    at: { file: "dispatch.json", line: i + 1 },
+    evidence: "text",
+  }));
+  const { targetsOf } = matchCalls({ surfaces: graph.surfaces, calls }, rankedComponents(config));
+  return compared
+    .filter((r, i) => {
+      const targets = targetsOf.get(i) ?? [];
+      if (r.route === null) return targets.length > 0;
+      return targets.length !== 1 || !routeKeys([targets[0]!], canonicalPaths).includes(r.route);
+    })
+    .map((r) => `${r.method} ${r.path}`)
+    .sort();
+}
+
 describe("routes as each framework serves them", () => {
   const board: string[] = [];
   for (const name of fixtures) {
@@ -181,6 +221,21 @@ describe("routes as each framework serves them", () => {
       const listedMissing = gaps.unread !== undefined ? oracle : (gaps.missing ?? []).map((g) => g.route).sort();
       const listedExtra = (gaps.extra ?? []).map((g) => g.route).sort();
       expect({ missing, extra }).toEqual({ missing: listedMissing, extra: listedExtra });
+    });
+    it.runIf(existsSync(join(root, name, "dispatch.json")))(`${name}: requests reach the routes the framework dispatches them to`, () => {
+      const dir = join(root, name);
+      const gaps = (existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) as Gaps;
+      const config = loadConfig(join(dir, "atlas.config.yaml"));
+      const graph = scan(new WorktreeSource(dir), config, { root: dir, requested: "WORKTREE" });
+      const dispatch = JSON.parse(readFileSync(join(dir, "dispatch.json"), "utf8")) as Dispatch;
+      const served = JSON.parse(readFileSync(join(dir, "routes.json"), "utf8")) as { routes: Array<{ method: string; path: string }> };
+      const keys = new Set(served.routes.map((r) => `${r.method} ${r.path}`));
+      expect(dispatch.requests.filter((r) => r.route !== null && !keys.has(r.route))).toEqual([]);
+      // Each surface's own key, as a target is told below: a parameter route beside a catch-all one, which the routes
+      // compare as one route of one segment or more, is a route atlas reads all the same.
+      const read = new Set(graph.surfaces.flatMap((s) => routeKeys([s], canonicalPaths)));
+      const differences = dispatchDifferences(graph, config, dispatch, read);
+      expect(differences).toEqual((gaps.dispatch ?? []).map((g) => g.request).sort());
     });
   }
   it("lock files name no registry but the public ones", () => {

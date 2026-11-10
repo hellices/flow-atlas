@@ -36,7 +36,9 @@ logging.disable(logging.WARNING)  # Django logs each 405 the function views answ
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.http import Http404
-from django.test import RequestFactory
+from django.db import connection
+from django.test import Client, RequestFactory
+from django.test.utils import setup_test_environment
 from django.urls import URLResolver, get_resolver
 from django.utils.regex_helper import normalize
 
@@ -208,5 +210,101 @@ def walk(patterns, chain: list, out: list[dict]) -> list[dict]:
 
 
 routes = walk(get_resolver().url_patterns, [], [])
+
+
+def leaves(patterns, prefix: str, chain: list[str], out: list[tuple]) -> list[tuple]:
+    """Each pattern a request can be dispatched to: the `route` Django's ResolverMatch gives for it (the patterns' own
+    text joined as `URLResolver.resolve` joins it), its view, and the regex `walk` wrote it under."""
+    for pattern in patterns:
+        piece = pattern.pattern.regex.pattern.removeprefix("^")
+        if isinstance(pattern, URLResolver):
+            leaves(pattern.url_patterns, prefix + piece, [*chain, str(pattern.pattern)], out)
+            continue
+        route = str(pattern.pattern)
+        for outer in reversed(chain):
+            route = URLResolver._join_route(outer, route)
+        out.append((route, pattern.callback, "^" + prefix + piece))
+    return out
+
+
+def samples(regex: str) -> list[str]:
+    # A concrete path for each form of the pattern: each parameter a value its regex takes (the rest of the path where
+    # it takes a slash), and the path before the last `/` where that parameter takes nothing as well.
+    out = []
+    for text, params in normalize(regex):
+        values = {}
+        for p in params:
+            group = group_regex(regex, p)
+            candidates = ("rest/of/it", "value1", "1", "2024", "00000000-0000-0000-0000-000000000001")
+            fits = [v for v in candidates if re.fullmatch(group, v)]
+            values[p] = fits[0] if fits else witness(group)
+        out.append(("/" + text % values).rstrip("/") or "/")
+        if params and re.fullmatch(group_regex(regex, params[-1]), "") and values[params[-1]] == "rest/of/it":
+            out.append(("/" + text % {**values, params[-1]: ""}).rstrip("/") or "/")
+    return out
+
+
+def takes(path: str, request: str) -> bool:
+    pattern = re.escape(path).replace(re.escape("{**}"), ".+").replace(re.escape("{}"), "[^/]+")
+    return re.fullmatch(pattern, request.rstrip("/") or "/") is not None
+
+
+# Sample requests, and the pattern Django dispatched each to: every pattern's sample path, also with a trailing `/`, and
+# a path no pattern takes, each with every method a route registers, sent through Django's test client, anonymous, to
+# a test database. A pattern is told by `request.resolver_match` of the request the handler served, which Django sets
+# when its resolver finds one (the first that matches, in the order of the URLconf); its path is the one of the
+# pattern's forms that takes the request. A 405 is no pattern's: the view refused the method.
+# A request no pattern takes but would with `/` appended is answered by CommonMiddleware with a 301 there (APPEND_SLASH;
+# with DEBUG on, an error for a POST, PUT or PATCH). Django documents that as a redirect to the URL with a slash
+# appended, not as the pattern it reaches, so the request is no pattern's. A view's own answer, a redirect included,
+# is its pattern's: the admin's views, its catch-all `admin/<url>` among them, send an anonymous user to the login page.
+logging.disable(logging.CRITICAL)  # the 500s of those errors
+setup_test_environment()
+connection.creation.create_test_db(verbosity=0)
+found = leaves(get_resolver().url_patterns, "", [], [])
+by_raw: dict[str, list[dict]] = {}
+for r in routes:
+    by_raw.setdefault(r["raw"], []).append(r)
+# HEAD and OPTIONS only where a route registers them on their own: the compared form leaves out the HEAD beside a GET
+# and the OPTIONS beside another method of the same path, which the framework answers by itself.
+methods_at: dict[str, set[str]] = {}
+for r in routes:
+    methods_at.setdefault(r["path"], set()).add(r["method"])
+methods_sent = sorted(
+    {
+        r["method"]
+        for r in routes
+        if r["method"] != "*"
+        and not (r["method"] == "HEAD" and "GET" in methods_at[r["path"]])
+        and not (r["method"] == "OPTIONS" and len(methods_at[r["path"]]) > 1)
+    }
+)
+probe_paths = {s for _, _, raw in found for s in samples(raw.removeprefix("^"))}
+probes = sorted(probe_paths | {s if s == "/" else s + "/" for s in probe_paths} | {"/nowhere/value1"})
+keys = {f"{r['method']} {r['path']}" for r in routes}
+client = Client(raise_request_exception=False)
+requests = []
+for path in probes:
+    for method in methods_sent:
+        response = client.generic(method, path)
+        match = response.wsgi_request.resolver_match
+        if match is None or response.status_code == 405:
+            requests.append({"method": method, "path": path, "route": None})
+            continue
+        raws = {raw for route, callback, raw in found if route == match.route and callback is match.func}
+        if len(raws) != 1:
+            raise SystemExit(f"{method} {path} resolves to {match.route}, which names {sorted(raws)}")
+        entries = by_raw[raws.pop()]
+        any_method = any(r["method"] == "*" for r in entries)
+        if not any_method and all(r["method"] != method for r in entries):
+            # A view that answers before it checks the method (DRF's 404 for an unknown format suffix) still refuses it.
+            requests.append({"method": method, "path": path, "route": None})
+            continue
+        taken = sorted({f"{'*' if any_method else method} {r['path']}" for r in entries if takes(r["path"], path)})
+        if len(taken) != 1 or taken[0] not in keys:
+            raise SystemExit(f"{method} {path} is answered by {match.route}, whose forms give {taken}")
+        requests.append({"method": method, "path": path, "route": taken[0]})
+connection.creation.destroy_test_db(":memory:", verbosity=0)
+
 served_by = f"{version('django')}, djangorestframework {version('djangorestframework')}"
-print(json.dumps({"framework": "django", "version": served_by, "routes": routes}))
+print(json.dumps({"framework": "django", "version": served_by, "routes": routes, "requests": requests}))
