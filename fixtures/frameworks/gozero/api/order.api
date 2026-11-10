@@ -1,0 +1,35 @@
+syntax = "v1"
+
+import "base.api"
+
+type OrderReq {
+	Id int64 `path:"id"`
+}
+
+type OrderResp {
+	Base
+	Id     int64  `json:"id"`
+	Status string `json:"status"`
+}
+
+type CreateOrderReq {
+	Item string `json:"item"`
+}
+
+@server (
+	prefix: /v1
+	group:  order
+)
+service items-api {
+	@handler listOrders
+	get /orders returns ([]OrderResp)
+
+	@handler createOrder
+	post /orders (CreateOrderReq) returns (OrderResp)
+
+	@handler getOrder
+	get /orders/:id (OrderReq) returns (OrderResp)
+
+	@handler cancelOrder
+	delete /orders/:id (OrderReq)
+}

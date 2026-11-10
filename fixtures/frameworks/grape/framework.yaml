@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs installs Grape and asks it for the routes the application serves. Gemfile.lock pins every
+# gem from rubygems.org, for each platform the fixture is run on; without one, setup writes it.
+toolchain: ruby
+docs:
+  - https://github.com/ruby-grape/grape/blob/master/README.md#routes
+  - https://github.com/ruby-grape/grape/blob/master/README.md#mounting
+  - https://github.com/ruby-grape/grape/blob/master/README.md#versioning
+  - https://github.com/ruby-grape/grape/blob/master/README.md#describing-and-inspecting-an-api
+setup: >-
+  if [ -f Gemfile.lock ]; then BUNDLE_FROZEN=true bundle install --quiet;
+  else bundle lock --add-platform x86_64-linux aarch64-linux arm64-darwin x86_64-darwin && bundle install --quiet; fi
+latest: bundle update --all --quiet
+oracle: ruby oracle.rb

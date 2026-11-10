@@ -1,0 +1,8 @@
+# How scripts/frameworks.mjs installs gorilla/mux and asks it for the routes the application serves.
+toolchain: go
+docs:
+  - https://github.com/gorilla/mux#readme
+  - https://pkg.go.dev/github.com/gorilla/mux
+setup: go mod download
+latest: go get github.com/gorilla/mux@latest && go mod tidy
+oracle: go run oracle.go

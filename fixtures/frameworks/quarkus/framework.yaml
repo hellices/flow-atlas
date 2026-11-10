@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs installs Quarkus and asks it for the routes the application serves.
+toolchain: java
+docs:
+  - https://quarkus.io/guides/rest
+  - https://quarkus.io/guides/reactive-routes
+  - https://quarkus.io/guides/http-reference
+setup: mvn -q -B clean test-compile
+# The latest Quarkus 3 platform on Maven Central, in place of the pom's quarkus.platform.version, kept in
+# target/maven.args for the oracle's run (`clean` in setup removes it).
+latest: >-
+  v=$(curl -fsS https://repo1.maven.org/maven2/io/quarkus/platform/quarkus-bom/maven-metadata.xml
+  | sed -n 's:.*<version>\(3\.[0-9.]*\)</version>.*:\1:p' | sort -V | tail -1)
+  && mvn -q -B -U clean test-compile -Dquarkus.platform.version=$v
+  && echo "-Dquarkus.platform.version=$v" > target/maven.args
+# The oracle is a Quarkus test (src/test/java/com/example/oracle): it starts the application and writes what it reads.
+oracle: mvn -q -B surefire:test -Dtest=RoutesOracle $(cat target/maven.args 2>/dev/null) >&2 && cat target/routes.json

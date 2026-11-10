@@ -1,0 +1,3 @@
+# What react-router build writes.
+build/
+.react-router/

@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Micronaut serves. Remove this when atlas reads it; the test fails while
+# a listed difference no longer occurs.
+unread: >-
+  atlas has no style for Micronaut: controllers' `@Get`/`@Post`/... methods and their RFC 6570 URI templates (optional
+  `{/name}`, reserved `{+path}`), routes declared on an interface the controller implements, a `DefaultRouteBuilder`'s
+  routes, and the management endpoints and static resources the framework serves are all left out; the only sign is
+  the limit "routes app: 9 files read, nothing extracted"

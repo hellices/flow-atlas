@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Grape serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Grape style: the routes the verb methods and `route` declare, under the API's `prefix`, the path
+  `version` puts before them, `namespace`/`resource`/`group`/`segment` and `route_param` segments, the paths mounted
+  APIs are mounted at and the format suffix Grape adds, are not read; a limit says the route files gave nothing
+  ("7 files read, nothing extracted"), and `atlas inventory` offers no style for them.

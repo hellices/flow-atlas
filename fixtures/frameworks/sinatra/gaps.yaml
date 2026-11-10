@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Sinatra serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Sinatra style: the routes `get`, `post`, `route` and the other verb methods register on a classic or a
+  modular application, the prefixes of sinatra-contrib's `namespace`, the paths config.ru's `map` mounts each
+  application at, and the public files Sinatra serves itself are not read; a limit says the route files gave nothing
+  ("4 files read, nothing extracted"), and `atlas inventory` offers no style for them.

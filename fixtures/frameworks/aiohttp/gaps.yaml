@@ -1,0 +1,10 @@
+# Where atlas's reading differs from the routes aiohttp serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no aiohttp style: the routes `add_routes` registers (`web.get`, `web.route("*", ...)`), the route table's
+  decorators (`@routes.get`, `@routes.view`), the router's `add_get` and `add_resource`, the regexes of variable
+  resources (`{tail:.*}` taking slashes), the nested application `add_subapp` serves under its prefix and the static
+  files `add_static` serves are not read; a limit says the route files gave nothing ("4 files read, nothing
+  extracted"). `atlas inventory` offers the `fastapi` style for app/views.py, which reads nothing there either (a
+  `RouteTableDef` is no FastAPI router), and offers the `web.get(...)` registrations of app/main.py and app/admin.py as
+  client call candidates, which they are not.

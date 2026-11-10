@@ -1,0 +1,13 @@
+# How scripts/frameworks.mjs installs React Router (framework mode) and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://reactrouter.com/start/framework/routing
+  - https://reactrouter.com/start/framework/route-module
+  - https://reactrouter.com/start/framework/actions
+  - https://reactrouter.com/how-to/resource-routes
+  - https://reactrouter.com/how-to/file-route-conventions
+  - https://reactrouter.com/explanation/lazy-route-discovery
+  - https://reactrouter.com/api/other-api/serve
+setup: npm ci --silent
+latest: npm install --silent --no-save "react-router@*" "@react-router/dev@*" "@react-router/fs-routes@*" "@react-router/node@*" "@react-router/serve@*" "react@*" "react-dom@*"
+oracle: node oracle.mjs

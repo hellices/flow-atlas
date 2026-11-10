@@ -307,13 +307,20 @@ public class Oracle {
 		}
 
 		public void route(RequestPredicate predicate, HandlerFunction<?> handler) {
-			List<Way> result = List.of(Way.ANY);
-			List<List<Way>> levels = new ArrayList<>(nests);
-			levels.add(ways(predicate));
-			for (List<Way> level : levels) {
+			List<Way> outers = List.of(Way.ANY);
+			for (List<Way> level : nests) {
 				List<Way> next = new ArrayList<>();
-				for (Way outer : result) for (Way inner : level) next.add(outer.nest(inner));
-				result = next;
+				for (Way outer : outers) for (Way inner : level) next.add(outer.nest(inner));
+				outers = next;
+			}
+			// A route with no path predicate of its own within a path nest takes whatever rest of the path the nest's
+			// pattern leaves (PathPatternPredicate.nest matches the start of the path): `.path("/teams", b -> b.GET(h))`
+			// serves GET /teams and GET /teams/1/2 alike.
+			List<Way> result = new ArrayList<>();
+			for (Way outer : outers) {
+				for (Way inner : ways(predicate)) {
+					result.add(inner.path() == null && outer.path() != null ? outer.nest(new Way(inner.methods(), "/**", inner.headers(), inner.params())) : outer.nest(inner));
+				}
 			}
 			for (Way way : result) {
 				String raw = way.path() == null ? "/**" : way.path();

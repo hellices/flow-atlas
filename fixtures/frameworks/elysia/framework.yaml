@@ -1,0 +1,10 @@
+# How scripts/frameworks.mjs installs Elysia and asks it for the routes the application serves.
+toolchain: bun
+docs:
+  - https://elysiajs.com/essential/route
+  - https://elysiajs.com/essential/plugin
+  - https://elysiajs.com/patterns/mount
+setup: bun install --frozen-lockfile --silent
+# Elysia's `latest` tag names a 2.0 release candidate; the range takes the newest stable release.
+latest: bun add --no-save --silent "elysia@>=1"
+oracle: bun oracle.ts

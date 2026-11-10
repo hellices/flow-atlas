@@ -1,0 +1,15 @@
+# How scripts/frameworks.mjs installs Nuxt and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://nuxt.com/docs/4.x/getting-started/routing
+  - https://nuxt.com/docs/4.x/directory-structure/app/pages
+  - https://nuxt.com/docs/4.x/guide/recipes/custom-routing
+  - https://nuxt.com/docs/4.x/api/utils/define-page-meta
+  - https://nuxt.com/docs/4.x/directory-structure/server
+  - https://nuxt.com/docs/4.x/api/nuxt-config#serverhandlers
+  - https://nuxt.com/docs/4.x/directory-structure/public
+  - https://v2.nitro.build/guide/routing
+setup: npm ci --silent
+# `*`, not `latest`: npm's `latest` tag of vue has pointed at a release candidate.
+latest: npm install --silent --no-save "nuxt@*" "vue@*" "vue-router@*"
+oracle: node oracle.mjs

@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Nuxt serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for Nuxt: the pages under app/pages (file-based routes, `definePageMeta` paths) and the Nitro
+  handlers under server/api and server/routes (method suffixes, `[...]` catch-alls, nuxt.config `serverHandlers`) are
+  read and nothing is extracted; a limit says so (`routes app: N files read, nothing extracted`) but names none of the
+  routes left out, nor the public files and build assets Nitro serves by itself

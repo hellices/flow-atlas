@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Rails without Active Record: the router (Action Pack) and the application and engine it runs in (Railties).
+gem "railties", ">= 8.1"
+gem "actionpack", ">= 8.1"

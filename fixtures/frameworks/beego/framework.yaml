@@ -1,0 +1,14 @@
+# How scripts/frameworks.mjs installs Beego and asks it for the routes the application serves. routers/commentsRouter.go
+# is what `bee generate routers` writes from the controllers' `@router` annotations, committed as Beego projects do.
+toolchain: go
+docs:
+  - https://beegodoc.com/en-US/v2.2.x/web/router/ctrl_style/
+  - https://beegodoc.com/en-US/v2.2.x/web/router/functional_style/
+  - https://beegodoc.com/en-US/v2.2.x/web/router/namespace.html
+  - https://beegodoc.com/en-US/v2.2.x/web/router/router_rule.html
+  - https://beegodoc.com/en-US/v2.2.x/web/router/router_tree.html
+  - https://beegodoc.com/en-US/v2.2.x/web/view/static_file.html
+  - https://beegodoc.com/en-US/v2.2.x/bee/
+setup: go mod download
+latest: go get github.com/beego/beego/v2@latest && go mod tidy
+oracle: go run oracle.go

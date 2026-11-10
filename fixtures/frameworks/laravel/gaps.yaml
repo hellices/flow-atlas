@@ -1,0 +1,9 @@
+# Where atlas's reading differs from the routes Laravel serves. Remove the entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no style for PHP: the routes `Route::get`/`post`/`match`/`any`, resource and singleton controllers, groups'
+  prefixes, `Route::redirect`/`view`/`fallback` in routes/web.php and routes/api.php, the `/api` prefix Laravel gives
+  routes/api.php and the routes Laravel registers by itself (the `/up` health check, the local disk's `/storage/{path}`)
+  are not read; a limit says the route files gave nothing ("routes app: 2 files read, nothing extracted") but names
+  none of the routes left out, and `atlas inventory` finds neither a component (composer.json is no manifest it reads)
+  nor a route candidate.

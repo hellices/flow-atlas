@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs installs SvelteKit and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://svelte.dev/docs/kit/routing
+  - https://svelte.dev/docs/kit/advanced-routing
+  - https://svelte.dev/docs/kit/form-actions
+  - https://svelte.dev/docs/kit/project-structure
+  - https://svelte.dev/docs/kit/adapter-node
+setup: npm ci --silent
+latest: npm install --silent --no-save "@sveltejs/kit@*" "@sveltejs/adapter-node@*" "@sveltejs/vite-plugin-svelte@*" "svelte@*" "vite@*"
+oracle: node oracle.mjs

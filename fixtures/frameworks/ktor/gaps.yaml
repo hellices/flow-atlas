@@ -1,0 +1,7 @@
+# Where atlas's reading differs from the routes Ktor serves. Remove this when atlas reads it; the test fails while a
+# listed difference no longer occurs.
+unread: >-
+  atlas has no style for Ktor: the `routing { }` DSL (`route()`, `get`/`post`/..., `method()`, `{param?}`, `*`,
+  `{...}`), the routes of `Route` extension functions, the type-safe `@Resource` routes and the static content the
+  framework serves are all left out; the only sign is the limit "routes app: 4 files read, nothing extracted", which
+  names none of the routes

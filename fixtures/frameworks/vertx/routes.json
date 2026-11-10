@@ -1,0 +1,33 @@
+{
+  "framework": "vertx-web",
+  "version": "5.2.3",
+  "routes": [
+    {"method":"GET","path":"/"},
+    {"method":"POST","path":"/catalogue/products/{}/{}","raw":"/catalogue/products/:productType/:productID/"},
+    {"method":"MKCOL","path":"/dav/{}","raw":"/dav/:resource"},
+    {"method":"GET","path":"/flights/{}-{}","raw":"/flights/:from-:to"},
+    {"method":"GET","path":"/items/{}","raw":"/items/:id::integer"},
+    {"method":"POST","path":"/orders"},
+    {"method":"PUT","path":"/orders"},
+    {"method":"POST","path":"/productsAPI/admin/reindex"},
+    {"method":"GET","path":"/productsAPI/admin/stats"},
+    {"method":"GET","path":"/productsAPI/products"},
+    {"method":"DELETE","path":"/productsAPI/products/{}","raw":"/productsAPI/products/:productID"},
+    {"method":"GET","path":"/productsAPI/products/{}","raw":"/productsAPI/products/:productID"},
+    {"method":"PUT","path":"/productsAPI/products/{}","raw":"/productsAPI/products/:productID"},
+    {"method":"*","path":"/some/path"},
+    {"method":"*","path":"/some/prefix","raw":"/some/prefix/*"},
+    {"method":"*","path":"/some/prefix/{**}","raw":"/some/prefix/*"},
+    {"method":"GET","path":"/static","raw":"/static/*"},
+    {"method":"HEAD","path":"/static","raw":"/static/*"},
+    {"method":"GET","path":"/static/{**}","raw":"/static/*"},
+    {"method":"HEAD","path":"/static/{**}","raw":"/static/*"},
+    {"method":"GET","path":"/tenants/{}/settings","raw":"/tenants/:tenant/settings"},
+    {"method":"PUT","path":"/tenants/{}/settings/{}","raw":"/tenants/:tenant/settings/:key"},
+    {"method":"GET","path":"/users"},
+    {"method":"POST","path":"/users"},
+    {"method":"DELETE","path":"/users/{}","raw":"/users/:id"},
+    {"method":"GET","path":"/users/{}","raw":"/users/:id"},
+    {"method":"PATCH","path":"/users/{}","raw":"/users/:id"}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "framework": "go-zero",
+  "version": "1.10.3",
+  "routes": [
+    {"method":"GET","path":"/"},
+    {"method":"DELETE","path":"/admin/cache"},
+    {"method":"GET","path":"/admin/dashboard"},
+    {"method":"GET","path":"/api/v1/events"},
+    {"method":"GET","path":"/foo/bar_baz/123"},
+    {"method":"GET","path":"/foo/bar/baz-qux"},
+    {"method":"GET","path":"/ping"},
+    {"method":"POST","path":"/user/login"},
+    {"method":"GET","path":"/v1/orders"},
+    {"method":"POST","path":"/v1/orders"},
+    {"method":"DELETE","path":"/v1/orders/{}","raw":"/v1/orders/:id"},
+    {"method":"GET","path":"/v1/orders/{}","raw":"/v1/orders/:id"},
+    {"method":"GET","path":"/v1/users"},
+    {"method":"POST","path":"/v1/users"},
+    {"method":"DELETE","path":"/v1/users/{}","raw":"/v1/users/:id"},
+    {"method":"GET","path":"/v1/users/{}","raw":"/v1/users/:id"},
+    {"method":"PATCH","path":"/v1/users/{}","raw":"/v1/users/:id"},
+    {"method":"PUT","path":"/v1/users/{}","raw":"/v1/users/:id"},
+    {"method":"GET","path":"/v1/users/{}/orders/{}","raw":"/v1/users/:id/orders/:orderId"},
+    {"method":"GET","path":"/v2/users"}
+  ]
+}
