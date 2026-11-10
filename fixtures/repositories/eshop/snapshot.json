@@ -1,0 +1,63 @@
+{
+  "surfaces": [
+    "catalog-api|DELETE /api/catalog/items/{id}",
+    "catalog-api|GET /api/catalog/catalogbrands",
+    "catalog-api|GET /api/catalog/catalogtypes",
+    "catalog-api|GET /api/catalog/items",
+    "catalog-api|GET /api/catalog/items/by",
+    "catalog-api|GET /api/catalog/items/by/{name}",
+    "catalog-api|GET /api/catalog/items/facets",
+    "catalog-api|GET /api/catalog/items/type/all/brand/{brandId}",
+    "catalog-api|GET /api/catalog/items/type/{typeId}/brand/{brandId}",
+    "catalog-api|GET /api/catalog/items/withsemanticrelevance",
+    "catalog-api|GET /api/catalog/items/withsemanticrelevance/{text}",
+    "catalog-api|GET /api/catalog/items/{id}",
+    "catalog-api|GET /api/catalog/items/{id}/pic",
+    "catalog-api|POST /api/catalog/items",
+    "catalog-api|PUT /api/catalog/items",
+    "catalog-api|PUT /api/catalog/items/{id}"
+  ],
+  "calls": [
+    "client-app->catalog-api|* /catalogbrands based @ src/ClientApp/Services/Catalog/CatalogService.cs:69",
+    "client-app->catalog-api|* /catalogtypes based @ src/ClientApp/Services/Catalog/CatalogService.cs:78",
+    "client-app->catalog-api|* /items based @ src/ClientApp/Services/Catalog/CatalogService.cs:38",
+    "client-app->catalog-api|* /items/{} based @ src/ClientApp/Services/Catalog/CatalogService.cs:54",
+    "webapp->catalog-api|* /Error @ src/WebApp/Program.cs:19",
+    "webapp->catalog-api|* /api/catalog/items/{}/pic @ src/WebApp/Program.cs:32",
+    "webapp->catalog-api|* /product-images/{} @ src/WebApp/Program.cs:32",
+    "webapp->ordering-api|* /api/Orders @ src/WebApp/Services/OrderingService.cs:5",
+    "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:12",
+    "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:7"
+  ],
+  "edges": [
+    "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/by/{name} (text)",
+    "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/withsemanticrelevance/{text} (text)",
+    "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/{id}/pic (text)"
+  ],
+  "findings": [
+    "FA001|catalog-api|DELETE /api/catalog/items/{id}",
+    "FA001|catalog-api|GET /api/catalog/catalogbrands",
+    "FA001|catalog-api|GET /api/catalog/catalogtypes",
+    "FA001|catalog-api|GET /api/catalog/items",
+    "FA001|catalog-api|GET /api/catalog/items/by",
+    "FA001|catalog-api|GET /api/catalog/items/facets",
+    "FA001|catalog-api|GET /api/catalog/items/type/all/brand/{brandId}",
+    "FA001|catalog-api|GET /api/catalog/items/type/{typeId}/brand/{brandId}",
+    "FA001|catalog-api|GET /api/catalog/items/withsemanticrelevance",
+    "FA001|catalog-api|GET /api/catalog/items/{id}",
+    "FA001|catalog-api|POST /api/catalog/items",
+    "FA001|catalog-api|PUT /api/catalog/items",
+    "FA001|catalog-api|PUT /api/catalog/items/{id}",
+    "FA002|client-app->catalog-api|* /catalogbrands",
+    "FA002|client-app->catalog-api|* /catalogtypes",
+    "FA002|client-app->catalog-api|* /items",
+    "FA002|client-app->catalog-api|* /items/{}"
+  ],
+  "limits": [
+    "calls client-app->ordering-api: 3 files read, nothing extracted",
+    "calls hybrid-app->catalog-api: 3 files read, nothing extracted",
+    "calls webapp-components->catalog-api: 4 files read, nothing extracted",
+    "routes catalog-api: no handler was found in the configured route files for 3 operations of src/Catalog.API/Catalog.API.json (GetRelevantItems, GetItemsByTypeAndBrand, GetItemsByBrand); they stay at their line in the document",
+    "routes catalog-api: no handler was found in the configured route files for 9 operations of src/Catalog.API/Catalog.API_v2.json (BatchGetItems, GetItem, UpdateItem-V2, DeleteItem, GetItemPicture and 4 more); they stay at their line in the document"
+  ]
+}

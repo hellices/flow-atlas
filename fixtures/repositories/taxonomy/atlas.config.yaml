@@ -1,0 +1,12 @@
+# One Next.js app at the repository root: App Router under app/, an API route under pages/api.
+components:
+  - { name: taxonomy, path: . }
+routes:
+  - { component: taxonomy, files: ["app/**/*.{ts,tsx}", "pages/**/*.{ts,tsx}"], styles: [next] }
+calls:
+  # Browser and server components request the app's own route handlers and link to its pages; config/*.ts holds the
+  # navigation items layouts render as links; middleware.ts redirects.
+  - { from: taxonomy, to: taxonomy, files: ["components/**/*.tsx", "app/**/*.{ts,tsx}", "config/*.ts", "middleware.ts"] }
+publicSurfaces:
+  - "taxonomy|GET /"
+  - "taxonomy|POST /api/webhooks/stripe"

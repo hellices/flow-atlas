@@ -175,6 +175,9 @@ ASP.NET Core to Phoenix, Rails, Laravel, Axum and Vapor), each with the routes t
 requests it sends when run against a server that records them. The `frameworks` workflow installs each framework and
 library and checks those routes and requests again, weekly on its latest release.
 
+[`fixtures/repositories`](fixtures/repositories/README.md) pins public repositories at a commit with what atlas read
+there; the `repositories` workflow fetches them and fails when a change moves any of it.
+
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 
 ```bash
