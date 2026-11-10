@@ -36,7 +36,7 @@ for (const name of names.length ? names : all) {
   const dir = join(root, ".repos", name);
   if (existsSync(join(dir, ".git")) && git(dir, "rev-parse", "HEAD") === commit) {
     // A file changed or added in the checkout would be scanned with the commit's: put it back as committed.
-    if (git(dir, "status", "--porcelain", "--untracked-files=all")) {
+    if (git(dir, "status", "--porcelain", "--untracked-files=all", "--ignored")) {
       git(dir, "reset", "-q", "--hard");
       git(dir, "clean", "-q", "-fdx");
       console.error(`${name}: at ${commit.slice(0, 7)}, local changes dropped`);
