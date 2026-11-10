@@ -1,0 +1,6 @@
+# Where atlas's reading differs from the routes Django serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+unread: >-
+  atlas has no Django style: the URLconfs (`path`, `re_path`, `include` with its prefix, the admin's and Django REST
+  framework's routers' patterns) and the methods each view answers are not read; a limit says the route files gave
+  nothing ("14 files read, nothing extracted"), and `atlas inventory` offers no route candidate for them.

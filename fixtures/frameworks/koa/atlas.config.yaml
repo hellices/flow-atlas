@@ -1,0 +1,7 @@
+components:
+  - { name: app, path: . }
+routes:
+  - component: app
+    files: ["src/**/*.js"]
+    styles: [express]
+    receivers: [router, users, posts, api, versioned, legacy, admin]

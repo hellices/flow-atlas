@@ -1,0 +1,16 @@
+# How scripts/frameworks.mjs installs Django and Django REST framework and asks Django for the routes the application
+# serves. requirements.txt pins every package with its hashes and names no index, so each machine installs the same
+# files from the index it uses.
+toolchain: python
+docs:
+  - https://docs.djangoproject.com/en/stable/topics/http/urls/
+  - https://docs.djangoproject.com/en/stable/topics/http/decorators/
+  - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+  - https://docs.djangoproject.com/en/stable/ref/contrib/admin/#hooking-adminsite-instances-into-your-urlconf
+  - https://www.django-rest-framework.org/api-guide/routers/
+  - https://www.django-rest-framework.org/api-guide/viewsets/
+  - https://www.django-rest-framework.org/api-guide/views/
+  - https://www.django-rest-framework.org/api-guide/format-suffixes/
+setup: uv venv -q --allow-existing && uv pip sync -q requirements.txt
+latest: uv venv -q --allow-existing && uv pip install -q --upgrade -r pyproject.toml
+oracle: .venv/bin/python oracle.py

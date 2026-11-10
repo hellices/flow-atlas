@@ -1,0 +1,13 @@
+# Where atlas's reading differs from the routes FastAPI serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { route: "GET /openapi.json", reason: "the document FastAPI serves by itself (`openapi_url`) is not a surface" }
+  - { route: "GET /docs", reason: "the Swagger UI FastAPI serves by itself (`docs_url`) is not a surface" }
+  - { route: "GET /docs/oauth2-redirect", reason: "the Swagger UI's OAuth2 redirect FastAPI serves by itself is not a surface" }
+  - { route: "GET /redoc", reason: "the ReDoc page FastAPI serves by itself (`redoc_url`) is not a surface" }
+  - { route: "GET /health", reason: "`app.add_api_route(path, endpoint)` is not read, and nothing says so" }
+  - { route: "GET /subapi/sub", reason: "a FastAPI application other than `app` is not read; mounted with `app.mount`, its routes are left out and nothing says so" }
+  - { route: "GET /subapi/openapi.json", reason: "a mounted FastAPI application serves its own document, which is not a surface" }
+  - { route: "GET /subapi/docs", reason: "a mounted FastAPI application serves its own Swagger UI, which is not a surface" }
+  - { route: "GET /subapi/docs/oauth2-redirect", reason: "a mounted FastAPI application serves its own OAuth2 redirect, which is not a surface" }
+  - { route: "GET /subapi/redoc", reason: "a mounted FastAPI application serves its own ReDoc page, which is not a surface" }

@@ -1,0 +1,4 @@
+components:
+  - { name: app, path: . }
+routes:
+  - { component: app, files: ["project/**/*.py", "blog/**/*.py", "api/**/*.py"] }

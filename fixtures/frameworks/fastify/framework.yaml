@@ -1,0 +1,11 @@
+# How scripts/frameworks.mjs installs Fastify and asks it for the routes the application serves.
+toolchain: node
+docs:
+  - https://fastify.dev/docs/latest/Reference/Routes/
+  - https://fastify.dev/docs/latest/Reference/Plugins/
+  - https://fastify.dev/docs/latest/Reference/Hooks/#onroute
+  - https://github.com/fastify/fastify-static
+setup: npm ci --silent
+# Fastify's `latest` tag names a 6.0 prerelease; the range takes the newest stable release.
+latest: npm install --silent --no-save "fastify@>=5" @fastify/static@latest
+oracle: node oracle.mjs

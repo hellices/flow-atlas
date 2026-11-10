@@ -157,7 +157,8 @@ pnpm test
 ```
 
 The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
-`.git/hooks` still runs after them, with the same refs. CI runs the same checks.
+`.git/hooks` runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the
+same checks.
 
 `fixtures/shop` is a small monorepo with eight planted problems; the tests check that exactly those are found, that
 baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
@@ -166,6 +167,11 @@ through a BFF handler's port call to a service, and that SARIF and Arazzo output
 [`fixtures/scenarios`](fixtures/scenarios/README.md) holds small repositories in the shapes of real ones atlas was run
 on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
 scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
+
+[`fixtures/frameworks`](fixtures/frameworks/README.md) holds an application per framework (Express, Fastify, Koa, Hono,
+NestJS, Next.js, FastAPI, Flask, Django, Spring Boot, ASP.NET Core, Gin, chi, net/http), each with the routes the
+framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
+The `frameworks` workflow installs each framework and checks those routes again, weekly on its latest release.
 
 [`fixtures/repositories`](fixtures/repositories/README.md) pins public repositories at a commit with what atlas read
 there; the `repositories` workflow fetches them and fails when a change moves any of it.
