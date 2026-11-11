@@ -365,3 +365,40 @@ describe("Ky's options merged over the instance's", () => {
     expect(rows.map(([code]) => read({ ...ky2, "web/a.js": `import ky from "ky";\n${code}` }))).toEqual(rows.map(([, calls, limits]) => ({ calls, limits })));
   });
 });
+
+describe("a helper around a client, and an interceptor's rewrite", () => {
+  it("hands the paths passed to a function on to the client it requests them through, with its base", () => {
+    const http = 'import axios from "axios";\nexport const api = axios.create({ baseURL: "/api" });\nexport function get(path) { return api.get(`/v2${path}`); }\nexport const fetchJson = (url) => api.get(url).then((r) => r.data);';
+    expect(read({ "web/http.js": http, "web/u.js": 'import { get, fetchJson } from "./http.js";\nget("/users");\nfetchJson("/orders");\nfetchJson("items");' })).toEqual({
+      calls: ["* /api/items @4", "* /api/orders @3", "GET /api/v2/users @2"],
+      limits: ["calls web->api: /v2, which a function puts before the path it is given (web/http.js:3), is read before the paths passed to it, not as a request of its own"],
+    });
+  });
+
+  it("reads as a rewrite only text put before the config's own URL, set as that config's URL", () => {
+    const rows: Array<[string, string[]]> = [
+      ["export function go(req) { return axios.request({ method: 'post', url: `/audit?from=${req.url}` }); }", ["POST /audit @1"]],
+      ["export function go(item) { return fetch({ url: `/shares/${item.url}` }); }", ["GET /shares/{} @1"]],
+      ["export function go(a, b) { a.url = `/v2${b.url}`; }", ["* /v2{} @1"]],
+      ["export const go = (c) => ({ ...c, url: `/v2${c.url}` });", []],
+      ["export const go = (c) => { c.url = '/v2' + c.url; return c; };", []],
+    ];
+    expect(rows.map(([code]) => read({ "web/a.js": code }).calls)).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  it("reads no URL that starts with a value through a client whose base it does not read", () => {
+    const code = 'import axios from "axios";\nconst api = axios.create({ baseURL: process.env.API });\napi.get(`${seg}/users`);';
+    expect(read({ "web/a.js": code }, { base: "/api", join: "append" })).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where it starts with a value, an absolute URL or a path api's base takes: web/a.js:3"],
+    });
+  });
+
+  it("reads no method of an @HttpExchange interface that takes its type-level mapping from the one it extends", () => {
+    const java = '@HttpExchange("/api/v1")\ninterface Base {\n  @GetExchange("/health") String health();\n}\ninterface Users extends Base {\n  @GetExchange("/users") List<User> users();\n}';
+    expect(read({ "web/Clients.java": java })).toEqual({
+      calls: ["GET /api/v1/health @3"],
+      limits: ["calls web->api: the requests are not read where an @HttpExchange interface without a type-level mapping of its own extends another: web/Clients.java:5"],
+    });
+  });
+});

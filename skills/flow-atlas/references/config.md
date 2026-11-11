@@ -165,10 +165,12 @@ URL is still a request where a branch names no other host, and the limit names t
 the base the call source appends to (`prefix`, or `base` with `join: append`) straight before a path it is given
 (`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built from that one parameter alone) is the base written once
 more, not a request: the paths passed to it are read where they are written, with the base, and a limit names where the
-helper was left out. A function of the repository that puts other text from the root straight before a parameter, and
-nothing but that (`` fetch(`/api${path}`) ``, text that does not end in `/`), where every call that passes it text
-passes a path from the root, puts that text before each of them: its URL is read before those paths, not as a request
-of its own, and a limit names it. A path with a hole (`` `/orders/${id}` ``), another base, or text after the value is
+helper was left out. A function of the repository that requests a URL of other text from the root put straight before
+a parameter (`` fetch(`/api${path}`) ``, the text not ending in `/`), hands that parameter to no other call, and is
+passed a path from the root wherever the code passes it text, puts that text before each of those paths: its URL is
+read before them, not as a request of its own, and a limit names it. Where it requests that URL through a client
+whose base atlas reads (below), or hands the parameter itself to one (`` (url) => api.get(url) ``), the paths passed to
+it are that client's requests, joined to its base. A path with a hole (`` `/orders/${id}` ``), another base, or text after the value is
 still a request. A path that already starts with the base still gets it, since a service may nest the same segment; the
 base itself, written as a value (`baseUrl: "/api/v1/"`, `this.baseUrl = options.baseUrl || "/api"`, `` `${API}/api/v1` ``),
 is no request, and a limit names where.
@@ -550,12 +552,14 @@ the client, a library's factory imported under any name, and reads the options t
 
 - axios, `axios.create({ baseURL })` (append, `combineURLs`); the requests are the URL its methods take first (`get`,
   `post` and the others), the instance called with a URL, and the `url` of a request config (`api({ url })`,
-  `api.request({ url })`). A request's own `baseURL` takes the instance's place. A request interceptor
-  (`api.interceptors.request.use(fn)`) that sets the config's `url` to text before the URL it holds
-  (`` config.url = `/v2${config.url}` ``, a statement of its own in the function's body) puts that text before each URL
-  of the instance; one that writes `url` or `baseURL` otherwise, hands the config on, returns another object, or is
-  not a function of the file, and a change of `api.defaults` (or their `baseURL`), leave the instance's requests
-  unread with a limit. The interceptor's own rewrite is no request.
+  `api.request({ url })`). A request's own `baseURL` takes the instance's place; options held in a value, or with a
+  spread, may set one, so they leave the base unread. A request interceptor (`api.interceptors.request.use(fn)`) that
+  sets the config's `url` to text before the URL it holds (`` config.url = `/v2${config.url}` ``, a statement of its own
+  in the function's body) puts that text before each URL of the instance; one that writes `url` or `baseURL`
+  otherwise, hands the config on, returns another object, takes options, or is not a function of the file, and a
+  change of `api.defaults` whole or of its `baseURL`, leave the instance's requests unread with a limit, as do uses of
+  the instance in files atlas cannot all list. Such a rewrite of a config's own URL, there or as the `url` of an object
+  that spreads the config, is no request.
 - Ky (`ky.create`, `ky.extend`, `instance.extend`, with options or a function of the parent's options, whose
   `` `${options.prefix}/admin` `` is read with the parent's prefix), at the major version the nearest package.json
   above the file that creates it gives: from Ky 2, `prefix` is appended (its readme: "the leading slash of the input
@@ -571,8 +575,8 @@ the client, a library's factory imported under any name, and reads the options t
   endpoint's `query` returns its URL, alone or as an object's `url`, appended with `joinUrls`, with the object's
   `method`, GET where it states none (fetchBaseQuery's). Another `baseQuery` leaves the endpoints unread.
 
-Through such a client, a URL that starts with a value (`` `${year}/summary` ``) may be absolute, and bypass the base,
-or a path the base takes; it is not read, and a limit names it. A base the client's options set where atlas does not
+Through such a client, whether its base is read or not, a URL that starts with a value (`` `${year}/summary` ``) may
+be absolute, and bypass the base, or a path the base takes; it is not read, and a limit names it. A base the client's options set where atlas does not
 read it (a value, a spread or a computed key after it, options held in a value) is taken from the call source's
 `base` or `prefix`; without one, a path from the root is still read where the base resolves it (Ky's `baseUrl`), and
 none other, and a limit says where. A client none of whose options state a base reads its paths with the call source's
@@ -587,8 +591,10 @@ root, as the package documents; a host written there as a literal is checked as 
 prefixes are read: Refit's `[PathPrefix("/projects")]`, joined before each verb attribute's route of its interface with
 one `/` (Refit, `PathPrefixAttribute`), and, in Java and Kotlin, an `@HttpExchange` interface's `url` before each of
 its methods' `@GetExchange` and the others, with the method each names, else the interface's. A `[PathPrefix]` on an
-interface that extends another or that another of the file extends, written with more than its path, or an exchange
-not spelled out, leaves those requests unread with a limit.
+interface that extends another or that another of the file extends, written with more than its path, an
+`@HttpExchange` interface that extends another and has no type-level mapping of its own (Spring takes it from the
+interfaces it extends), or an exchange not spelled out, leaves those requests unread with a limit; an interface with
+its own mapping that extends another is read for its own methods, and a limit says those it inherits are not.
 
 ### Generated clients
 

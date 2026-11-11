@@ -1422,27 +1422,33 @@ export type ReadCall = Draft<Call> & { span?: [number, number]; host?: string; r
  */
 type Requested = CallPath & { relative?: true; base?: Base; method?: string; host?: string };
 
+/** The parameter a value is the `url` of (`config.url`), where it is one. */
+function urlOfParameter(e: ts.Expression): ts.ParameterDeclaration | undefined {
+  const m = member(unwrap(e));
+  const receiver = m?.name === "url" ? unwrap(m.receiver) : undefined;
+  const d = receiver && ts.isIdentifier(receiver) ? declarationOf(receiver) : undefined;
+  return d && ts.isParameter(d) ? d : undefined;
+}
+
 /**
- * Whether a URL is written over the URL a request config holds, built from it (`config.url = `/v2${config.url}``), as an
- * interceptor rewrites each request's URL: the requests it rewrites are read where they are made.
+ * Whether a URL is the rewrite an interceptor makes of the URL of the config it is given: text before that config's own
+ * URL (`` `/v2${config.url}` ``, `"/v2" + config.url`), set as the config's `url` (`config.url = ...`), or as the `url`
+ * of an object that spreads the config (`{ ...config, url: ... }`). The requests it rewrites are read where they are
+ * made.
  */
 function rewritesOwnUrl(node: ts.Node): boolean {
   const value = valuePlace(node);
+  let own: ts.ParameterDeclaration | undefined;
+  if (ts.isTemplateExpression(value) && value.head.text && value.templateSpans.length === 1 && !value.templateSpans[0]!.literal.text) own = urlOfParameter(value.templateSpans[0]!.expression);
+  else if (isPlus(value) && !isPlus(value.parent)) {
+    const parts = operands(value).map(unwrap);
+    if (parts.length === 2 && ts.isStringLiteralLike(parts[0]!)) own = urlOfParameter(parts[1]!);
+  }
+  if (!own) return false;
   const write = value.parent;
-  const assigned = ts.isBinaryExpression(write) && write.right === value && write.operatorToken.kind === ts.SyntaxKind.EqualsToken ? member(unwrap(write.left))?.name : undefined;
-  const property = ts.isPropertyAssignment(write) && write.initializer === value ? writtenKey(write) : undefined;
-  if ((assigned ?? property) !== "url") return false;
-  // Built from the `url` of a parameter: the config the function is given.
-  let own = false;
-  const visit = (n: ts.Node): void => {
-    const m = ts.isExpression(n) ? member(n) : undefined;
-    const receiver = m && unwrap(m.receiver);
-    const d = receiver && ts.isIdentifier(receiver) ? declarationOf(receiver) : undefined;
-    if (m?.name === "url" && d && ts.isParameter(d)) own = true;
-    else ts.forEachChild(n, visit);
-  };
-  visit(value);
-  return own;
+  if (ts.isBinaryExpression(write) && write.right === value && write.operatorToken.kind === ts.SyntaxKind.EqualsToken) return urlOfParameter(write.left) === own;
+  if (!ts.isPropertyAssignment(write) || write.initializer !== value || writtenKey(write) !== "url") return false;
+  return write.parent.properties.some((p) => ts.isSpreadAssignment(p) && ts.isIdentifier(unwrap(p.expression)) && declarationOf(unwrap(p.expression) as ts.Identifier) === own);
 }
 
 /** Whether a path is the path of a base, a trailing `/` aside; the root is the base of everything, and no path's. */
@@ -1451,43 +1457,60 @@ function sameBase(path: string, base: string): boolean {
   return b !== "/" && joinRoute(path) === b;
 }
 
+/** What a helper puts before the path it is given: its text, and the URL it requests with it, which may be a client's. */
+interface Helper {
+  lead: string;
+  url: ts.Node;
+}
+
 /**
- * The text a function puts straight before the path it is given at a parameter, where it requests a URL built so and
- * hands the parameter to no other call: `` fetch(`/api${path}`) `` puts `/api` before each path passed as `path`.
- * Undefined for a function that does otherwise, a rest parameter, one read through `arguments` or written to.
+ * What a function puts straight before the path it is given at a parameter, where it requests a URL built so and hands
+ * the parameter to no other call: `` fetch(`/api${path}`) `` puts `/api` before each path passed as `path`, and
+ * `api.get(path)`, a request through a client instance whose base atlas reads, puts nothing but hands each path to
+ * that client. Undefined for a function that does otherwise, a rest parameter, one read through `arguments` or
+ * written to.
  */
-function helperPrefix(fn: Callable, index: number): string | undefined {
+function helperPrefix(fn: Callable, index: number): Helper | undefined {
   if (helpers.has(fn) && helpers.get(fn)!.has(index)) return helpers.get(fn)!.get(index);
   const found = helperPrefixOf(fn, index);
   (helpers.get(fn) ?? helpers.set(fn, new Map()).get(fn)!).set(index, found);
   return found;
 }
 
-const helpers = new WeakMap<Callable, Map<number, string | undefined>>();
+const helpers = new WeakMap<Callable, Map<number, Helper | undefined>>();
 
-function helperPrefixOf(fn: Callable, index: number): string | undefined {
+/** The client instances read for each repository's files (see `Clients`). */
+const clientsOf = new WeakMap<Constants, Clients>();
+
+function helperPrefixOf(fn: Callable, index: number): Helper | undefined {
   const p = fn.parameters[index];
   if (!p || p.dotDotDotToken || !ts.isIdentifier(p.name) || readsArguments(fn) || reassigned(p.name)) return undefined;
-  let found: string | undefined;
+  const clients = clientsOf.get(repositories.get(fn.getSourceFile())!);
+  let found: Helper | undefined;
   for (const ref of references(p.name)) {
     const place = valuePlace(ref);
     const url = ts.isTemplateSpan(place.parent) ? place.parent.parent : isPlus(place.parent) ? place.parent : undefined;
     const lead = url && helperLead(url, place);
-    if (lead !== undefined) {
-      if (!requestPosition(url!) || (found !== undefined && found !== lead)) return undefined;
-      found = lead;
+    const client = lead === undefined ? clients?.requestOf(place) : undefined;
+    if (lead !== undefined || client) {
+      const at = lead !== undefined ? url! : place;
+      if (!(requestPosition(at) || clients?.requestOf(at)) || found !== undefined) return undefined;
+      found = { lead: lead ?? "", url: at };
     } else if (argumentPlace(place) || ts.isSpreadElement(place.parent)) return undefined;
   }
   // `/users/${id}` takes a segment, not a path: the text before a path ends in no `/`, and what the function is given
-  // there is a path from the root, wherever the code passes it text.
-  return found !== undefined && !found.endsWith("/") && passesPaths(fn, index) ? found : undefined;
+  // there is a path, wherever the code passes it text.
+  if (!found || found.lead.endsWith("/")) return undefined;
+  const relative = !!clients?.requestOf(found.url)?.relative;
+  return passesPaths(fn, index, !found.lead && relative) ? found : undefined;
 }
 
 /**
  * Whether the calls of a function, where the code names it (`usesOf`), pass it text at a position, and every text
- * passed there is a path from the root: a string, or a template or `+` that starts with one.
+ * passed there is a path from the root (or, with `relative`, a path a client joins to its base): a string, or a
+ * template or `+` that starts with one.
  */
-function passesPaths(fn: Callable, index: number): boolean {
+function passesPaths(fn: Callable, index: number, relative: boolean): boolean {
   const name = ts.isFunctionDeclaration(fn) ? fn.name : ts.isVariableDeclaration(valuePlace(fn).parent) ? (valuePlace(fn).parent as ts.VariableDeclaration).name : undefined;
   if (!name || !ts.isIdentifier(name)) return false;
   const uses = usesOf(name, name.parent);
@@ -1499,7 +1522,8 @@ function passesPaths(fn: Callable, index: number): boolean {
     if (!arg) continue;
     const lead = ts.isStringLiteralLike(arg) ? arg.text : ts.isTemplateExpression(arg) ? arg.head.text : isPlus(arg) && ts.isStringLiteralLike(unwrap(operands(arg)[0]!)) ? (unwrap(operands(arg)[0]!) as ts.StringLiteral).text : undefined;
     if (lead === undefined) continue;
-    if (!lead.startsWith("/") || lead.startsWith("//")) return false;
+    const rooted = lead.startsWith("/") && !lead.startsWith("//");
+    if (!rooted && !(relative && lead && relativePath(lead.replace(/\/+$/, "") || lead))) return false;
     text = true;
   }
   return text;
@@ -1526,11 +1550,11 @@ function helperUrl(node: ts.Node): string | undefined {
   const fn = d.parent;
   if (!(ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isArrowFunction(fn) || ts.isMethodDeclaration(fn))) return undefined;
   const lead = helperLead(node, id);
-  return lead !== undefined && helperPrefix(fn, fn.parameters.indexOf(d)) === lead ? lead : undefined;
+  return lead !== undefined && helperPrefix(fn, fn.parameters.indexOf(d))?.lead === lead ? lead : undefined;
 }
 
-/** The text a helper the string is handed to puts before it (`helperPrefix`), where the helper is one the code names. */
-function helperBefore(node: ts.Node): string | undefined {
+/** What a helper the string is handed to puts before it (`helperPrefix`), where the helper is one the code names. */
+function helperBefore(node: ts.Node): Helper | undefined {
   const place = argumentPlace(valuePlace(node));
   if (!place || !ts.isCallExpression(place.call)) return undefined;
   const fn = functionCalled(place.callee);
@@ -1662,7 +1686,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
   repositories.set(sf, constants);
-  const clients = context.clients ?? new Clients(constants, importersOf.get(constants), () => undefined);
+  const clients = context.clients ?? clientsOf.get(constants) ?? new Clients(constants, importersOf.get(constants), () => undefined);
+  if (!clientsOf.has(constants)) clientsOf.set(constants, clients);
   const base = context.base;
   // The base a configured client appends its paths to, which a helper of the client may write once more.
   const appended = base?.join === "append" ? base.path : undefined;
@@ -1680,14 +1705,16 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       return undefined;
     }
     const helper = helperUrl(node);
-    if (helper !== undefined && joinRoute(helper) !== joinRoute(appended ?? "")) {
+    if (helper !== undefined && (clients.requestOf(node) || joinRoute(helper) !== joinRoute(appended ?? ""))) {
       if (report) context.helpers?.push({ prefix: helper, at: at(node) });
       return undefined;
     }
-    const client = clients.requestOf(node);
-    // A path a helper of the module puts text before (`` fetch(`/api${path}`) ``) is sent with that text.
-    const before = helperBefore(node);
-    const url = before !== undefined && joinRoute(before) !== joinRoute(appended ?? "") ? before + raw.trimStart() : raw;
+    // A path a helper of the module puts text before (`` fetch(`/api${path}`) ``) is sent with that text, through the
+    // client the helper requests it with.
+    const helped = helperBefore(node);
+    const client = clients.requestOf(node) ?? (helped && clients.requestOf(helped.url));
+    const before = helped && (client || joinRoute(helped.lead) !== joinRoute(appended ?? "")) ? helped.lead : undefined;
+    const url = before ? before + raw.trimStart() : raw;
     let parsed: Requested | undefined = callPath(url, false, context.served) ?? rootRequest(node, url, spec.wrappers);
     if (!parsed && client?.relative) parsed = relativePath(url, context.served);
     if (!parsed) return undefined;
@@ -1707,7 +1734,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       }
       // On a client whose base is read, a URL that starts with a value may be absolute, and take no base, or a path
       // the base takes: which, the code does not say.
-      if (client.base && client.relative && url.trimStart().startsWith(HOLE) && hostOf(url) === undefined) {
+      if ((client.base || client.unread) && client.relative && url.trimStart().startsWith(HOLE) && hostOf(url) === undefined) {
         if (report) context.unjoined?.push({ why: `it starts with a value, an absolute URL or a path ${client.name}'s base takes`, at: at(node) });
         return undefined;
       }
@@ -2334,7 +2361,13 @@ function exchangeCalls(file: string, text: string, spec: CallSource, untyped?: T
   const out: ReadCall[] = [];
   for (const iface of httpExchanges(new Map([[file, text]])).values()) {
     if (!iface) continue;
-    if (iface.inherits) untyped?.push({ why: "an @HttpExchange interface extends another, whose mappings are not read for it", at: { file, line: iface.line } });
+    // Spring takes the type-level `@HttpExchange` from the interface proxied or, without one, from the interfaces it
+    // extends; and the methods it inherits are proxied under it too. Those are not read.
+    if (iface.inherits && !iface.typed) {
+      untyped?.push({ why: "an @HttpExchange interface without a type-level mapping of its own extends another", at: { file, line: iface.line } });
+      continue;
+    }
+    if (iface.inherits) untyped?.push({ why: "an @HttpExchange interface extends another, whose methods are not read under it", at: { file, line: iface.line } });
     for (const member of iface.members) {
       const methods = member.methods?.length ? member.methods : iface.methods;
       if (!iface.paths || !member.paths || !methods) {
@@ -3023,6 +3056,7 @@ export function extractCalls(
   const constants = new Constants(source);
   importersOf.set(constants, new Importers(source, constants, matcher(config.exclude)));
   const clients = new Clients(constants, importersOf.get(constants), packageRanges(source));
+  clientsOf.set(constants, clients);
   // The names each calling component's configured files use, outside generated clients, and those that generated
   // declarations they name use in turn; undefined where the component has no such file.
   const used = new Map<string, Set<string> | undefined>();
