@@ -226,10 +226,13 @@ forms it is served at where its router tells them apart (`slash`, `both`; neithe
 route registered that a request fits, in the `order` of the route's steps from the router a request enters to the one
 holding it, each a sequence of registrations and a place in it; `find-my-way`, Fastify's precedence; `specificity`,
 Nest's sort by the `rank` of each segment, then `order`; `werkzeug`, the precedence of Werkzeug's matcher (Flask,
-Quart) by the route's `parts`, each segment's static text or its regex and weight), `passes` (its
-handler may pass the request on to a later route), `slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed`
-and `added` for Next.js's `trailingSlash`, `appended` for Werkzeug's `strict_slashes`) and `constrained` (Fastify takes a request to it only with headers that meet
-its constraints). Where an OpenAPI document writes the
+Quart) by the route's `parts`, each segment's static text or its regex and weight; `precedence`, ASP.NET Core's endpoint
+routing by the `rank` of its `Order` and each segment's precedence digit, then a route that names the method), `passes`
+(its handler may pass the request on to a later route), `slashes` (`ignored`, `strict`, `redirected` for Starlette,
+`removed` and `added` for Next.js's `trailingSlash`, `appended` for Werkzeug's `strict_slashes`), `constrained` (Fastify
+takes a request to it only with headers that meet its constraints), `caseless` (its literal text matches whatever the
+case, as ASP.NET Core matches it) and `unchecked` (parameters whose constraint atlas does not read, so the route may
+refuse a value its path takes). Where an OpenAPI document writes the
 `/` (a server path or `basePath` before the root key `/` puts one after it), a call that leaves it out is matched to
 the route only by GET or HEAD. Whether another method reaches it depends on the framework (Starlette's redirect keeps
 the method, Django's may lose a POST's body), so such a call is matched to none and a `limit:` names it. A route

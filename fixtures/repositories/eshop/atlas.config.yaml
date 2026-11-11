@@ -1,7 +1,8 @@
 # .NET Aspire solution (src/eShop.AppHost/AppHost.cs wires the services): ASP.NET Core minimal API services, the Blazor
-# web app and its component library, the webhook client, and the MAUI apps. atlas reads no C# routes; Catalog.API
-# commits the OpenAPI documents it generates at build (OpenApiDocumentsDirectory in Catalog.API.csproj), the other
-# services none. C# is read as text.
+# web app and its component library, the webhook client, and the MAUI apps. The aspnetcore style reads the minimal APIs
+# of Catalog.API, Ordering.API and Webhooks.API (each Program.cs maps them through the extension methods of its Apis/);
+# Catalog.API also commits the OpenAPI documents it generates at build (OpenApiDocumentsDirectory in
+# Catalog.API.csproj), the other services none. Client calls in C# are read as text.
 components:
   - { name: catalog-api, path: src/Catalog.API }
   - { name: ordering-api, path: src/Ordering.API }
@@ -13,8 +14,10 @@ components:
   - { name: client-app, path: src/ClientApp }
 routes:
   # API versions 1.0 and 2.0 (src/Catalog.API/Apis/CatalogApi.cs), one document each.
-  - { component: catalog-api, openapi: src/Catalog.API/Catalog.API.json, files: ["src/Catalog.API/**/*.cs"] }
+  - { component: catalog-api, openapi: src/Catalog.API/Catalog.API.json, files: ["src/Catalog.API/**/*.cs"], styles: [aspnetcore] }
   - { component: catalog-api, openapi: src/Catalog.API/Catalog.API_v2.json, files: ["src/Catalog.API/**/*.cs"] }
+  - { component: ordering-api, files: ["src/Ordering.API/**/*.cs"], styles: [aspnetcore] }
+  - { component: webhooks-api, files: ["src/Webhooks.API/**/*.cs"], styles: [aspnetcore] }
 calls:
   # The web app's HttpClients have the services' Aspire names as base addresses (src/WebApp/Extensions/Extensions.cs);
   # Program.cs forwards /product-images/{id} to catalog-api's picture route.

@@ -101,12 +101,17 @@ export interface Dispatch {
    * with a regexp before one without, and a parameter before a wildcard, whatever the order. `specificity`: Nest's
    * `routeResolutionStrategy: 'specificity'` registers the more specific routes first, by `rank`, and routes of one rank
    * in `order`. `werkzeug`: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and
-   * variables by their weight, whatever the order, by `parts`.
+   * variables by their weight, whatever the order, by `parts`. `precedence`: ASP.NET Core's endpoint routing takes, of
+   * the routes whose template and constraints a request meets, the one first by `rank` (lower first: `Order`, then
+   * precedence), and of those a route that names the request's method before one that takes any (`EndpointComparer`,
+   * `HttpMethodMatcherPolicy`); routes left tied are ambiguous.
    */
-  picks?: "registration" | "find-my-way" | "specificity" | "werkzeug";
+  picks?: "registration" | "find-my-way" | "specificity" | "werkzeug" | "precedence";
   /**
-   * The kind of each segment of the route's path as Nest's specificity sort ranks it (`RouteSpecificitySorter`): a
-   * literal 0, text with a parameter 2, a parameter 3, a wildcard 4.
+   * For `specificity`, the kind of each segment of the route's path as Nest's specificity sort ranks it
+   * (`RouteSpecificitySorter`): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4. For `precedence`, the
+   * route's `Order` and then the digit of each segment of its template (`RoutePrecedence.ComputeInbound`): a literal 1,
+   * a constrained parameter or a segment of several parts 2, a parameter 3, a constrained catch-all 4, a catch-all 5.
    */
   rank?: number[];
   /**
@@ -147,6 +152,14 @@ export interface Dispatch {
    * where the route's options are not spelled out.
    */
   constrained?: true;
+  /** The router matches the literal text of the path whatever its case (ASP.NET Core). */
+  caseless?: true;
+  /**
+   * Parameters whose constraint atlas does not read as a regular expression (ASP.NET Core's `min(2000)`, `guid`, one
+   * the application registers): the router may refuse a value the path takes there, so the route takes a request from
+   * no other route for certain.
+   */
+  unchecked?: string[];
 }
 
 export interface Call {

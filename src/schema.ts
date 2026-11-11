@@ -23,7 +23,9 @@ const compiled = new Map<SchemaName, ValidateFunction>();
 
 function load(): Ajv2020 {
   if (ajv) return ajv;
-  ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
+  // A `prefixItems` tuple may be open (a dispatch's `rank`: an Order, then any number of digits), which strictTuples
+  // reports as a likely mistake.
+  ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false, strictTuples: false });
   ajv.addFormat("date-time", { type: "string", validate: isDateTime });
   for (const f of FILES) ajv.addSchema(JSON.parse(readFileSync(new URL(`../schema/${f}.schema.json`, import.meta.url), "utf8")) as object);
   return ajv;

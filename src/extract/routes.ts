@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
+import { aspnetcoreRoutes } from "./aspnetcore.js";
 import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
 import { withoutComments } from "./calls.js";
@@ -1985,6 +1986,10 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
     } else out.trailing = "both";
   }
   if (a.constrained && b.constrained) out.constrained = true;
+  if (a.caseless && b.caseless) out.caseless = true;
+  // A constraint not read on either route leaves the surface's unread.
+  const unchecked = [...new Set([...(a.unchecked ?? []), ...(b.unchecked ?? [])])];
+  if (unchecked.length) out.unchecked = unchecked;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -2054,6 +2059,7 @@ export function extractRoutes(
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges, slashes));
     }
+    if ((spec.styles ?? []).includes("aspnetcore")) out.push(...aspnetcoreRoutes(source, spec, files, config.exclude, limits, spans));
     if (routers) limits.push(...routers.limits(spec.component));
     if ((spec.styles ?? []).includes("flask")) {
       const read = flaskRoutes(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.component, spec.mounts);

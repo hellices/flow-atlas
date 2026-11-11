@@ -1,6 +1,9 @@
-# Where atlas's reading differs from the routes ASP.NET Core serves. Remove this when atlas reads it; the test fails
-# while a listed difference no longer occurs.
-unread: >-
-  atlas has no style for ASP.NET Core and reads no C#: minimal APIs (`MapGet`, `MapMethods`, `MapGroup`), controllers'
-  attribute and conventional routes, and the static assets, OpenAPI document and health check the framework serves are
-  all left out; the only sign is the limit "routes app: 9 files read, nothing extracted"
+# Where atlas's reading differs from the routes ASP.NET Core serves. Remove an entry when atlas reads it right; the test
+# fails while a listed difference no longer occurs.
+missing:
+  - { route: "GET /css/site.tu26klvjre.css", reason: "`MapStaticAssets` also serves each file under a name with the fingerprint the build computes from its content; atlas reads each file at its own path only, and names the rest in a limit" }
+  - { route: "GET /index.3e7coceai0.html", reason: "`MapStaticAssets` also serves each file under a name with the fingerprint the build computes from its content; atlas reads each file at its own path only, and names the rest in a limit" }
+  - { route: "GET /css/site.css.gz", reason: "`MapStaticAssets` also serves the gzip form the build writes of each file it compresses, by its own patterns; atlas reads each file at its own path only, and names the rest in a limit" }
+  - { route: "GET /index.html.gz", reason: "`MapStaticAssets` also serves the gzip form the build writes of each file it compresses, by its own patterns; atlas reads each file at its own path only, and names the rest in a limit" }
+  - { route: "GET /css/site.tu26klvjre.css.gz", reason: "the gzip form of a fingerprinted name `MapStaticAssets` serves; neither is read" }
+  - { route: "GET /index.3e7coceai0.html.gz", reason: "the gzip form of a fingerprinted name `MapStaticAssets` serves; neither is read" }

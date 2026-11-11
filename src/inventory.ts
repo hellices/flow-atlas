@@ -3,6 +3,7 @@ import ts from "typescript";
 import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments, spectacularDocuments } from "./extract/apidocs.js";
 import { withoutComments } from "./extract/calls.js";
+import { maskCSharp } from "./extract/csharp.js";
 import { BUILD_FILE, springdocDocuments } from "./extract/springdoc.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -20,7 +21,7 @@ export interface Inventory {
   apiDocuments: ApiDocument[];
 }
 
-const CODE = "**/*.{ts,tsx,js,jsx,mjs,cjs,kt,kts,java,swift,py,go,dart,html,htm}";
+const CODE = "**/*.{ts,tsx,js,jsx,mjs,cjs,kt,kts,java,cs,swift,py,go,dart,html,htm}";
 const MANIFESTS = /(^|\/)(component\.json|package\.json|project\.json|pyproject\.toml|build\.gradle(\.kts)?|pom\.xml|go\.mod|pubspec\.yaml)$/;
 
 /** Of manifests in one directory, the one that names the component: component.json, then Nx's project.json. */
@@ -76,6 +77,12 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
     re: /^[\t ]*export\s+default\b|^[\t ]*export\s*\{([^}]*)\}/gm,
     files: /(?:^|\/)(?:app\/(?:.*\/)?page|pages\/(?!_app\.|_document\.|_error\.)[^]*)\.(c|m)?[jt]sx?$/,
     accept: (m) => m[1] === undefined || exportedNames(m[1]).includes("default"),
+  },
+  // ASP.NET Core: minimal APIs, controller mappings and route attributes, in C# without its comments and strings.
+  {
+    style: "aspnetcore",
+    re: /\.Map(?:Get|Post|Put|Delete|Patch|Methods|Group|Controllers|ControllerRoute|DefaultControllerRoute|AreaControllerRoute)\s*\(|\[\s*(?:Route|Http(?:Get|Post|Put|Delete|Patch|Head|Options)|AcceptVerbs)(?:Attribute)?\s*[(\],]/g,
+    files: /\.cs$/,
   },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },
 ];
@@ -319,7 +326,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
     if (file.endsWith(".py") && text.includes("Spectacular")) apiDocuments.push(...spectacularDocuments(file, text, component));
     // An annotation a Java or Kotlin comment mentions (`each @RequestMapping method` in a Javadoc) maps nothing.
-    const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : text;
+    const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : file.endsWith(".cs") ? maskCSharp(text) : text;
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file) || (style === "next" && !mayUseNext(file))) continue;
       // A Python file that imports Flask or Quart registers their routes; their shortcuts look like FastAPI's.

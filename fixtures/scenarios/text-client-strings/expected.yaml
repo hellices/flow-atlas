@@ -29,6 +29,7 @@ descriptions:
   - server none - NoneFound
 inventory:
   routes:
+    - catalog-api/CatalogApi.cs aspnetcore 2
     - server/src/controllers/server.controller.ts nest 1
     - server/src/controllers/user.controller.ts nest 1
   calls:

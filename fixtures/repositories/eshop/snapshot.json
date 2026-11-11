@@ -7,7 +7,9 @@
     "catalog-api|GET /api/catalog/items/by",
     "catalog-api|GET /api/catalog/items/by/{name}",
     "catalog-api|GET /api/catalog/items/facets",
+    "catalog-api|GET /api/catalog/items/type/all/brand",
     "catalog-api|GET /api/catalog/items/type/all/brand/{brandId}",
+    "catalog-api|GET /api/catalog/items/type/{typeId}/brand",
     "catalog-api|GET /api/catalog/items/type/{typeId}/brand/{brandId}",
     "catalog-api|GET /api/catalog/items/withsemanticrelevance",
     "catalog-api|GET /api/catalog/items/withsemanticrelevance/{text}",
@@ -15,7 +17,18 @@
     "catalog-api|GET /api/catalog/items/{id}/pic",
     "catalog-api|POST /api/catalog/items",
     "catalog-api|PUT /api/catalog/items",
-    "catalog-api|PUT /api/catalog/items/{id}"
+    "catalog-api|PUT /api/catalog/items/{id}",
+    "ordering-api|GET /api/orders",
+    "ordering-api|GET /api/orders/cardtypes",
+    "ordering-api|GET /api/orders/{orderId}",
+    "ordering-api|POST /api/orders",
+    "ordering-api|POST /api/orders/draft",
+    "ordering-api|PUT /api/orders/cancel",
+    "ordering-api|PUT /api/orders/ship",
+    "webhooks-api|DELETE /api/webhooks/{id}",
+    "webhooks-api|GET /api/webhooks",
+    "webhooks-api|GET /api/webhooks/{id}",
+    "webhooks-api|POST /api/webhooks"
   ],
   "calls": [
     "client-app->catalog-api|* /catalogbrands based @ src/ClientApp/Services/Catalog/CatalogService.cs:69",
@@ -30,7 +43,9 @@
   "edges": [
     "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/by/{name} (text)",
     "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/withsemanticrelevance/{text} (text)",
-    "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/{id}/pic (text)"
+    "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/{id}/pic (text)",
+    "match webhook-client->webhooks-api|GET /api/webhooks@src/WebhookClient/Services/WebHooksClient.cs:12 -> webhooks-api|GET /api/webhooks (text)",
+    "match webhook-client->webhooks-api|POST /api/webhooks@src/WebhookClient/Services/WebHooksClient.cs:7 -> webhooks-api|POST /api/webhooks (text)"
   ],
   "findings": [
     "FA001|catalog-api|DELETE /api/catalog/items/{id}",
@@ -39,13 +54,22 @@
     "FA001|catalog-api|GET /api/catalog/items",
     "FA001|catalog-api|GET /api/catalog/items/by",
     "FA001|catalog-api|GET /api/catalog/items/facets",
+    "FA001|catalog-api|GET /api/catalog/items/type/all/brand",
     "FA001|catalog-api|GET /api/catalog/items/type/all/brand/{brandId}",
+    "FA001|catalog-api|GET /api/catalog/items/type/{typeId}/brand",
     "FA001|catalog-api|GET /api/catalog/items/type/{typeId}/brand/{brandId}",
     "FA001|catalog-api|GET /api/catalog/items/withsemanticrelevance",
     "FA001|catalog-api|GET /api/catalog/items/{id}",
     "FA001|catalog-api|POST /api/catalog/items",
     "FA001|catalog-api|PUT /api/catalog/items",
     "FA001|catalog-api|PUT /api/catalog/items/{id}",
+    "FA001|ordering-api|GET /api/orders/cardtypes",
+    "FA001|ordering-api|GET /api/orders/{orderId}",
+    "FA001|ordering-api|POST /api/orders/draft",
+    "FA001|ordering-api|PUT /api/orders/cancel",
+    "FA001|ordering-api|PUT /api/orders/ship",
+    "FA001|webhooks-api|DELETE /api/webhooks/{id}",
+    "FA001|webhooks-api|GET /api/webhooks/{id}",
     "FA002|client-app->catalog-api|* /catalogbrands",
     "FA002|client-app->catalog-api|* /catalogtypes",
     "FA002|client-app->catalog-api|* /items",
@@ -54,8 +78,10 @@
   "limits": [
     "calls client-app->ordering-api: 3 files read, nothing extracted",
     "calls hybrid-app->catalog-api: 3 files read, nothing extracted",
+    "calls webapp->ordering-api: * /api/Orders at src/WebApp/Services/OrderingService.cs:5 fits routes of GET and POST; its method is not read, so it is matched to none of them",
     "calls webapp-components->catalog-api: 4 files read, nothing extracted",
-    "routes catalog-api: no handler was found in the configured route files for 3 operations of src/Catalog.API/Catalog.API.json (GetRelevantItems, GetItemsByTypeAndBrand, GetItemsByBrand); they stay at their line in the document",
-    "routes catalog-api: no handler was found in the configured route files for 9 operations of src/Catalog.API/Catalog.API_v2.json (BatchGetItems, GetItem, UpdateItem-V2, DeleteItem, GetItemPicture and 4 more); they stay at their line in the document"
+    "routes catalog-api: src/Catalog.API/Program.cs:22 calls MapDefaultEndpoints, which is not among the files read; the routes it may map are not read",
+    "routes ordering-api: src/Ordering.API/Program.cs:17 calls MapDefaultEndpoints, which is not among the files read; the routes it may map are not read",
+    "routes webhooks-api: src/Webhooks.API/Program.cs:16 calls MapDefaultEndpoints, which is not among the files read; the routes it may map are not read"
   ]
 }

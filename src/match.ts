@@ -169,6 +169,7 @@ const addedForm = (path: string): boolean | undefined => {
  * `added` the form `addedForm` gives.
  */
 export function takes(s: Surface, path: string, slash: boolean): boolean {
+  if (s.dispatch?.caseless) path = recased(s.path, path);
   const r = segments(s.path);
   const c = segments(path);
   const last = r[r.length - 1];
@@ -193,6 +194,18 @@ export function takes(s: Surface, path: string, slash: boolean): boolean {
     takesEmpty(last!, s.patterns) &&
     pathsMatch(joinRoute(...r.slice(0, -1)), path, s.patterns)
   );
+}
+
+/**
+ * A request's path as a route that matches literal text whatever its case spells it (`Dispatch.caseless`): each
+ * segment of the request that is the route's literal segment in another case, written as the route writes it.
+ */
+export function recased(route: string, path: string): string {
+  const r = segments(route);
+  const c = segments(path);
+  if (!c.some((seg, i) => r[i] !== undefined && seg !== r[i] && isFixed(r[i]) && seg.toLowerCase() === r[i].toLowerCase())) return path;
+  const out = c.map((seg, i) => (r[i] !== undefined && isFixed(r[i]) && seg.toLowerCase() === r[i].toLowerCase() ? r[i] : seg));
+  return joinRoute(...out);
 }
 
 /**
@@ -254,6 +267,7 @@ function fmwCompare(a: Surface, b: Surface): number {
  * the call's last `/` to the route's last parameter, by the path before that parameter.
  */
 function covers(d: Surface, call: Call): boolean {
+  if (d.dispatch?.caseless) call = { ...call, path: recased(d.path, call.path) };
   if (pathCovers(d.path, call.path, d.patterns)) return true;
   const r = segments(d.path);
   return !!call.slash && r.length === segments(call.path).length + 1 && takes(d, call.path, true) && pathCovers(joinRoute(...r.slice(0, -1)), call.path, d.patterns);
@@ -308,6 +322,13 @@ function first(d: Surface, c: Surface): boolean {
   if (!a?.picks || a.picks !== b?.picks) return false;
   if (a.picks === "find-my-way") return fmwCompare(d, c) < 0;
   if (a.picks === "werkzeug") return werkzeugCompare(a.parts, b.parts) < 0;
+  if (a.picks === "precedence") {
+    // A route whose constraint is not read may refuse the request, which then goes to the next.
+    if (a.unchecked?.length || !a.rank || !b.rank) return false;
+    const k = compare(a.rank, b.rank);
+    if (k !== 0) return k < 0;
+    return d.method !== "*" && c.method === "*";
+  }
   if (a.passes) return false;
   if (a.picks === "specificity") {
     const k = nestCompare(a.rank, b.rank);
@@ -563,5 +584,5 @@ export function constrainedLimits(graph: Pick<Graph, "calls">, constrained: Matc
 export function plausibleRequest(graph: Graph, call: Call): boolean {
   if (call.based) return true;
   const first = firstLiteral(call.path);
-  return graph.surfaces.some((s) => s.component === call.to && firstLiteral(s.path) === first);
+  return graph.surfaces.some((s) => s.component === call.to && (firstLiteral(s.path) === first || (!!s.dispatch?.caseless && firstLiteral(s.path)?.toLowerCase() === first?.toLowerCase())));
 }
