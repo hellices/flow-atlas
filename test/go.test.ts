@@ -745,8 +745,8 @@ describe("values atlas does not settle are not read as settled", () => {
     expect(surfaces).toEqual(["* /l/**"]);
     expect(limits).toEqual([
       "routes svc: svc/main.go:16 mounts s at p, which atlas does not trace to a router or handler; what it serves is not read",
-      "routes svc: svc/main.go:12 makes a router that svc/main.go:14 puts in a value atlas does not follow; where it is served is not read, so its routes are not read",
-      "routes svc: svc/main.go:18 makes a router that svc/main.go:21 puts in a value atlas does not follow; where it is served is not read, so its routes are not read",
+      "routes svc: svc/main.go:12 makes a router that svc/main.go:14 passes on where atlas does not follow it; where it is served is not read, so its routes are not read",
+      "routes svc: svc/main.go:18 makes a router that svc/main.go:21 passes on where atlas does not follow it; where it is served is not read, so its routes are not read",
     ]);
   });
 
@@ -846,5 +846,18 @@ describe("values atlas does not settle are not read as settled", () => {
       ),
     };
     expect(read(files, { mounts: { "svc/routes/api.go": "/api" } }).surfaces).toEqual(["GET /api/users/{id}", "GET /api/admin/stats"]);
+  });
+});
+
+describe("a router mounted on a value atlas does not trace", () => {
+  it("is not read at the root", () => {
+    const { surfaces, limits } = read({
+      "svc/app.go": chiFile("sub := chi.NewRouter()", 'sub.Get("/x", h)', 'other.Mount("/api", sub)'),
+    });
+    expect(surfaces).toEqual([]);
+    expect(limits).toEqual([
+      'routes svc: svc/app.go:13 registers Mount "/api" on other, which atlas does not trace to a router; it is not read',
+      "routes svc: svc/app.go:11 makes a router that svc/app.go:13 passes on where atlas does not follow it; where it is served is not read, so its routes are not read",
+    ]);
   });
 });

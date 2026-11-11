@@ -73,7 +73,10 @@ interface Router {
   go?: { version: string | undefined; legacy: boolean; file: string | undefined };
   /** The DefaultServeMux. */
   default?: true;
-  /** Where the router is put in a value atlas does not follow (a map, a slice, an index, another package's struct). */
+  /**
+   * Where the router is put in a value atlas does not follow (a map, a slice, an index, another package's struct), or
+   * handed to a registration on a value atlas does not trace.
+   */
   escaped?: string;
 }
 
@@ -1546,6 +1549,8 @@ class Interp {
     // A function read with no caller, whose call is read on a router where a traced call reaches it, leaves nothing out.
     if (registers && recv.untraced && this.handled.has(`${frame.file}:${e.start}`)) registers = false;
     if (registers) {
+      // A router given to a registration atlas does not read (a mount) is served where that puts it.
+      args.forEach((a) => this.escape(a, frame, e.start));
       const path = literal(name === "Handle" && (t === "gin" || t === "gin-engine") ? 1 : 0);
       const what = path !== undefined ? `${name} ${JSON.stringify(path)}` : name;
       this.limit(`${this.at(frame.file, this.nameAt(e))} registers ${what} on ${this.source(sel.x, frame)}${recv.why ? ` (${recv.why})` : ""}, which atlas does not trace to a router; it is not read`);
@@ -1956,7 +1961,7 @@ class Assembly {
     let out: Place[] = [];
     const traced = r.mounts.some((m) => m.prefix !== undefined);
     if (r.escaped) {
-      this.limit(`${r.file}:${r.line} makes a router that ${r.escaped} puts in a value atlas does not follow; ${traced || r.declared !== undefined ? "a mount of it from there" : "where it is served"} is not read${traced || r.declared !== undefined ? "" : ", so its routes are not read"}`);
+      this.limit(`${r.file}:${r.line} makes a router that ${r.escaped} passes on where atlas does not follow it; ${traced || r.declared !== undefined ? "a mount of it from there" : "where it is served"} is not read${traced || r.declared !== undefined ? "" : ", so its routes are not read"}`);
       if (!traced && r.declared === undefined) {
         seen.delete(r);
         this.places.set(r, []);
