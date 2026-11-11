@@ -1,11 +1,6 @@
 # Where atlas's reading differs from the routes Fastify serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { route: "GET /hello", reason: "the full declaration `fastify.route({ method, url })` is not read, and nothing says so" }
-  - { route: "POST /items", reason: "the full declaration `fastify.route({ method: [...], path })` is not read, and nothing says so" }
-  - { route: "PUT /items", reason: "the full declaration `fastify.route({ method: [...], path })` is not read, and nothing says so" }
-  - { route: "GET /versioned", reason: "the full declaration `fastify.route({ method, url, constraints })` is not read, and nothing says so" }
-  - { route: "QUERY /search", reason: "the `fastify.query` shorthand (QUERY method) is not read, and nothing says so" }
   - { route: "GET /public", reason: "the route @fastify/static registers under its `prefix` (`/public/*`, which also takes `/public/`) is not read, and nothing says so" }
   - { route: "GET /public/{**}", reason: "the route @fastify/static registers under its `prefix` is not read, and nothing says so" }
 dispatch:
@@ -27,6 +22,10 @@ dispatch:
   - { request: "GET /example/12.png/", reason: "trailing slash: `/example/12.png/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12.png`" }
   - { request: "GET /example/posts/", reason: "trailing slash: `/example/posts/` is a path of its own, whose empty last segment find-my-way gives the optional parameter of `/example/posts/:id?`; atlas matches it as `/example/posts`" }
   - { request: "POST /name:verb/", reason: "trailing slash: Fastify treats `/name:verb/` as another path than `/name:verb` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/name::verb`" }
+  - { request: "GET /hello/", reason: "trailing slash: Fastify treats `/hello/` as another path than `/hello` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/hello`" }
+  - { request: "POST /items/", reason: "trailing slash: Fastify treats `/items/` as another path than `/items` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/items`" }
+  - { request: "PUT /items/", reason: "trailing slash: Fastify treats `/items/` as another path than `/items` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/items`" }
+  - { request: "QUERY /search/", reason: "trailing slash: Fastify treats `/search/` as another path than `/search` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/search`" }
   - { request: "GET /example", reason: "trailing slash: find-my-way's `/example/*` takes `/example/`, with nothing after its `/`, but not `/example`, which no route takes; atlas reads the two as one path and matches the wildcard" }
   - { request: "GET /example/12/12/", reason: "trailing slash: `/example/12/12/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/12/12`, to `/example/:userId/:secretToken` too" }
   - { request: "GET /example/at/12h12m/", reason: "trailing slash: `/example/at/12h12m/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/at/12h12m`, to `/example/at/:hour(^\\d{2})h:minute(^\\d{2})m` and `/example/:userId/:secretToken` too" }
@@ -43,3 +42,7 @@ dispatch:
   - { request: "GET /example/near/12-12/radius/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/near/:lat-:lng/radius/:r` takes it; atlas also matches the wildcard `/example/*`" }
   - { request: "GET /example/posts", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/posts`, the path `/example/posts/:id?` takes without its parameter, takes it; atlas also matches `/example/:userId` and the wildcard `/example/*`" }
   - { request: "GET /example/posts/12", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/posts/:id?` takes it; atlas also matches `/example/:userId/:secretToken` and the wildcard `/example/*`" }
+  # find-my-way takes a request to a route with a `version` constraint only where its `Accept-Version` header satisfies it
+  # (fastify.dev/docs/latest/Reference/Routes/#constraints); atlas reads the route and no constraint.
+  - { request: "GET /versioned", reason: "version constraint: both routes at `/versioned` take only a request whose `Accept-Version` header satisfies their version, and the sample request has none; atlas matches it to `/versioned`" }
+  - { request: "GET /versioned/", reason: "version constraint and trailing slash: only a request with an `Accept-Version` header reaches `/versioned`, and Fastify treats `/versioned/` as another path; atlas matches it to `/versioned`" }

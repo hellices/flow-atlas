@@ -20,8 +20,8 @@ missing:
   - { route: "* /legacy", reason: "a handler mounted with `.mount(path, handler)` (served at the path and under it) is not read, and nothing says so" }
   - { route: "* /legacy/{**}", reason: "a handler mounted with `.mount(path, handler)` is not read, and nothing says so" }
   - { route: "POST /user/sign-in", reason: "a group's route (`.group(\"/user\", (app) => app.post(...))`) is read without the group's path, and nothing says so" }
-  - { route: "POST /user/sign-up", reason: "a group's route chained after its first one (`app.post(a).post(b)`) is not read, and nothing says so" }
-  - { route: "POST /user/profile", reason: "a group's route chained after its first one is not read, and nothing says so" }
+  - { route: "POST /user/sign-up", reason: "a group's route chained after its first one (`app.post(a).post(b)`) is not read (named in a limit: a route chained on `app`, which atlas does not trace to a framework it reads)" }
+  - { route: "POST /user/profile", reason: "a group's route chained after its first one is not read (named in a limit)" }
   - { route: "POST /account/rename", reason: "a group's route (a group with a guard) is read without the group's path, and nothing says so" }
   - { route: "PUT /account/settings/{}", reason: "a nested group's route is read without either group's path, and nothing says so" }
   - { route: "GET /api/users", reason: "routes chained on a plugin instance (`new Elysia({ prefix })`) are not read, nor its prefix and the group it is used in, and nothing says so" }
@@ -31,7 +31,7 @@ missing:
   - { route: "GET /health", reason: "routes chained on a named plugin instance are not read, and nothing says so" }
   - { route: "GET /admin/dashboard", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
   - { route: "DELETE /admin/cache", reason: "a group's route in a prefixed plugin is read without the group's path and the plugin's prefix, and nothing says so" }
-  - { route: "DELETE /admin/cache/{}", reason: "a group's route chained after its first one is not read, and nothing says so" }
+  - { route: "DELETE /admin/cache/{}", reason: "a group's route chained after its first one is not read (named in a limit)" }
   - { route: "GET /admin/reports/{}", reason: "routes chained on a prefixed plugin used in another are not read, and nothing says so" }
   - { route: "GET /admin/reports/{**}", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`), and nothing says so" }
   - { route: "GET /admin/reports", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`, which also takes the prefix with `/`), and nothing says so" }

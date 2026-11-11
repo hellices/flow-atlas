@@ -1,7 +1,5 @@
 # Where atlas's reading differs from the routes Nest serves. Remove an entry when atlas reads it right; the test fails
 # while a listed difference no longer occurs.
-missing:
-  - { route: "QUERY /api/v1/cats/search", reason: "`@QueryMethod()` (the QUERY method) is not read, and nothing says so" }
 dispatch:
   # Nest registers routes in declaration order and Express dispatches to the first that matches
   # (docs.nestjs.com/controllers#route-conflicts-and-resolution-order): `@All('legacy')`, declared before `@Get(':id')`
