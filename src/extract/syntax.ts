@@ -43,13 +43,17 @@ type Built = Variant | { why: string; rejected?: true };
 
 const quote = (s: string): string => `\`${s}\``;
 
+/** The most paths one registration is written as: path-to-regexp 8's limit on the combinations of a path. */
+const MAX_PATHS = 256;
+
 /**
  * The template a variant stands for: `{name}` for a parameter, wherever it stands in its segment; a final rest as
  * `{name}/**` (one segment or more), `{*name}` (none or more) or `**` (none or more, unnamed). Text that would read as
  * template syntax (`{`, `}`, `*`, `?`, or a `:` starting a segment) is not written.
  */
 function write(v: Variant): RoutePath | { why: string } {
-  const patterns: Record<string, string> = {};
+  // A Map, so a parameter named `constructor` or `__proto__` is a name like any other.
+  const patterns = new Map<string, string>();
   const parts: string[] = [];
   const name = (n: string): string | undefined => (/^[^{}/:*?\s]+$/.test(n) ? undefined : `its parameter name ${quote(n)} cannot be written in a path template`);
   for (const seg of v.segments) {
@@ -62,8 +66,8 @@ function write(v: Variant): RoutePath | { why: string } {
         const bad = name(p.param);
         if (bad) return { why: bad };
         if (p.pattern !== undefined) {
-          if (patterns[p.param] !== undefined && patterns[p.param] !== p.pattern) return { why: `two parameters named ${quote(p.param)} take different regexps` };
-          patterns[p.param] = p.pattern;
+          if (patterns.has(p.param) && patterns.get(p.param) !== p.pattern) return { why: `two parameters named ${quote(p.param)} take different regexps` };
+          patterns.set(p.param, p.pattern);
         }
         out += `{${p.param}}`;
       } else out += "*";
@@ -75,7 +79,7 @@ function write(v: Variant): RoutePath | { why: string } {
     if (bad) return { why: bad };
     parts.push(v.rest.name === undefined ? "**" : v.rest.min === 1 ? `{${v.rest.name}}/**` : `{*${v.rest.name}}`);
   }
-  return { path: `/${parts.join("/")}`, ...(Object.keys(patterns).length ? { patterns } : {}) };
+  return { path: `/${parts.join("/")}`, ...(patterns.size ? { patterns: Object.fromEntries(patterns) } : {}) };
 }
 
 /**
@@ -182,11 +186,15 @@ function parseP2R(str: string): Token[] | { why: string; rejected: true } {
   return until("");
 }
 
-/** path-to-regexp 8's `flatten`: each sequence of tokens a path's optional groups make, at most 256 of them. */
+/**
+ * path-to-regexp 8's `flatten`: each sequence of tokens a path's optional groups make. `pathToRegexp` throws on the
+ * 257th ("Too many path combinations"), so the walk stops there: undefined.
+ */
 function flatten(tokens: Token[]): Array<Array<Exclude<Token, { type: "group" }>>> | undefined {
   const out: Array<Array<Exclude<Token, { type: "group" }>>> = [];
+  let overflow = false;
   const walk = (list: Token[], index: number, result: Array<Exclude<Token, { type: "group" }>>, done: (r: Array<Exclude<Token, { type: "group" }>>) => void): void => {
-    while (index < list.length) {
+    while (index < list.length && !overflow) {
       const token = list[index++]!;
       if (token.type === "group") {
         // The sequences with the group first, then the loop goes on without it.
@@ -198,11 +206,10 @@ function flatten(tokens: Token[]): Array<Array<Exclude<Token, { type: "group" }>
       }
       result.push(token);
     }
-    done(result);
+    if (!overflow) done(result);
   };
-  let overflow = false;
   walk(tokens, 0, [], (seq) => {
-    if (out.length >= 256) overflow = true;
+    if (out.length >= MAX_PATHS) overflow = true;
     else out.push([...seq]);
   });
   return overflow ? undefined : out;
@@ -216,7 +223,7 @@ export function readPathToRegexp(path: string): ReadPath {
   const tokens = parseP2R(path);
   if (!Array.isArray(tokens)) return tokens;
   const sequences = flatten(tokens);
-  if (!sequences) return { why: "path-to-regexp 8 rejects more than 256 combinations of optional groups", rejected: true };
+  if (!sequences) return { why: `path-to-regexp 8 rejects more than ${MAX_PATHS} combinations of optional groups`, rejected: true };
   return finish(
     sequences.map((seq): Built => {
       const v: Variant = { segments: [[]] };
@@ -262,6 +269,8 @@ export function readPathToRegexp01(path: string): ReadPath {
     }
     const optional = /^:(\w+)\?$/.exec(seg);
     if (optional) {
+      // Express compiles one regular expression; atlas writes a path per combination, as many as path-to-regexp 8 allows.
+      if (variants.length * 2 > MAX_PATHS) return { why: `its optional segments make more than ${MAX_PATHS} paths, which atlas does not write` };
       variants = variants.flatMap((v) => [{ segments: [...v.segments, [{ param: optional[1]! }]] }, v]);
       continue;
     }
@@ -387,8 +396,14 @@ function fmwVariant(path: string): Built {
       continue;
     }
     flush();
-    // One node: parameters, each with its regexp, and the static text between them, up to the next `/`.
+    // One node: parameters, each with its regexp, and the static text between them, up to the next `/`. In a node with
+    // a regexp or static text (a regex node), a parameter without its own regexp takes `(.*?)`, or after another such
+    // parameter, anything up to the static text before it (`isParamSafe`, `backtrack`), empty text included.
     const regexps: string[] = [];
+    const node: Piece[] = [];
+    let regexNode = false;
+    let safe = true;
+    let backtrack = "";
     let start = i + 1;
     let j = start;
     for (;;) {
@@ -401,15 +416,21 @@ function fmwVariant(path: string): Built {
         continue;
       }
       const name = path.slice(start, j);
-      let pattern: string | undefined;
+      regexNode ||= isRegex || isStatic;
+      let pattern: string;
       if (isRegex) {
         const close = closingParen(path, j);
         if (close === undefined) return { why: "find-my-way rejects a regexp that is not closed" };
         pattern = trimRegExp(path.slice(j, close + 1));
         j = close + 1;
+        safe = true;
+        node.push({ param: name, pattern });
+      } else {
+        pattern = safe ? "(.*?)" : `(${backtrack}|(?:(?!${backtrack}).)*)`;
+        safe = false;
+        node.push({ param: name, pattern });
       }
-      v.segments[v.segments.length - 1]!.push({ param: name, ...(pattern !== undefined ? { pattern } : {}) });
-      regexps.push(pattern ?? "(.*?)");
+      regexps.push(pattern);
       const from = j;
       for (; j < path.length; j++) {
         if (path[j] === "/") break;
@@ -420,14 +441,16 @@ function fmwVariant(path: string): Built {
       }
       const stat = path.slice(from, j).replaceAll("::", ":");
       if (stat) {
-        v.segments[v.segments.length - 1]!.push({ text: stat });
-        regexps.push(stat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+        node.push({ text: stat });
+        regexps.push((backtrack = stat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
       if (j >= path.length || path[j] === "/") break;
       start = j + 1;
       j = start;
     }
     if (!compiles(`^${regexps.join("")}$`)) return { why: "find-my-way rejects a regexp that is not a valid regular expression" };
+    // A parameter that is its node whole has no regexp: it takes the segment.
+    for (const p of node) v.segments[v.segments.length - 1]!.push("param" in p && !regexNode ? { param: p.param } : p);
     i = j;
   }
   flush();
@@ -441,6 +464,9 @@ function fmwVariant(path: string): Built {
  */
 export function slashFree(source: string): boolean {
   const risky = (e: string | undefined) => e === undefined || /[DWS/uxcpPk0-9]/.test(e);
+  // The character a class escape stands for (`\t` is U+0009, `\b` a backspace in a class), null for `\d`, `\w`, `\s`.
+  const CONTROL: Record<string, number> = { t: 0x09, n: 0x0a, v: 0x0b, f: 0x0c, r: 0x0d, b: 0x08 };
+  const escaped = (e: string): number | null => (/[dws]/.test(e) ? null : Object.hasOwn(CONTROL, e) ? CONTROL[e]! : e.codePointAt(0)!);
   for (let i = 0; i < source.length; i++) {
     const c = source[i]!;
     if (c === "\\") {
@@ -451,23 +477,24 @@ export function slashFree(source: string): boolean {
     if (c === "." || c === "/") return false;
     if (c !== "[") continue;
     if (source[i + 1] === "^") return false;
-    const members: Array<string | null> = [];
+    // Each member's code point (null for a class escape), and whether it is an unescaped `-`, which makes a range.
+    const members: Array<{ code: number | null; dash: boolean }> = [];
     let j = i + 1;
     for (; j < source.length && source[j] !== "]"; j++) {
       if (source[j] === "\\") {
         const e = source[j + 1];
         if (risky(e)) return false;
-        members.push(/[dws]/.test(e!) ? null : e!);
+        members.push({ code: escaped(e!), dash: false });
         j++;
-      } else members.push(source[j]!);
+      } else members.push({ code: source.codePointAt(j)!, dash: source[j] === "-" });
     }
     if (j >= source.length) return false;
     for (let k = 0; k < members.length; k++) {
-      const m = members[k];
-      if (m === "/") return false;
-      const from = members[k - 1];
-      const to = members[k + 1];
-      if (m === "-" && k > 0 && k < members.length - 1 && from && to && from.charCodeAt(0) <= 0x2f && to.charCodeAt(0) >= 0x2f) return false;
+      const m = members[k]!;
+      if (m.code === 0x2f) return false;
+      const from = members[k - 1]?.code;
+      const to = members[k + 1]?.code;
+      if (m.dash && k > 0 && k < members.length - 1 && from != null && to != null && from <= 0x2f && to >= 0x2f) return false;
     }
     i = j;
   }

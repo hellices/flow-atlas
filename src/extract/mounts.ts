@@ -38,6 +38,11 @@ export interface Mounts {
   /** The package a router is created from (`express`, `@koa/router`, `koa-router`, `hono` or a preset, `fastify`). */
   packageOf(router: string): string | undefined;
   /**
+   * The files that package is resolved from: where the router is created, or for a Fastify plugin, where each
+   * `Fastify()` instance it is registered under is; none for a plugin no traced instance takes in.
+   */
+  originsOf(router: string): string[];
+  /**
    * Where `file` mounts `express.static`, which serves the files of a directory: the line and the paths it is mounted
    * at, undefined where a mount is not read.
    */
@@ -536,6 +541,21 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       return "why" in s ? s.why : undefined;
     },
     packageOf: (handle) => stores.get(storeOf(handle))?.pkg,
+    originsOf: (handle) => {
+      const fileOf = (h: string) => h.slice(0, h.lastIndexOf("@"));
+      const store = storeOf(handle);
+      if (stores.get(store)?.kind !== "plugin") return stores.has(store) ? [fileOf(store)] : [];
+      const out = new Set<string>();
+      const seen = new Set<string>();
+      const up = (h: string): void => {
+        if (seen.has(h)) return;
+        seen.add(h);
+        if (stores.get(h)?.kind === "fastify") out.add(fileOf(h));
+        else for (const m of mounts.get(h) ?? []) if (m.parent !== ROOT) up(storeOf(m.parent));
+      };
+      up(store);
+      return [...out];
+    },
     statics,
   };
 }

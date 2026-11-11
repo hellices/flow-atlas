@@ -511,7 +511,7 @@ export function routesFromTypeScript(
             for (const module of routed ?? [""]) {
               for (const base of bases) {
                 for (const path of paths) {
-                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true, syntax: nestSyntax((pkg) => ranges?.(file, pkg)) });
+                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true, syntax: nestSyntax((pkg) => ranges?.(spec.bootstrap ?? file, pkg)) });
                 }
               }
             }
@@ -533,9 +533,12 @@ export function routesFromTypeScript(
         if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
           span(node.arguments[0]);
           const method = name === "all" ? "*" : name;
-          // The router's package, at the version the file's package.json gives it, settles the syntax of the path.
+          // The router's package, at the version the package.json above where it is created gives it, settles the
+          // syntax of the path. Ranges that differ (a plugin under two instances) admit no one major version.
           const pkg = router ? mounts!.packageOf(router) : undefined;
-          const syntax = syntaxOf(pkg, pkg === undefined ? undefined : ranges?.(file, pkg));
+          const origins = router ? mounts!.originsOf(router) : [];
+          const given = pkg === undefined ? [] : (origins.length ? origins : [file]).flatMap((f) => ranges?.(f, pkg) ?? []);
+          const syntax = syntaxOf(pkg, given.length ? [...new Set(given)].join(" || ") : undefined);
           if (router) {
             const prefixes = mounts!.prefixes(router);
             if (prefixes) for (const p of prefixes) add(method, joinRoute(p, path), node, node, undefined, { syntax });

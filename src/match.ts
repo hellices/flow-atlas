@@ -171,7 +171,7 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // being redirected.
     const redirected = (surface: Surface): boolean => {
       const bare = slashRedirectPath(surface.path);
-      if (bare === undefined || !pathsMatch(bare, call.path)) return false;
+      if (bare === undefined || !pathsMatch(bare, call.path, surface.patterns)) return false;
       const served = narrowedPath(bare, call.path);
       return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served, s.patterns));
     };

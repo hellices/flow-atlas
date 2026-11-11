@@ -63,7 +63,12 @@ describe("path-to-regexp 8 (Express 5, @koa/router 14 and later)", () => {
     expect(readPathToRegexp("/files/*")).toEqual({ why: "path-to-regexp 8 rejects a `*` with no parameter name", rejected: true });
     expect(readPathToRegexp("/a/:b:c")).toEqual({ why: "path-to-regexp 8 rejects `:c` with no text before it", rejected: true });
     expect(readPathToRegexp("/a{/b")).toEqual({ why: "path-to-regexp 8 rejects a `{` not closed", rejected: true });
+    // `pathToRegexp` throws "Too many path combinations" on the 257th; the walk stops there, not after 2^30 of them.
     expect(readPathToRegexp(`/x${"{/a}".repeat(9)}`)).toEqual({ why: "path-to-regexp 8 rejects more than 256 combinations of optional groups", rejected: true });
+    const started = Date.now();
+    expect(readPathToRegexp(`/x${"{/a}".repeat(30)}`)).toEqual({ why: "path-to-regexp 8 rejects more than 256 combinations of optional groups", rejected: true });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(paths(readPathToRegexp(`/x${Array.from({ length: 8 }, (_, i) => `{/a${i}}`).join("")}`))).toHaveLength(256);
     expect(readPathToRegexp("/files/*rest/edit")).toEqual({ why: "its wildcard `*rest` takes text across segments, not the whole end of the path" });
     expect(readPathToRegexp("/files/v*rest")).toEqual({ why: "its wildcard `*rest` takes text across segments, not the whole end of the path" });
     // Escaped text that a template would read as syntax is not written as one.
@@ -81,6 +86,9 @@ describe("Express 4 (path-to-regexp 0.1) and Express of a version not read", () 
     expect(readPathToRegexp01("/ab?cd")).toEqual(why);
     expect(readPathToRegexp01("/users/:id(\\d+)")).toEqual(why);
     expect(readPathToRegexp01("/files/*/edit")).toEqual(why);
+    // Express compiles one regular expression; atlas writes no more paths than path-to-regexp 8 would allow.
+    expect(paths(readPathToRegexp01(`/x${Array.from({ length: 8 }, (_, i) => `/:a${i}?`).join("")}`))).toHaveLength(256);
+    expect(readPathToRegexp01(`/x${Array.from({ length: 20 }, (_, i) => `/:a${i}?`).join("")}`)).toEqual({ why: "its optional segments make more than 256 paths, which atlas does not write" });
   });
 
   it("reads a path as both versions do where they agree, and as Express 4 where Express 5 rejects it", () => {
@@ -121,7 +129,10 @@ describe("find-my-way (Fastify)", () => {
   it("reads regexps, parameters sharing a segment, an optional last parameter, `::` and the final wildcard", () => {
     expect(paths(readFindMyWay("/example/:file(^\\d+).png"))).toEqual([{ path: "/example/{file}.png", patterns: { file: "(\\d+)" } }]);
     expect(paths(readFindMyWay("/at/:hour(^\\d{2})h:minute(^\\d{2})m"))).toEqual([{ path: "/at/{hour}h{minute}m", patterns: { hour: "(\\d{2})", minute: "(\\d{2})" } }]);
-    expect(paths(readFindMyWay("/near/:lat-:lng/radius/:r"))).toEqual([{ path: "/near/{lat}-{lng}/radius/{r}" }]);
+    // In a node with static text, a parameter without a regexp takes `(.*?)`, or, after another, anything up to the
+    // text before it: empty text too.
+    expect(paths(readFindMyWay("/near/:lat-:lng/radius/:r"))).toEqual([{ path: "/near/{lat}-{lng}/radius/{r}", patterns: { lat: "(.*?)", lng: "(-|(?:(?!-).)*)" } }]);
+    expect(paths(readFindMyWay("/files/:name.png"))).toEqual([{ path: "/files/{name}.png", patterns: { name: "(.*?)" } }]);
     expect(paths(readFindMyWay("/posts/:id?"))).toEqual([{ path: "/posts/{id}" }, { path: "/posts" }]);
     expect(paths(readFindMyWay("/:id?"))).toEqual([{ path: "/{id}" }, { path: "/" }]);
     expect(paths(readFindMyWay("/name::verb"))).toEqual([{ path: "/name:verb" }]);
@@ -157,9 +168,24 @@ describe("Hono", () => {
     expect(readHono("/a/:a-:b")).toEqual({ why: "its parameter name `a-:b` cannot be written in a path template" });
   });
 
+  it("records a parameter named like a property of every object as any other", () => {
+    expect(paths(readHono("/items/:constructor{[a-z]+}"))).toEqual([{ path: "/items/{constructor}", patterns: { constructor: "[a-z]+" } }]);
+    const proto = paths(readHono("/items/:__proto__{[0-9]+}")) as Array<{ path: string; patterns?: Record<string, string> }>;
+    expect(proto[0]!.path).toBe("/items/{__proto__}");
+    expect(Object.hasOwn(proto[0]!.patterns!, "__proto__")).toBe(true);
+    expect(pathsMatch("/items/{__proto__}", "/items/12", proto[0]!.patterns)).toBe(true);
+    expect(pathsMatch("/items/{__proto__}", "/items/ab", proto[0]!.patterns)).toBe(false);
+    // A parameter `patterns` does not name takes any segment, whatever `Object.prototype` holds.
+    expect(pathsMatch("/items/{constructor}", "/items/ab", { id: "\\d+" })).toBe(true);
+    expect(pathCovers("/items/{toString}", "/items/{}", { id: "\\d+" })).toBe(true);
+  });
+
   it("tells a regexp that surely takes no `/` from one that may", () => {
     expect(["[0-9]+", "\\d{2}", "[a-z-]+", "(?:ab|cd)\\w*", "[\\d.]+"].map(slashFree)).toEqual([true, true, true, true, true]);
     expect([".+", "[^a]+", "\\W", "\\S+", "[!-z]+", "a\\/b", "\\x2f", "[\\/]"].map(slashFree)).toEqual([false, false, false, false, false, false, false, false]);
+    // A control escape is the character it stands for, so `\t-0` (U+0009 to U+0030) holds `/`; an escaped `-` makes no range.
+    expect(["[\\t-0]+", "[\\n-z]"].map(slashFree)).toEqual([false, false]);
+    expect(["[\\t-\\r]+", "[!\\-z]+", "[a\\-z]"].map(slashFree)).toEqual([true, true, true]);
   });
 });
 
@@ -285,6 +311,31 @@ describe("routes registered in each router's syntax", () => {
     expect(validate("graph", graph)).toEqual([]);
   });
 
+  it("resolves a router's package from where it is created, and a Fastify plugin's from the instance it is under", () => {
+    const read = (files: Record<string, string>) => {
+      const limits: string[] = [];
+      const config = normalizeConfig({ components: [{ name: "api", path: "." }], routes: [{ component: "api", files: ["shared/**", "web/**", "plugins/**", "server/**"], styles: ["express"], receivers: [] }] });
+      return { ids: extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`), limits };
+    };
+    // An Express 4 application imported into a package that depends on Express 5 is still Express 4.
+    expect(
+      read({
+        "shared/package.json": JSON.stringify({ dependencies: { express: "~4.18.1" } }),
+        "shared/app.js": 'import express from "express";\nexport const app = express();\n',
+        "web/package.json": JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+        "web/routes.js": 'import { app } from "../shared/app.js";\napp.get("/posts/:id?", h);\n',
+      }),
+    ).toEqual({ ids: ["GET /posts/{id}", "GET /posts"], limits: [] });
+    // A plugin in a directory with no package.json takes the Fastify of the instance that registers it.
+    expect(
+      read({
+        "plugins/files.js": 'export default async function (f) {\n  f.get("/files/*", h);\n}\n',
+        "server/package.json": JSON.stringify({ dependencies: { fastify: "^5.0.0" } }),
+        "server/app.js": 'import Fastify from "fastify";\nimport files from "../plugins/files.js";\nconst app = Fastify();\napp.register(files);\n',
+      }),
+    ).toEqual({ ids: ["GET /files/**"], limits: [] });
+  });
+
   it("keeps no regexp on a path two registrations take by different ones", () => {
     const files = {
       "api/package.json": JSON.stringify({ dependencies: { fastify: "^5.0.0" } }),
@@ -315,6 +366,21 @@ describe("routes registered in each router's syntax", () => {
     });
     expect(nest({ "@nestjs/platform-express": "^10.4.0" })).toEqual({ ids: ["GET /cats/abcd/**", "GET /cats/trips/{from}-{to}", "GET /cats/{id}", "GET /cats"], limits: [] });
   });
+
+  it("takes Nest's adapter from the application the bootstrap names, not from the controllers' package", () => {
+    const limits: string[] = [];
+    const config = normalizeConfig({
+      components: [{ name: "api", path: "." }],
+      routes: [{ component: "api", files: ["libs/**"], styles: ["nest"], bootstrap: "server/main.ts" }],
+    });
+    const files = {
+      "libs/package.json": JSON.stringify({ dependencies: { "@nestjs/common": "^12.3.2" } }),
+      "libs/cats/cats.controller.ts": "import { Controller, Get } from '@nestjs/common';\n@Controller('cats')\nexport class CatsController {\n  @Get('abcd/*') wild() {}\n}\n",
+      "server/package.json": JSON.stringify({ dependencies: { "@nestjs/platform-express": "^12.3.2" } }),
+      "server/main.ts": "import { NestFactory } from '@nestjs/core';\nasync function bootstrap() {\n  const app = await NestFactory.create(AppModule);\n  await app.listen(3000);\n}\nbootstrap();\n",
+    };
+    expect({ ids: extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`), limits }).toEqual({ ids: ["GET /cats/abcd/{*path}"], limits: [] });
+  });
 });
 
 describe("matching the forms read", () => {
@@ -334,6 +400,39 @@ describe("matching the forms read", () => {
     expect(pathsMatch("/flights/{from}-{to}", "/flights/ICN")).toBe(false);
     expect(pathsMatch("/plantae/{genus}.{species}", "/plantae/prunus.persica")).toBe(true);
     expect(pathsMatch("/plantae/{genus}.{species}", "/plantae/{}")).toBe(true);
+    // A call that interpolates part of the segment meets it where the fixed text at either end agrees.
+    expect(pathsMatch("/flights/{from}-{to}", "/flights/ICN-{}")).toBe(true);
+    expect(pathsMatch("/flights/{from}-{to}", "/flights/{}-SFO")).toBe(true);
+    expect(pathsMatch("/files/{name}.png", "/files/a{}.png")).toBe(true);
+    expect(pathsMatch("/files/{name}.png", "/files/{}.jpg")).toBe(false);
+    expect(pathsMatch("/resources/*.png", "/resources/{}.jpg")).toBe(false);
+    expect(pathsMatch("/v{version}/status", "/x{}/status")).toBe(false);
+  });
+
+  it("lets a parameter sharing a segment take empty text where its router does", () => {
+    // Fastify's `(.*?)` and Spring's `(.*)` take none; path-to-regexp's `[^/]+`, the default, takes some.
+    expect(pathsMatch("/lib/{name}-{version}", "/lib/-1", { name: ".*", version: ".*" })).toBe(true);
+    expect(pathsMatch("/near/{lat}-{lng}", "/near/-5", { lat: "(.*?)", lng: "(-|(?:(?!-).)*)" })).toBe(true);
+    expect(pathsMatch("/flights/{from}-{to}", "/flights/-SFO")).toBe(false);
+    const files = { "src/main/java/app/Lib.java": '@RestController\nclass Lib {\n  @GetMapping("/lib/{name:[a-z-]+}-{version}") String a() { return ""; }\n  @GetMapping("/lib/{id}") String b() { return ""; }\n}\n' };
+    const config = normalizeConfig({ components: [{ name: "s", path: "." }], routes: [{ component: "s", files: ["src/**"], styles: ["spring"] }] });
+    expect(extractRoutes(memory(files), config).map((s) => [s.id, s.patterns])).toEqual([
+      ["s|GET /lib/{name}-{version}", { name: ".*", version: ".*" }],
+      ["s|GET /lib/{id}", undefined],
+    ]);
+  });
+
+  it("settles no segment by a regexp this runtime cannot compile", () => {
+    const python = { id: "(?P<n>\\d+)" };
+    expect(pathsMatch("/users/{id}", "/users/abc", python)).toBe(true);
+    expect(pathCovers("/users/{id}", "/users/abc", python)).toBe(false);
+    expect(pathCovers("/users/{id}", "/users/abc")).toBe(true);
+  });
+
+  it("holds a route reached by Starlette's slash redirect to its regexps too", () => {
+    const route = surface("/api/{v}/{path:path}", { v: "\\d+" });
+    const { targetsOf } = matchCalls({ surfaces: [route], calls: [call("/api/1"), call("/api/x")] });
+    expect([targetsOf.get(0)?.length, targetsOf.get(1)?.length]).toEqual([1, undefined]);
   });
 
   it("takes a parameter's text only where its regexp does, and any where the call interpolates it", () => {

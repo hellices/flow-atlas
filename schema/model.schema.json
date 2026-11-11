@@ -155,7 +155,7 @@
           "const": true
         },
         "patterns": {
-          "description": "The regular expression the text of each parameter named here must match, as its router tests it: Fastify's :file(^\\d+) and Hono's :date{[0-9]+}. A parameter not named takes any text of its segment.",
+          "description": "The regular expression the text of each parameter named here must match, as its router tests it: Fastify's :file(^\\d+) and Hono's :date{[0-9]+}, and where a parameter shares its segment, Fastify's (.*?) and Spring's (.*). A parameter not named takes some text of its segment, or the whole segment.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
