@@ -2,10 +2,11 @@ import ts from "typescript";
 import type { CallSource, Config } from "../config.js";
 import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
 import { callPath, HOLE, hostOf, isLoopback, joinRoute, pathsMatch, resolveReference, type CallPath } from "../paths.js";
-import { lineOf, select, type Source } from "../source.js";
+import { lineOf, matcher, select, type Source } from "../source.js";
 import { addCoverage } from "./coverage.js";
-import { declarationOf, importedFrom, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, isReference, references, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
+import { Importers } from "./importers.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
 
@@ -732,13 +733,15 @@ function setsReload(o: ts.ObjectLiteralExpression): boolean {
  * written there (a call or a function inside runs on its own); "document" where the navigation loads the document
  * instead, which the browser requests with GET: a `to` or `href` beside `reloadDocument`, or the URL React Router's
  * `redirectDocument` takes first (its response options are the router's, as `redirect`'s are). Undefined anywhere
- * else, and in a file that imports no client router.
+ * else, and in a file that imports no client router. With `within`, `node` is an object followed to where it goes and
+ * what is asked about is its property `within.key`, as if written there.
  */
-function clientRoute(node: ts.Node): "route" | "document" | undefined {
+function clientRoute(node: ts.Node, within?: { key: string; object: ts.ObjectLiteralExpression }): "route" | "document" | undefined {
   if (!importsRouter(node.getSourceFile())) return undefined;
   let value: ts.Node = valuePlace(node);
-  let key: string | undefined;
-  let options: ts.ObjectLiteralExpression | undefined;
+  // An object followed to where it goes, as the options holding the property followed.
+  let key: string | undefined = within?.key;
+  let options: ts.ObjectLiteralExpression | undefined = within?.object;
   for (;;) {
     const parent = value.parent;
     if (ts.isPropertyAssignment(parent) && parent.initializer === value) {
@@ -880,6 +883,12 @@ function resolvedAgainst(node: ts.Node): "page" | "value" | { host: string } | u
   return host === undefined ? "value" : { host };
 }
 
+/**
+ * Whether a URL's text starts at the root of a host it does not name (`/orders`), as `new URL` resolves against its
+ * base. One that starts with a value (`${API}/orders`) may be absolute already, and then takes no base.
+ */
+const rootRelative = (raw: string): boolean => raw.trim().startsWith("/") && !raw.trim().startsWith("//");
+
 /** Whether a value is the base `new URL(url, base)` (the global URL) resolves a URL against, no request of its own. */
 function urlBase(value: ts.Node): boolean {
   const place = argumentPlace(value);
@@ -901,14 +910,15 @@ function pageAddress(e: ts.Expression): boolean {
   return m.name === "origin" && isGlobal(receiver, new Set(["window", "self", "globalThis"]));
 }
 
+/** The methods an App Router route handler may export (Next.js, route.js: Supported HTTP Methods). */
+const ROUTE_HANDLERS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]);
+
 /**
  * Whether an expression is the address of the request a Next.js middleware, proxy or route handler answers: the `url`
- * or `nextUrl` (or its `href` or `origin`) of a parameter of a function in such a file, which Next.js calls with the
- * request (Next.js, Middleware: `NextResponse.redirect(new URL('/home', request.url))`). That is the app's own address.
+ * or `nextUrl` (or its `href` or `origin`) of the request parameter of the handler Next.js calls with it (Next.js,
+ * Middleware: `NextResponse.redirect(new URL('/home', request.url))`). That is the app's own address.
  */
 function requestAddress(e: ts.Expression): boolean {
-  const file = e.getSourceFile().fileName;
-  if (!/(?:^|\/)(?:middleware|proxy)\.(?:c|m)?[jt]s$/.test(file) && !/(?:^|\/)app\/(?:.+\/)?route\.(?:c|m)?[jt]s$/.test(file)) return false;
   let m = member(e);
   if (m && (m.name === "href" || m.name === "origin")) {
     const inner = member(unwrap(m.receiver));
@@ -918,69 +928,91 @@ function requestAddress(e: ts.Expression): boolean {
   if (!m || (m.name !== "url" && m.name !== "nextUrl")) return false;
   const receiver = unwrap(m.receiver);
   const d = ts.isIdentifier(receiver) ? declarationOf(receiver) : undefined;
-  return !!d && ts.isParameter(d);
+  return !!d && ts.isParameter(d) && d.parent.parameters[0] === d && nextHandler(d.parent);
 }
-
-const identifiersByFile = new WeakMap<ts.SourceFile, Map<string, ts.Identifier[]>>();
 
 /**
- * Whether an identifier refers to a binding where it is written: not a property's or a member's name, a key a
- * destructuring or an import takes, the name an export gives, a label, an attribute's or an intrinsic element's name,
- * nor a name in a type.
+ * Whether a function is one Next.js calls with the request it answers, the first parameter: in a `middleware` or
+ * `proxy` file, the function exported as `middleware`, `proxy` or the default, or the one given to next-auth's
+ * `withAuth`, which calls it with the request (next-auth, Middleware: `withAuth(function middleware(req) {...})`), where
+ * that call is what the file exports; in an App Router `route` file, a function exported under an HTTP method's name.
  */
-function isReference(id: ts.Identifier): boolean {
-  const p = id.parent;
-  if ((ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id)) return false;
-  if ((ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p) || ts.isEnumMember(p)) && p.name === id) return false;
-  if ((ts.isBindingElement(p) || ts.isImportSpecifier(p)) && p.propertyName === id) return false;
-  // `export { local as name }` refers to `local`; `export { name } from "m"` to nothing of this file.
-  if (ts.isExportSpecifier(p)) return !p.parent.parent.moduleSpecifier && (p.propertyName ?? p.name) === id;
-  if (ts.isJsxAttribute(p) || ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
-  if ((ts.isJsxOpeningElement(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxClosingElement(p)) && p.tagName === id && /^[a-z]/.test(id.text)) return false;
-  for (let a: ts.Node = p; !ts.isSourceFile(a); a = a.parent) {
-    if (ts.isTypeNode(a) && !ts.isExpressionWithTypeArguments(a)) return false;
-    if (ts.isStatement(a)) break;
-  }
-  return true;
+function nextHandler(fn: ts.SignatureDeclaration): boolean {
+  const file = fn.getSourceFile().fileName;
+  const middleware = /(?:^|\/)(?:middleware|proxy)\.(?:c|m)?[jt]s$/.test(file);
+  const route = /(?:^|\/)app\/(?:.+\/)?route\.(?:c|m)?[jt]s$/.test(file);
+  if (!middleware && !route) return false;
+  const names = route ? ROUTE_HANDLERS : new Set(["middleware", "proxy"]);
+  const exportedAs = (node: ts.Node): boolean => {
+    // `export function GET(request)`, `export default function middleware(req)`.
+    if (ts.isFunctionDeclaration(node)) {
+      const modifiers = ts.getModifiers(node);
+      if (!modifiers?.some((x) => x.kind === ts.SyntaxKind.ExportKeyword)) return false;
+      return (middleware && modifiers.some((x) => x.kind === ts.SyntaxKind.DefaultKeyword)) || (!!node.name && names.has(node.name.text));
+    }
+    const place = valuePlace(node);
+    const holder = place.parent;
+    // `export default (req) => ...`, `export const GET = (request) => ...`.
+    if (ts.isExportAssignment(holder)) return middleware && !holder.isExportEquals;
+    if (ts.isVariableDeclaration(holder) && holder.initializer === place && ts.isIdentifier(holder.name) && names.has(holder.name.text)) {
+      const statement = holder.parent.parent;
+      return ts.isVariableStatement(statement) && !!ts.getModifiers(statement)?.some((x) => x.kind === ts.SyntaxKind.ExportKeyword);
+    }
+    return false;
+  };
+  if (exportedAs(fn)) return true;
+  if (!middleware || !(ts.isFunctionExpression(fn) || ts.isArrowFunction(fn))) return false;
+  const place = argumentPlace(valuePlace(fn));
+  return !!place && place.at === 0 && ts.isCallExpression(place.call) && ts.isIdentifier(place.callee) && importedFrom(place.callee, ["next-auth/middleware"]) === "withAuth" && exportedAs(place.call);
 }
 
-/** The identifiers of its file that refer to the binding a name declares, the name itself left out. */
-function references(name: ts.Identifier): ts.Identifier[] {
-  const sf = name.getSourceFile();
-  let index = identifiersByFile.get(sf);
-  if (!index) {
-    const built = new Map<string, ts.Identifier[]>();
-    const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n)) (built.get(n.text) ?? built.set(n.text, []).get(n.text)!).push(n);
-      ts.forEachChild(n, visit);
-    };
-    visit(sf);
-    identifiersByFile.set(sf, built);
-    index = built;
-  }
-  const declaration = name.parent;
-  return (index.get(name.text) ?? []).filter((id) => id !== name && isReference(id) && declarationOf(id) === declaration);
-}
-
-/** Whether a variable is a `const` (not a `let`, a `var` or a `using`) its statement does not export. */
-function localConst(d: ts.VariableDeclaration): d is ts.VariableDeclaration & { name: ts.Identifier } {
+/** Whether a variable is declared `const` (not `let`, `var` or `using`), exported or not, under a name or a pattern. */
+function constList(d: ts.VariableDeclaration): boolean {
   const list = d.parent;
-  if (!ts.isIdentifier(d.name) || !ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const) || list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Using)) return false;
-  return !(ts.isVariableStatement(list.parent) && ts.getModifiers(list.parent)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
+  return ts.isVariableDeclarationList(list) && !!(list.flags & ts.NodeFlags.Const) && !(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Using));
+}
+
+/** Whether a variable is a `const` (not a `let`, a `var` or a `using`) under a name, exported or not. */
+function constDeclaration(d: ts.VariableDeclaration): d is ts.VariableDeclaration & { name: ts.Identifier } {
+  return ts.isIdentifier(d.name) && constList(d);
 }
 
 /** The key a property of an object literal is written with, a computed key where it is a literal; undefined otherwise, and for `__proto__`, which sets the prototype. */
-function writtenKey(p: ts.PropertyAssignment): string | undefined {
+function writtenKey(p: ts.PropertyAssignment | ts.MethodDeclaration): string | undefined {
   const key = propertyName(p.name);
   return key === "__proto__" && !ts.isComputedPropertyName(p.name) ? undefined : key;
 }
 
-/** Whether a function's body may read its arguments through `arguments`, which an arrow function does not have. */
+/**
+ * Whether an object literal holds data alone, apart from `except`: properties written with a value that is no
+ * `function` expression, or in short. A method, an accessor or a `function` may read its other properties through
+ * `this`, and a spread may give any.
+ */
+function plainObject(o: ts.ObjectLiteralExpression, except?: ts.Node): boolean {
+  return o.properties.every((p) => {
+    if (p === except || ts.isShorthandPropertyAssignment(p)) return true;
+    if (!ts.isPropertyAssignment(p)) return false;
+    const v = unwrap(p.initializer);
+    return !ts.isFunctionExpression(v) && !ts.isClassExpression(v);
+  });
+}
+
+/** Whether an object literal writes a property of this name itself: reading another name may reach its prototype. */
+function ownKey(o: ts.ObjectLiteralExpression, name: string): boolean {
+  return o.properties.some((p) =>
+    ts.isShorthandPropertyAssignment(p) ? p.name.text === name : (ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) && writtenKey(p) === name,
+  );
+}
+
+/**
+ * Whether a function's body may read its arguments through `arguments`: an arrow function has none of its own, and
+ * `arguments` in a nested function other than an arrow function is that function's.
+ */
 function readsArguments(fn: ts.SignatureDeclaration): boolean {
   if (ts.isArrowFunction(fn)) return false;
   let found = false;
   const visit = (n: ts.Node): void => {
-    if (found) return;
+    if (found || (n !== fn && ts.isFunctionLike(n) && !ts.isArrowFunction(n))) return;
     if (ts.isIdentifier(n) && n.text === "arguments" && isReference(n) && !declarationOf(n)) found = true;
     else ts.forEachChild(n, visit);
   };
@@ -988,12 +1020,23 @@ function readsArguments(fn: ts.SignatureDeclaration): boolean {
   return found;
 }
 
-type Callable = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
+/** Whether a binding is written after it is declared (`f = other`, `f++`, a destructuring or a loop writing it). */
+function reassigned(name: ts.Identifier): boolean {
+  return references(name).some((ref) => {
+    const place = outermost(ref);
+    const p = place.parent;
+    const assigned = ts.isBinaryExpression(p) && p.left === place && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+    return assigned || written(place);
+  });
+}
+
+type Callable = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration;
 
 /**
  * The function a call's callee names, with its body: one the file declares (`function f`, `const f = () => ...`), or one
  * a module of the repository exports and the file imports, as `Constants` follows imports. Undefined for any other
- * callee: a member, a parameter, a `let`, a function of a package.
+ * callee (a member, a parameter, a `let`, a function of a package), and for a function declaration the code writes
+ * another value to (`send = fetch`), which may be what is called.
  */
 function functionCalled(callee: ts.Expression): Callable | undefined {
   if (!ts.isIdentifier(callee)) return undefined;
@@ -1012,16 +1055,10 @@ function functionCalled(callee: ts.Expression): Callable | undefined {
 }
 
 function callableOf(node: ts.Node): Callable | undefined {
-  if (ts.isFunctionDeclaration(node)) return node.body ? node : undefined;
-  const init = ts.isVariableDeclaration(node) ? (localConstOrExported(node) ? node.initializer : undefined) : ts.isExpression(node) ? node : undefined;
+  if (ts.isFunctionDeclaration(node)) return node.body && !(node.name && reassigned(node.name)) ? node : undefined;
+  const init = ts.isVariableDeclaration(node) ? (constDeclaration(node) ? node.initializer : undefined) : ts.isExpression(node) ? node : undefined;
   const fn = init && unwrap(init);
   return fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) ? fn : undefined;
-}
-
-/** Whether a variable is a `const`, exported or not. */
-function localConstOrExported(d: ts.VariableDeclaration): boolean {
-  const list = d.parent;
-  return ts.isIdentifier(d.name) && ts.isVariableDeclarationList(list) && !!(list.flags & ts.NodeFlags.Const) && !(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Using));
 }
 
 /** Array methods whose test compares each element with the value given, answering with a boolean or an index. */
@@ -1033,20 +1070,32 @@ const MEMBERSHIP = new Set(["includes", "indexOf", "lastIndexOf"]);
  */
 const ITERATION = new Set(["some", "every", "findIndex", "findLastIndex", "forEach", "map", "flatMap"]);
 
-/** What following a value needs: the URL's text, the call source's target, and where route registrations write paths. */
+/** The modules of the repository and where other files use what they export, by the constants that read them. */
+const importersOf = new WeakMap<Constants, Importers>();
+
+/**
+ * What following a value needs: the URL's text, the call source's target, and where route registrations write paths;
+ * what each binding was found to reach, and how many times the property followed was read.
+ */
 interface Follow {
   raw: string;
   origin: string | undefined;
   registered: (node: ts.Node) => boolean;
-  /** What each binding followed, by the key followed in it, was found to reach; null while it is followed. */
-  seen: Map<ts.Node, Map<string | undefined, boolean | null>>;
+  /** What each binding followed, by what is followed in it, was found to reach; null while it is followed. */
+  seen: Map<ts.Node, Map<string, boolean | null>>;
+  reads: number;
 }
 
+/** A property path within a value followed: each key, with the object literal that writes it. Empty for the value itself. */
+type Path = ReadonlyArray<{ key: string; object: ts.ObjectLiteralExpression }>;
+
+const pathKey = (path: Path): string => path.map((p) => p.key).join("\0");
+
 /**
- * Whether what a binding (or an array a declaration holds) reaches, by the key followed in it or none, is no request:
- * found once for each, a binding met again while it is followed being a cycle, which is left as it is read.
+ * Whether what a binding (or a function) reaches, by what is followed in it, is no request: found once for each, a
+ * binding met again while it is followed being a cycle, which is left as it is read.
  */
-function remembered(node: ts.Node, key: string | undefined, follow: Follow, find: () => boolean): boolean {
+function remembered(node: ts.Node, key: string, follow: Follow, find: () => boolean): boolean {
   const keys = follow.seen.get(node) ?? follow.seen.set(node, new Map()).get(node)!;
   const known = keys.get(key);
   if (known !== undefined) return known ?? false;
@@ -1082,15 +1131,30 @@ function wholeValue(node: ts.Node): { value: ts.Node; urls: ts.Node[] } {
 }
 
 /**
- * Whether a value reaches no request: the place it is used in is no request (`unrequestedPlace`), it is written into a
- * URL on a host other than the target's, or it goes on, as the code states, only to such places (`goesOnUnrequested`).
- * Anything not followed may be a request.
+ * Whether a value reaches no request. With no `path`, the value itself: the place it is used in is no request
+ * (`unrequestedPlace`), it is written into a URL on a host other than the target's, or it goes on, as the code states,
+ * only to such places (`goesOnUnrequested`). With one, the property at that path of the object the expression is:
+ * each read of it is followed; a read of another property the object writes itself gives another value; a test for
+ * truth, or a client router's navigation or route definition taking the object whole, reads none. Anything not followed
+ * may be a request.
  */
-function unrequestedValue(node: ts.Node, follow: Follow, depth: number): boolean {
-  const { value, urls } = wholeValue(node);
-  // A URL read where it is written names its own host, which a limit names where it is another's (`urlHosts`).
-  if (depth > 0 && urls.some((u) => otherHost(u, follow.origin))) return true;
-  return unrequestedPlace(value, follow) || goesOnUnrequested(value, follow, depth);
+function unrequestedValue(node: ts.Node, follow: Follow, depth: number, path: Path = []): boolean {
+  if (!path.length) {
+    const { value, urls } = wholeValue(node);
+    // A URL read where it is written names its own host, which a limit names where it is another's (`urlHosts`).
+    if (depth > 0 && urls.some((u) => otherHost(u, follow.origin))) return true;
+    return unrequestedPlace(value, follow) || goesOnUnrequested(value, follow, depth, path);
+  }
+  const value = valuePlace(node);
+  const read = value.parent;
+  const m = (ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)) && read.expression === value ? member(read) : undefined;
+  if (m) {
+    if (m.name !== path[0]!.key) return ownKey(path[0]!.object, m.name);
+    if (path.length === 1) follow.reads++;
+    return unrequestedValue(read, follow, depth, path.slice(1));
+  }
+  if (testedForTruth(value) || (clientRoute(value, path[0]) === "route" && hostOf(follow.raw) === undefined)) return true;
+  return goesOnUnrequested(value, follow, depth, path);
 }
 
 /**
@@ -1121,85 +1185,106 @@ function otherHost(value: ts.Node, origin: string | undefined): boolean {
 }
 
 /**
- * Whether a value goes on only to places that are no request, where the code states where it goes: a local `const`
- * holding it, to every use of that const; an element of an array (or a property of an object that is one), held in a
- * local `const` or written in place, to the arrays' tests and the functions their iterations hand each element to; a
- * property of an object held in a local `const`, to each read of that property; an argument of a function the file
- * declares or imports from the repository, to every use of its parameter. A binding no code uses is left as it is read.
+ * Whether a value (or the property at `path` of it) goes on only to places that are no request, where the code states
+ * where it goes: a `const` holding it, to every use of that const; an element of an array, held in a `const` or
+ * written in place, to the array's tests and the functions its iterations hand each element to; a property of an
+ * object literal, to where the object goes; an argument of a function the file declares or imports from the
+ * repository, to every use of its parameter; a function's result, to every call of that function. A `const` or a
+ * function a module exports is followed into the other files of the repository that import it (`Importers`). A
+ * binding no code uses is left as it is read.
  */
-function goesOnUnrequested(value: ts.Node, follow: Follow, depth: number): boolean {
+function goesOnUnrequested(value: ts.Node, follow: Follow, depth: number, path: Path): boolean {
   if (depth >= FOLLOW_DEPTH) return false;
   const parent = value.parent;
-  if (ts.isVariableDeclaration(parent) && parent.initializer === value) return localConst(parent) && bindingUnrequested(parent.name, undefined, follow, depth);
-  if (ts.isArrayLiteralExpression(parent)) return elementsUnrequested(parent, undefined, follow, depth);
+  if (ts.isVariableDeclaration(parent) && parent.initializer === value) return constList(parent) && bindingUnrequested(parent.name, path, follow, depth);
+  if (ts.isArrayLiteralExpression(parent)) return elementsUnrequested(parent, path, follow, depth);
   if (ts.isPropertyAssignment(parent) && parent.initializer === value) {
     const key = writtenKey(parent);
-    if (key === undefined) return false;
-    const object = valuePlace(parent.parent);
-    const holder = object.parent;
-    if (ts.isArrayLiteralExpression(holder)) return elementsUnrequested(holder, key, follow, depth);
-    if (ts.isVariableDeclaration(holder) && holder.initializer === object) return localConst(holder) && bindingUnrequested(holder.name, key, follow, depth);
-    return argumentUnrequested(object, key, follow, depth);
+    const object = parent.parent;
+    if (key === undefined || !plainObject(object)) return false;
+    return unrequestedValue(object, follow, depth, [{ key, object }, ...path]);
   }
-  return argumentUnrequested(value, undefined, follow, depth);
+  if ((ts.isReturnStatement(parent) && parent.expression === value) || (ts.isArrowFunction(parent) && parent.body === value)) return returnedUnrequested(parent, path, follow, depth);
+  return argumentUnrequested(value, path, follow, depth);
 }
 
 /**
- * Whether what a binding holds reaches no request: with no `key`, the binding's value at each of its uses; with one,
- * the property of that name of the object it holds, at each read of it (a read of another property gives another
- * value), the object used in any other way taking the property anywhere. A destructuring follows the key's binding; a
- * rest element, a nested pattern, or a binding or key no code reads leave the value as it is read.
+ * Where a binding is used: its references in its file, and, where its module exports it (`export`, `export { name }`),
+ * those of the other files of the repository that import it (`Importers`). Null where a use cannot be read: a default
+ * export, or an import not read.
  */
-function bindingUnrequested(name: ts.BindingName, key: string | undefined, follow: Follow, depth: number): boolean {
+function usesOf(name: ts.Identifier, declaration: ts.Node): ts.Expression[] | null {
+  const uses: ts.Expression[] = [];
+  const exported: string[] = [];
+  const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : declaration;
+  const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+  if (modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) {
+    if (modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) return null;
+    exported.push(name.text);
+  }
+  for (const ref of references(name)) {
+    const p = ref.parent;
+    if (ts.isExportSpecifier(p)) exported.push(p.name.text);
+    else if (ts.isExportAssignment(p)) return null;
+    else uses.push(ref);
+  }
+  if (!exported.length) return uses;
+  const sf = name.getSourceFile();
+  const constants = repositories.get(sf);
+  const others = constants && importersOf.get(constants)?.uses(sf.fileName, declaration, exported);
+  if (!others) return null;
+  for (const o of others) repositories.set(o.getSourceFile(), constants);
+  return [...uses, ...others];
+}
+
+/**
+ * Whether what a binding holds (the property at `path` of it) reaches no request, at each of its uses (`usesOf`). A
+ * destructuring follows every binding that takes the path's first key; a rest element, a computed key not read, an
+ * array pattern, or a binding or property no code reads leave the value as it is read.
+ */
+function bindingUnrequested(name: ts.BindingName, path: Path, follow: Follow, depth: number): boolean {
   if (ts.isObjectBindingPattern(name)) {
-    if (key === undefined) return false;
+    if (!path.length) return false;
+    const [first, ...rest] = path;
     const keys = name.elements.map((e) => (e.dotDotDotToken ? undefined : e.propertyName ? propertyName(e.propertyName) : ts.isIdentifier(e.name) ? e.name.text : undefined));
     // A key computed from a value may be the one followed.
     if (keys.some((k, i) => k === undefined && !name.elements[i]!.dotDotDotToken)) return false;
-    const element = name.elements[keys.indexOf(key)];
-    return !!element && ts.isIdentifier(element.name) && bindingUnrequested(element.name, undefined, follow, depth);
+    const taking = name.elements.filter((_, i) => keys[i] === first!.key);
+    if (!taking.length) return false;
+    if (!rest.length) follow.reads++;
+    return taking.every((e) => bindingUnrequested(e.name, rest, follow, depth));
   }
   if (!ts.isIdentifier(name)) return false;
-  return remembered(name.parent, key, follow, () => {
-    const uses = references(name);
-    if (key === undefined) return uses.length > 0 && uses.every((use) => unrequestedValue(use, follow, depth + 1));
-    let read = false;
-    for (const use of uses) {
-      const place = outermost(use);
-      const access = place.parent;
-      const m = (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) && access.expression === place ? member(access) : undefined;
-      if (!m) return false;
-      if (m.name !== key) continue;
-      if (!unrequestedValue(access, follow, depth + 1)) return false;
-      read = true;
-    }
-    return read;
+  return remembered(name.parent, pathKey(path), follow, () => {
+    const uses = usesOf(name, name.parent);
+    if (!uses?.length) return false;
+    const reads = follow.reads;
+    return uses.every((use) => unrequestedValue(use, follow, depth + 1, path)) && (!path.length || follow.reads > reads);
   });
 }
 
 /**
- * Whether the elements of an array (with `key`, that property of each) reach no request: every use of the array, in
- * place or through the local `const` holding it, is a test of membership (`includes`, `indexOf`), its `length`, an
- * iteration that hands each element to a function written there (`ITERATION`), or a `for...of`, whose element is
- * followed through the binding it is given to.
+ * Whether the elements of an array (the property at `path` of each) reach no request: every use of the array, in place
+ * or through the `const` holding it, is a test of membership (`includes`, `indexOf`), its `length`, an iteration that
+ * hands each element to a function written there (`ITERATION`), or a `for...of`, whose element is followed through the
+ * binding it is given to.
  */
-function elementsUnrequested(array: ts.ArrayLiteralExpression, key: string | undefined, follow: Follow, depth: number): boolean {
+function elementsUnrequested(array: ts.ArrayLiteralExpression, path: Path, follow: Follow, depth: number): boolean {
   const holder = valuePlace(array);
   const declaration = holder.parent;
-  if (!(ts.isVariableDeclaration(declaration) && declaration.initializer === holder)) return elementUseUnrequested(holder, key, follow, depth);
-  if (!localConst(declaration)) return false;
-  const name = declaration.name;
-  return remembered(holder, key, follow, () => {
-    const uses = references(name);
-    return uses.length > 0 && uses.every((use) => elementUseUnrequested(outermost(use), key, follow, depth));
+  if (!(ts.isVariableDeclaration(declaration) && declaration.initializer === holder)) return elementUseUnrequested(holder, path, follow, depth);
+  if (!constDeclaration(declaration)) return false;
+  return remembered(holder, pathKey(path), follow, () => {
+    const uses = usesOf(declaration.name, declaration);
+    return !!uses?.length && uses.every((use) => elementUseUnrequested(outermost(use), path, follow, depth));
   });
 }
 
-function elementUseUnrequested(use: ts.Node, key: string | undefined, follow: Follow, depth: number): boolean {
+function elementUseUnrequested(use: ts.Node, path: Path, follow: Follow, depth: number): boolean {
   const p = use.parent;
   if (ts.isForOfStatement(p) && p.expression === use) {
     const init = p.initializer;
-    return ts.isVariableDeclarationList(init) && init.declarations.length === 1 && bindingUnrequested(init.declarations[0]!.name, key, follow, depth + 1);
+    return ts.isVariableDeclarationList(init) && init.declarations.length === 1 && bindingUnrequested(init.declarations[0]!.name, path, follow, depth + 1);
   }
   const m = (ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === use ? member(p) : undefined;
   if (!m) return false;
@@ -1210,24 +1295,93 @@ function elementUseUnrequested(use: ts.Node, key: string | undefined, follow: Fo
   if (MEMBERSHIP.has(m.name)) return true;
   if (!ITERATION.has(m.name)) return false;
   const fn = call.arguments[0] && unwrap(call.arguments[0]);
-  // A third parameter is the array itself, which may then go anywhere.
-  if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || fn.parameters.length > 2 || readsArguments(fn)) return false;
+  // A third parameter, or a rest parameter anywhere, is given the array itself, which may then go anywhere.
+  if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || fn.parameters.length > 2 || fn.parameters.some((q) => q.dotDotDotToken) || readsArguments(fn)) return false;
   const first = fn.parameters[0];
-  return !!first && !first.dotDotDotToken && bindingUnrequested(first.name, key, follow, depth + 1);
+  return !!first && bindingUnrequested(first.name, path, follow, depth + 1);
 }
 
 /**
- * Whether an argument (with `key`, that property of an object written as the argument) reaches no request in the
- * function called (`functionCalled`): through the parameter in its place, which a spread before it, a rest parameter
- * or the function's `arguments` would leave unknown.
+ * Whether an argument (the property at `path` of it) reaches no request in the function called (`functionCalled`):
+ * through the parameter in its place, which a spread before it, a rest parameter or the function's `arguments` would
+ * leave unknown.
  */
-function argumentUnrequested(value: ts.Node, key: string | undefined, follow: Follow, depth: number): boolean {
+function argumentUnrequested(value: ts.Node, path: Path, follow: Follow, depth: number): boolean {
   const place = argumentPlace(value);
   if (!place || !ts.isCallExpression(place.call) || place.args.slice(0, place.at + 1).some((a) => ts.isSpreadElement(a))) return false;
   const fn = functionCalled(place.callee);
   if (!fn || readsArguments(fn)) return false;
   const parameter = fn.parameters[place.at];
-  return !!parameter && !parameter.dotDotDotToken && bindingUnrequested(parameter.name, key, follow, depth + 1);
+  return !!parameter && !parameter.dotDotDotToken && bindingUnrequested(parameter.name, path, follow, depth + 1);
+}
+
+/** The function a `return` (or an arrow function's body) gives its value from. */
+function returningFunction(place: ts.Node): Callable | undefined {
+  if (ts.isArrowFunction(place)) return place;
+  for (let a = place.parent; a && !ts.isSourceFile(a); a = a.parent) {
+    if (!ts.isFunctionLike(a)) continue;
+    return ts.isFunctionDeclaration(a) || ts.isFunctionExpression(a) || ts.isArrowFunction(a) || ts.isMethodDeclaration(a) ? a : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Whether a function's result (the property at `path` of it) reaches no request: at every call of the function, which
+ * is a function the code declares (`function homePath()`), a `const` holding one, or a method of an object held in a
+ * `const` whose other properties are data (`Route = { albums: () => "/albums" }`, called as `Route.albums()`), called
+ * where it is written, in its file or, where its module exports it, in the files that import it. An `async` function or
+ * a generator gives a promise or an iterator, a function written over (`f = other`) may be another, and a function
+ * used in any other way (handed on, `call`, `bind`) may be called anywhere: each leaves the value as it is read.
+ */
+function returnedUnrequested(place: ts.Node, path: Path, follow: Follow, depth: number): boolean {
+  const fn = returningFunction(place);
+  if (!fn || !fn.body || fn.asteriskToken || ts.getModifiers(fn)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return false;
+  const value = ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) ? fn : valuePlace(fn);
+  const parent = value.parent;
+  // Called on the spot.
+  if (ts.isCallExpression(parent) && parent.expression === value) return unrequestedValue(parent, follow, depth + 1, path);
+  if (ts.isFunctionDeclaration(fn)) return !!fn.name && !reassigned(fn.name) && callsUnrequested(fn.name, fn, undefined, path, follow, depth);
+  if (ts.isVariableDeclaration(parent) && parent.initializer === value) return constDeclaration(parent) && callsUnrequested(parent.name, parent, undefined, path, follow, depth);
+  const holder = ts.isMethodDeclaration(fn) ? fn : parent;
+  if (!((ts.isPropertyAssignment(holder) && holder.initializer === value) || ts.isMethodDeclaration(holder)) || !ts.isObjectLiteralExpression(holder.parent)) return false;
+  const key = writtenKey(holder);
+  const object = holder.parent;
+  if (key === undefined || !plainObject(object, holder)) return false;
+  const declaration = valuePlace(object).parent;
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== valuePlace(object) || !constDeclaration(declaration)) return false;
+  return callsUnrequested(declaration.name, declaration, { key, object }, path, follow, depth);
+}
+
+/**
+ * Whether every use of a function's name (with `method`, of the object holding it as that method) is a call whose
+ * result, the property at `path` of it, reaches no request (`usesOf`). A read of another property the object writes
+ * itself is another value.
+ */
+function callsUnrequested(
+  name: ts.Identifier,
+  declaration: ts.Node,
+  method: { key: string; object: ts.ObjectLiteralExpression } | undefined,
+  path: Path,
+  follow: Follow,
+  depth: number,
+): boolean {
+  if (depth >= FOLLOW_DEPTH) return false;
+  return remembered(declaration, `()${method?.key ?? ""}\0${pathKey(path)}`, follow, () => {
+    const uses = usesOf(name, declaration);
+    if (!uses?.length) return false;
+    return uses.every((use) => {
+      let callee: ts.Node = outermost(use);
+      if (method) {
+        const read = callee.parent;
+        const m = (ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)) && read.expression === callee ? member(read) : undefined;
+        if (!m) return false;
+        if (m.name !== method.key) return ownKey(method.object, m.name);
+        callee = outermost(read);
+      }
+      const call = callee.parent;
+      return ts.isCallExpression(call) && call.expression === callee && unrequestedValue(call, follow, depth + 1, path);
+    });
+  });
 }
 
 /**
@@ -1329,7 +1483,7 @@ function leadingHosts(node: ts.Node, depth = 0): { hosts: Array<string | undefin
  * branch of which names another host requests the first of them.
  */
 function urlHosts(node: ts.Node, raw: string, origin: string | undefined): { host: string | undefined; other: string[] } {
-  const against = hostOf(raw) === undefined ? resolvedAgainst(node) : undefined;
+  const against = rootRelative(raw) ? resolvedAgainst(node) : undefined;
   const named = hostOf(raw) ?? (typeof against === "object" ? against.host : leadHost(node));
   if (named !== undefined) return { host: named, other: [] };
   const { hosts, literal } = leadingHosts(node);
@@ -1383,9 +1537,9 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     }
     let parsed = callPath(raw, false, context.served) ?? rootRequest(node, raw, spec.wrappers);
     if (!parsed) return undefined;
-    const follow: Follow = { raw, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map() };
+    const follow: Follow = { raw, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map(), reads: 0 };
     if (unrequestedValue(node, follow, 0)) return undefined;
-    const against = hostOf(raw) === undefined ? resolvedAgainst(node) : undefined;
+    const against = rootRelative(raw) ? resolvedAgainst(node) : undefined;
     if (against === "value") {
       if (report) context.unbased?.push({ file, line: lineAt(node) });
       return undefined;
@@ -1685,12 +1839,13 @@ function withoutTypeArguments(before: string): string {
 const KOTLIN_THROWING = new Set(["error", "TODO", "require", "check"]);
 
 /** A string literal written as an argument of a call, in code read as text, from its opening quote to just past its closing one. */
-interface Argument {
+export interface Argument {
   start: number;
   end: number;
-  /** The name the call is made by, and whether on a receiver (`url.endsWith(`). */
+  /** The name the call is made by, whether on a receiver (`url.endsWith(`), and that receiver where it is a name. */
   name: string;
   method: boolean;
+  receiver?: string;
   /** The argument's position, and the name it is given by (`prefixText: "/s/"`), if any. */
   index: number;
   label?: string;
@@ -1706,11 +1861,11 @@ interface Argument {
  * Java's, Kotlin's, Dart's and Python's own exceptions are named (`...Error`, `...Exception`), or in Kotlin is one of
  * the standard library's throwing functions.
  */
-function callArguments(file: string, text: string): Argument[] {
+export function callArguments(file: string, text: string): Argument[] {
   const kotlin = /\.kts?$/.test(file);
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
   const out: Argument[] = [];
-  const frames: Array<{ open: string; name?: string; method?: boolean; exception?: string; index: number; from: number }> = [];
+  const frames: Array<{ open: string; name?: string; method?: boolean; receiver?: string; exception?: string; index: number; from: number }> = [];
   const opener: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
   for (let i = 0; i < text.length; ) {
     const c = text[i]!;
@@ -1720,7 +1875,16 @@ function callArguments(file: string, text: string): Argument[] {
       const end = literalEnd(text, i, quote, file);
       if (frame?.name !== undefined) {
         const label = /^\s*([A-Za-z_]\w*)\s*:(?!:)/.exec(text.slice(frame.from, i))?.[1];
-        out.push({ start: i, end, name: frame.name, method: !!frame.method, index: frame.index, ...(label ? { label } : {}), ...(frame.exception ? { exception: frame.exception } : {}) });
+        out.push({
+          start: i,
+          end,
+          name: frame.name,
+          method: !!frame.method,
+          ...(frame.receiver ? { receiver: frame.receiver } : {}),
+          index: frame.index,
+          ...(label ? { label } : {}),
+          ...(frame.exception ? { exception: frame.exception } : {}),
+        });
       }
       i = end;
       continue;
@@ -1730,9 +1894,26 @@ function callArguments(file: string, text: string): Argument[] {
       const m = CALLEE_BEFORE.exec(before);
       const [, thrown, receivers = "", name = ""] = m ?? [];
       const exception = !!thrown || /^(?:[A-Z]\w*)?(?:Error|Exception)$/.test(name) || (kotlin && !receivers && KOTLIN_THROWING.has(name));
-      // A method is called on whatever comes before its dot, a call's result too (`get(x).replaceFirst(`).
-      const called = /(\?\.|\.)?\s*([A-Za-z_]\w*)\s*$/.exec(before);
-      frames.push({ open: c, name: called?.[2], method: !!called?.[1], exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined, index: 0, from: i + 1 });
+      // A method is called on whatever comes before its dot, a call's result too (`get(x).replaceFirst(`). A keyword's
+      // parentheses (`if ("/x")`) are no call.
+      const method = /(?:\?\.|\.)\s*([A-Za-z_]\w*)\s*$/.exec(before);
+      const bare = method ? undefined : /(?<![\w$])([A-Za-z_]\w*)\s*$/.exec(before)?.[1];
+      frames.push({
+        open: c,
+        name: method ? method[1] : bare && !CONTROL_KEYWORDS.has(bare) ? bare : undefined,
+        method: !!method,
+        receiver: method ? /(?<![\w$.])([A-Za-z_]\w*)\s*(?:\?\.|\.)\s*[A-Za-z_]\w*\s*$/.exec(before)?.[1] : undefined,
+        exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined,
+        index: 0,
+        from: i + 1,
+      });
+    } else if (c === "<" && /[\w$]/.test(text[i - 1] ?? "")) {
+      // A call's type arguments (`helper<T, U>(`): their commas separate no arguments.
+      const close = typeArgumentsEnd(text, i);
+      if (close !== undefined) {
+        i = close;
+        continue;
+      }
     } else if (c === "[" || c === "{") frames.push({ open: c, index: 0, from: i + 1 });
     else if (c === ",") {
       const frame = frames.at(-1);
@@ -1750,58 +1931,43 @@ function callArguments(file: string, text: string): Argument[] {
   return out;
 }
 
+/** Keywords of the languages read as text that are written before parentheses that hold no call's arguments. */
+const CONTROL_KEYWORDS = new Set(["if", "elif", "while", "for", "foreach", "switch", "when", "catch", "using", "lock", "fixed", "return", "assert", "synchronized", "with", "in", "is", "not", "and", "or", "await", "yield", "throw", "raise", "case", "typeof", "sizeof", "nameof", "default", "else", "do"]);
+
 /**
- * Methods of strings that test, search or cut text with their arguments, in the languages read as text: Java's and
- * Kotlin's, Dart's, Python's, C#'s, Swift's and those of Go's `strings` package. An argument of one is no request.
+ * Where a call's type arguments that open at `open` (`<`) close, just past the `>` followed by the call's `(`; undefined
+ * where they do not balance over characters type arguments are written with, or no `(` follows, as in a comparison.
  */
-const TEXT_METHODS = new Set([
-  "startsWith",
-  "endsWith",
-  "contains",
-  "indexOf",
-  "lastIndexOf",
-  "replace",
-  "replaceFirst",
-  "replaceAll",
-  "split",
-  "matches",
-  "equals",
-  "equalsIgnoreCase",
-  "removePrefix",
-  "removeSuffix",
-  "substringBefore",
-  "substringAfter",
-  "substringBeforeLast",
-  "substringAfterLast",
-  "startswith",
-  "endswith",
-  "removeprefix",
-  "removesuffix",
-  "find",
-  "rfind",
-  "rsplit",
-  "partition",
-  "rpartition",
-  "StartsWith",
-  "EndsWith",
-  "Contains",
-  "IndexOf",
-  "LastIndexOf",
-  "Replace",
-  "ReplaceAll",
-  "Split",
-  "Equals",
-  "hasPrefix",
-  "hasSuffix",
-  "replacingOccurrences",
-  "HasPrefix",
-  "HasSuffix",
-  "TrimPrefix",
-  "TrimSuffix",
-  "CutPrefix",
-  "CutSuffix",
-  "EqualFold",
-]);
+function typeArgumentsEnd(text: string, open: number): number | undefined {
+  let depth = 0;
+  for (let j = open; j < text.length && j < open + 200; j++) {
+    const c = text[j]!;
+    if (c === "<") depth++;
+    else if (c === ">") {
+      if (--depth === 0) return /^\s*\(/.test(text.slice(j + 1, j + 40)) ? j + 1 : undefined;
+    } else if (!/[\w\s.,?*[\]$:]/.test(c)) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Methods of strings that test, search or cut text with their arguments, in each language read as text by its files:
+ * Java's, Kotlin's and the JVM's (`java.lang.String`, `kotlin.text`), Dart's (`dart:core` String, whose `replaceFirst`
+ * and `replaceAll` cut text; `Uri.replace` builds a URL and is no such method), Python's `str`, C#'s `System.String`,
+ * Swift's `StringProtocol` and Foundation's, and Go's `strings` package (called on `strings`). An argument of one is no
+ * request; other languages have none here.
+ */
+const TEXT_METHODS: Array<{ files: RegExp; names: Set<string>; receiver?: string }> = [
+  {
+    files: /\.(java|kt|kts|scala|groovy)$/,
+    names: new Set(["startsWith", "endsWith", "contains", "indexOf", "lastIndexOf", "replace", "replaceFirst", "replaceAll", "split", "matches", "equals", "equalsIgnoreCase", "compareTo", "removePrefix", "removeSuffix", "substringBefore", "substringAfter", "substringBeforeLast", "substringAfterLast"]),
+  },
+  { files: /\.dart$/, names: new Set(["startsWith", "endsWith", "contains", "indexOf", "lastIndexOf", "replaceFirst", "replaceAll", "split", "compareTo"]) },
+  { files: /\.pyi?$/, names: new Set(["startswith", "endswith", "removeprefix", "removesuffix", "find", "rfind", "index", "rindex", "count", "split", "rsplit", "partition", "rpartition", "replace"]) },
+  { files: /\.cs$/, names: new Set(["StartsWith", "EndsWith", "Contains", "IndexOf", "LastIndexOf", "Replace", "Split", "Equals", "CompareTo"]) },
+  { files: /\.swift$/, names: new Set(["hasPrefix", "hasSuffix", "contains", "replacingOccurrences", "components"]) },
+  { files: /\.go$/, receiver: "strings", names: new Set(["HasPrefix", "HasSuffix", "TrimPrefix", "TrimSuffix", "CutPrefix", "CutSuffix", "Contains", "Index", "LastIndex", "Split", "Replace", "ReplaceAll", "EqualFold", "Count"]) },
+];
 
 /** The text properties of Flutter's `InputDecoration`, shown in or around a text field (Flutter API, InputDecoration). */
 const INPUT_DECORATION_TEXT = new Set(["labelText", "hintText", "helperText", "prefixText", "suffixText", "counterText", "errorText", "semanticCounterText"]);
@@ -1809,39 +1975,44 @@ const INPUT_DECORATION_TEXT = new Set(["labelText", "hintText", "helperText", "p
 /**
  * ASP.NET Core's methods whose first argument is a route pattern the application serves (`app.MapGet("/x", ...)`,
  * `MapGroup`, YARP's `MapForwarder(pattern, destinationPrefix, targetPath)`, whose `targetPath` is the path it sends
- * the requests it forwards to), or a path the request is re-executed at inside the application (`UseExceptionHandler("/Error")`,
- * `UseStatusCodePagesWithReExecute`).
+ * the requests it forwards to), or a path the request is re-executed at inside the application
+ * (`UseExceptionHandler("/Error")`, `UseStatusCodePagesWithReExecute`), each with the name of that parameter, by which a
+ * named argument gives it in any position.
  */
-const ASPNET_PATHS = new Set([
-  "Map",
-  "MapGet",
-  "MapPost",
-  "MapPut",
-  "MapDelete",
-  "MapPatch",
-  "MapMethods",
-  "MapGroup",
-  "MapForwarder",
-  "MapFallback",
-  "MapHub",
-  "MapHealthChecks",
-  "MapBlazorHub",
-  "UseExceptionHandler",
-  "UseStatusCodePagesWithReExecute",
+const ASPNET_PATHS = new Map([
+  ["Map", "pattern"],
+  ["MapGet", "pattern"],
+  ["MapPost", "pattern"],
+  ["MapPut", "pattern"],
+  ["MapDelete", "pattern"],
+  ["MapPatch", "pattern"],
+  ["MapMethods", "pattern"],
+  ["MapGroup", "prefix"],
+  ["MapForwarder", "pattern"],
+  ["MapFallback", "pattern"],
+  ["MapHub", "pattern"],
+  ["MapHealthChecks", "pattern"],
+  ["MapBlazorHub", "path"],
+  ["UseExceptionHandler", "errorHandlingPath"],
+  ["UseStatusCodePagesWithReExecute", "pathFormat"],
 ]);
 
 /** ASP.NET Core's methods every argument of which names a file or a page of the application (`MapFallbackToFile`). */
 const ASPNET_FILES = new Set(["MapFallbackToFile", "MapFallbackToPage"]);
 
 /**
- * Whether a string argument is no request by the call it is given to: a text method (`TEXT_METHODS`) on a receiver; in
- * Dart, a text property of Flutter's `InputDecoration`; in C#, a path ASP.NET Core serves or re-executes at.
+ * Whether a string argument is no request by the call it is given to: a text method of its file's language
+ * (`TEXT_METHODS`) on a receiver; in Dart, a text property of Flutter's `InputDecoration`; in C#, a path ASP.NET Core
+ * serves or re-executes at.
  */
 function unrequestedArgument(file: string, a: Argument): boolean {
-  if (a.method && TEXT_METHODS.has(a.name)) return true;
+  const text = TEXT_METHODS.find((t) => t.files.test(file));
+  if (a.method && text?.names.has(a.name) && (!text.receiver || a.receiver === text.receiver)) return true;
   if (/\.dart$/.test(file)) return a.name === "InputDecoration" && a.label !== undefined && INPUT_DECORATION_TEXT.has(a.label);
-  if (/\.cs$/.test(file)) return (a.index === 0 && ASPNET_PATHS.has(a.name)) || ASPNET_FILES.has(a.name);
-  return false;
+  if (!/\.cs$/.test(file)) return false;
+  const path = ASPNET_PATHS.get(a.name);
+  // A named argument is the parameter it names; a positional one is in the parameter's place.
+  return (path !== undefined && (a.label === undefined ? a.index === 0 : a.label === path)) || ASPNET_FILES.has(a.name);
 }
 
 /** The argument whose literal holds an offset, among arguments in the order of their place. */
@@ -2387,7 +2558,9 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const inScript: Passed[] = [];
     const prefixed: Place[] = [];
     const elsewhere: Array<{ host: string; at: Place }> = [];
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed, elsewhere })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    const unbased: Place[] = [];
+    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed, elsewhere, unbased })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    context.unbased?.push(...unbased.map((p) => ({ file, line: p.line + shift })));
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
     context.elsewhere?.push(...elsewhere.map((e) => ({ host: e.host, at: { file, line: e.at.line + shift } })));
@@ -2490,6 +2663,7 @@ export function extractCalls(
 ): ReadCall[] {
   const out: ReadCall[] = [];
   const constants = new Constants(source);
+  importersOf.set(constants, new Importers(source, constants, matcher(config.exclude)));
   // The names each calling component's configured files use, outside generated clients, and those that generated
   // declarations they name use in turn; undefined where the component has no such file.
   const used = new Map<string, Set<string> | undefined>();
@@ -2547,7 +2721,7 @@ export function extractCalls(
       let calls = SCRIPT.test(file)
         ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, elsewhere, unbased, constants })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere })
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased })
           : callsFromText(file, text, spec, spans, labels, served);
       // A host is named at the leading hole that writes it, ahead of the URLs built on it.
       for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);

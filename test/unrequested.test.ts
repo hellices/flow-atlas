@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
-import { callsFromText, callsFromTypeScript, extractCalls, type Passed } from "../src/extract/calls.js";
+import { callArguments, callsFromText, callsFromTypeScript, extractCalls, type Passed } from "../src/extract/calls.js";
 import type { Place } from "../src/model.js";
 import type { Source } from "../src/source.js";
 
@@ -216,6 +216,102 @@ describe("a value followed to where the code takes it", () => {
   });
 });
 
+describe("the review of #75", () => {
+  it("follows no function the code writes another value to, nor one reached through it", () => {
+    expect(read("function send(p) { return p.startsWith('/'); }\nsend = fetch;\nsend('/orders');")).toEqual(["* /orders"]);
+    expect(read("function send(p) { return p.startsWith('/'); }\n[send] = [fetch];\nsend('/orders');")).toEqual(["* /orders"]);
+    const files = { "a.tsx": 'import { send } from "./send";\nsend("/orders");', "send.ts": "export function send(p) { return p.startsWith('/'); }\nexport function swap(f) { send = f; }" };
+    expect(repository(files).calls).toEqual(["* /orders @ a.tsx:2"]);
+  });
+
+  it("follows every binding a destructuring gives the same key", () => {
+    expect(read('function f({ path: a, path: b }) { a.startsWith(x); fetch(b); }\nf({ path: "/items" });')).toEqual(["* /items"]);
+    expect(read('function f({ url: checked, url: requested }) { if (checked) {} fetch(requested); }\nf({ url: "/x" });')).toEqual(["* /x"]);
+    expect(read('function f({ path: a, path: b }) { return a.startsWith(x) && b === y; }\nf({ path: "/items" });')).toEqual([]);
+  });
+
+  it("follows a property only where the object holds data: a getter, a method or a prototype's member may read it", () => {
+    expect(read('const o = { path: "/api/items", get url() { return this.path; } };\no.path.startsWith("/");\nfetch(o.url);')).toEqual(["* /api/items"]);
+    expect(read('const o = { path: "/api/items", url: function () { return this.path; } };\no.path.startsWith("/");\nfetch(o.url());')).toEqual(["* /api/items"]);
+    expect(read('const o = { path: "/api/items" };\no.path.startsWith("/");\nfetch(o.valueOf().path);')).toEqual(["* /api/items"]);
+    expect(read('const o = { path: "/api/items", label: "x" };\no.path.startsWith("/");\nshow(o.label);')).toEqual([]);
+  });
+
+  it("follows no element into an iteration whose function takes a rest parameter, which gets the array too", () => {
+    expect(read('const paths = ["/items"];\npaths.forEach((p, ...rest) => { p.startsWith(x); fetch(rest[1][0]); });')).toEqual(["* /items"]);
+  });
+
+  it("reads `arguments` of a nested function as that function's", () => {
+    expect(read('function f(path) { const g = function () { return arguments[0]; }; return path === x; }\nf("/home");')).toEqual([]);
+    // An arrow function's `arguments` is the enclosing function's.
+    expect(read('function f(path) { const g = () => fetch(arguments[0]); return path === x; }\nf("/home");')).toEqual(["* /home"]);
+  });
+
+  it("reads only a history's push and replace, taken apart, as navigations", () => {
+    expect(read(RR5 + 'function A() { const { block } = useHistory(); block("/admin"); }')).toEqual(["* /admin"]);
+    expect(read(RR5 + 'function A() { const { replace: go } = useHistory(); go("/admin"); }')).toEqual([]);
+  });
+});
+
+describe("a function's result followed to its calls", () => {
+  const rr = 'import { Link, Route, useNavigate } from "react-router-dom";\n';
+  it("reads no request in a path a function returns where every call takes it to a route or a test", () => {
+    const rows: Array<[string, string[]]> = [
+      [rr + 'function homePath() { return "/home"; }\n<Route path={`${homePath()}/:tab?`} />;\nconst at = location.pathname === homePath();', []],
+      [rr + 'const homePath = () => "/home";\n<Link to={homePath()} />;\nfetch(homePath());', ["* /home"]],
+      // Called on the spot.
+      [rr + '<Link to={(() => "/home")()} />;', []],
+      // An object of page paths, its methods called by name.
+      [rr + 'const Paths = { home: () => "/home", doc: (id) => `/doc/${id}`, size: 2 };\nfunction A() { const navigate = useNavigate(); navigate(Paths.home()); return <Link to={Paths.doc(1)} />; }', []],
+      [rr + 'const Paths = { home: () => "/home", all: function () { return [this.home()]; } };\n<Link to={Paths.home()} />;', ["* /home"]],
+      // An async function or a generator, a function never called, handed on or written over, keep it.
+      [rr + 'async function homePath() { return "/home"; }\n<Link to={await homePath()} />;', ["* /home"]],
+      [rr + 'function homePath() { return "/home"; }', ["* /home"]],
+      [rr + 'function homePath() { return "/home"; }\nregister(homePath);', ["* /home"]],
+      [rr + 'function homePath() { return "/home"; }\nhomePath = other;\n<Link to={homePath()} />;', ["* /home"]],
+      // A property of the object a function returns, followed to where it is read.
+      ['function payload() { return { http: { method: "GET", path: "/s" } }; }\nconst ok = payload().http.path.startsWith(x);', []],
+      // Its method is the one beside it.
+      ['function payload() { return { http: { method: "GET", path: "/s" } }; }\nsend(payload());', ["GET /s"]],
+      ['function payload() { return { http: { method: "GET", path: "/s" } }; }\nconst { http: { path } } = payload();\nconst ok = path === x;', []],
+    ];
+    expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
+  });
+
+  const helpers = 'export function homePath() {\n  return "/home";\n}\nexport const Route = { trash: () => "/trash" };';
+  it("follows a function a module exports to the files of the repository that import it", () => {
+    const files = {
+      "a.tsx": helpers,
+      "nav.tsx": 'import { Link, useNavigate } from "react-router-dom";\nimport { homePath, Route } from "./a";\nexport const N = () => {\n  const navigate = useNavigate();\n  return <Link to={homePath()} onClick={() => navigate(Route.trash())} />;\n};',
+      "match.ts": 'import * as helpers from "./a";\nexport const atHome = (p: string) => p === helpers.homePath();',
+    };
+    expect(repository(files)).toEqual({ calls: [], limits: [] });
+    // Through a module that passes it on under another name.
+    const barrel = { "a.tsx": helpers, "index.ts": 'export { homePath as home } from "./a";', "nav.tsx": 'import { Link } from "react-router-dom";\nimport { home } from "./index";\n<Link to={home()} />;' };
+    // Route is used nowhere: what it returns goes nowhere, and is read as it is written.
+    expect(repository(barrel)).toEqual({ calls: ["* /trash @ a.tsx:4"], limits: [] });
+  });
+
+  it("keeps the path where an importer may request it or cannot be read", () => {
+    const at = { calls: ['* /home @ a.tsx:2', "* /trash @ a.tsx:4"], limits: [] };
+    const cases: Array<Record<string, string>> = [
+      { "load.ts": 'import { homePath, Route } from "./a";\nfetch(homePath());\nfetch(Route.trash());' },
+      // Svelte markup is not read.
+      { "Page.svelte": "<script>import { homePath, Route } from './a';</script>\n<a href={homePath()}>{Route.trash()}</a>" },
+      // A module loaded at run time, an import from a module not resolved, a namespace used whole.
+      { "lazy.ts": 'const m = await import("./a");\nfetch(m.homePath() + m.Route.trash());' },
+      { "alias.ts": 'import { homePath, Route } from "@app/a";\nfetch(homePath() + Route.trash());' },
+      { "all.ts": 'import * as helpers from "./a";\nsend(helpers);\nsend(helpers.homePath, helpers.Route);' },
+    ];
+    for (const other of cases) expect(repository({ "a.tsx": helpers, ...other })).toEqual(at);
+    // A default export, which an importer names as it likes.
+    expect(repository({ "a.tsx": 'export default function homePath() {\n  return "/home";\n}', "nav.tsx": 'import { Link } from "react-router-dom";\nimport home from "./a";\n<Link to={home()} />;' })).toEqual({
+      calls: ["* /home @ a.tsx:2"],
+      limits: [],
+    });
+  });
+});
+
 describe("new URL(path, base)", () => {
   const rows: Array<[string, string[], string[]]> = [
     // The page's own address: the path is read as a relative one.
@@ -246,8 +342,35 @@ describe("new URL(path, base)", () => {
       calls: ["* /login @ app/api/x/route.ts:1"],
       limits: [],
     });
-    // Elsewhere, a parameter's `url` is a value.
-    expect(repository({ "a.tsx": 'export function go(req) { return fetch(new URL("/login", req.url)); }' }).calls).toEqual([]);
+    // next-auth's withAuth calls the function it is given with the request.
+    const wrapped = 'import { withAuth } from "next-auth/middleware";\nexport default withAuth(async function middleware(req) {\n  return Response.redirect(new URL("/dashboard", req.url));\n});';
+    expect(repository({ "middleware.ts": wrapped }, ["middleware.ts"])).toEqual({ calls: ["* /dashboard @ middleware.ts:3"], limits: [] });
+    // Elsewhere, or a helper's parameter in a handler's file, a parameter's `url` is a value.
+    const unbased = (place: string) => `calls app->api: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: ${place}`;
+    expect(repository({ "a.tsx": 'export function go(req) { return fetch(new URL("/login", req.url)); }' })).toEqual({ calls: [], limits: [unbased("a.tsx:1")] });
+    const helper = 'function load(options) { return fetch(new URL("/activate", options.url)); }\nexport function GET(request) { return load(request); }';
+    expect(repository({ "app/api/license/route.ts": helper }, ["app/api/license/route.ts"])).toEqual({ calls: [], limits: [unbased("app/api/license/route.ts:1")] });
+    expect(repository({ "middleware.ts": 'export function middleware(req, event) { return fetch(new URL("/x", event.url)); }' }, ["middleware.ts"])).toEqual({
+      calls: [],
+      limits: [unbased("middleware.ts:1")],
+    });
+  });
+
+  it("reads a URL that starts with a value as it is written, which may be absolute and take no base", () => {
+    const files = {
+      "a.tsx": 'import { API } from "./config";\nfetch(new URL(`${API}/orders`, "https://docs.example.com"));',
+      "config.ts": 'export const API = "http://localhost:3000";',
+    };
+    expect(repository(files)).toEqual({ calls: ["GET /orders based @ a.tsx:2"], limits: [] });
+    expect(repository({ "a.tsx": "fetch(new URL(`${api}/orders`, base));" })).toEqual({ calls: ["GET /orders based @ a.tsx:1"], limits: [] });
+  });
+
+  it("names a base held in a value in a template's inline script, at the template's line", () => {
+    const config = normalizeConfig({ components: [{ name: "app", path: "" }, { name: "api", path: "" }], calls: [{ from: "app", to: "api", files: ["page.html"] }] });
+    const limits: string[] = [];
+    const page = "<html>\n<body>\n<script>\nfetch(new URL('/items', apiBase));\n</script>\n</body>\n</html>";
+    expect(extractCalls(memory({ "page.html": page }), config, [], undefined, limits)).toEqual([]);
+    expect(limits).toEqual(["calls app->api: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: page.html:4"]);
   });
 });
 
@@ -269,6 +392,10 @@ describe("in code read as text", () => {
       ["a.py", 'if request.path.startswith("/api") or p.endswith("/raw"): pass', []],
       ["A.cs", 'if (path.StartsWith("/api")) return path.Replace("/api", "");', []],
       ["a.go", 'if strings.HasPrefix(p, "/api") { p = strings.TrimPrefix(p, "/api") }', []],
+      // A method of another type, or of another language, is its own: Dart's Uri.replace builds a URL.
+      ["a.dart", "final res = await client.get(baseUri.replace(path: '/v1/users'));", ["* /v1/users"]],
+      ["a.go", 'if other.HasPrefix(p, "/api") {}', ["* /api"]],
+      ["a.rb", 'path.start_with?("/api") || other.startsWith("/admin")', ["* /api", "* /admin"]],
       ["A.swift", 'let bare = path.replacingOccurrences(of: "/api", with: "")', []],
       // A request made inside the test's arguments is still read; a call that is not a method on a receiver is too.
       ["a.dart", "if (url.startsWith(await http.get('/prefix'))) {}", ["GET /prefix"]],
@@ -301,6 +428,18 @@ describe("in code read as text", () => {
     expect(text("Program.cs", code)).toEqual(["* /api/catalog/items/{}/pic"]);
     // In another language, a method of that name is its own.
     expect(text("a.kt", 'router.MapGet("/items")')).toEqual(["* /items"]);
+    // A named argument is the parameter it names, in any position.
+    expect(text("Program.cs", 'app.MapForwarder(targetPath: "/api/items", pattern: "/images", destinationPrefix: host);')).toEqual(["* /api/items"]);
+    expect(text("Program.cs", 'app.UseExceptionHandler(errorHandlingPath: "/Error");')).toEqual([]);
+  });
+
+  it("records a call's arguments by their place, past type arguments, and no keyword's parentheses as a call", () => {
+    const args = (file: string, code: string) => callArguments(file, code).map((a) => `${a.name}${a.method ? "." : ""}#${a.index}${a.label ? ` ${a.label}` : ""}`);
+    expect(args("A.cs", 'request(helper<T, U>(), "/api");')).toEqual(["request#1"]);
+    expect(args("A.kt", 'call(listOf<Pair<String, Int>>(), "/api")')).toEqual(["call#1"]);
+    expect(args("A.cs", 'if (a < b && c > d) call(x, "/api");')).toEqual(["call#1"]);
+    expect(args("A.kt", 'if ("/admin" == p) {}\nwhen ("/x") {}\nwhile ("/y" != q) {}')).toEqual([]);
+    expect(args("a.dart", "x.replaceFirst('/api', '');\nInputDecoration(prefixText: '/s/')")).toEqual(["replaceFirst.#0", "replaceFirst.#1", "InputDecoration#0 prefixText"]);
   });
 
   it("reads a path ending in .log as a file's", () => {

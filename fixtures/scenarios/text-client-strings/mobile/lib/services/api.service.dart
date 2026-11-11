@@ -1,4 +1,4 @@
-import 'package:http/http.dart' as http;
+import '../api/api_client.dart';
 
 class ApiService {
   final ApiClient _api;

@@ -305,6 +305,16 @@ export class Constants {
     return this.imported(from, spec, name) ?? undefined;
   }
 
+  /** A script file of the repository, parsed once; undefined for a file not read. */
+  sourceFile(file: string): ts.SourceFile | undefined {
+    return this.parse(file);
+  }
+
+  /** The file of the repository a module specifier written in a file leads to, as `exportOf` resolves it. */
+  moduleFile(from: string, spec: string): string | undefined {
+    return this.resolve(from, spec)?.file;
+  }
+
   private exportedRef(x: Found): Ref | undefined {
     if (!x || "module" in x) return undefined;
     if ("file" in x) return { kind: "module", file: x.file };

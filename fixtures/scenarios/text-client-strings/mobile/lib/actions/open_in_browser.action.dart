@@ -1,5 +1,7 @@
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/store.service.dart';
+
 class OpenInBrowserAction {
   Future<void> open(Store store) async {
     final serverEndpoint = store.get(StoreKey.serverEndpoint).replaceFirst('/api', '');

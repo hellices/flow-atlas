@@ -19,7 +19,7 @@ chains:
   - webapp->catalog-api|GET /api/catalog/items/{id}/pic
 calls:
   - mobile->server|GET /api/server/ping @ mobile/lib/services/api.service.dart:12
-  - mobile->server|GET /api/users/me @ mobile/lib/repositories/user.repository.dart:7
+  - mobile->server|GET /api/users/me @ mobile/lib/repositories/user.repository.dart:10
   - webapp->catalog-api|* /api/catalog/items/{}/pic @ webapp/Program.cs:17
 limits:
   - "routes catalog-api: no handler was found in the configured route files for 1 operation of catalog-api/Catalog.API.json (GetItemPicture)"

@@ -10,16 +10,17 @@ case: |
   in immich, a URL resolved against another host by `new URL(path, base)` was read with the client's prefix. Now the
   router's component is followed through the module that passes it on; React Router 5's Redirect, useHistory,
   useRouteMatch and matchPath name routes; a placeholder and a Lingui message are text for people; a value is followed
-  through a local const, an array's tests and iterations and a function's parameter to where it goes, and is no request
+  through a const, an array's tests and iterations and a function's parameter to where it goes, and is no request
   where it goes only to places that are none (a route, a test, a URL on another host); and a base held in a value
-  leaves the URL unread with a limit. The helpers in routeHelpers return page paths that other files use: atlas reads
-  where a string is written and does not follow a function's result to its callers, so they are still read, as the
-  two FA002s show.
+  leaves the URL unread with a limit. A function's result is followed to its calls, in its file and the files that
+  import it: `homePath()` is used only in `<Route path>` and `<Redirect to>`, and the front's `AppPaths` methods only in
+  `navigate()` and `<Link to>`, so neither is a request. `searchPath()` is also a form's `action`, which the browser
+  requests, and `getBasePathToShowPage()` is added to an id in the value `useMemo` gives a React context, which atlas
+  does not follow: both are still read.
 surfaces:
   - server|POST /api/documents.info
   - server|POST /api/documents.list
 findings:
-  - FA002|app->server|* /api/home
   - FA002|app->server|* /api/search
 chains:
   - app->server|POST /api/documents.info
@@ -27,12 +28,11 @@ chains:
 calls:
   - app->server|POST /api/documents.info @ app/stores/DocumentsStore.ts:5
   - app->server|POST /api/documents.list @ app/stores/DocumentsStore.ts:10
-  - app->server|* /api/home @ app/utils/routeHelpers.ts:2
   - app->server|* /api/search @ app/utils/routeHelpers.ts:6
+  - front->server|* /object/{} @ front/src/modules/object-metadata/utils/getBasePathToShowPage.ts:2
 limits:
   - "calls app->server: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: app/utils/license.ts:4"
   - "calls front->server: URLs to docs.example.com (front/src/modules/support/getDocumentationUrl.ts:7) are not read as requests to server"
-  - "calls front->server: 5 files read, nothing extracted"
 descriptions:
   - server none - NoneFound
 inventory:

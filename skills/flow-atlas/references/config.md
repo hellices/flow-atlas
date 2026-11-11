@@ -169,21 +169,34 @@ name; a message given to one of Lingui's macros (`` t`/month` ``, `msg`, `define
 `useLingui()` of `@lingui/react/macro` gives); a string tested for truth (`!x`, a condition, the left of `&&`), or one a
 test is made on (`prefix.startsWith(x)`, `includes`, `indexOf`, its `length`). Where the code states where a value
 goes, atlas follows it there, and the value is no request when every place it reaches is none of the above or a URL on
-a host other than the target's: a local `const` to each of its uses; an element of an array, written in place or held
-in a local `const`, to the array's `includes`, `indexOf` and `lastIndexOf`, and through `some`, `every`, `findIndex`,
-`findLastIndex`, `forEach`, `map`, `flatMap` and `for...of` to the binding each element is given to (a property of an
-object element, through its key or the destructuring that names it); a property of an object held in a local `const`
-to each read of it; an argument (or a property of an object written as one) to the uses of the parameter in its
-place, in a function the file declares or one a module of the repository exports and the file imports. A binding that
-is exported, a `let`, a parameter read through `arguments` or a rest element, an element or property read any other
-way (passed on, spread, found with `find`), a key no code reads, and a binding no code uses leave the string as it is
-read; a function's result is not followed to its callers, so a helper that returns a page's path (`homePath()`) is
-still read where it is written. `new URL(path, base)` (the global URL) resolves a root-relative path against the base's
+a host other than the target's: a `const` to each of its uses; an element of an array, written in place or held in a
+`const`, to the array's `includes`, `indexOf` and `lastIndexOf`, and through `some`, `every`, `findIndex`,
+`findLastIndex`, `forEach`, `map`, `flatMap` and `for...of` to the binding each element is given to; a property of an
+object literal to where the object goes and each read of that property (through its key, or every binding of a
+destructuring that names it), where the object holds data alone (no method, accessor, `function` value or spread,
+which may read it through `this`) and only properties it writes itself are read otherwise; an argument (or a property
+of an object written as one) to the uses of the parameter in its place, in a function the file declares or one a module
+of the repository exports and the file imports, unless the code writes another value to that function; a function's
+result (a `return`, an arrow function's body) to every call of the function: a function declaration, a `const` holding
+one, a method of an object held in a `const` (`Route = { albums: () => "/albums" }`, called as `Route.albums()`), or
+one called on the spot. A `const` or a function a module exports is followed into the files of the repository that
+import it, by the name each import gives it, through modules that pass it on (up to 20) and `ns.name` of a namespace
+import; a file whose text holds the name but is code atlas does not parse (a Svelte, Vue or Astro component, MDX,
+HTML), an import of that name from a module atlas does not resolve, a module loaded with `import()` or `require()`, a
+namespace used whole, a default export, `export * as`, and the files `exclude` leaves out (which are not looked at)
+leave it as it is read. So do a `let`, a function `async` or a generator, a parameter read through `arguments` or a rest
+parameter (in an iteration's function, anywhere), an element or a function used any other way (passed on, spread,
+found with `find`, `call`ed), a key no code reads, and a binding or function no code uses. `homePath()` used only as
+`<Route path>` and `<Redirect to>` is therefore no request, and one also used as a form's `action` still is.
+`new URL(path, base)` (the global URL) resolves a root-relative path against the base's
 origin, with none of its path, so the configured `prefix` is not put before it: against the page's own address
 (`location`, its `href` or `origin`, `document.baseURI`, the global `origin`) or the request a Next.js middleware, proxy
-or route handler answers (a parameter's `url` or `nextUrl`), the path is read as a relative one; against a base the
+or route handler answers (the `url` or `nextUrl` of the first parameter of the function exported as `middleware`,
+`proxy`, the default or an HTTP method's name, or given to next-auth's `withAuth` where that is what the file
+exports), the path is read as a relative one; against a base the
 code spells out, in this file or another, at the host it names, as any absolute URL is; against any other value, whose
-host the code does not state, it is not read, and a limit names where. The base itself is no request, nor is a URL's
+host the code does not state, it is not read, and a limit names where. A URL that starts with a value (`` `${API}/orders` ``) may be absolute already and take no base; it is read as
+written. The base itself is no request, nor is a URL's
 leading constant of another file that names a host other than the target's (`DOCUMENTATION_BASE_URL =
 "https://docs.example.com"`), which the limit on other hosts names. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
@@ -383,15 +396,21 @@ as Java's, Kotlin's, Dart's and Python's own exceptions are (`Exception("/x")`, 
 Kotlin of the standard library's throwing functions `error`, `TODO`, `require` and `check` (not a member of that name);
 a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
 the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the
-language. A string written directly in the parentheses of a method that tests or cuts text, called on a receiver, is
-no request either (`serverUrl.endsWith('/api')`, `replaceFirst`, `contains`, `removePrefix`, Python's `startswith`,
-C#'s `StartsWith`, Swift's `hasPrefix`, Go's `strings.HasPrefix` and the like); nor, in Dart, a text property of
+language. A string written directly in the parentheses of a method of strings, in the file's language, that tests or
+cuts text, called on a receiver, is no request either: Java's, Kotlin's and the JVM's (`startsWith`, `contains`,
+`replace`, `removePrefix`, `substringBefore`...), Dart's (`endsWith`, `replaceFirst`, `replaceAll`, `contains`...; not
+`Uri.replace`, which builds a URL), Python's (`startswith`, `removeprefix`, `find`, `replace`...), C#'s (`StartsWith`,
+`Replace`...), Swift's (`hasPrefix`, `replacingOccurrences`...) and those of Go's `strings` package called on
+`strings`; type arguments (`helper<T, U>(`) and a keyword's parentheses (`if (...)`) are no call's. Nor, in Dart, a
+text property of
 Flutter's `InputDecoration` (`labelText`, `hintText`, `helperText`, `prefixText`, `suffixText`, `counterText`,
 `errorText`, `semanticCounterText`); nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
 `MapPut`, `MapDelete`, `MapPatch`, `MapMethods`, `MapGroup`, `MapFallback`, `MapHub`, `MapHealthChecks` and
 `MapBlazorHub` or of YARP's `MapForwarder` (a route pattern the application serves; the forwarder's `targetPath`, the
 path it sends its requests to, is read), the path `UseExceptionHandler` and `UseStatusCodePagesWithReExecute`
-re-execute a request at inside the application, or an argument of `MapFallbackToFile` and `MapFallbackToPage`. FastAPI
+re-execute a request at inside the application (each by position, or by its parameter's name where the argument is
+named: `pattern`, `prefix` for `MapGroup`, `path` for `MapBlazorHub`, `errorHandlingPath`, `pathFormat`), or an
+argument of `MapFallbackToFile` and `MapFallbackToPage`. FastAPI
 decorators, and `add_api_route(path, endpoint, methods=...)` (GET where `methods` is not given or None), are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
 none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
 that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,
