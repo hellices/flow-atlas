@@ -502,6 +502,24 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
         if (!candidates.length) return;
       }
     }
+    // Django resolves a request to the first pattern its path fits, by any method (`URLResolver.resolve`), and that
+    // pattern's view answers a method it does not take with 405: a later pattern that takes the method is not reached.
+    if (candidates.some((c) => c.surface.dispatch?.byPath)) {
+      const any = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, slash));
+      candidates = candidates.filter((c) => !c.surface.dispatch?.byPath || !any.some((d) => d !== c.surface && beats(d, c.surface, call)));
+    }
+    // CommonMiddleware answers a request without a trailing `/` that no pattern takes as written, by any method, with a
+    // redirect to the path with it, where the first pattern that takes that appends one (`APPEND_SLASH`,
+    // `should_redirect_with_slash`). A call with values may be redirected for some and served for others.
+    if (!slash && call.path !== "/" && graph.surfaces.some((s) => s.component === call.to && s.dispatch?.slashes === "append-slash")) {
+      const asWritten = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, false));
+      if (!asWritten.some((s) => pathCovers(s.path, call.path, s.patterns))) {
+        const withSlash = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, true));
+        const firstPattern = withSlash.filter((d) => !withSlash.some((e) => e !== d && beats(e, d, { ...call, slash: true })));
+        const to = firstPattern.filter((s) => s.dispatch?.slashes === "append-slash" && methodsMatch(s.method, call.method) && !(s.implicit && (s.method === "HEAD" || s.method === "OPTIONS") && call.method.toUpperCase() !== s.method));
+        if (to.length) redirected.set(ci, { path: call.path, slash: true, surfaces: to });
+      }
+    }
     // A router that redirects answers a request no route of it takes as written, by any method, with a redirect to the
     // path with the `/` added or removed, where a route of it takes that path.
     const redirecting = graph.surfaces.filter((s) => s.component === call.to && REDIRECTING.has(s.dispatch?.slashes));

@@ -63,6 +63,8 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   { style: "fastapi", re: /@(?<fastapi>\w+)\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
   // Flask's and Quart's decorators, method shortcuts and `add_url_rule`, in a file that imports either.
   { style: "flask", re: /@(?<decorated>[A-Za-z_][\w.]*)\.(?:route|get|post|put|patch|delete)\(\s*["'](\/[^"']*)|(?<![\w.])(?<called>[A-Za-z_][\w.]*)\.add_url_rule\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  // Django's `path()` and `re_path()` patterns and DRF's `router.register()`, in a file that imports Django or DRF.
+  { style: "django", re: /(?<![\w.])(?:re_)?path\(\s*[rRuU]?["']|(?<![\w.])[A-Za-z_]\w*\.register\(\s*[rRuU]?["']/g, files: /\.py$/ },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
@@ -335,6 +337,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
       // is that framework's.
       const flask = style === "flask" || style === "fastapi" ? importsPackage(code, ["flask", "quart"]) : false;
       if (style === "flask" && !flask) continue;
+      if (style === "django" && !importsPackage(code, ["django", "rest_framework"])) continue;
       if (style === "fastapi" && flask && !importsPackage(code, ["fastapi"])) continue;
       const other = style === "flask" ? boundTo(code, "FastAPI|APIRouter") : style === "fastapi" && flask ? boundTo(code, "Flask|Quart|Blueprint") : undefined;
       const receiverOf = (m: RegExpMatchArray) => m.groups?.decorated ?? m.groups?.called ?? m.groups?.fastapi ?? "";

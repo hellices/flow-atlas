@@ -40,6 +40,8 @@ descriptions:
   - backend chosen backend/schema.yml ReadForRoutes
 inventory:
   routes:
+    # The URLconf's three patterns and the router's two registrations (#51).
+    - backend/project/urls.py django 5
     - frontend/js/pages/Home.tsx next 1
   calls:
     # The generated client's `url:` properties, and both axios calls of the invite helper.
