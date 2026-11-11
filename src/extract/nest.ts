@@ -1,6 +1,7 @@
 import ts from "typescript";
 import { joinRoute } from "../paths.js";
 import { declarationOf, importedFrom, resolveModule, unwrap } from "./binding.js";
+import { Constants } from "./constants.js";
 
 /** `VERSION_NEUTRAL`: a route served with no version in its path. */
 export const NEUTRAL = "";
@@ -27,39 +28,48 @@ export interface NestApp {
   modules?: Map<string, string[] | null>;
 }
 
-const short = (node: ts.Node, sf: ts.SourceFile): string => {
-  const text = node.getText(sf).replace(/\s+/g, " ");
+/** A node's text on one line, shortened, from the file it is in. */
+const short = (node: ts.Node): string => {
+  const text = node.getText().replace(/\s+/g, " ");
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 };
 
-/** A string the file spells out: a literal, or a `const` of the file initialized with one (`const globalPrefix = "api"`). */
-function literalOf(e: ts.Expression | undefined): string | undefined {
-  const u = e && unwrap(e);
-  if (!u) return undefined;
-  if (ts.isStringLiteral(u) || ts.isNoSubstitutionTemplateLiteral(u)) return u.text;
-  if (!ts.isIdentifier(u)) return undefined;
-  const decl = declarationOf(u);
-  return decl && ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const ? literalOf(decl.initializer) : undefined;
-}
+/** Where a node is, `file:line`, in the file it is in (a constant may be held in another file than the call). */
+const where = (n: ts.Node): string => {
+  const sf = n.getSourceFile();
+  return `${sf.fileName}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
+};
 
-/** A version or list of versions as Nest takes them: strings, `VERSION_NEUTRAL`, or an array of those; undefined otherwise. */
-export function versionsOf(e: ts.Expression): string[] | undefined {
+/** A reader of the constants of `texts` alone, where no reader of the repository's is given. */
+const within = (texts: Map<string, string>) => new Constants({ read: (f) => texts.get(f), list: () => [...texts.keys()] });
+
+/**
+ * A version or list of versions as Nest takes them: strings the code spells out (see `Constants`), `VERSION_NEUTRAL`,
+ * or an array of those; undefined otherwise.
+ */
+export function versionsOf(e: ts.Expression, constants: Constants, within = new Set<readonly ts.Expression[]>()): string[] | undefined {
   const u = unwrap(e);
   if ((ts.isIdentifier(u) && u.text === "VERSION_NEUTRAL") || (ts.isPropertyAccessExpression(u) && u.name.text === "VERSION_NEUTRAL")) return [NEUTRAL];
-  if (ts.isArrayLiteralExpression(u)) {
-    const all = u.elements.map((x) => (ts.isSpreadElement(x) ? undefined : versionsOf(x)));
-    return all.every(Boolean) ? (all as string[][]).flat() : undefined;
-  }
-  const v = literalOf(u);
-  return v === undefined ? undefined : [v];
+  const v = constants.text(u);
+  if (v !== undefined) return [v];
+  const list = constants.elements(u);
+  // An array that holds itself, through constants of other files, gives no version.
+  if (!list || within.has(list)) return undefined;
+  const all = list.map((x) => (ts.isSpreadElement(x) ? undefined : versionsOf(x, constants, new Set([...within, list]))));
+  return all.every(Boolean) ? (all as string[][]).flat() : undefined;
 }
 
 /** A property of an object literal: undefined when it is not there, null when the literal does not spell it out. */
 export const property = (o: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined | null => {
-  // A spread may set any property.
-  if (o.properties.some(ts.isSpreadAssignment)) return null;
-  for (const p of o.properties) {
-    const key = p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : undefined;
+  // The last property of the name is the one the object holds; a spread, or a name computed from anything but a
+  // literal, after it may set it.
+  for (let i = o.properties.length - 1; i >= 0; i--) {
+    const p = o.properties[i]!;
+    if (ts.isSpreadAssignment(p)) return null;
+    const n = p.name;
+    const computed = n && ts.isComputedPropertyName(n) ? unwrap(n.expression) : undefined;
+    const key = computed ? (ts.isStringLiteralLike(computed) || ts.isNumericLiteral(computed) ? computed.text : null) : n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) ? n.text : undefined;
+    if (key === null) return null;
     if (key !== name) continue;
     if (ts.isPropertyAssignment(p)) return p.initializer;
     if (ts.isShorthandPropertyAssignment(p)) return p.name;
@@ -107,33 +117,34 @@ const REQUEST_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIO
  * `declared` taking the place of the prefix. Every such call is taken as the application's; calls that disagree leave
  * it unknown, and a setting not spelled out agrees with no other. `limits` gets what is not read.
  */
-export function nestApp(texts: Map<string, string>, component: string, limits: string[], declared?: string): NestApp {
+export function nestApp(texts: Map<string, string>, component: string, limits: string[], declared?: string, constants = within(texts)): NestApp {
   // `key` is what a call sets, to compare calls by.
   const prefixes: Array<{ where: string; key: string; value: string | undefined; exclude: NestApp["exclude"]; limits: string[] }> = [];
   const versionings: Array<{ where: string; key: string; value: NonNullable<NestApp["versioning"]>; limits: string[] }> = [];
   for (const [file, text] of texts) {
     if (!/\b(?:setGlobalPrefix|enableVersioning)\s*\(/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-    const where = (n: ts.Node) => `${file}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
     const visit = (node: ts.Node): void => {
       const name = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
       const call = node as ts.CallExpression;
       if (name === "setGlobalPrefix") {
-        const value = literalOf(call.arguments[0]);
+        const value = constants.text(call.arguments[0]);
         const own: string[] = [];
         if (value === undefined && declared === undefined) {
-          own.push(`routes ${component}: ${where(call)} sets a global prefix the file does not spell out (${short(call.arguments[0] ?? call, sf)}); the routes under it are not read (declare it in prefix)`);
+          own.push(`routes ${component}: ${where(call)} sets a global prefix the file does not spell out (${short(call.arguments[0] ?? call)}); the routes under it are not read (declare it in prefix)`);
         }
         const exclude: NestApp["exclude"] = [];
         let unreadExclusion = false;
         const options = call.arguments[1] && unwrap(call.arguments[1]);
         const list = options && ts.isObjectLiteralExpression(options) ? property(options, "exclude") : undefined;
-        const entries: ts.Expression[] = list && ts.isArrayLiteralExpression(unwrap(list)) ? [...(unwrap(list) as ts.ArrayLiteralExpression).elements] : list ? [list] : list === null ? [options!] : [];
+        // The list written in place or held in a constant (`exclude: excludePaths`).
+        const listed = list ? constants.elements(list) : undefined;
+        const entries: ts.Expression[] = listed ? [...listed] : list ? [list] : list === null ? [options!] : [];
         if (options && !ts.isObjectLiteralExpression(options)) entries.push(options);
         for (const entry of entries) {
           const u = ts.isSpreadElement(entry) ? undefined : unwrap(entry);
           const object = u && ts.isObjectLiteralExpression(u) ? u : undefined;
-          const path = object ? literalOf(property(object, "path") ?? undefined) : u && literalOf(u);
+          const path = object ? constants.text(property(object, "path") ?? undefined) : constants.text(u);
           const method = object ? property(object, "method") : undefined;
           const verb = method && ts.isPropertyAccessExpression(unwrap(method)) ? (unwrap(method) as ts.PropertyAccessExpression).name.text : undefined;
           const pattern = path === undefined ? undefined : excludePattern(path);
@@ -143,7 +154,7 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
           else {
             unreadExclusion = true;
             own.push(
-              `routes ${component}: ${where(entry)} excludes from the global prefix ${path === undefined ? "a path the file does not spell out" : !pattern ? "a pattern atlas does not read" : "an entry atlas does not read"} (${short(entry, sf)}); a route it excludes is read under the prefix`,
+              `routes ${component}: ${where(entry)} excludes from the global prefix ${path === undefined ? "a path the file does not spell out" : !pattern ? "a pattern atlas does not read" : "an entry atlas does not read"} (${short(entry)}); a route it excludes is read under the prefix`,
             );
           }
         }
@@ -164,18 +175,18 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
           const type = property(options, "type");
           const kind = type && ts.isPropertyAccessExpression(unwrap(type)) ? (unwrap(type) as ts.PropertyAccessExpression).name.text : undefined;
           const prefix = property(options, "prefix");
-          const before = prefix === undefined ? "v" : prefix && unwrap(prefix).kind === ts.SyntaxKind.FalseKeyword ? "" : literalOf(prefix ?? undefined);
+          const before = prefix === undefined ? "v" : prefix && unwrap(prefix).kind === ts.SyntaxKind.FalseKeyword ? "" : constants.text(prefix ?? undefined);
           const defaults = property(options, "defaultVersion");
-          const versions = defaults === undefined ? undefined : ((defaults && versionsOf(defaults)) ?? null);
+          const versions = defaults === undefined ? undefined : ((defaults && versionsOf(defaults, constants)) ?? null);
           if (kind && ["HEADER", "MEDIA_TYPE", "CUSTOM"].includes(kind)) value = { uri: false };
           else if (kind === "URI" && before !== undefined) value = { uri: true, prefix: before, defaults: versions === null ? "unread" : versions };
           if (value !== "unread" && value.uri && value.defaults === "unread") {
             // An accessor or method gives no expression; the member is said instead.
             const at = defaults ?? options.properties.find((p) => p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === "defaultVersion") ?? options;
-            own.push(`routes ${component}: ${where(at)} sets a default version the file does not spell out (${short(at, sf)}); the routes that take it are not read`);
+            own.push(`routes ${component}: ${where(at)} sets a default version the file does not spell out (${short(at)}); the routes that take it are not read`);
           }
         }
-        if (value === "unread") own.push(`routes ${component}: ${where(call)} enables versioning the file does not spell out (${short(call.arguments[0]!, sf)}); the routes are not read`);
+        if (value === "unread") own.push(`routes ${component}: ${where(call)} enables versioning the file does not spell out (${short(call.arguments[0]!)}); the routes are not read`);
         const unknown = `unread at ${where(call)}`;
         const key = value === "unread" ? unknown : JSON.stringify(value.uri && value.defaults === "unread" ? { ...value, defaults: unknown } : value);
         versionings.push({ where: where(call), key, value, limits: own });
@@ -231,7 +242,7 @@ export function nestPaths(app: NestApp, method: string, inner: string, versions:
  * leaves the routes it reaches unread, with a limit; routes that cannot be told apart from those, all of them where the
  * routes passed to `register` are not read, are said in `unknown`.
  */
-export function nestModules(texts: Map<string, string>, component: string, limits: string[]): { modules: Map<string, string[] | null>; unknown?: string } {
+export function nestModules(texts: Map<string, string>, component: string, limits: string[], constants = within(texts)): { modules: Map<string, string[] | null>; unknown?: string } {
   const parsed = new Map<string, ts.SourceFile>();
   const parse = (file: string): ts.SourceFile | undefined => {
     const text = texts.get(file);
@@ -239,7 +250,6 @@ export function nestModules(texts: Map<string, string>, component: string, limit
     if (!parsed.has(file)) parsed.set(file, ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS));
     return parsed.get(file);
   };
-  const where = (file: string, n: ts.Node) => `${file}:${n.getSourceFile().getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
   const decorated = (cls: ts.ClassDeclaration, name: string) =>
     (ts.getDecorators(cls) ?? []).find((d) => ts.isCallExpression(d.expression) && ts.isIdentifier(d.expression.expression) && d.expression.expression.text === name);
   /** The class a name refers to, `file#Name`: declared in the file, imported from a relative module, or else the one class of that name the files declare with `decorator`. */
@@ -282,53 +292,53 @@ export function nestModules(texts: Map<string, string>, component: string, limit
       if (callee?.name.text === "register" && ts.isIdentifier(callee.expression) && importedFrom(callee.expression, ["@nestjs/core"]) === "RouterModule") {
         const call = node as ts.CallExpression;
         const arg = call.arguments[0] && unwrap(call.arguments[0]);
-        // The routes, written in place or held in a `const` of the file (`const routes: Routes = [...]`).
-        let routes = arg;
-        if (routes && ts.isIdentifier(routes)) {
-          const decl = declarationOf(routes);
-          routes = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : routes;
-        }
-        if (!routes || !ts.isArrayLiteralExpression(routes)) {
-          unknown = `${where(file, call)} registers routes the file does not spell out (${short(arg ?? call, sf)}) with RouterModule, and which controllers they serve under which path is not read, so no route of the controllers is`;
+        // The routes, written in place or held in a `const` (`const routes: Routes = [...]`), of this file or another.
+        const routes = constants.elements(arg);
+        if (!routes) {
+          unknown = `${where(call)} registers routes the file does not spell out (${short(arg ?? call)}) with RouterModule, and which controllers they serve under which path is not read, so no route of the controllers is`;
           return;
         }
-        const entries = (list: ts.ArrayLiteralExpression, parent: string | null | undefined, top: boolean): void => {
-          for (const element of list.elements) {
+        const entries = (list: readonly ts.Expression[], parent: string | null | undefined, top: boolean, within: Set<readonly ts.Expression[]>): void => {
+          const inner = new Set([...within, list]);
+          for (const element of list) {
             const item = unwrap(element);
+            // The file the entry is written in, whose imports name its modules.
+            const at = item.getSourceFile().fileName;
             if (ts.isIdentifier(item) && !top) {
-              const key = classKey(file, item, "Module");
+              const key = classKey(at, item, "Module");
               // A module among the children takes its parent's path, unread where that is.
               if (key) give(key, parent === undefined ? "" : parent);
-              else unfound.push(`${where(file, item)} (${item.text})`);
+              else unfound.push(`${where(item)} (${item.text})`);
               continue;
             }
             if (!ts.isObjectLiteralExpression(item)) {
-              unknown = `${where(file, element)} gives RouterModule a route the file does not spell out (${short(element, sf)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
+              unknown = `${where(element)} gives RouterModule a route the file does not spell out (${short(element)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
               continue;
             }
             const own = property(item, "path");
-            const value = own === undefined ? undefined : own === null ? null : (literalOf(own) ?? null);
+            const value = own === undefined ? undefined : own === null ? null : (constants.text(own) ?? null);
             // A child's path is joined to its parent's; an entry with no path, or an empty one at the top, gives none, and
             // its children's paths are their own.
             const path = value === undefined || (top && value === "") ? undefined : value === null || parent === null ? null : top ? value : joinRoute(parent ?? "", value);
             const module = property(item, "module");
             if (module && ts.isIdentifier(unwrap(module)) && path !== undefined) {
-              const key = classKey(file, unwrap(module) as ts.Identifier, "Module");
+              const key = classKey(at, unwrap(module) as ts.Identifier, "Module");
               if (key) give(key, path);
-              else unfound.push(`${where(file, module)} (${module.getText(sf)})`);
+              else unfound.push(`${where(module)} (${module.getText()})`);
             } else if (module === null || (module && !ts.isIdentifier(unwrap(module)))) {
-              unknown = `${where(file, item)} gives RouterModule a module the file does not spell out (${short(item, sf)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
+              unknown = `${where(item)} gives RouterModule a module the file does not spell out (${short(item)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
             }
-            if (value === null) limits.push(`routes ${component}: ${where(file, own ?? item)} gives RouterModule a path the file does not spell out (${short(own ?? item, sf)}); the routes of the controllers it reaches are not read`);
+            if (value === null) limits.push(`routes ${component}: ${where(own ?? item)} gives RouterModule a path the file does not spell out (${short(own ?? item)}); the routes of the controllers it reaches are not read`);
             const children = property(item, "children");
-            const list = children && unwrap(children);
-            if (list && ts.isArrayLiteralExpression(list)) entries(list, path === undefined ? "" : path, false);
+            const list = children ? constants.elements(children) : undefined;
+            // Children that hold their own parent, through constants of other files, are not read.
+            if (list && !inner.has(list)) entries(list, path === undefined ? "" : path, false, inner);
             else if (children !== undefined) {
-              unknown = `${where(file, item)} gives RouterModule children the file does not spell out (${short(children ?? item, sf)}), and which controllers they serve under which path is not read, so no route of the controllers is`;
+              unknown = `${where(item)} gives RouterModule children the file does not spell out (${short(children ?? item)}), and which controllers they serve under which path is not read, so no route of the controllers is`;
             }
           }
         };
-        entries(routes, undefined, true);
+        entries(routes, undefined, true, new Set());
       }
       ts.forEachChild(node, visit);
     };
@@ -361,13 +371,13 @@ export function nestModules(texts: Map<string, string>, component: string, limit
       const controllers = list && unwrap(list);
       if (list === undefined) continue;
       if (!controllers || !ts.isArrayLiteralExpression(controllers) || !controllers.elements.every((e) => ts.isIdentifier(unwrap(e)))) {
-        limits.push(`routes ${component}: ${where(file, st)} lists controllers the file does not spell out (${short(controllers ?? object ?? st, sf)}) in ${st.name.text}, which RouterModule serves under ${path ?? "a path not read"}; a controller it holds is read without that path`);
+        limits.push(`routes ${component}: ${where(st)} lists controllers the file does not spell out (${short(controllers ?? object ?? st)}) in ${st.name.text}, which RouterModule serves under ${path ?? "a path not read"}; a controller it holds is read without that path`);
         continue;
       }
       for (const e of controllers.elements) {
         const key = classKey(file, unwrap(e) as ts.Identifier, "Controller");
         if (!key) {
-          limits.push(`routes ${component}: ${where(file, e)} names a controller atlas does not find in the files read (${e.getText(sf)}); it is read without the path RouterModule gives ${st.name.text}`);
+          limits.push(`routes ${component}: ${where(e)} names a controller atlas does not find in the files read (${e.getText(sf)}); it is read without the path RouterModule gives ${st.name.text}`);
           continue;
         }
         const before = modules.get(key);

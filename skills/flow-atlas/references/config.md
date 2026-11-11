@@ -159,7 +159,7 @@ prefix still gets it, since a service may nest the same segment. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
 is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
-names its file, line and expression. A `const` of the file named in `constants` is read as a GET route at its value,
+names its file, line and expression; a Nest path held in a constant is read, as below. A `const` of the file named in `constants` is read as a GET route at its value,
 so a GET registered on it at that path gives no limit; another method or a prefix does. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
 those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
@@ -264,7 +264,26 @@ without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled 
 `v<version>` (or the `prefix` option's text), the version being the method's `@Version`, else the controller's
 `@Controller({ version })`, else `defaultVersion`; a list serves one path per version and `VERSION_NEUTRAL` none. An
 excluded route keeps its version. atlas reads those calls in the route files and the component's code (tests and the
-other excluded files left out), or in the `bootstrap` file the entry names; literals and `const`s of the file are read.
+other excluded files left out), or in the `bootstrap` file the entry names. Every path, version and exclusion Nest
+takes (decorators, `setGlobalPrefix` and its `exclude`, `enableVersioning`, `RouterModule.register`) is read where it is
+written in place or held in a constant of any file: a `const` initialized with a literal, a template or a `+` of
+such values; an enum member initialized with a literal, or with none: 0 first, else one more than the numeric member before it
+(TypeScript's auto-increment, which an ambient enum that is not `const` does not have; `E[0]` maps a numeric enum's
+value back to its name); the last own property of that name of an object
+literal held `as const` (or in `Object.freeze`, one level deep), where no spread or computed name not read after it may
+set it; the elements of a `const` array. A `let`, a parameter, an enum member computed from anything else, an accessor
+and what an object inherits (`constructor`) are not read. A name is followed through its imports (aliased, default,
+`import * as`) and re-exports (`export { x as y } from`, `export { imported }`, `export * as`, `export *`, which a
+module's own export of the name hides; two giving it from different bindings, or one reaching a module not read, give
+none), as ECMAScript resolves exports: a relative specifier; else the `paths` (and `baseUrl`) of the nearest
+tsconfig.json above the importing file, with what it extends by a relative path, matched as TypeScript does; else a
+package the root package.json's `workspaces` or pnpm-workspace.yaml list, at the file Node.js loads: the `exports`
+subpath (or its `*` pattern with the longest text before `*`, then the longest key) and the target its conditions
+select, which must be one file for an `import` and a `require`, with or without `module-sync` (a subpath not listed or
+blocked with null names nothing), else the subpath as a file or `main`. Where that file is a build output not committed,
+the package's one TypeScript source whose path mirrors it below their first directories is read in its place
+(`dist/types/index.d.ts` and `dist/types.mjs` from `src/types/index.ts`); none or two, and the value is not read. Cycles of imports or constants, and a value built longer than
+2048 characters, are left unread; what is not read is named in a limit as above.
 Calls that set different values (two applications) leave the controllers' routes unread; a setting not spelled out
 agrees with no other. A prefix, version or versioning option
 not spelled out leaves the routes it applies to unread, with a limit; an `exclude` entry not spelled out (built with
@@ -272,7 +291,7 @@ not spelled out leaves the routes it applies to unread, with a limit; an `exclud
 prefix. `RouterModule.register` (from `@nestjs/core`) puts a module's path, after the version and before the
 controller's, before the routes of the controllers its `@Module({ controllers })` lists (docs.nestjs.com/recipes/router-module):
 an entry's `path` for its `module`, a child entry's joined to its parent's, a module class among `children` its
-parent's; `RouterModule` may be imported under any name, the routes written in place or held in a `const` of the file, and modules and controllers are found
+parent's; `RouterModule` may be imported under any name, the routes, their paths and their children written in place or held in a constant (as above), and modules and controllers are found
 through relative imports, else by a class of that name the files declare once. Nest keeps one path per module, so a
 module given two is left unread; a path not spelled out leaves the routes it reaches unread, and routes passed to
 `register` that are not spelled out leave every controller's, each with a limit. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of

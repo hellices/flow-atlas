@@ -311,8 +311,15 @@ describe("NestJS global prefix and versioning", () => {
     const app = { prefix: "", exclude: [], versioning: { uri: true as const, prefix: "v", defaults: ["1"] } };
     const read = (text: string) => routesFromTypeScript("a.ts", text, { component: "c", files: [], styles: ["nest"] }, { limits, nest: app }).map((s) => s.path);
     expect(read("const version = '2';\n@Controller({ path: 'orders', version })\nclass A {\n  @Get() a() {}\n}")).toEqual(["/v2/orders"]);
-    expect(read("@Controller({ path: 'o', ...opts })\nclass B {\n  @Get() a() {}\n  @Version('3') @Get('b') b() {}\n}")).toEqual(["/v3/o/b"]);
-    expect(limits).toEqual(["routes c: a.ts:1 gives a version the file does not spell out ({ path: 'o', ...opts }); its routes are not read"]);
+    expect(read("@Controller({ ...opts, path: 'o' })\nclass B {\n  @Get() a() {}\n  @Version('3') @Get('b') b() {}\n}")).toEqual(["/v3/o/b"]);
+    expect(limits).toEqual(["routes c: a.ts:1 gives a version the file does not spell out ({ ...opts, path: 'o' }); its routes are not read"]);
+    // A spread after the path may set it too.
+    limits.length = 0;
+    expect(read("@Controller({ path: 'o', version: '2', ...opts })\nclass C {\n  @Get() a() {}\n}")).toEqual([]);
+    expect(limits).toEqual([
+      "routes c: a.ts:1 gives a version the file does not spell out ({ path: 'o', version: '2', ...opts }); its routes are not read",
+      "routes c: a.ts:1 registers a path the file does not spell out ({ path: 'o', version: '2', ...opts }); its routes are not read",
+    ]);
   });
 
   it("gives a route a version the controller or method states, and none where it is not spelled out", () => {
