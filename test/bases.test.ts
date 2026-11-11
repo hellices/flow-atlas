@@ -402,3 +402,95 @@ describe("a helper around a client, and an interceptor's rewrite", () => {
     });
   });
 });
+
+describe("a client's requests as its library sends them", () => {
+  const ky1 = { "package.json": '{ "dependencies": { "ky": "^1.7.0" } }' };
+  const ky2 = { "package.json": '{ "dependencies": { "ky": "^2.0.0" } }' };
+
+  it("follows a URL held in a const to the client its uses request it through, and names one they disagree on", () => {
+    const axios = 'import axios from "axios";\nconst api = axios.create({ baseURL: "/api" });\n';
+    expect(read({ "web/a.js": `${axios}const url = "/users";\napi.get(url);\nconst rel = "orders";\napi.post(rel);` })).toEqual({ calls: ["GET /api/users @3", "POST /api/orders @5"], limits: [] });
+    expect(read({ "web/a.js": `${axios}const url = "/users";\napi.get(url);\nfetch(url);` })).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where a const holds the URL that requests through different clients, or through a client and elsewhere, take: web/a.js:3"],
+    });
+    // A const that only names the base is no request.
+    expect(read({ "web/a.js": 'import axios from "axios";\nconst BASE = "/api";\nconst api = axios.create({ baseURL: BASE });\napi.get("/users");' })).toEqual({ calls: ["GET /api/users @4"], limits: [] });
+  });
+
+  it("reads a file the target serves under the client's base", () => {
+    const surfaces = [{ id: "api|GET /api/status.json", component: "api", method: "GET", path: "/api/status.json", at: { file: "api/a.ts", line: 1 }, evidence: "static" as const }];
+    const config = normalizeConfig({ components: [{ name: "web", path: "web" }, { name: "api", path: "api" }], calls: [{ from: "web", to: "api", files: ["web/**"] }] });
+    const code = 'import axios from "axios";\nconst api = axios.create({ baseURL: "/api" });\napi.get("/status.json");\napi.get("status.json");\napi.get("/logo.png");';
+    const calls = extractCalls(memory({ "web/a.js": code }), config, [], undefined, [], { surfaces }).map((c) => `${c.method} ${c.path} @${c.at.line}`);
+    expect(calls.sort()).toEqual(["GET /api/status.json @3", "GET /api/status.json @4"]);
+  });
+
+  it("puts Ky's prefix, Ky 1's prefixUrl and an axios interceptor's text before an absolute URL too", () => {
+    expect(read({ ...ky2, "web/a.js": 'import ky from "ky";\nconst api = ky.create({ prefix: "/api" });\napi.get("https://other.example/x");' })).toEqual({ calls: ["GET /api/https://other.example/x based @3"], limits: [] });
+    expect(read({ ...ky1, "web/a.js": 'import ky from "ky";\nconst api = ky.create({ prefixUrl: "/api" });\napi.get("https://other.example/x");' })).toEqual({ calls: ["GET /api/https://other.example/x based @3"], limits: [] });
+    const interceptor = 'import axios from "axios";\nconst api = axios.create({ baseURL: "/billing" });\napi.interceptors.request.use((c) => { c.url = `/v2${c.url}`; return c; });\napi.get("https://other.example/x");';
+    expect(read({ "web/a.js": interceptor })).toEqual({ calls: ["GET /billing/v2https://other.example/x @4"], limits: [] });
+    // Ky's baseUrl alone leaves an absolute URL as it is.
+    expect(read({ ...ky2, "web/a.js": 'import ky from "ky";\nconst api = ky.create({ baseUrl: "/api/" });\napi.get("https://other.example/x");' }).calls).toEqual([]);
+  });
+
+  it("reads a request to the configured base's own path as one", () => {
+    expect(read({ "web/a.js": 'fetch("/api");\nfetch(`${origin}/api`);\nconst b = { baseUrl: "/api/" };' }, { base: "/api/", join: "resolve" })).toEqual({
+      calls: ["GET /api @1", "GET /api based @2"],
+      limits: ["calls web->api: the configured base /api/, written as a value (web/a.js:3), is the client's base, not a request"],
+    });
+    expect(read({ "web/A.kt": 'interface A {\n  @GET("/api")\n  suspend fun a(): Unit\n}', "web/a.py": 'api.get("/api")\nbase_url = "/api/"' }, { base: "/api/", join: "resolve", receivers: ["api"] })).toEqual({
+      calls: ["* /api @2", "GET /api @1"],
+      limits: ["calls web->api: the configured base /api/, written as a value (web/a.py:2), is the client's base, not a request"],
+    });
+  });
+
+  it("refuses a leading / under Ky 1's prefixUrl wherever it is set, and reads an empty one as none", () => {
+    const code = 'import ky from "ky";\nconst api = ky.create({});\napi.get("/users", { prefixUrl: "/v2" });\napi.get("users", { prefixUrl: "/v2" });\nconst b = ky.create({ prefixUrl: "/api" });\nb.get("/users", { prefixUrl: "" });';
+    expect(read({ ...ky1, "web/a.js": code })).toEqual({
+      calls: ["GET /users @6", "GET /v2/users @4"],
+      limits: ["calls web->api: requests through a client are not read where Ky 1 refuses an input that starts with / under prefixUrl: web/a.js:3"],
+    });
+    // Ky 2 refuses prefixUrl whatever its value.
+    expect(read({ ...ky2, "web/a.js": 'import ky from "ky";\nconst api = ky.create({ prefix: "/api" });\napi.get("users", { prefixUrl: "" });' })).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where api sets prefixUrl, which Ky 2 refuses: web/a.js:3"],
+    });
+  });
+
+  it("reads no Ky request whose own hooks may change it, and keeps prefix and baseUrl apart through extend", () => {
+    const hooks = 'import ky from "ky";\nconst api = ky.create({ prefix: "/api" });\napi.get("users", { hooks: { init: [(o) => { o.prefix = x; }] } });\napi.get("users", { hooks: { beforeRequest: [({ request }) => new Request(request)] } });\napi.get("users", { hooks: { afterResponse: [f] } });';
+    expect(read({ ...ky2, "web/a.js": hooks })).toEqual({
+      calls: ["GET /api/users @5"],
+      limits: [
+        "calls web->api: requests through a client are not read where a request through api's init hook may change its options: web/a.js:3",
+        "calls web->api: requests through a client are not read where a request through api's beforeRequest hook may return another request: web/a.js:4",
+      ],
+    });
+    const extended = 'import ky from "ky";\nconst a = ky.create({ baseUrl: "https://other.example/v1/", prefix: "/api" });\nconst b = a.extend({ prefix: "/v2" });\nb.get("users");\na.get("users", { prefix: "/v3" });\nconst c = ky.create({ baseUrl: "http://localhost:9000/" }).extend({ prefix: "/v2" });\nc.get("users");';
+    expect(read({ ...ky2, "web/a.js": extended })).toEqual({
+      calls: ["GET /v2/users @7"],
+      limits: ["calls web->api: URLs to other.example (web/a.js:4) are not read as requests to api; set origins.api if that is its host"],
+    });
+  });
+
+  it("reads no request through a middleware or an interceptor that hands on another request than its own", () => {
+    const middleware = 'import createClient from "openapi-fetch";\nconst client = createClient({ baseUrl: "/api/" });\nclient.use({ onRequest({ request }) { request = new Request(next, request); return request; } });\nclient.GET("/items");';
+    expect(read({ "web/a.ts": middleware })).toEqual({ calls: [], limits: ["calls web->api: requests through a client are not read where a middleware of client may return another request: web/a.ts:4"] });
+    const interceptor = (fn: string) => read({ "web/a.js": `import axios from "axios";\nconst api = axios.create({ baseURL: "/api" });\napi.interceptors.request.use(${fn});\napi.get("/users");` });
+    const unread = ["calls web->api: requests through a client are not read where a request interceptor of api may change its URLs: web/a.js:4"];
+    expect(interceptor("(c) => ({ method: 'get', url: next })")).toEqual({ calls: [], limits: unread });
+    expect(interceptor("(c) => { const n = { ...c }; return n; }")).toEqual({ calls: [], limits: unread });
+    expect(interceptor("(c) => { c = clone(c); return c; }")).toEqual({ calls: [], limits: unread });
+    expect(interceptor("(c) => c")).toEqual({ calls: ["GET /api/users @4"], limits: [] });
+  });
+
+  it("reads no path with a dot segment joined to the configured base, and removes one from a base read from code", () => {
+    expect(read({ "web/a.js": 'fetch("/../x");\nfetch("/a/./b");' }, { prefix: "/api" })).toEqual({
+      calls: [],
+      limits: ["calls web->api: paths with a . or .. segment joined to the configured base are not read, since clients differ on removing them: web/a.js:1, web/a.js:2"],
+    });
+    expect(read({ "web/a.js": 'import axios from "axios";\nconst api = axios.create({ baseURL: "/api/v1" });\napi.get("../health");' })).toEqual({ calls: ["GET /api/health @3"], limits: [] });
+  });
+});

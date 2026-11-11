@@ -14,9 +14,15 @@ const RTK = ["@reduxjs/toolkit/query", "@reduxjs/toolkit/query/react"];
 const DEPTH = 8;
 const MAX_LENGTH = 2048;
 
-/** A base the code states, as its text (a hole for each value not read), or why it is not read. */
-/** A base the code states, as its text (a hole for each value not read), or why it is not read and how it joins where that is known. */
-type Stated = { text: string; join: Join } | { unread: string; join?: Join };
+/**
+ * A base the code states, as its text (a hole for each value not read), or why it is not read and how it joins where
+ * that is known. `absolute`: the library joins it before an absolute URL too (Ky's prefix, openapi-fetch); `rejects`:
+ * the library refuses an input that starts with `/` (Ky 1's prefixUrl).
+ */
+type Stated = { text: string; join: Join; absolute?: true; rejects?: true } | { unread: string; join?: Join };
+
+/** Ky's base options as they are set, each kept apart, since an extension or a request may set one and keep the others. */
+type KyParts = { prefix?: Stated; baseUrl?: Stated; prefixUrl?: Stated };
 
 /** A client instance: its library, the base its options state (none stated: undefined), what changes its URLs. */
 interface Instance {
@@ -25,9 +31,9 @@ interface Instance {
   base: Stated | undefined;
   /** The text a request interceptor puts before each URL (axios), or why its interceptors are not read. */
   before?: string | { unread: string };
-  /** Ky's options as each major version reads them; ky 1 rejects an input with a leading `/` under `prefixUrl`. */
+  /** Ky's options as each major version reads them, and its base options as set. */
   ky?: { major: number | undefined; file: string };
-  rejectsSlash?: boolean;
+  kyParts?: KyParts;
 }
 
 /** A request made through a client instance, as the code states it. */
@@ -52,6 +58,8 @@ export interface ClientRequest {
   method?: string;
   /** The library refuses the URL: Ky 1 with `prefixUrl` and an input that starts with `/`. */
   rejected?: string;
+  /** The base is joined before an absolute URL too, which then is a path under it (Ky's prefix, openapi-fetch). */
+  absolute?: true;
 }
 
 /** A property an object literal sets last under a name: its value, `unread` where a spread or a key not read may set it. */
@@ -255,10 +263,15 @@ export class Clients {
   /** A request through an instance, with the base the call's own options set in place of the instance's. */
   private request(instance: Instance, options: ts.Expression | undefined): ClientRequest {
     const own = options === undefined ? undefined : this.callBase(instance, options);
-    const stated = own ?? instance.base;
+    const stated = own ?? (instance.library === "ky" ? this.kyBase(instance.kyParts ?? {}, instance.ky, instance.name) : instance.base);
     const out: ClientRequest = { library: instance.library, name: instance.name, relative: instance.library !== "openapi-fetch" };
     if (stated && "unread" in stated) out.unread = { why: stated.unread, ...(stated.join ? { join: stated.join } : {}) };
-    else if (stated) {
+    // An empty base is none: axios, RTK Query's joinUrls and Ky join only a base that is set, openapi-fetch writes nothing.
+    else if (stated && !stated.text.trim()) {
+      /* no base */
+    } else if (stated) {
+      if (stated.rejects) out.rejected = "Ky 1 refuses an input that starts with / under prefixUrl";
+      if (stated.absolute) out.absolute = true;
       const parsed = parseBase(stated.text, stated.join);
       if ("unread" in parsed) out.unread = { why: `${instance.name}'s base is ${parsed.unread}`, join: stated.join };
       else {
@@ -268,7 +281,6 @@ export class Clients {
     }
     if (typeof instance.before === "object") out.unread = { why: instance.before.unread };
     else if (instance.before) out.before = instance.before;
-    if (instance.rejectsSlash && !own) out.rejected = "Ky 1 refuses an input that starts with / under prefixUrl";
     return out;
   }
 
@@ -279,41 +291,70 @@ export class Clients {
       const join: Join | undefined = instance.library === "ky" ? undefined : "append";
       return { unread: `options held in a value (${short(options)}) may set ${instance.name}'s base`, ...(join ? { join } : {}) };
     }
-    // Ky merges a request's options over the instance's: a prefix it sets still resolves against the instance's baseUrl.
-    return this.optionsBase(instance.library, o, instance.ky, `a request through ${instance.name}`, instance.base);
+    const who = `a request through ${instance.name}`;
+    if (instance.library !== "ky") return this.optionsBase(instance.library, o, who);
+    // Ky merges a request's options over the instance's, its hooks too: a prefix it sets still resolves against the
+    // instance's baseUrl.
+    const hooks = this.kyHooks(o, who);
+    if (hooks) return { unread: hooks };
+    const parts = this.kyParts(o, who, instance.kyParts ?? {});
+    return parts === instance.kyParts ? undefined : this.kyBase(parts, instance.ky, instance.name);
   }
 
-  /** The base an options object states for a library, where it states one. */
-  private optionsBase(library: Library, o: ts.ObjectLiteralExpression, ky: Instance["ky"], who: string, parent?: Stated): Stated | undefined {
-    const read = (key: string, join: Join): Stated | undefined => {
-      const v = lastProperty(o, key);
-      if (v === undefined) return undefined;
-      if (v === "unread") return { unread: `${who} sets ${key} where a spread, a computed key or a prototype may`, join };
-      const text = baseText(v, this.constants);
-      return text === undefined ? { unread: `${who} sets ${key} to ${short(v)}`, join } : { text, join };
-    };
-    if (library === "axios") return read("baseURL", "append");
-    if (library === "openapi-fetch" || library === "rtk-query") return read("baseUrl", "append");
+  /** The text an option sets, or why it is not read; undefined where the options do not set it. */
+  private option(o: ts.ObjectLiteralExpression, key: string, join: Join, who: string): Stated | undefined {
+    const v = lastProperty(o, key);
+    if (v === undefined) return undefined;
+    if (v === "unread") return { unread: `${who} sets ${key} where a spread, a computed key or a prototype may`, join };
+    const text = baseText(v, this.constants);
+    return text === undefined ? { unread: `${who} sets ${key} to ${short(v)}`, join } : { text, join };
+  }
+
+  /** The base an options object of axios, openapi-fetch or fetchBaseQuery states, where it states one. */
+  private optionsBase(library: Library, o: ts.ObjectLiteralExpression, who: string): Stated | undefined {
+    if (library === "axios") return this.option(o, "baseURL", "append", who);
+    const base = this.option(o, "baseUrl", "append", who);
+    // openapi-fetch writes the path after its base whatever the path is (`${baseUrl}${path}`).
+    return library === "openapi-fetch" && base && "text" in base ? { ...base, absolute: true } : base;
+  }
+
+  /** Ky's base options an object sets, over those it is merged onto; `parts` itself where it sets none. */
+  private kyParts(o: ts.ObjectLiteralExpression, who: string, parts: KyParts): KyParts {
+    const set: KyParts = {};
+    for (const [key, join] of [["prefix", "append"], ["baseUrl", "resolve"], ["prefixUrl", "append"]] as const) {
+      const v = this.option(o, key, join, who);
+      if (v) set[key] = v;
+    }
+    return Object.keys(set).length ? { ...parts, ...set } : parts;
+  }
+
+  /**
+   * The base Ky's options give, at its major version: from Ky 2, `prefix` is appended and `baseUrl` resolves the input
+   * (a prefix from the root keeps only `baseUrl`'s origin, one relative to it is not read), and `prefixUrl` is refused;
+   * before, `prefixUrl` alone is read, appended, refusing an input that starts with `/`. An empty option is none, and
+   * sets none over its parent's (an empty text: no base); Ky 2 refuses `prefixUrl` whatever its value.
+   */
+  private kyBase(parts: KyParts, ky: Instance["ky"], who: string): Stated | undefined {
+    const set = (p: Stated | undefined): Stated | undefined => (p && "text" in p && !p.text.trim() ? undefined : p);
+    const prefix = set(parts.prefix);
+    const base = set(parts.baseUrl);
+    const prefixUrl = set(parts.prefixUrl);
     const major = ky?.major;
-    const stated = ["prefix", "baseUrl", "prefixUrl"].filter((k) => lastProperty(o, k) !== undefined);
-    if (!stated.length) return undefined;
+    const refused = parts.prefixUrl !== undefined && (major === undefined || major >= 2);
+    if (!prefix && !base && !prefixUrl && !refused) return parts.prefix || parts.baseUrl || parts.prefixUrl ? { text: "", join: "append" } : undefined;
     if (major === undefined) return { unread: `no package.json above ${ky?.file} gives one major version of ky, whose prefixUrl, prefix and baseUrl differ between versions` };
-    if (major < 2) return stated.includes("prefixUrl") ? read("prefixUrl", "append") : undefined;
-    if (stated.includes("prefixUrl")) return { unread: `${who} sets prefixUrl, which Ky ${major} refuses` };
-    // What the options do not set, the parent's options give (an option of the parent not read, too).
-    const inherited = (join: Join): Stated | undefined => (parent && (parent.join === join || ("unread" in parent && !parent.join)) ? parent : undefined);
-    const prefix = stated.includes("prefix") ? read("prefix", "append") : inherited("append");
-    const base = stated.includes("baseUrl") ? read("baseUrl", "resolve") : inherited("resolve");
+    if (major < 2) return prefixUrl && "text" in prefixUrl ? { ...prefixUrl, absolute: true, rejects: true } : (prefixUrl ?? (parts.prefixUrl ? { text: "", join: "append" } : undefined));
+    if (refused) return { unread: `${who} sets prefixUrl, which Ky ${major} refuses` };
     if (prefix && "unread" in prefix) return prefix;
-    if (!prefix || !base) return prefix ?? base;
-    // A prefix from the root or with an origin leaves only the origin of `baseUrl`; one relative to it is not read.
+    if (!prefix) return base;
+    if (!base) return { ...prefix, absolute: true };
     const rooted = /^(?:\/(?!\/)|\{\}|https?:)/i.test(prefix.text.trim());
     if (!rooted) return { unread: `${who} sets a prefix that baseUrl resolves` };
-    if (!prefix.text.trim().startsWith("/")) return prefix;
+    if (!prefix.text.trim().startsWith("/")) return { ...prefix, absolute: true };
     // A baseUrl not read gives an origin the code does not state, as a URL's leading value does.
-    if ("unread" in base) return prefix;
+    if ("unread" in base) return { ...prefix, absolute: true };
     const origin = /^https?:\/\/[^/?#]+/i.exec(base.text.trim())?.[0];
-    return origin ? { text: origin + prefix.text.trim(), join: "append" } : prefix;
+    return { text: (origin ?? "") + prefix.text.trim(), join: "append", absolute: true };
   }
 
   /** The instance an expression is: a call that creates one, or a `const` holding one, through imports. */
@@ -352,7 +393,7 @@ export class Clients {
     const holder = valuePlace(call).parent;
     const name = ts.isVariableDeclaration(holder) && ts.isIdentifier(holder.name) ? holder.name.text : short(call);
     if (ts.isIdentifier(callee)) {
-      if (importedFrom(callee, ["openapi-fetch"]) === "default") return { library: "openapi-fetch", name, base: object ? this.optionsBase("openapi-fetch", object, undefined, name) : opts ? { unread: `${name}'s options are held in a value`, join: "append" } : undefined };
+      if (importedFrom(callee, ["openapi-fetch"]) === "default") return { library: "openapi-fetch", name, base: object ? this.optionsBase("openapi-fetch", object, name) : opts ? { unread: `${name}'s options are held in a value`, join: "append" } : undefined };
       if (RTK.some((m) => importedFrom(callee, [m]) === "createApi")) return { library: "rtk-query", name, base: object ? this.rtkBase(object, name) : undefined };
       return undefined;
     }
@@ -361,7 +402,7 @@ export class Clients {
     const root = unwrap(m.receiver);
     const file = call.getSourceFile().fileName;
     if (ts.isIdentifier(root) && importedFrom(root, ["axios"]) === "default" && m.name === "create") {
-      return { library: "axios", name, base: object ? this.optionsBase("axios", object, undefined, name) : opts ? { unread: `${name}'s options are held in a value`, join: "append" } : undefined };
+      return { library: "axios", name, base: object ? this.optionsBase("axios", object, name) : opts ? { unread: `${name}'s options are held in a value`, join: "append" } : undefined };
     }
     if (ts.isIdentifier(root) && importedFrom(root, ["ky"]) === "default" && (m.name === "create" || m.name === "extend")) {
       const range = this.ranges(file, "ky");
@@ -377,60 +418,62 @@ export class Clients {
 
   /** A Ky instance from options (an object, or a function of the parent's), merged over its parent's. */
   private kyInstance(name: string, ky: Instance["ky"], opts: ts.Expression | undefined, parent: Instance | undefined): Instance {
-    const out: Instance = { library: "ky", name, base: parent?.base, ky, ...(parent?.rejectsSlash ? { rejectsSlash: true } : {}), ...(parent?.before ? { before: parent.before } : {}) };
+    const parts = parent?.kyParts ?? {};
+    const out: Instance = { library: "ky", name, base: undefined, ky, kyParts: parts, ...(parent?.before ? { before: parent.before } : {}) };
     if (!opts) return out;
     let object: ts.ObjectLiteralExpression | undefined;
     let param: ts.Identifier | undefined;
+    const unread = (why: string): Instance => ({ ...out, before: { unread: why } });
     if (ts.isObjectLiteralExpression(opts)) object = opts;
     else if (ts.isArrowFunction(opts) || ts.isFunctionExpression(opts)) {
       const first = opts.parameters[0];
-      if (first && !ts.isIdentifier(first.name)) return { ...out, base: { unread: `${name} takes its options from a function whose parameter is destructured` } };
+      if (first && !ts.isIdentifier(first.name)) return unread(`${name} takes its options from a function whose parameter is destructured`);
       param = first?.name as ts.Identifier | undefined;
       const body = ts.isBlock(opts.body) ? undefined : unwrap(opts.body);
       if (body && ts.isObjectLiteralExpression(body)) object = body;
-      else return { ...out, base: { unread: `${name} takes its options from a function atlas does not read` } };
-    } else return { ...out, base: { unread: `${name}'s options are held in a value` } };
+      else return unread(`${name} takes its options from a function atlas does not read`);
+    } else return unread(`${name}'s options are held in a value`);
     // A hook that may change the URL stays with every instance extended from this one, whatever base they set.
     const hooks = this.kyHooks(object, name);
     if (hooks) out.before = { unread: hooks };
-    const inherited = parent?.base;
-    // `${options.prefix}/admin`: the parent's option, where the function names it on its parameter (Ky 2's options).
-    const withParent = param && ky?.major !== undefined && ky.major >= 2 ? this.parentText(object, param, inherited) : undefined;
-    if (withParent) return { ...out, base: withParent };
-    const stated = this.optionsBase("ky", object, ky, name, inherited);
-    if (stated && "text" in stated && ky?.major !== undefined && ky.major < 2) out.rejectsSlash = true;
-    return { ...out, base: stated ?? inherited };
+    const merged = this.kyParts(object, name, parts);
+    // `${options.prefix}/admin`: the parent's option, where the function names it on its parameter.
+    out.kyParts = param ? { ...merged, ...this.parentParts(object, param, parts) } : merged;
+    return out;
   }
 
   /**
-   * Where a function of the parent's options sets an option from the parent's (`({ prefix: `${options.prefix}/admin` })`),
-   * that option's text with the parent's put in; undefined where it names no parent option.
+   * The options a function of the parent's options builds from the parent's (`({ prefix: `${options.prefix}/admin` })`),
+   * each with the parent's text put in, or not read where it builds on one that is not.
    */
-  private parentText(object: ts.ObjectLiteralExpression, param: ts.Identifier, inherited: Stated | undefined): Stated | undefined {
-    for (const key of ["prefix", "baseUrl"]) {
+  private parentParts(object: ts.ObjectLiteralExpression, param: ts.Identifier, parts: KyParts): KyParts {
+    const out: KyParts = {};
+    for (const [key, join] of [["prefix", "append"], ["baseUrl", "resolve"], ["prefixUrl", "append"]] as const) {
       const v = lastProperty(object, key);
       if (v === undefined || v === "unread") continue;
       const u = unwrap(v);
-      const uses = references(param).filter((r) => r.pos >= u.pos && r.end <= u.end);
-      if (!uses.length) continue;
-      const join: Join = key === "prefix" ? "append" : "resolve";
-      if (!inherited || "unread" in inherited || inherited.join !== join) return { unread: `the parent's ${key} it builds on is not read`, join };
+      if (!references(param).some((r) => r.pos >= u.pos && r.end <= u.end)) continue;
+      const inherited = parts[key];
+      const unread: Stated = { unread: `the parent's ${key} it builds on is not read`, join };
+      if (!inherited || !("text" in inherited) || !ts.isTemplateExpression(u)) {
+        out[key] = inherited && "text" in inherited ? { unread: `the parent's ${key} is built on in a way atlas does not read`, join } : unread;
+        continue;
+      }
       const part = (e: ts.Expression): string | undefined => {
         const x = unwrap(e);
         const m = member(x);
         if (m && ts.isIdentifier(unwrap(m.receiver)) && declarationOf(unwrap(m.receiver) as ts.Identifier) === param.parent) return m.name === key ? inherited.text : undefined;
         return this.constants.text(x);
       };
-      if (!ts.isTemplateExpression(u)) return { unread: `the parent's ${key} is built on in a way atlas does not read`, join };
-      let s = u.head.text;
+      let text: string | undefined = u.head.text;
       for (const span of u.templateSpans) {
         const t = part(span.expression);
-        if (t === undefined) return { unread: `the parent's ${key} is built on in a way atlas does not read`, join };
-        s += t + span.literal.text;
+        text = t === undefined ? undefined : text + t + span.literal.text;
+        if (text === undefined) break;
       }
-      return s.length > MAX_LENGTH ? { unread: "the base is too long", join } : { text: s, join };
+      out[key] = text === undefined ? { unread: `the parent's ${key} is built on in a way atlas does not read`, join } : text.length > MAX_LENGTH ? { unread: "the base is too long", join } : { text, join };
     }
-    return undefined;
+    return out;
   }
 
   /** Why Ky's hooks may change a request's URL: an `init` hook, or a `beforeRequest`/`beforeRetry` hook that may return a request. */
@@ -461,7 +504,7 @@ export class Clients {
     const opts = call.arguments[0] && unwrap(call.arguments[0]);
     if (!opts) return undefined;
     if (!ts.isObjectLiteralExpression(opts)) return { unread: `${name}'s fetchBaseQuery options are held in a value`, join: "append" };
-    return this.optionsBase("rtk-query", opts, undefined, name);
+    return this.optionsBase("rtk-query", opts, name);
   }
 
   /**
@@ -623,6 +666,8 @@ function returnsOwnRequest(fn: ts.SignatureDeclaration): boolean {
   if (!body || !ts.isBlock(body)) return false;
   const first = fn.parameters[0];
   const request = first && ts.isObjectBindingPattern(first.name) ? first.name.elements.find((e) => !e.dotDotDotToken && (e.propertyName ? nameOf(e.propertyName) : ts.isIdentifier(e.name) ? e.name.text : undefined) === "request") : undefined;
+  // A request written over (`request = new Request(...)`) is another request, though returned by the same name.
+  if (request && ts.isIdentifier(request.name) && references(request.name).some((r) => written(r))) return false;
   let ok = true;
   const visit = (n: ts.Node): void => {
     if (!ok || (n !== fn && ts.isFunctionLike(n))) return;
@@ -636,6 +681,17 @@ function returnsOwnRequest(fn: ts.SignatureDeclaration): boolean {
   return ok;
 }
 
+/** Whether a name is written where it is used: assigned, incremented, or a destructuring's or a loop's target. */
+function written(id: ts.Identifier): boolean {
+  let place: ts.Node = id;
+  while (ts.isParenthesizedExpression(place.parent)) place = place.parent;
+  const p = place.parent;
+  if (ts.isBinaryExpression(p) && p.left === place && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return true;
+  if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) return true;
+  // A destructuring assignment or a loop that writes it (`({ request } = x)`, `for (request of xs)`).
+  return ts.isShorthandPropertyAssignment(p) || ts.isArrayLiteralExpression(p) || ts.isForOfStatement(p) || ts.isForInStatement(p);
+}
+
 /**
  * The text an axios request interceptor puts before the URL: `config.url = `/v2${config.url}``, a statement of its own
  * in the function's body; "" where it leaves the URL and the base alone; undefined where it may change them otherwise:
@@ -646,6 +702,27 @@ function urlRewrite(fn: ts.SignatureDeclaration): string | undefined {
   const body = "body" in fn ? fn.body : undefined;
   if (!param || !body) return undefined;
   if (!ts.isIdentifier(param.name)) return undefined;
+  // axios sends the config the interceptor returns: it must be the one it is given (`return config`), not another.
+  const returnsOwn = (e: ts.Expression | undefined): boolean => {
+    const r = e && unwrap(e);
+    return !!r && ts.isIdentifier(r) && declarationOf(r) === param && !references(param.name as ts.Identifier).some((x) => written(x));
+  };
+  if (!ts.isBlock(body)) {
+    if (!returnsOwn(body)) return undefined;
+  } else {
+    let returns = 0;
+    let other = false;
+    const visit = (n: ts.Node): void => {
+      if (n !== fn && ts.isFunctionLike(n)) return;
+      if (ts.isReturnStatement(n)) {
+        returns++;
+        if (!returnsOwn(n.expression)) other = true;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(body);
+    if (!returns || other) return undefined;
+  }
   let before = "";
   for (const ref of references(param.name)) {
     const place = valuePlace(ref);

@@ -542,7 +542,10 @@ or `prefix` where it does not: a base held in a value (`process.env.API_URL`, an
   `combineURLs`, Ky's `prefix`, RTK Query's `joinUrls`, httpx's `base_url`, resty's `SetBaseURL` and Refit do. `prefix`
   is this join, the form earlier configurations wrote; a path with its leading `/` gets it as before.
 
-Dot segments are removed after either join, as parsing the URL that results does. A URL with a host, or one that starts
+Clients differ on a `.` or `..` segment after the join: the URL Standard, .NET's `Uri`, OkHttp, `urljoin` and httpx
+remove it, resty's `url.Parse` and Ktor's `DefaultRequest` send it as written; so a path with one, joined to the
+configured base, is left unread with a limit, and one joined to a base read from code (whose libraries send it through
+the URL Standard) has it removed. A URL with a host, or one that starts
 with a value (`${base}/orders`), keeps its own path. A path without a leading `/` is read only where the place it is
 written in makes it relative to a client's base, and only where that base is known; where it is not, a limit names
 the place and says to set `base` and `join`.
@@ -555,8 +558,10 @@ the client, a library's factory imported under any name, and reads the options t
   `api.request({ url })`). A request's own `baseURL` takes the instance's place; options held in a value, or with a
   spread, may set one, so they leave the base unread. A request interceptor (`api.interceptors.request.use(fn)`) that
   sets the config's `url` to text before the URL it holds (`` config.url = `/v2${config.url}` ``, a statement of its own
-  in the function's body) puts that text before each URL of the instance; one that writes `url` or `baseURL`
-  otherwise, hands the config on, returns another object, takes options, or is not a function of the file, and a
+  in the function's body) puts that text before each URL of the instance, an absolute one too (`combineURLs` then
+  appends `/v2https://...` to the base); one that writes `url` or `baseURL`
+  otherwise, hands the config on, returns anything but the config it is given (or writes that parameter), takes
+  options, or is not a function of the file, and a
   change of `api.defaults` whole or of its `baseURL`, leave the instance's requests unread with a limit, as do uses of
   the instance in files atlas cannot all list. Such a rewrite of a config's own URL, there or as the `url` of an object
   that spreads the config, is no request.
@@ -564,13 +569,18 @@ the client, a library's factory imported under any name, and reads the options t
   `` `${options.prefix}/admin` `` is read with the parent's prefix), at the major version the nearest package.json
   above the file that creates it gives: from Ky 2, `prefix` is appended (its readme: "the leading slash of the input
   will essentially be ignored") and `baseUrl` resolves the input as a URL; a relative prefix with a `baseUrl` is not
-  read; `prefixUrl`, which Ky 2 refuses, leaves the requests unread. Before Ky 2, `prefixUrl` is appended, and an input
-  with a leading `/`, which Ky refuses then, is no request. A `beforeRequest` or `beforeRetry` hook that may return a
-  request (anything but a block with no `return` of a value) and an `init` hook may change any URL: the instance's
-  requests are left unread with a limit.
+  read; `prefixUrl`, which Ky 2 refuses whatever its value, leaves the requests unread. Before Ky 2, `prefixUrl` is
+  appended, and an input with a leading `/`, which Ky refuses then under a `prefixUrl` set on the instance or the
+  request, is no request. `prefix` and `prefixUrl` go before an absolute input too (`resolveInput`, Ky 1's
+  constructor), which is then a path on the client's own host; an empty one is none, over the parent's too. `prefix`
+  and `baseUrl` are kept apart through `extend` and a request's options, and combined only for the request. A
+  `beforeRequest` or `beforeRetry` hook that may return a request (anything but a block with no `return` of a value)
+  and an `init` hook, on the instance or in a request's own options, may change any URL: those requests are left
+  unread with a limit.
 - openapi-fetch, `createClient({ baseUrl })`, and a request's own `baseUrl` (`client.GET("/health", { baseUrl: "/" })`);
-  the path, a document's, is written after the base. A middleware whose `onRequest` may return another request than
-  the one it is given leaves the client's requests unread.
+  the path, a document's, is written after the base, an absolute one too. A middleware whose `onRequest` may return
+  another request than the one it is given, or writes over its `request` parameter, leaves the client's requests
+  unread.
 - RTK Query, `createApi({ baseQuery: fetchBaseQuery({ baseUrl }) })` and `api.injectEndpoints(...)` on it: each
   endpoint's `query` returns its URL, alone or as an object's `url`, appended with `joinUrls`, with the object's
   `method`, GET where it states none (fetchBaseQuery's). Another `baseQuery` leaves the endpoints unread.
@@ -580,7 +590,11 @@ be absolute, and bypass the base, or a path the base takes; it is not read, and 
 read it (a value, a spread or a computed key after it, options held in a value) is taken from the call source's
 `base` or `prefix`; without one, a path from the root is still read where the base resolves it (Ky's `baseUrl`), and
 none other, and a limit says where. A client none of whose options state a base reads its paths with the call source's
-base, as before.
+base, as before. A URL held in a `const` is read through the client its uses request it with (`const url = "/users";
+api.get(url)`), followed across the files that import it for a path from the root; where its uses request it through
+different clients, or through a client and otherwise, a limit names it. A file's path (`/status.json`) is read where
+a route of the target serves it under the client's base. A request to the configured base's own path (`fetch("/api")`)
+is a request; the base is no request only where it is a value of its own.
 
 In code read as text, a path without a leading `/` is read relative to the call source's `base` (or `prefix`) where it
 is a whole string argument (not `"users/" + id`) of: Retrofit's `@GET("users/{id}")` and the other verb annotations,
