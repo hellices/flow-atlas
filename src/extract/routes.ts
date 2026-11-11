@@ -20,6 +20,7 @@ import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { djangoRoutes } from "./django.js";
 import { flaskRoutes } from "./flask.js";
+import { goRoutes } from "./goroutes.js";
 import { springBootRoutes } from "./springboot.js";
 import { metadataSuffix, nextBuiltins, nextConfig, nextPageMethods, nextSetting, type NextConfig, type NextPage, type PageMethods } from "./next.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
@@ -1976,6 +1977,7 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
   if (a.picks && a.picks === b.picks) out.picks = a.picks;
   if (out.picks && a.rank && JSON.stringify(a.rank) === JSON.stringify(b.rank)) out.rank = a.rank;
   if (out.picks && a.parts && JSON.stringify(a.parts) === JSON.stringify(b.parts)) out.parts = a.parts;
+  if (out.picks && a.mounted && JSON.stringify(a.mounted) === JSON.stringify(b.mounted)) out.mounted = a.mounted;
   // Two registrations at two places are both the surface, which then has no one place.
   const order = JSON.stringify(a.order) === JSON.stringify(b.order) ? a.order : undefined;
   if (out.picks && order) out.order = order;
@@ -2095,6 +2097,26 @@ export function extractRoutes(
           at: { file: r.file, line: r.line },
           evidence: "text",
           ...(r.implicit ? { implicit: true } : {}),
+          ...(r.patterns ? { patterns: r.patterns } : {}),
+          dispatch: r.dispatch,
+        });
+      }
+      for (const s of read.spans) spans?.add(s.file, s.start, s.end);
+      limits.push(...read.limits);
+    }
+    if ((spec.styles ?? []).includes("go")) {
+      const read = goRoutes(new Map(files.filter((f) => f.endsWith(".go")).map((f) => [f, source.read(f) ?? ""])), spec.component, (p) => source.read(p), spec.mounts);
+      for (const r of read.routes) {
+        const path = spec.prefix ? joinRoute(spec.prefix, r.path) : r.path;
+        out.push({
+          id: surfaceId({ component: spec.component, method: r.method, path }),
+          component: spec.component,
+          method: r.method,
+          path,
+          at: { file: r.file, line: r.line },
+          evidence: "text",
+          ...(r.implicit ? { implicit: true } : {}),
+          ...(r.convention ? { convention: r.convention } : {}),
           ...(r.patterns ? { patterns: r.patterns } : {}),
           dispatch: r.dispatch,
         });

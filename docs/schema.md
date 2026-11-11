@@ -210,12 +210,17 @@ are written `{id}` with their regex in `patterns` (`<int:id>` takes `[0-9]+`), `
 and a converter the application registers as `{id:name}`, whose values are not read. Django's are written the same
 way: a `path()` converter or a `re_path()` group is `{name}` with its regex in `patterns` (an unnamed group `{_0}`),
 `.+` at the end (`<path:rest>`) `{rest}/**`, `.*` at the end `**` with `dispatch.trailing: slash` (`media/` is taken,
-`media` is not), and a converter the files register whose `to_python` may refuse a value `{name:converter}`. Two forms
+`media` is not), and a converter the files register whose `to_python` may refuse a value `{name:converter}`. Go's are
+written as their router holds them: Gin's `:id` and chi's `{id}` as `{id}` (chi's `{id:[0-9]+}` with its regexp,
+anchored as chi anchors it, in `patterns`), ServeMux's `{id}` as `{id}` and `{rest...}` as `{*rest}`, and Gin's `*rest`
+as `{*rest}`. Two forms
 are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path, which
 matches the rest of a request's path, and a wildcard within a segment (`*.txt`, and Spring's `t?st.html`, `?` being one
 character), which matches any text in that segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written
 `{*rest}`, Hono's final `/*`, written `**`, and path-to-regexp 8's `/x{/*rest}`, written `/x/{*rest}`) match the path
-without them too. Fastify's and Express 4's final `/*` (written `**`) and path-to-regexp 8's `/x/{*rest}` (Nest's
+without them too. Gin's `*rest`, chi's final `/*` and ServeMux's `{rest...}` and subtree (a final `/`, written `**`)
+take `/x/` but not `/x` (`trailing: slash`), except a handler chi mounts at `/x` and a mounted router's `/*`, which chi
+also serves at `/x`. Fastify's and Express 4's final `/*` (written `**`) and path-to-regexp 8's `/x/{*rest}` (Nest's
 `/x/*`) take `/x/`, with nothing after its `/`, but not `/x`: the route's `dispatch.trailing` is `slash`, and a request
 for `/x` is not matched to it. `{rest}/**` (Next.js's `[...rest]`, path-to-regexp 8's `*rest`) takes one segment or
 more; Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`), is `.*` after the `/` before it,
@@ -230,11 +235,15 @@ route registered that a request fits, in the `order` of the route's steps from t
 holding it, each a sequence of registrations and a place in it; `find-my-way`, Fastify's precedence; `specificity`,
 Nest's sort by the `rank` of each segment, then `order`; `werkzeug`, the precedence of Werkzeug's matcher (Flask,
 Quart) by the route's `parts`, each segment's static text or its regex and weight; `precedence`, ASP.NET Core's endpoint
-routing by the `rank` of its `Order` and each segment's precedence digit, then a route that names the method), `passes`
+routing by the `rank` of its `Order` and each segment's precedence digit, then a route that names the method;
+`httprouter`, Gin's tree, static text before a parameter before a catch-all; `chi`, chi's tree, static text before a
+regexp before a parameter before a catch-all, a router mounted on the way (`mounted`, the segments before each mount) a
+catch-all at its mount; `servemux`, Go's ServeMux, the most specific pattern), `passes`
 (its handler may pass the request on to a later route), `byPath` (the router picks the route by the path alone and the
 route answers another method with 405, as Django's resolver does, so a later route of that method is not reached),
 `slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed` and `added` for Next.js's `trailingSlash`,
-`appended` for Werkzeug's `strict_slashes`, `append-slash` for Django's CommonMiddleware with `APPEND_SLASH`),
+`appended` for Werkzeug's `strict_slashes`, `append-slash` for Django's CommonMiddleware with `APPEND_SLASH`, `tsr` for
+Gin's `RedirectTrailingSlash`, `subtree` for ServeMux's redirect to a subtree's root),
 `constrained` (Fastify takes a request to it only with headers that meet its constraints), `caseless` (its literal text
 matches whatever the case, as ASP.NET Core matches it) and `unchecked` (parameters whose constraint atlas does not read,
 so the route may refuse a value its path takes). Where an OpenAPI document writes the

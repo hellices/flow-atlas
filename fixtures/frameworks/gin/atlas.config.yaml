@@ -1,4 +1,4 @@
 components:
   - { name: app, path: . }
 routes:
-  - { component: app, files: ["app/**/*.go"] }
+  - { component: app, files: ["app/**/*.go"], styles: [go] }

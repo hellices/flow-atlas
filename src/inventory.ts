@@ -4,6 +4,7 @@ import { parse } from "yaml";
 import { DOCUMENT_FILE, documentStart, servedDocuments, spectacularDocuments } from "./extract/apidocs.js";
 import { withoutComments } from "./extract/calls.js";
 import { maskCSharp } from "./extract/csharp.js";
+import { tokenize } from "./extract/golang.js";
 import { BUILD_FILE, springdocDocuments } from "./extract/springdoc.js";
 import type { ApiDocument } from "./model.js";
 import { lineOf, matcher, select, type Source } from "./source.js";
@@ -56,6 +57,9 @@ function importsPackage(code: string, packages: string[]): boolean {
 const boundTo = (code: string, classes: string): Set<string> =>
   new Set([...code.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)[ \\t]*(?::[^=\\n]+)?=[ \\t]*(?:[A-Za-z_][\\w.]*\\.)?(?:${classes})[ \\t]*\\(`, "gm"))].map((m) => m[1]!));
 
+/** The import paths of the Go routers the `go` style reads. */
+const GO_ROUTERS = /"(?:github\.com\/gin-gonic\/gin|github\.com\/go-chi\/chi\/v5|net\/http)"/;
+
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
 const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
@@ -65,6 +69,8 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   { style: "flask", re: /@(?<decorated>[A-Za-z_][\w.]*)\.(?:route|get|post|put|patch|delete)\(\s*["'](\/[^"']*)|(?<![\w.])(?<called>[A-Za-z_][\w.]*)\.add_url_rule\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
   // Django's `path()` and `re_path()` patterns and DRF's `router.register()`, in a file that imports Django or DRF.
   { style: "django", re: /(?<![\w.])(?:re_)?path\(\s*[rRuU]?["']|(?<![\w.])[A-Za-z_]\w*\.register\(\s*[rRuU]?["']/g, files: /\.py$/ },
+  // Gin's, chi's and ServeMux's registrations, in a Go file that imports one of them.
+  { style: "go", re: /\.(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any|Get|Post|Put|Patch|Delete|Head|Options|Handle|HandleFunc|Route|Mount|Group|Static|StaticFile|StaticFS)\(\s*["`](?:[A-Z]+[ \t]+)?\//g, files: /\.go$/ },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
@@ -328,7 +334,7 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     if (/\.(c|m)?tsx?$/.test(file) && /SwaggerModule|swagger|openapi|api-docs/i.test(text)) apiDocuments.push(...servedDocuments(file, text, component));
     if (file.endsWith(".py") && text.includes("Spectacular")) apiDocuments.push(...spectacularDocuments(file, text, component));
     // An annotation a Java or Kotlin comment mentions (`each @RequestMapping method` in a Javadoc) maps nothing.
-    const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : file.endsWith(".cs") ? maskCSharp(text) : text;
+    const code = /\.(java|kt|kts|go)$/.test(file) ? withoutComments(file, text) : file.endsWith(".cs") ? maskCSharp(text) : text;
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file) || (style === "next" && !mayUseNext(file))) continue;
       // A Python file that imports Flask or Quart registers their routes; their shortcuts look like FastAPI's.
@@ -338,10 +344,13 @@ export function inventory(source: Source, exclude: string[]): Inventory {
       const flask = style === "flask" || style === "fastapi" ? importsPackage(code, ["flask", "quart"]) : false;
       if (style === "flask" && !flask) continue;
       if (style === "django" && !importsPackage(code, ["django", "rest_framework"])) continue;
+      if (style === "go" && !GO_ROUTERS.test(code)) continue;
       if (style === "fastapi" && flask && !importsPackage(code, ["fastapi"])) continue;
       const other = style === "flask" ? boundTo(code, "FastAPI|APIRouter") : style === "fastapi" && flask ? boundTo(code, "Flask|Quart|Blueprint") : undefined;
       const receiverOf = (m: RegExpMatchArray) => m.groups?.decorated ?? m.groups?.called ?? m.groups?.fastapi ?? "";
-      const hits = [...code.matchAll(re)].filter((m) => (!accept || accept(m)) && !other?.has(receiverOf(m)));
+      // A Go registration is code: its `.` is a token, not text in a string.
+      const dots = style === "go" ? new Set(tokenize(text).flatMap((t) => (t.kind === "op" && t.text === "." ? [t.start] : []))) : undefined;
+      const hits = [...code.matchAll(re)].filter((m) => (!accept || accept(m)) && !other?.has(receiverOf(m)) && (!dots || dots.has(m.index ?? -1)));
       if (!hits.length) continue;
       const first = hits[0]!;
       const label = style === "registration" ? `registration ${first[1]}` : style;

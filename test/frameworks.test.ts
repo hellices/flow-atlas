@@ -212,7 +212,13 @@ function dispatchDifferences(graph: Graph, config: Config, dispatch: Dispatch, r
     .filter((r, i) => {
       const targets = targetsOf.get(i) ?? [];
       if (r.route === null) return targets.length > 0;
-      return targets.length !== 1 || !routeKeys([targets[0]!], canonicalPaths).includes(r.route);
+      if (targets.length !== 1) return true;
+      const t = targets[0]!;
+      if (routeKeys([t], canonicalPaths).includes(r.route)) return false;
+      // A catch-all that took nothing after its `/` is named by the path before that `/` (Gin's `/user/:name/*action`
+      // for `/user/value1/`), which `routeKeys` folds with the catch-all into one route of one segment or more.
+      const paths = canonicalPaths(t.path);
+      return !(r.path.endsWith("/") && paths.length === 2 && r.route === `${t.method.toUpperCase()} ${paths[0]}`);
     })
     .map((r) => `${r.method} ${r.path}`)
     .sort();

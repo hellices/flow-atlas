@@ -312,9 +312,112 @@ export function werkzeugCompare(a: Dispatch["parts"], b: Dispatch["parts"]): num
 }
 
 /**
+ * The kind of each segment of a route's path as Gin's tree (httprouter's) tries them, lower first: static text 0, a
+ * parameter 1, a catch-all 2 (tree.go `getValue`: the static children, then the wildcard child).
+ */
+function httprouterKinds(s: Surface): Array<{ kind: number; key: string }> {
+  return segments(s.path).map((seg) => (isCatchAll(seg) ? { kind: 2, key: "" } : isParam(seg) ? { kind: 1, key: "" } : { kind: 0, key: seg }));
+}
+
+/**
+ * The kind of each segment of a ServeMux pattern as its routing tree tries them, lower first (routing_tree.go
+ * `matchPath`): a literal 0, a wildcard 1, a remainder (`{x...}`, a last `/`) 2; a `{$}`, which matches the `/` at the
+ * path's end, is a literal there.
+ */
+function servemuxKinds(s: Surface): Array<{ kind: number; key: string }> {
+  const out = httprouterKinds(s);
+  if (s.dispatch?.trailing === "slash" && !isCatchAll(segments(s.path).pop())) out.push({ kind: 0, key: "/" });
+  return out;
+}
+
+/** Below zero where the tree tries route `a` before `b` for a request both take, segment by segment; zero where not settled. */
+function kindsCompare(x: Array<{ kind: number; key: string }>, y: Array<{ kind: number; key: string }>): number {
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i]!.kind !== y[i]!.kind) return x[i]!.kind - y[i]!.kind;
+    if (x[i]!.key !== y[i]!.key) return 0;
+  }
+  return 0;
+}
+
+/**
+ * ServeMux's precedence (routing_tree.go `matchMethodAndPath`, `matchPath`): a pattern that names the request's method
+ * before GET's for a HEAD request, before one that names none, and segment by segment a literal before a wildcard
+ * before a remainder. Two patterns that order otherwise by method than by path conflict, which ServeMux refuses as they
+ * are registered, so they are in no order.
+ */
+function servemuxCompare(d: Surface, c: Surface): number {
+  const rank = (s: Surface) => (s.method === "*" ? 2 : s.implicit && s.method === "HEAD" ? 1 : 0);
+  const path = kindsCompare(servemuxKinds(d), servemuxKinds(c));
+  const method = rank(d) - rank(c);
+  if (path === 0) return method;
+  return Math.sign(path) === -Math.sign(method) ? 0 : path;
+}
+
+/**
+ * The pieces of a chi route at each level of its routers (`Dispatch.mounted`), as chi's tree tries them from each
+ * place in the path (tree.go `findRoute`): static text, a character each (0), a parameter with a regexp (1), one
+ * without (2), keyed by the character that ends it, and a catch-all (3); a mounted router is a catch-all after its
+ * mount's path.
+ */
+function chiLevels(s: Surface): Array<Array<{ kind: number; key: string }>> {
+  const segs = segments(s.path);
+  const bounds = [...(s.dispatch?.mounted ?? []), segs.length];
+  const levels: Array<Array<{ kind: number; key: string }>> = [];
+  let from = 0;
+  bounds.forEach((to, i) => {
+    const pieces: Array<{ kind: number; key: string }> = [];
+    for (const seg of segs.slice(from, to)) {
+      pieces.push({ kind: 0, key: "/" });
+      if (isCatchAll(seg)) {
+        pieces.push({ kind: 3, key: "" });
+        continue;
+      }
+      for (let k = 0; k < seg.length; k++) {
+        if (seg[k] !== "{") {
+          pieces.push({ kind: 0, key: seg[k]! });
+          continue;
+        }
+        const end = seg.indexOf("}", k);
+        const name = seg.slice(k + 1, end);
+        const own = patternOf(s.patterns, name);
+        const tail = seg[end + 1] ?? "/";
+        pieces.push(own === undefined ? { kind: 2, key: tail } : { kind: 1, key: `${tail}${own}` });
+        k = end;
+      }
+    }
+    if (i < bounds.length - 1) pieces.push({ kind: 0, key: "/" }, { kind: 3, key: "" });
+    levels.push(pieces);
+    from = to;
+  });
+  return levels;
+}
+
+/**
+ * chi's order of two routes a request both fits: level by level, piece by piece, the lower kind first; of two
+ * parameters at one place, one that ends at a `/` after one that ends at another character (`tailSort`). Zero where not
+ * settled: two regexps, or two parameters ending at characters other than `/`, are tried in an order atlas does not read.
+ */
+function chiCompare(d: Surface, c: Surface): number {
+  const x = chiLevels(d);
+  const y = chiLevels(c);
+  for (let l = 0; l < Math.min(x.length, y.length); l++) {
+    const a = x[l]!;
+    const b = y[l]!;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      if (a[i]!.kind !== b[i]!.kind) return a[i]!.kind - b[i]!.kind;
+      if (a[i]!.key === b[i]!.key) continue;
+      if (a[i]!.kind === 2 && (a[i]!.key === "/" || b[i]!.key === "/")) return a[i]!.key === "/" ? 1 : -1;
+      return 0;
+    }
+    if (a.length !== b.length) return 0;
+  }
+  return 0;
+}
+
+/**
  * Whether route `d` comes before route `c` for a request both take, where both are picked by one rule: find-my-way's
- * precedence; Werkzeug's; Nest's specificity, then its declaration order; or registration order. A route that may pass
- * the request on comes before none.
+ * precedence; Werkzeug's; Gin's, chi's or ServeMux's tree; Nest's specificity, then its declaration order; or
+ * registration order. A route that may pass the request on comes before none.
  */
 function first(d: Surface, c: Surface): boolean {
   const a = d.dispatch;
@@ -329,6 +432,9 @@ function first(d: Surface, c: Surface): boolean {
     if (k !== 0) return k < 0;
     return d.method !== "*" && c.method === "*";
   }
+  if (a.picks === "httprouter") return kindsCompare(httprouterKinds(d), httprouterKinds(c)) < 0;
+  if (a.picks === "chi") return chiCompare(d, c) < 0;
+  if (a.picks === "servemux") return servemuxCompare(d, c) < 0;
   if (a.passes) return false;
   if (a.picks === "specificity") {
     const k = nestCompare(a.rank, b.rank);
@@ -435,6 +541,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
   const constrained = new Map<number, Surface[]>();
   const push = <T>(map: Map<number, T[]>, key: number, value: T) => (map.get(key) ?? map.set(key, []).get(key)!).push(value);
   const appending = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "appended").map((s) => s.component));
+  const tsr = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "tsr").map((s) => s.component));
+  const subtree = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "subtree").map((s) => s.component));
   graph.calls.forEach((call, ci) => {
     // Next.js settles the route by the path first; the method is checked on that route only. Each request a call stands
     // for goes to the most specific path that fits it, so a call with interpolations reaches every path down to the
@@ -478,6 +586,42 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     };
     const slash = !!call.slash;
     let candidates = candidatesAt(slash);
+    // Gin redirects a request to the path with the `/` added or removed where its tree, walking the request, reaches a
+    // route of the other form before any that takes the request as written (tree.go `getValue` sets `tsr` and returns
+    // there; gin.go `handleHTTPRequest` redirects with RedirectTrailingSlash). A route of the other form that comes before
+    // a route the request fits, by the tree's order, takes the request from it.
+    if (tsr.has(call.to) && call.path !== "/" && call.method !== "*") {
+      const other = candidatesAt(!slash).filter((o) => o.surface.dispatch?.slashes === "tsr" && pathCovers(o.surface.path, call.path, o.surface.patterns));
+      if (other.length) {
+        const ahead = (d: Candidate) => d.surface.dispatch?.picks === "httprouter" && other.some((o) => kindsCompare(httprouterKinds(o.surface), httprouterKinds(d.surface)) < 0);
+        const left = candidates.filter((d) => !ahead(d));
+        if (!left.some((d) => d.surface.dispatch?.picks === "httprouter")) {
+          const flipped: Call = { ...call };
+          if (slash) delete flipped.slash;
+          else flipped.slash = true;
+          redirected.set(ci, { path: call.path, slash: !slash, surfaces: picked(flipped, other).map((c) => c.surface) });
+          candidates = left;
+          if (!candidates.length) return;
+        }
+      }
+    }
+    // ServeMux redirects a request without a trailing `/` to the path with it where a pattern matches that with nothing
+    // left for its remainder (a subtree's root, a `{$}`), unless a pattern without a remainder matches the request as
+    // written (server.go `matchOrRedirect`, `exactMatch`).
+    if (subtree.has(call.to) && !slash && call.path !== "/") {
+      const exact = candidatesAt(true).filter((o) => {
+        const d = o.surface.dispatch;
+        if (d?.slashes !== "subtree" || !pathCovers(o.surface.path, call.path, o.surface.patterns)) return false;
+        const r = segments(o.surface.path);
+        return isCatchAll(r[r.length - 1]) ? r.length === segments(call.path).length + 1 : d.trailing === "slash";
+      });
+      const served = candidates.some((c) => c.surface.dispatch?.picks === "servemux" && !isCatchAll(segments(c.surface.path).pop()) && pathCovers(c.surface.path, call.path, c.surface.patterns));
+      if (exact.length && !served) {
+        redirected.set(ci, { path: call.path, slash: true, surfaces: picked({ ...call, slash: true }, exact).map((c) => c.surface) });
+        candidates = candidates.filter((c) => !(c.surface.dispatch?.picks === "servemux" && isCatchAll(segments(c.surface.path).pop())));
+        if (!candidates.length) return;
+      }
+    }
     // Werkzeug answers a request without a trailing `/` with a redirect to the path with it, where a route written with
     // one takes that (`strict_slashes`), as its matcher reaches the state of the path without the `/`: unless a route of
     // that same path takes the request, or one the matcher tries earlier does (`StateMachineMatcher.match` raises

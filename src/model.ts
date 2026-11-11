@@ -104,9 +104,14 @@ export interface Dispatch {
    * variables by their weight, whatever the order, by `parts`. `precedence`: ASP.NET Core's endpoint routing takes, of
    * the routes whose template and constraints a request meets, the one first by `rank` (lower first: `Order`, then
    * precedence), and of those a route that names the request's method before one that takes any (`EndpointComparer`,
-   * `HttpMethodMatcherPolicy`); routes left tied are ambiguous.
+   * `HttpMethodMatcherPolicy`); routes left tied are ambiguous. `httprouter`: Gin's tree (httprouter's) tries, segment
+   * by segment, static text before a parameter and a parameter before a catch-all, whatever the order. `chi`: chi's tree
+   * tries, from each place in the path, static text, then a parameter with a regexp, then one without, then a catch-all,
+   * whatever the order, a mounted router's routes as a catch-all at their mount (`mounted`). `servemux`: Go's ServeMux
+   * (1.22 and later) takes the most specific pattern: a pattern with a method before one without, and segment by segment
+   * a literal before a wildcard before a remainder (`{x...}`, a last `/`).
    */
-  picks?: "registration" | "find-my-way" | "specificity" | "werkzeug" | "precedence";
+  picks?: "registration" | "find-my-way" | "specificity" | "werkzeug" | "precedence" | "httprouter" | "chi" | "servemux";
   /**
    * For `specificity`, the kind of each segment of the route's path as Nest's specificity sort ranks it
    * (`RouteSpecificitySorter`): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4. For `precedence`, the
@@ -123,6 +128,11 @@ export interface Dispatch {
    * lower first). No weight where a converter's is not read.
    */
   parts?: Array<string | { regex: string; weight?: number[] }>;
+  /**
+   * chi: the number of segments of the route's path before each router mounted on the way to the route's (`Mount`,
+   * `Route`), from the outermost. chi's tree matches a mount as a catch-all after its path, then the mounted router's tree.
+   */
+  mounted?: number[];
   /**
    * Where the route is registered, from the router a request enters down to the one that holds the route: each step a
    * sequence of registrations whose order is known (`router`, one router in one function body of one file) and the
@@ -147,9 +157,13 @@ export interface Dispatch {
    * unless its matcher reaches a route that takes the request as written first: `strict_slashes`), `append-slash`
    * (Django serves the path as the pattern writes it, and CommonMiddleware answers a request without the `/` that no
    * pattern takes as written with a redirect to the path with it, where the first pattern that takes that is this
-   * route's: `APPEND_SLASH`).
+   * route's: `APPEND_SLASH`), `tsr` (Gin serves the path as the route writes it, and redirects a request to the path
+   * with the `/` added or removed where the route its tree reaches first takes that form: `RedirectTrailingSlash`),
+   * `subtree` (Go's ServeMux serves the path as the pattern writes it, and redirects a request without a `/` that no
+   * pattern but a remainder or subtree matches to the path with it, where a pattern matches that with nothing left for
+   * its remainder).
    */
-  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added" | "appended" | "append-slash";
+  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added" | "appended" | "append-slash" | "tsr" | "subtree";
   /**
    * The route's path as served ends with a `/` (`slash`), or is served with and without one (`both`). On a route that
    * ends in a wildcard, `slash` says the path before the wildcard is served only with the `/` (find-my-way's `/x/*`,
