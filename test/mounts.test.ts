@@ -88,6 +88,31 @@ describe("@koa/router prefixes and nested routers", () => {
   });
 });
 
+describe("prefix options under a computed name", () => {
+  it("reads a computed name spelled out, and leaves one that may be the prefix unread", () => {
+    const files = {
+      "api/app.js": lines(
+        'import Koa from "koa";',
+        'import Router from "@koa/router";',
+        'import Fastify from "fastify";',
+        "const app = new Koa();",
+        'const a = new Router({ ["prefix"]: "/a" });',
+        'a.get("/x", h);',
+        'const b = new Router({ prefix: "/b", [key]: "/c" });',
+        'b.get("/x", h);',
+        "app.use(a.routes());",
+        "app.use(b.routes());",
+        "const server = Fastify();",
+        'server.register(async function (f) { f.get("/x", h); }, { [`prefix`]: "/f" });',
+      ),
+    };
+    expect(routes(files, express)).toEqual({
+      ids: ["GET /a/x", "GET /f/x"],
+      limits: ['routes api: router b in api/app.js has a prefix the code does not spell out ([key]: "/c"); its routes are not read (declare it in mounts)'],
+    });
+  });
+});
+
 describe("Hono groups and base paths", () => {
   it("serves a group under the path route mounts it at, joined to the base path of the instance it is mounted on", () => {
     const files = {
@@ -126,6 +151,15 @@ describe("Hono groups and base paths", () => {
         "routes api: router api in api/app.ts has a base path the code does not spell out (BASE); its routes are not read (declare it in mounts)",
       ],
     });
+  });
+});
+
+describe("a Hono base path the code does not spell out", () => {
+  it("takes the path mounts declares for the file, and the literal base paths put after it", () => {
+    const files = {
+      "api/app.ts": lines('import { Hono } from "hono";', "const api = new Hono().basePath(BASE);", 'api.get("/x", h);', 'const admin = api.basePath("/admin");', 'admin.get("/y", h);'),
+    };
+    expect(routes(files, { ...express, mounts: { "api/app.ts": "/api" } })).toEqual({ ids: ["GET /api/admin/y", "GET /api/x"], limits: [] });
   });
 });
 
@@ -229,6 +263,28 @@ describe("NestJS RouterModule paths", () => {
     });
   });
 
+  it("reads RouterModule imported under another name, and a module named with `$` through a path alias", () => {
+    const files = {
+      ...controllers,
+      "api/src/admin/admin.module.ts": "import { AdminController } from './admin.controller';\n@Module({ controllers: [AdminController] })\nexport class $AdminModule {}",
+      "api/src/app.module.ts": lines(
+        "import { RouterModule as RM } from '@nestjs/core';",
+        "import { $AdminModule } from '@app/admin';",
+        "@Module({ imports: [RM.register([{ path: 'admin', module: $AdminModule }])] })",
+        "export class AppModule {}",
+      ),
+    };
+    expect(routes(files, nest)).toEqual({ ids: ["GET /admin", "GET /cpu", "GET /widgets/{id}"], limits: [] });
+  });
+
+  it("leaves a module among the children of an entry whose path is not spelled out unread", () => {
+    const files = module("@Module({ imports: [RouterModule.register([{ path: ADMIN, module: AdminModule, children: [StatsModule] }])] })\nexport class AppModule {}");
+    expect(routes(files, nest)).toEqual({
+      ids: ["GET /widgets/{id}"],
+      limits: ["routes api: api/src/app.module.ts:5 gives RouterModule a path the file does not spell out (ADMIN); the routes of the controllers it reaches are not read"],
+    });
+  });
+
   it("leaves a module given two paths unread, as Nest keeps one", () => {
     const files = module("@Module({ imports: [RouterModule.register([{ path: 'a', module: AdminModule }, { path: 'b', module: AdminModule }])] })\nexport class AppModule {}");
     expect(routes(files, nest)).toEqual({
@@ -249,14 +305,15 @@ describe("Spring path prefixes", () => {
     [file]: `package com.example;\n@Configuration\nclass WebConfig implements WebMvcConfigurer {\n  public void configurePathMatch(PathMatchConfigurer configurer) {\n    ${body}\n  }\n}`,
   });
 
+  const read = (ids: string[]) => ({ ids, limits: [] });
+
   it("gives the prefix to the handler types a predicate it reads accepts", () => {
-    expect(routes(config('configurer.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(RestController.class));'), spring).ids).toEqual(["GET /api/items/{id}", "GET /home"]);
-    expect(routes(config('configurer.addPathPrefix("/v1", HandlerTypePredicate.forAnnotation(Controller.class));'), spring).ids).toEqual(["GET /v1/home", "GET /v1/items/{id}"]);
-    expect(routes(config('configurer.addPathPrefix("/web", HandlerTypePredicate.forBasePackage("com.example.web"));'), spring).ids).toEqual(["GET /items/{id}", "GET /web/home"]);
-    expect(routes(config('configurer.addPathPrefix(API, c -> c.isAnnotationPresent(RestController.class));\n  }\n  static final String API = "/api";\n  void x() {'), spring).ids).toEqual([
-      "GET /api/items/{id}",
-      "GET /home",
-    ]);
+    expect(routes(config('configurer.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(RestController.class));'), spring)).toEqual(read(["GET /api/items/{id}", "GET /home"]));
+    expect(routes(config('configurer.addPathPrefix("/v1", HandlerTypePredicate.forAnnotation(Controller.class));'), spring)).toEqual(read(["GET /v1/home", "GET /v1/items/{id}"]));
+    expect(routes(config('configurer.addPathPrefix("/web", HandlerTypePredicate.forBasePackage("com.example.web"));'), spring)).toEqual(read(["GET /items/{id}", "GET /web/home"]));
+    expect(routes(config('configurer.addPathPrefix(API, c -> c.isAnnotationPresent(RestController.class));\n  }\n  static final String API = "/api";\n  void x() {'), spring)).toEqual(
+      read(["GET /api/items/{id}", "GET /home"]),
+    );
   });
 
   it("reads a Kotlin configurer's trailing lambda, and the first of two prefixes one configurer gives", () => {
@@ -264,7 +321,39 @@ describe("Spring path prefixes", () => {
       'configurer.addPathPrefix("/api") { it.isAnnotationPresent(RestController::class.java) }\n    configurer.addPathPrefix("/all", HandlerTypePredicate.forAnnotation(Controller::class.java))',
       "api/src/main/kotlin/com/example/WebConfig.kt",
     );
-    expect(routes(kotlin, spring).ids).toEqual(["GET /all/home", "GET /api/items/{id}"]);
+    expect(routes(kotlin, spring)).toEqual(read(["GET /all/home", "GET /api/items/{id}"]));
+  });
+
+  it("reads a configurer outside the entry's files, in the component's code", () => {
+    const files = config('configurer.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(RestController.class));');
+    expect(routes(files, { ...spring, files: ["api/**/Rest.java", "api/**/Page.java"] })).toEqual(read(["GET /api/items/{id}", "GET /home"]));
+  });
+
+  it("takes two configurers in one file as two, whose prefixes disagree", () => {
+    const configurer = (name: string, prefix: string) =>
+      `@Configuration\nclass ${name} implements WebMvcConfigurer {\n  public void configurePathMatch(PathMatchConfigurer c) {\n    c.addPathPrefix("${prefix}", HandlerTypePredicate.forAnnotation(RestController.class));\n  }\n}`;
+    const files = { ...controllers, "api/src/main/java/com/example/WebConfig.java": `package com.example;\n${configurer("A", "/a")}\n${configurer("B", "/b")}` };
+    expect(routes(files, spring)).toEqual({
+      ids: ["GET /home"],
+      limits: [
+        "routes api: api/src/main/java/com/example/WebConfig.java:5, api/src/main/java/com/example/WebConfig.java:11 give path prefixes (/a, /b) in configurers whose order is not read; the routes of Rest are not read",
+      ],
+    });
+  });
+
+  it("follows the meta-annotations of the annotations a type carries, and decides none it cannot follow", () => {
+    const files = {
+      ...config('configurer.addPathPrefix("/audited", HandlerTypePredicate.forAnnotation(Audit.class));'),
+      "api/src/main/java/com/example/Audited.java": "package com.example;\n@Audit\n@Retention(RetentionPolicy.RUNTIME)\npublic @interface Audited {}",
+      "api/src/main/java/com/example/web/Logged.java": "package com.example.web;\n@RestController\n@Audited\nclass Logged {\n  @GetMapping(\"/logged\") String logged() { return \"\"; }\n}",
+      "api/src/main/java/com/example/web/Tagged.java": "package com.example.web;\n@RestController\n@Tag(name = \"t\")\nclass Tagged {\n  @GetMapping(\"/tagged\") String tagged() { return \"\"; }\n}",
+    };
+    expect(routes(files, spring)).toEqual({
+      ids: ["GET /audited/logged", "GET /home", "GET /items/{id}"],
+      limits: [
+        "routes api: api/src/main/java/com/example/WebConfig.java:5 gives a path prefix to the handler types HandlerTypePredicate.forAnnotation(Audit.class) accepts, which a supertype or a meta-annotation may decide; the routes of Tagged are not read",
+      ],
+    });
   });
 
   it("leaves the types a predicate or a prefix it does not read may reach unread, and says so", () => {

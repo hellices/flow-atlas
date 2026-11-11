@@ -1154,14 +1154,26 @@ const ANNOTATION_CLASS = /^(?:[\w.]*\.)?(\w+)(?:\.class|::class(?:\.java)?)$/;
  * different configurers is not read, so prefixes from two of them that disagree leave the type unread.
  */
 export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
-  type Entry = { where: string; file: string; prefix: string | undefined; prefixText: string; predicate: string; test: ((t: HandlerType) => boolean | undefined) | undefined };
+  /** `group`: the configurer the call is made in, whose calls Spring takes in order. */
+  type Entry = { where: string; group: string; prefix: string | undefined; prefixText: string; predicate: string; test: ((t: HandlerType) => boolean | undefined) | undefined };
   const entries: Entry[] = [];
+  const meta = annotationTypes(texts);
   for (const [file, text] of texts) {
     if (!/\baddPathPrefix\s*\(/.test(text)) continue;
     const code = withoutComments(file, text);
     const masked = maskStrings(file, code);
     const kotlin = /\.kts?$/.test(file);
     const constant = stringConstants(code, masked, kotlin);
+    /** The `configurePathMatch` body around a call, else the innermost block: one configurer's calls, in order. */
+    const groupOf = (at: number): string => {
+      let innermost: number | undefined;
+      for (let open = enclosingOpen(masked, at); open !== undefined; open = enclosingOpen(masked, open)) {
+        if (masked[open] !== "{") continue;
+        innermost ??= open;
+        if (/\bconfigurePathMatch\s*\([^()]*\)[^{}()]*$/.test(masked.slice(Math.max(0, open - 300), open))) return `${file}@${open}`;
+      }
+      return `${file}@${innermost ?? 0}`;
+    };
     for (const m of masked.matchAll(/\.\s*addPathPrefix\s*\(/g)) {
       const open = (m.index ?? 0) + m[0].length - 1;
       const close = closing(masked, open);
@@ -1176,7 +1188,14 @@ export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
       const value = literal?.length === 1 ? literal[0] : constant(prefixText, m.index ?? 0);
       // Spring resolves `${...}` placeholders in a prefix from the environment (RequestMappingHandlerMapping).
       const prefix = value === undefined || /\$\{/.test(value) ? undefined : value;
-      entries.push({ where: `${file}:${lineOf(text, m.index ?? 0)}`, file, prefix, prefixText, predicate: predicate.replace(/\s+/g, " "), test: args.length === 2 ? predicateTest(predicate, kotlin) : undefined });
+      entries.push({
+        where: `${file}:${lineOf(text, m.index ?? 0)}`,
+        group: groupOf(m.index ?? 0),
+        prefix,
+        prefixText,
+        predicate: predicate.replace(/\s+/g, " "),
+        test: args.length === 2 ? predicateTest(predicate, kotlin, meta) : undefined,
+      });
     }
   }
   const causes = new Map<string, Set<string>>();
@@ -1190,22 +1209,25 @@ export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
       // What each configurer decides, in the order of its calls: a prefix, or the entry that leaves it undecided.
       const decided = new Map<string, { prefix: string } | { entry: Entry; why: string }>();
       for (const e of entries) {
-        if (decided.has(e.file)) continue;
+        if (decided.has(e.group)) continue;
         if (type.kind === "interface") {
-          decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which the class that implements an interface decides` });
+          decided.set(e.group, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which the class that implements an interface decides` });
           continue;
         }
         const accepts = e.test?.(type);
-        if (e.test === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types a predicate atlas does not read accepts (${e.predicate})` });
-        else if (accepts === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which a supertype or a meta-annotation may decide` });
-        else if (accepts && e.prefix === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives the handler types ${e.predicate} accepts a path prefix the file does not spell out (${e.prefixText})` });
-        else if (accepts) decided.set(e.file, { prefix: e.prefix! });
+        if (e.test === undefined) decided.set(e.group, { entry: e, why: `${e.where} gives a path prefix to the handler types a predicate atlas does not read accepts (${e.predicate})` });
+        else if (accepts === undefined) decided.set(e.group, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which a supertype or a meta-annotation may decide` });
+        else if (accepts && e.prefix === undefined) decided.set(e.group, { entry: e, why: `${e.where} gives the handler types ${e.predicate} accepts a path prefix the file does not spell out (${e.prefixText})` });
+        else if (accepts) decided.set(e.group, { prefix: e.prefix! });
       }
       const all = [...decided.values()];
       const open = all.find((d): d is { entry: Entry; why: string } => "why" in d);
       if (open) return unread(open.why, type);
       const values = [...new Set(all.map((d) => (d as { prefix: string }).prefix))];
-      if (values.length > 1) return unread(`${[...decided.keys()].join(", ")} give path prefixes (${values.join(", ")}) in configurers whose order is not read`, type);
+      if (values.length > 1) {
+        const where = [...new Set(entries.filter((e) => decided.has(e.group) && e.prefix !== undefined && values.includes(e.prefix)).map((e) => e.where))];
+        return unread(`${where.join(", ")} give path prefixes (${values.join(", ")}) in configurers whose order is not read`, type);
+      }
       return values[0] ?? "";
     },
     limits: (component) => [...causes].map(([why, types]) => `routes ${component}: ${why}; the routes of ${[...types].sort().join(", ")} are not read`),
@@ -1213,7 +1235,7 @@ export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
 }
 
 /** A predicate on handler types atlas decides: a test giving undefined where it cannot decide for a type, or undefined. */
-function predicateTest(predicate: string, kotlin: boolean): ((t: HandlerType) => boolean | undefined) | undefined {
+function predicateTest(predicate: string, kotlin: boolean, meta: Map<string, string[] | null>): ((t: HandlerType) => boolean | undefined) | undefined {
   const text = predicate.trim();
   const call = /^(?:[\w.]*\.)?(forAnnotation|forBasePackage)\s*\(([\s\S]*)\)$/.exec(text);
   if (call) {
@@ -1228,10 +1250,10 @@ function predicateTest(predicate: string, kotlin: boolean): ((t: HandlerType) =>
     const names = args.map((a) => ANNOTATION_CLASS.exec(a)?.[1]);
     if (!names.every(Boolean)) return undefined;
     return (t) => {
-      const has = (a: string) => t.annotations.has(a) || (a === "Controller" && t.annotations.has("RestController"));
-      if (names.some((n) => has(n!))) return true;
-      // Without one written on it, a supertype or a stereotype of its own may carry one.
-      return t.inherits || !(t.annotations.has("Controller") || t.annotations.has("RestController")) ? undefined : false;
+      const { names: present, complete } = metaClosure(t.annotations, meta);
+      if (names.some((n) => present.has(n!))) return true;
+      // Not found, a supertype, or an annotation whose own annotations are not read, may still carry one.
+      return t.inherits || !complete ? undefined : false;
     };
   }
   // `c -> c.isAnnotationPresent(A.class)`, `(Class<?> c) -> ...`, `{ it.isAnnotationPresent(A::class.java) }`.
@@ -1242,4 +1264,69 @@ function predicateTest(predicate: string, kotlin: boolean): ((t: HandlerType) =>
   if (!name) return undefined;
   // Class.isAnnotationPresent sees an annotation of a supertype only where it is @Inherited, which Spring's stereotypes are not.
   return (t) => (t.annotations.has(name) ? true : t.inherits && name !== "Controller" && name !== "RestController" ? undefined : false);
+}
+
+/**
+ * The annotations Spring and the JDK declare on the annotations a handler type commonly carries, by simple name, as
+ * `AnnotationUtils.findAnnotation` follows them: `@RestController` is annotated with `@Controller` and `@ResponseBody`,
+ * `@Controller` with `@Component`, `@Component` with `@Indexed`, `@RequestMapping` with `@Mapping` and `@Reflective`.
+ * java.lang.annotation's and Kotlin's own meta-annotations carry none of a user's.
+ */
+const KNOWN_META: Record<string, string[]> = {
+  RestController: ["Controller", "ResponseBody"],
+  Controller: ["Component"],
+  Component: ["Indexed"],
+  Indexed: [],
+  ResponseBody: [],
+  RequestMapping: ["Mapping", "Reflective"],
+  Mapping: [],
+  Reflective: [],
+  CrossOrigin: [],
+  Validated: [],
+  SessionAttributes: [],
+  Deprecated: [],
+  SuppressWarnings: [],
+  Target: [],
+  Retention: [],
+  Documented: [],
+  Inherited: [],
+  Repeatable: [],
+  MustBeDocumented: [],
+};
+
+/**
+ * The annotation types the files declare (`@interface A`, Kotlin `annotation class A`), with the annotations written
+ * on each; null for a name declared more than once, which atlas cannot tell apart.
+ */
+function annotationTypes(texts: Map<string, string>): Map<string, string[] | null> {
+  const out = new Map<string, string[] | null>();
+  for (const [file, text] of texts) {
+    if (!/@interface\b|\bannotation\s+class\b/.test(text)) continue;
+    const masked = maskStrings(file, withoutComments(file, text));
+    for (const m of masked.matchAll(/(?:@interface|\bannotation\s+class)\s+(\w+)/g)) {
+      const at = m.index ?? 0;
+      const names = [...masked.slice(declarationStart(masked, at), at).matchAll(/@(?:[\w.]*\.)?(\w+)/g)].map((a) => a[1]!);
+      out.set(m[1]!, out.has(m[1]!) ? null : names);
+    }
+  }
+  return out;
+}
+
+/**
+ * The annotations present on a type through meta-annotations, as `AnnotationUtils.findAnnotation` searches them, and
+ * whether every one was followed: an annotation neither the files declare nor `KNOWN_META` names may carry any.
+ */
+function metaClosure(annotations: Set<string>, declared: Map<string, string[] | null>): { names: Set<string>; complete: boolean } {
+  const names = new Set<string>();
+  let complete = true;
+  const queue = [...annotations];
+  while (queue.length) {
+    const a = queue.shift()!;
+    if (names.has(a)) continue;
+    names.add(a);
+    const own = declared.has(a) ? declared.get(a)! : (KNOWN_META[a] ?? null);
+    if (own === null) complete = false;
+    else queue.push(...own);
+  }
+  return { names, complete };
 }

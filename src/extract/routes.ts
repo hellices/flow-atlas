@@ -1068,6 +1068,17 @@ function nestBootstrap(source: Source, config: Config, spec: RouteSource, files:
   return { ...app, modules, ...(unknown && !app.unknown ? { unknown } : {}) };
 }
 
+/**
+ * The Java and Kotlin files a Spring entry's configurers and annotation types are read from: its route files and the
+ * component's code (the excluded files left out), since a `WebMvcConfigurer` need not be among the controller globs.
+ */
+function springSources(source: Source, config: Config, files: string[], root: string | undefined): Map<string, string> {
+  const dir = root?.replace(/\/+$/, "");
+  const component = dir === undefined ? [] : select(source, [dir ? `${dir}/**` : "**"], config.exclude);
+  const all = [...new Set([...files, ...component])].filter((f) => /\.(java|kt|kts)$/.test(f));
+  return new Map(all.map((f) => [f, source.read(f) ?? ""]));
+}
+
 /** Surfaces with one per component, method and path, the first kept. */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Set<string>();
@@ -1103,9 +1114,7 @@ export function extractRoutes(
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts, spec.receivers ?? EXPRESS_RECEIVERS) : undefined;
     const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
-    const prefixes = (spec.styles ?? []).includes("spring")
-      ? pathPrefixes(new Map(files.filter((f) => /\.(java|kt|kts)$/.test(f)).map((f) => [f, source.read(f) ?? ""])))
-      : undefined;
+    const prefixes = (spec.styles ?? []).includes("spring") ? pathPrefixes(springSources(source, config, files, roots.get(spec.component))) : undefined;
     const routers = (spec.styles ?? []).includes("fastapi")
       ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
       : undefined;

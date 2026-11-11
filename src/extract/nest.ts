@@ -260,7 +260,8 @@ export function nestModules(texts: Map<string, string>, component: string, limit
     }
     // A path alias (`@app/admin`) or a module that re-exports it: the one class of that name and kind in the files read.
     const name = exported === "default" ? id.text : exported;
-    const pattern = new RegExp(`\\bclass\\s+${name}\\b`);
+    // A name may hold `$`, which a word boundary does not bound.
+    const pattern = new RegExp(`(?<![\\w$])class\\s+${name.replace(/\$/g, "\\$")}(?![\\w$])`);
     const found = [...texts]
       .filter(([f, t]) => pattern.test(t) && parse(f)!.statements.some((st) => ts.isClassDeclaration(st) && st.name?.text === name && decorated(st, decorator)))
       .map(([f]) => f);
@@ -273,7 +274,8 @@ export function nestModules(texts: Map<string, string>, component: string, limit
   const unfound: string[] = [];
   let unknown: string | undefined;
   for (const [file, text] of texts) {
-    if (!/\bRouterModule\s*\.\s*register\s*\(/.test(text)) continue;
+    // The import names RouterModule, under any local name (`RouterModule as RM`).
+    if (!/\bRouterModule\b/.test(text) || !/\.\s*register\s*\(/.test(text)) continue;
     const sf = parse(file)!;
     const visit = (node: ts.Node): void => {
       const callee = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression : undefined;
@@ -295,7 +297,8 @@ export function nestModules(texts: Map<string, string>, component: string, limit
             const item = unwrap(element);
             if (ts.isIdentifier(item) && !top) {
               const key = classKey(file, item, "Module");
-              if (key) give(key, parent ?? "");
+              // A module among the children takes its parent's path, unread where that is.
+              if (key) give(key, parent === undefined ? "" : parent);
               else unfound.push(`${where(file, item)} (${item.text})`);
               continue;
             }

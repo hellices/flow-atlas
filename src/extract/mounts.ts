@@ -104,15 +104,32 @@ function packageName(callee: ts.Expression): { spec: string; name: string } | un
   return from && (from.name === "default" || from.name === "*") ? { spec: from.spec, name: u.name.text } : undefined;
 }
 
+/** A property's name as the object holds it: `prefix`, `"prefix"`, `["prefix"]`; null for a computed name not spelled out. */
+function propertyKey(name: ts.PropertyName): string | null {
+  if (ts.isComputedPropertyName(name)) return literal(name.expression) ?? null;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name) || ts.isNumericLiteral(name) || ts.isPrivateIdentifier(name) ? name.text : null;
+}
+
+/**
+ * The `prefix` an options object gives: "" with none; unread where its value is not a literal, or where a computed name
+ * the code does not spell out may be it. Of two properties of one name, the object holds the last.
+ */
+function prefixOption(o: ts.ObjectLiteralExpression, unread: (p: ts.Node) => Value): Value {
+  for (const p of [...o.properties].reverse()) {
+    const key = p.name ? propertyKey(p.name) : undefined;
+    if (key === null) return unread(p);
+    if (key !== "prefix") continue;
+    return (ts.isPropertyAssignment(p) ? literal(p.initializer) : undefined) ?? unread(p);
+  }
+  return "";
+}
+
 /** The `prefix` an @koa/router constructor's options give: "" with none, unread where not spelled out. */
 function koaPrefix(options: ts.Expression | undefined): Value {
   const u = options && unwrap(options);
   if (!u) return "";
   if (!ts.isObjectLiteralExpression(u) || u.properties.some(ts.isSpreadAssignment)) return { why: `has options the code does not spell out (${short(u)})` };
-  const p = u.properties.find((x) => x.name && (ts.isIdentifier(x.name) || ts.isStringLiteral(x.name)) && x.name.text === "prefix");
-  if (!p) return "";
-  const value = ts.isPropertyAssignment(p) ? literal(p.initializer) : undefined;
-  return value ?? { why: `has a prefix the code does not spell out (${short(p)})` };
+  return prefixOption(u, (p) => ({ why: `has a prefix the code does not spell out (${short(p)})` }));
 }
 
 /** What an expression creates: an Express, @koa/router, Koa, Hono or Fastify router or application, with its own prefix. */
@@ -244,11 +261,7 @@ function factsOf(text: string, file: string): FileFacts {
       const options = call.args[1] && unwrap(call.args[1]);
       let path: Value = "";
       if (options && (!ts.isObjectLiteralExpression(options) || options.properties.some(ts.isSpreadAssignment))) path = { why: `is registered with options the code does not spell out (${short(options)})` };
-      else if (options) {
-        const p = options.properties.find((x) => x.name && (ts.isIdentifier(x.name) || ts.isStringLiteral(x.name)) && x.name.text === "prefix");
-        const value = p && ts.isPropertyAssignment(p) ? literal(p.initializer) : p ? undefined : "";
-        path = value ?? { why: `is registered with a prefix the code does not spell out (${short(p!)})` };
-      }
+      else if (options) path = prefixOption(options, (p) => ({ why: `is registered with a prefix the code does not spell out (${short(p)})` }));
       facts.mounts.push({ verb: "register", receiver: unwrap(call.receiver), path, target: unwrap(call.args[0]!) });
     }
     if (call?.name === "prefix" && call.args.length === 1) {
@@ -471,7 +484,11 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   const served = (handle: string, seen: Set<string>): Served => {
     const base = based.get(handle);
     if (base) {
-      if (typeof base.path !== "string") return { why: base.path.why };
+      // A base path the code does not spell out is the one `mounts` declares for the file, where it declares one.
+      if (typeof base.path !== "string") {
+        const file = handle.slice(0, handle.lastIndexOf("@"));
+        return declared[file] !== undefined ? { paths: [joinRoute(declared[file])] } : { why: base.path.why };
+      }
       const above = served(base.parent, seen);
       return "why" in above ? above : { paths: [...new Set(above.paths.map((p) => joinRoute(p, base.path as string)))] };
     }

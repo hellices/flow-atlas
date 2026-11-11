@@ -183,8 +183,10 @@ a path before the routes registered through what it returns (Hono's `hono-base.j
 `plugin-override.js`), from a `Fastify()` instance; a plugin registered on the first parameter of a function no
 `register` takes in, named among the receivers, is placed at the root, as that parameter's routes are read. Routers
 are told apart by their bindings, so a shadowing name is another value. Where a mount path or a prefix is not a literal
-and `mounts` does not give it (an option object built elsewhere, a `basePath` from a variable), or a router is mounted
-nowhere atlas reads, its routes are not read and a limit says so. `express.static` serves the files of a directory and passes on any path it does not hold, so
+and `mounts` does not give it (an option object built elsewhere, a computed name that may be `prefix`, a `basePath`
+from a variable), or a router is mounted nowhere atlas reads, its routes are not read and a limit says so; a Hono
+`basePath` not spelled out takes the path `mounts` declares for its file, and a literal `basePath` called on it adds
+to that. `express.static` serves the files of a directory and passes on any path it does not hold, so
 what it serves is the directory's content: a limit names where it is mounted, and its paths are not read. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
@@ -218,7 +220,7 @@ not spelled out leaves the routes it applies to unread, with a limit; an `exclud
 prefix. `RouterModule.register` (from `@nestjs/core`) puts a module's path, after the version and before the
 controller's, before the routes of the controllers its `@Module({ controllers })` lists (docs.nestjs.com/recipes/router-module):
 an entry's `path` for its `module`, a child entry's joined to its parent's, a module class among `children` its
-parent's; the routes may be written in place or held in a `const` of the file, and modules and controllers are found
+parent's; `RouterModule` may be imported under any name, the routes written in place or held in a `const` of the file, and modules and controllers are found
 through relative imports, else by a class of that name the files declare once. Nest keeps one path per module, so a
 module given two is left unread; a path not spelled out leaves the routes it reaches unread, and routes passed to
 `register` that are not spelled out leave every controller's, each with a limit. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of
@@ -302,11 +304,14 @@ prefix `PathMatchConfigurer.addPathPrefix(prefix, predicate)` gives the types it
 accepts in a configurer's order (docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html).
 The prefix is a literal or a constant of the file (one with a `${...}` placeholder is resolved at run time and not
 read); the predicate is read where it is `HandlerTypePredicate.forAnnotation(A.class, ...)` (an annotation written on
-the type, `@RestController` counting as `@Controller`; a type that names a supertype, or whose stereotype is neither,
-may take one through it and is not decided), `forBasePackage("p", ...)` (the type's qualified name starting with
+the type or present through the annotations of its annotations, as Spring and the JDK declare them for their own and
+the files declare them for an `@interface`; a type that names a supertype, or carries an annotation whose own
+annotations are not read, may take one through it and is not decided), `forBasePackage("p", ...)` (the type's qualified name starting with
 `p.`) or a lambda testing `isAnnotationPresent(A.class)` (Kotlin's trailing lambda included). Any other predicate, a
-prefix not spelled out, a mapping in an interface (whose implementing class decides) and two configurers that disagree
-leave the routes of the types they may reach unread, with a limit. A mapping path may be a string constant the file
+prefix not spelled out, a mapping in an interface (whose implementing class decides) and two configurers (two
+`configurePathMatch` methods, in one file or two) that disagree leave the routes of the types they may reach unread,
+with a limit. Configurers and annotation types are read in the entry's files and the component's code, the excluded
+files left out, since a `WebMvcConfigurer` need not be among the controller globs. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
 constants), since an annotation argument is a compile-time constant. A name is found as the language finds it: in the
 types around the mapping, innermost first, then a Kotlin file's top level, or `Type.PATH` for a type the file declares
