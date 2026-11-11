@@ -37,6 +37,17 @@ describe("Express: route(path) and arrays of paths", () => {
     expect(routes(files)).toEqual({ ids: ["* /files/{path}/**", "DELETE /users/{id}", "GET /book", "GET /users/{id}", "POST /book", "PUT /book"], limits: [] });
   });
 
+  it("says once where route(path) is given a path not spelled out, whatever the methods chained on it", () => {
+    const files = { "api/app.js": lines('const app = require("express")();', "app.route(BOOK).get(h).post(h);", 'app.route("book").get(h);') };
+    expect(routes(files)).toEqual({
+      ids: [],
+      limits: [
+        'routes api: api/app.js:3 registers "book" on app, a path that does not start with `/`; its routes are not read',
+        "routes api: api/app.js:2 registers a path the file does not spell out (BOOK); its routes are not read",
+      ],
+    });
+  });
+
   it("places each method chained on route(path) where it is named", () => {
     const files = { "api/app.js": lines('const app = require("express")();', "app", '  .route("/book")', "  .get(h)", "  .post(h);") };
     const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**"], styles: ["express"] }] });
@@ -359,6 +370,46 @@ describe("Spring: functional endpoints", () => {
     });
   });
 
+  it("reads past an argument it does not parse: a cast, in a handler or before it", () => {
+    const text = java(
+      "  @Bean",
+      "  RouterFunction<ServerResponse> r(Repo repo, H h) {",
+      "    return route()",
+      '        .GET("/count", req -> ok().header("X-Count", (String) repo.count()).build())',
+      '        .GET("/cast", (HandlerFunction<ServerResponse>) req -> ok().build())',
+      '        .POST("/items", h::create)',
+      "        .build();",
+      "  }",
+    );
+    expect(spring({ "api/Routes.java": text })).toEqual({ ids: ["GET /cast", "GET /count", "POST /items"], limits: [] });
+  });
+
+  it("does not take a local assigned again, a method not named on HttpMethod, or a predicate grown past its bound", () => {
+    const text = java(
+      "  @Bean",
+      "  RouterFunction<ServerResponse> r(H h) {",
+      '    String p = "/a";',
+      '    p = "/b";',
+      '    final String q = "/q";',
+      '    RequestPredicate p0 = path("/x").or(path("/y"));',
+      ...Array.from({ length: 22 }, (_, i) => `    RequestPredicate p${i + 1} = p${i}.or(p${i});`),
+      "    return route(GET(p), h::a)",
+      '        .andRoute(method(VERB).and(path("/m")), h::m)',
+      '        .andRoute(method(HttpMethod.PUT).and(path("/put")), h::put)',
+      "        .andRoute(GET(q), h::q)",
+      "        .andRoute(p22, h::x);",
+      "  }",
+    );
+    expect(spring({ "api/Routes.java": text })).toEqual({
+      ids: ["GET /q", "PUT /put"],
+      limits: [
+        "routes api: api/Routes.java:35 routes on a pattern the file does not spell out (p); its routes are not read",
+        'routes api: api/Routes.java:36 routes on a predicate atlas does not read (method(VERB)); its routes are not read',
+        "routes api: api/Routes.java:39 routes on a predicate of more than 256 combinations of methods and paths; its routes are not read",
+      ],
+    });
+  });
+
   it("reads a helper a bean calls, no bean twice, and says where a helper no bean calls builds one", () => {
     const text = java(
       "  @Bean RouterFunction<ServerResponse> all() { return api().and(admin()); }",
@@ -445,6 +496,15 @@ describe("Spring: @HttpExchange interfaces a controller implements, and register
       ids: ["DELETE /v2/members/{id} api/MemberService.java:7", "GET /v2/members/{id}/full api/MemberController.kt:5", "POST /v2/members api/MemberService.java:6"],
       limits: [],
     });
+  });
+
+  it("puts the controller's own methods and every interface's under the one type-level mapping Spring takes", () => {
+    const files = {
+      "api/A.java": lines("package app;", "interface A {", '  @GetExchange("/a") String a();', "}"),
+      "api/B.java": lines("package app;", '@HttpExchange("/b")', "interface B {", '  @GetExchange("/x") String x();', "}"),
+      "api/C.java": lines("package app;", "@RestController", "class C implements A, B {", '  @GetMapping("/own") String own() { return ""; }', "}"),
+    };
+    expect(spring(files)).toEqual({ ids: ["GET /b/a api/A.java:3", "GET /b/own api/C.java:4", "GET /b/x api/B.java:4"], limits: [] });
   });
 
   it("reads registerMapping's RequestMappingInfo, in place or in a local, with no prefix", () => {

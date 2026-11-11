@@ -707,6 +707,8 @@ interface TypeScope {
   handler: HandlerType;
   /** Where its declaration starts, its annotations included. */
   header: number;
+  /** The exchange interface its type-level mapping comes from, where it has none of its own. */
+  from?: [string, ExchangeInterface];
 }
 
 /**
@@ -782,6 +784,25 @@ export function routesFromSpring(
       responseBody: /@(?:[\w.]*\.)?(?:RestController|ResponseBody)\b/.test(annotations),
       ...(own ? { mapping: { at: own.at, args: own.args } } : {}),
     });
+  }
+
+  // The exchange interfaces each controller implements. Spring takes one type-level mapping for the whole class, the first
+  // its type hierarchy holds (`createRequestMappingInfo`, `firstRunOf`): the class's own `@RequestMapping`, else the
+  // `@HttpExchange` of the first interface it lists that carries one, for its own methods as for the interfaces'.
+  const implemented = new Map<TypeScope, Array<[string, ExchangeInterface]>>();
+  for (const t of types) {
+    if (t.handler.kind === "interface" || !(t.handler.annotations.has("Controller") || t.handler.annotations.has("RestController"))) continue;
+    const found = supertypes(masked.slice(t.header, t.start), kotlin)
+      .map((name) => exchangeOf(exchanges, name, imports))
+      .filter((f): f is [string, ExchangeInterface] => !!f);
+    if (!found.length) continue;
+    implemented.set(t, found);
+    const typed = found.find(([, iface]) => iface.typed);
+    if (!t.mapping && typed) {
+      t.paths = typed[1].paths;
+      t.methods = typed[1].methods;
+      t.from = typed;
+    }
   }
 
   // The type a position is in: the innermost body around it.
@@ -862,24 +883,19 @@ export function routesFromSpring(
     }
   }
   // The `@HttpExchange` mappings of the interfaces a controller implements, where it maps the method no other way.
-  for (const t of types) {
-    if (t.handler.kind === "interface" || !(t.handler.annotations.has("Controller") || t.handler.annotations.has("RestController"))) continue;
-    const head = masked.slice(t.header, t.start);
-    for (const name of supertypes(head, kotlin)) {
-      const found = exchangeOf(exchanges, name, imports);
-      if (!found) continue;
-      const [qualified, iface] = found;
-      const own = mappings.filter((m) => m.at > t.start && m.at < t.end && typeAt(m.at) === t).map((m) => methodNameAfter(masked, m.end));
-      const prefix = prefixes ? prefixes.of(t.handler) : "";
-      if (prefix === undefined) continue;
-      // The controller's own `@RequestMapping` comes first in its type hierarchy, so it takes the interface's place.
-      const bases = t.mapping ? t.paths : iface.paths;
-      const inherited = t.mapping ? t.methods : iface.methods;
+  for (const [t, found] of implemented) {
+    const prefix = prefixes ? prefixes.of(t.handler) : "";
+    if (prefix === undefined) continue;
+    const own = mappings.filter((m) => m.at > t.start && m.at < t.end && typeAt(m.at) === t).map((m) => methodNameAfter(masked, m.end));
+    const bases = t.paths;
+    const inherited = t.methods;
+    if ((!bases || !inherited) && t.from) {
+      const [qualified, iface] = t.from;
+      limits?.push(`routes ${spec.component}: ${iface.file}:${iface.line} maps ${bases ? "a method" : "a path"} the file does not spell out on ${qualified}, which ${t.handler.name} implements; its routes are not read`);
+    }
+    if (!bases || !inherited) continue;
+    for (const [qualified, iface] of found) {
       const where = `${iface.file}:${iface.line}`;
-      if (!bases || !inherited) {
-        limits?.push(`routes ${spec.component}: ${where} maps ${bases ? "a method" : "a path"} the file does not spell out on ${qualified}, which ${t.handler.name} implements; its routes are not read`);
-        continue;
-      }
       if (iface.inherits) limits?.push(`routes ${spec.component}: ${where} ${qualified} extends interfaces whose exchanges are not read; the routes ${t.handler.name} serves from them are not read`);
       for (const member of iface.members) {
         if (own.includes(member.name)) continue;
@@ -948,6 +964,8 @@ export interface ExchangeInterface {
   methods: string[] | undefined;
   /** Whether it extends other interfaces, whose methods it holds too. */
   inherits: boolean;
+  /** Whether it carries an `@HttpExchange` of its own. */
+  typed: boolean;
   members: Array<{ name: string; line: number; args: string; paths: string[] | undefined; methods: string[] | undefined }>;
 }
 /** The interfaces with `@HttpExchange` mappings the files declare, by qualified name; null for one declared twice. */
@@ -1010,7 +1028,7 @@ export function httpExchanges(texts: Map<string, string>): Exchanges {
       const name = t[0].split(/\s+/).pop()!;
       const key = pkg ? `${pkg}.${name}` : name;
       const head = masked.slice(at + t[0].length, i);
-      out.set(key, out.has(key) ? null : { file, line: lineOf(text, own?.at ?? at), paths: own ? own.paths : [""], methods: own ? own.methods : [], inherits: kotlin ? /:/.test(head) : /\bextends\b/.test(head), members });
+      out.set(key, out.has(key) ? null : { file, line: lineOf(text, own?.at ?? at), paths: own ? own.paths : [""], methods: own ? own.methods : [], inherits: kotlin ? /:/.test(head) : /\bextends\b/.test(head), typed: !!own, members });
     }
   }
   return out;

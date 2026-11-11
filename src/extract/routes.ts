@@ -542,7 +542,7 @@ export function routesFromTypeScript(
       limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, a path that does not start with \`/\`; its routes are not read`);
       return;
     }
-    const verb = method === "all" ? "*" : method === "del" ? "delete" : method;
+    const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
     for (const p of servedUnder(inst) ?? []) add(verb, joinRoute(p, path.startsWith("/") ? path : `/${path}`), place, node, undefined, { syntax });
   };
@@ -809,13 +809,17 @@ export function routesFromTypeScript(
   visit(sf);
   // A GET registration at the very path of a constant read as a route above is that route; any other, another method
   // or a prefix included, is said in `limits`.
+  // The methods chained on one `route(path)` share its path: one not spelled out is said once.
+  const saidPaths = new Set<string>();
   for (const { arg, method, prefixes } of unreadPaths) {
     const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
     const declaration = ts.isIdentifier(inner) ? declarationOf(inner) : undefined;
     const value = declaration && readConstants.get(declaration);
     const route = (p: string) => routeTemplate(joinRoute(p));
     if (value && method?.toUpperCase() === "GET" && prefixes?.length && prefixes.every((p) => route(joinRoute(p, value)) === route(value))) continue;
-    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+    const line = `routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`;
+    if (!saidPaths.has(line)) limits?.push(line);
+    saidPaths.add(line);
   }
   for (const [name, why] of unmounted) {
     limits?.push(`routes ${spec.component}: router ${name} in ${file} ${why}; its routes are not read (declare it in mounts)`);

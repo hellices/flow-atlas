@@ -51,12 +51,15 @@ type Node =
   | { t: "lambda"; params: string[]; body: Node[]; at: number; end: number }
   | { t: "infix"; op: string; left: Node; right: Node; at: number; end: number }
   | { t: "not"; operand: Node; at: number; end: number }
-  | { t: "decl"; name: string; init?: Node; at: number; end: number }
+  /** A local's declaration; `final` where the language keeps it from being assigned again (`final`, Kotlin's `val`). */
+  | { t: "decl"; name: string; init?: Node; final: boolean; at: number; end: number }
   | { t: "return"; value?: Node; at: number; end: number }
   | { t: "opaque"; at: number; end: number };
 
 /** The most alternatives one predicate is read as, so that `and` of many `or`s does not run away. */
 const MAX_ALTERNATIVES = 256;
+/** The most routes one file's router functions are read as, so that a router function added to itself does not run away. */
+const MAX_ROUTES = 4096;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 /** Predicates that narrow a request by what is not its method or path. */
 const NARROWING = new Set(["accept", "contentType", "headers", "param", "queryParam", "version"]);
@@ -184,6 +187,7 @@ class Parser {
       return { t: "return", value, at, end: this.last };
     }
     if (this.kotlin && (this.is("val") || this.is("var"))) {
+      const final = this.is("val");
       this.i++;
       const name = this.peek()?.text ?? "";
       this.i++;
@@ -191,9 +195,9 @@ class Parser {
         this.i++;
         this.type();
       }
-      if (!this.is("=")) return { t: "decl", name, at, end: this.last };
+      if (!this.is("=")) return { t: "decl", name, final, at, end: this.last };
       this.i++;
-      return { t: "decl", name, init: this.expression(), at, end: this.last };
+      return { t: "decl", name, init: this.expression(), final, at, end: this.last };
     }
     if (!this.kotlin) {
       // `final RouterFunction<ServerResponse> name = ...;`, `var name = ...;`
@@ -204,7 +208,7 @@ class Parser {
       if (this.type() && this.peek()?.kind === "id" && this.is("=", 1) && !this.is("==", 1)) {
         const name = this.peek()!.text;
         this.i += 2;
-        return { t: "decl", name, init: this.expression(), at, end: this.last };
+        return { t: "decl", name, init: this.expression(), final: k > save, at, end: this.last };
       }
       this.i = save;
       // A statement of control flow is not read: its routes would be registered on a condition.
@@ -291,26 +295,35 @@ class Parser {
     return this.postfix(this.primary());
   }
 
+  /** The arguments in the parentheses at the cursor, the cursor after them; one not read is opaque, the others still read. */
   args(): Node[] {
     const out: Node[] = [];
+    const end = this.skipBalanced(this.i) - 1;
     this.i++;
-    while (this.i < this.toks.length && !this.is(")")) {
+    while (this.i < end) {
       const before = this.i;
       // A Kotlin named argument, `name = value`.
       if (this.kotlin && this.peek()?.kind === "id" && this.is("=", 1)) this.i += 2;
       if (this.is("*")) this.i++;
-      out.push(this.expression());
-      if (this.is(",")) this.i++;
-      else if (!this.is(")")) {
-        // Something not read: the rest of the arguments are opaque.
-        this.i = before;
-        const close = this.skipBalanced(this.i - 1);
-        this.i = close - 1;
-        out.push(this.opaque(before));
-        break;
+      const e = this.expression();
+      if (this.i === end || (this.is(",") && this.i < end)) {
+        out.push(e);
+        if (this.i < end) this.i++;
+        continue;
       }
+      // Not read to its end: the argument is opaque up to the next `,` at its depth.
+      let k = before;
+      for (let depth = 0; k < end; k++) {
+        const t = this.toks[k]!;
+        if (t.kind !== "op") continue;
+        if ("([{".includes(t.text)) depth++;
+        else if (")]}".includes(t.text)) depth--;
+        else if (t.text === "," && depth === 0) break;
+      }
+      out.push({ t: "opaque", at: this.toks[before]!.at, end: this.toks[k - 1]?.end ?? this.toks[before]!.end });
+      this.i = k < end ? k + 1 : end;
     }
-    if (this.is(")")) this.i++;
+    this.i = end + 1;
     return out;
   }
 
@@ -363,6 +376,16 @@ class Parser {
         const params = this.toks.slice(this.i + 1, close - 1).filter((x, k, all) => x.kind === "id" && (all[k + 1]?.text === "," || k === all.length - 1)).map((x) => x.text);
         this.i = close + 1;
         return this.javaLambda(params, t.at);
+      }
+      // A Java cast, `(Type) value`, is the value.
+      if (!this.kotlin) {
+        this.i++;
+        const next = this.type() && this.is(")") ? this.peek(1) : undefined;
+        if (next && next.text !== "instanceof" && (next.kind === "id" || next.kind === "str" || next.kind === "num" || next.text === "(" || next.text === "!")) {
+          this.i++;
+          return this.unary();
+        }
+        this.i = from;
       }
       this.i++;
       const inner = this.expression();
@@ -568,6 +591,34 @@ function methods(toks: Tok[], kotlin: boolean): Method[] {
   return out;
 }
 
+/**
+ * The locals of a body whose value is their initializer: declared `final` or `val`, or never assigned again in the body
+ * (`x = ...`, `x += ...`). Another value a later assignment gives is not read, so neither is that local.
+ */
+function settled(code: string, body: Node[]): Map<string, Node> {
+  const out = new Map<string, Node>();
+  const text = body.length ? code.slice(body[0]!.at, body[body.length - 1]!.end) : "";
+  for (const s of body) {
+    if (s.t !== "decl" || !s.init) continue;
+    const name = s.name.replace(/\$/g, "\\$");
+    const assigned = [...text.matchAll(new RegExp(`(?<![\\w$.])${name}\\s*(?:[-+*/%&|^]|<<|>>>?)?=(?!=)`, "g"))].length;
+    if (s.final || assigned <= 1) out.set(s.name, s.init);
+  }
+  return out;
+}
+
+/**
+ * The name of a constant of an enum or class, `Type.NAME`, or `NAME` where the file imports it from that type (Java's
+ * `import static`, Kotlin's import); undefined for anything else.
+ */
+function constantOf(n: Node, type: string, text: string): string | undefined {
+  const simple = type.slice(type.lastIndexOf(".") + 1);
+  if (n.t === "member" && (n.target.t === "id" ? n.target.name : n.target.t === "member" ? n.target.name : undefined) === simple) return /^[A-Z]+$/.test(n.name) ? n.name : undefined;
+  if (n.t !== "id" || !/^[A-Z]+$/.test(n.name)) return undefined;
+  const escaped = type.replace(/\./g, "\\.");
+  return new RegExp(`^\\s*import\\s+(?:static\\s+)?${escaped}\\.(?:\\*|${n.name})\\s*;?\\s*$`, "m").test(text) ? n.name : undefined;
+}
+
 /** The router functions a Java or Kotlin file's `@Bean` methods build, with what is not read in `limits`. */
 export function routerFunctionRoutes(file: string, text: string, spec: RouteSource, constant: Constant, spans?: Spans, limits?: string[]): FunctionalRoute[] {
   if (!PACKAGES.test(text)) return [];
@@ -579,6 +630,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   for (const t of toks) if (t.kind === "id" && aliases.has(t.text) && t.text !== aliases.get(t.text)) t.text = aliases.get(t.text)!;
   const all = methods(toks, kotlin);
   const routes: Route[] = [];
+  let capped = false;
   /** The helpers a bean calls, which are read where it does. */
   const called = new Set<string>();
   const said = new Set<string>();
@@ -601,7 +653,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   }
   const withLocals = (ctx: Ctx, body: Node[]): Ctx => {
     const locals = new Map(ctx.locals);
-    for (const s of body) if (s.t === "decl" && s.init) locals.set(s.name, s.init);
+    for (const [name, init] of settled(code, body)) locals.set(name, init);
     return { ...ctx, locals };
   };
 
@@ -616,10 +668,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
     return undefined;
   };
   const isString = (n: Node, ctx: Ctx): boolean => n.t === "str" || ((n.t === "id" || n.t === "member") && stringOf(n, ctx) !== undefined);
-  const httpMethod = (n: Node): string | undefined => {
-    const name = n.t === "member" && owner(n.target) === "HttpMethod" ? n.name : n.t === "id" ? n.name : undefined;
-    return name && /^[A-Z]+$/.test(name) ? name : undefined;
-  };
+  const httpMethod = (n: Node): string | undefined => constantOf(n, "org.springframework.http.HttpMethod", text);
 
   const and = (a: Alt[], b: Alt[]): Read<Alt[]> => {
     const out: Alt[] = [];
@@ -636,6 +685,11 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   };
 
   /** What a request predicate takes. */
+  /** `or`: the alternatives of either, as many as `and` takes at most. */
+  const or = (l: Alt[], r: Alt[]): Read<Alt[]> =>
+    l.length + r.length > MAX_ALTERNATIVES ? { why: `a predicate of more than ${MAX_ALTERNATIVES} combinations of methods and paths` } : [...l, ...r];
+  /** What a local holds, read once: a name used twice is not read twice. */
+  const held = new Map<Node, Read<Alt[]>>();
   const predicate = (n: Node, ctx: Ctx): Read<Alt[]> => {
     const not = { why: `a predicate atlas does not read (${short(n)})` };
     if (n.t === "str") {
@@ -644,7 +698,9 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
     }
     if (n.t === "id") {
       const init = ctx.locals.get(n.name);
-      return init && !ctx.seen.has(n.name) ? predicate(init, { ...ctx, seen: new Set([...ctx.seen, n.name]) }) : { why: `a predicate the file does not spell out (${n.name})` };
+      if (!init || ctx.seen.has(n.name)) return { why: `a predicate the file does not spell out (${n.name})` };
+      if (!held.has(init)) held.set(init, predicate(init, { ...ctx, seen: new Set([...ctx.seen, n.name]) }));
+      return held.get(init)!;
     }
     if (n.t === "not") {
       const inner = predicate(n.operand, ctx);
@@ -652,10 +708,10 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
     }
     if (n.t === "infix" && (n.op === "and" || n.op === "or")) {
       const l = predicate(n.left, ctx);
-      const r = predicate(n.right, ctx);
       if (failed(l)) return l;
+      const r = predicate(n.right, ctx);
       if (failed(r)) return r;
-      return n.op === "or" ? [...l, ...r] : and(l, r);
+      return n.op === "or" ? or(l, r) : and(l, r);
     }
     if (n.t !== "call") return not;
     if (n.target && owner(n.target) !== "RequestPredicates" && (n.name === "and" || n.name === "or" || n.name === "negate")) {
@@ -664,7 +720,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
       if (n.name === "negate") return l.every((a) => !a.methods && a.path === undefined) ? [{}] : not;
       const r = n.args[0] ? predicate(n.args[0], ctx) : not;
       if (failed(r)) return r;
-      return n.name === "or" ? [...l, ...r] : and(l, r);
+      return n.name === "or" ? or(l, r) : and(l, r);
     }
     if (n.target && owner(n.target) !== "RequestPredicates") return not;
     if (METHODS.has(n.name) && n.args.length === 1) {
@@ -700,7 +756,14 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
         say(at, `builds a router function on ${path.why}`);
         continue;
       }
-      for (const method of methods ?? ["*"]) routes.push({ method, path, at, ...(only && method === "HEAD" ? { implicit: true } : {}) });
+      for (const method of methods ?? ["*"]) {
+        if (routes.length >= MAX_ROUTES) {
+          if (!capped) limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} builds more than ${MAX_ROUTES} routes in router functions; the rest are not read`);
+          capped = true;
+          return;
+        }
+        routes.push({ method, path, at, ...(only && method === "HEAD" ? { implicit: true } : {}) });
+      }
     }
   };
   /** A nest: the context its routes are read in, one per alternative of its predicate. */
@@ -827,6 +890,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
 
   /** The routes of a router function expression. */
   const routerFunction = (n: Node, ctx: Ctx): void => {
+    if (capped) return;
     if (n.t === "id") {
       const init = ctx.locals.get(n.name);
       if (init && !ctx.seen.has(n.name)) return routerFunction(init, { ...ctx, seen: new Set([...ctx.seen, n.name]) });
@@ -1012,10 +1076,7 @@ export function registeredMappingRoutes(file: string, text: string, constant: Co
     if (t.text === "registerMapping" && !all.some((m) => t.at >= m.start && t.at < m.end)) say(t.at, "registers a handler method outside a method atlas reads");
   }
   for (const m of all) {
-    const locals = new Map<string, Node>();
-    walk({ t: "lambda", params: [], body: m.body, at: m.at, end: m.end }, (n) => {
-      if (n.t === "decl" && n.init) locals.set(n.name, n.init);
-    });
+    const locals = settled(code, m.body);
     walk({ t: "lambda", params: [], body: m.body, at: m.at, end: m.end }, (n) => {
       if (n.t !== "call" || n.name !== "registerMapping" || !n.target || n.args.length !== 3) return;
       let info: Node = n.args[0]!;
@@ -1043,7 +1104,7 @@ export function registeredMappingRoutes(file: string, text: string, constant: Co
       let unread: string | undefined;
       for (const c of calls.slice(1)) {
         if (c.name === "methods") {
-          const ms = c.args.map((a) => (a.t === "member" ? a.name : a.t === "id" ? a.name : undefined));
+          const ms = c.args.map((a) => constantOf(a, "org.springframework.web.bind.annotation.RequestMethod", text));
           if (ms.some((v) => v === undefined || !/^[A-Z]+$/.test(v))) unread = `methods the file does not spell out (${code.slice(c.at, c.end).replace(/\s+/g, " ")})`;
           else verbs = [...(verbs ?? []), ...(ms as string[])];
         } else if (c.name === "paths") unread = "a second list of paths";

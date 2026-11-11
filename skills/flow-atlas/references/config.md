@@ -361,8 +361,9 @@ with a limit. Configurers and annotation types are read in the entry's files and
 files left out, since a `WebMvcConfigurer` need not be among the controller globs. A controller (`@Controller`,
 `@RestController`) that implements an interface with `@HttpExchange` mappings (`@GetExchange`, `@PostExchange`,
 `@PutExchange`, `@PatchExchange`, `@DeleteExchange`, `@HttpExchange(url, method)`) is served at them, under its own
-prefix: the interface's `@HttpExchange` joined to each method's, unless the controller maps that method itself or
-carries its own `@RequestMapping`, which Spring finds first in the type hierarchy. A handler method registered with
+prefix, unless it maps that method itself. Spring takes one type-level mapping for the class, the first its type
+hierarchy holds: its own `@RequestMapping`, else the `@HttpExchange` of the first interface it lists that carries one,
+which the class's own handler methods are served under too. A handler method registered with
 `registerMapping(info, handler, method)` is served at the paths and methods of the `RequestMappingInfo.paths(...)
 .methods(...).build()` it is given, in place or in a local, as given: no `addPathPrefix` prefix applies to it. Router
 functions (WebMvc.fn and WebFlux.fn) a `@Bean` method returns are served at the root, without that prefix too: the
@@ -373,8 +374,8 @@ a trailing handler). A predicate is read as the methods and paths it takes: `GET
 `method`, `methods` and `all()`, joined with `and` and `or`; `accept`, `contentType`, `headers`, `param`, `queryParam`
 and `version` leave both as they are. A nested route's pattern is joined after its nest's, a route with no pattern of
 its own takes any rest of the path within its nest (`/teams/**`), and `resources("/files/**", location)` serves GET
-and HEAD at one segment or more under `/files` (`/files/{path}/**`), never the location itself. A local or a helper
-method of the file with no parameters is followed; a predicate or router function not spelled out, a lookup function,
+and HEAD at one segment or more under `/files` (`/files/{path}/**`), never the location itself. A local (`final`, `val`, or
+never assigned again) or a helper method of the file with no parameters is followed; a predicate or router function not spelled out, a lookup function,
 `pathExtension`, a statement of control flow in the DSL and a router function built outside a `@Bean` method are
 named in a limit and not read. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
