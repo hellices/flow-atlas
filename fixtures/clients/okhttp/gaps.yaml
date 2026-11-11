@@ -1,23 +1,25 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/users/{}", reason: "a URL after the base URL's value (`\"$base/users/$id\"`) is read without the path the base URL's value carries, and the GET a `Request.Builder` sends without a method call is not read, and nothing says so" }
-  - { call: "POST /api/users", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method a `Request.Builder` sets after its URL (`.post(body)`) is not read, and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method set after the URL (`.put(body)`) is not read, and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method set after the URL (`.method(\"PATCH\", body)`) is not read, and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "of a URL concatenated after the base URL's value (`base + \"/users/\" + id`) only the literal is read, without the value after it, and the method set after the URL (`.delete()`) is not read, and nothing says so" }
-  - { call: "HEAD /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method set after the URL (`.head()`) is not read, and nothing says so" }
-  - { call: "POST /api/auth/token", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method set after the URL (`.post(form)`) is not read, and nothing says so" }
-  - { call: "GET /api/search", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the GET a `Request.Builder` sends without a method call is not read, and nothing says so" }
-  - { call: "POST /api/users/{}/refresh", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and the method set after the URL (`.post(body)`, a call enqueued) is not read, and nothing says so" }
+  - { call: "GET /api/users/{}", reason: "a URL after the base URL's value (`\"$base/users/$id\"`) is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "POST /api/users", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "PUT /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "PATCH /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "DELETE /api/users/{}", reason: "of a URL concatenated after the base URL's value (`base + \"/users/\" + id`) only the literal is read, without the value after it, and nothing says so" }
+  - { call: "HEAD /api/users/{}", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "POST /api/auth/token", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "GET /api/search", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
+  - { call: "POST /api/users/{}/refresh", reason: "a URL after the base URL's value is read without the path the base URL's value carries, and nothing says so" }
   - { call: "GET /api/users", reason: "a URL built with `HttpUrl`'s builder (`baseUrl.newBuilder().addPathSegment(\"users\")`) is not read, and nothing says so" }
   - { call: "POST /api/users/{}/avatar", reason: "a URL built with `HttpUrl`'s builder (`addPathSegment(\"users\").addPathSegment(id).addPathSegment(\"avatar\")`) is not read, and nothing says so" }
   - { call: "GET /api/orders/{}/items", reason: "a URL built with `HttpUrl.Builder()` (`addPathSegments(\"api/orders\").addPathSegment(...)`) is not read, and nothing says so" }
-  - { call: "GET /health", reason: "the GET a `Request.Builder` sends without a method call is not read: `baseUrl.resolve(\"/health\")`, which replaces the base URL's path, is read with its method unread, and nothing says so" }
 extra:
-  - { call: "* /users/{}", reason: "`\"$base/users/$id\"` read after the base URL's value, without the path it carries, and without the method the builder sets" }
-  - { call: "* /auth/token", reason: "`\"$base/auth/token\"` read after the base URL's value, without the path it carries, and without the method the builder sets" }
-  - { call: "* /search", reason: "`\"$base/search?q=$term\"` read after the base URL's value, without the path it carries, and without the method the builder sets" }
-  - { call: "* /users/{}/refresh", reason: "`\"$base/users/$id/refresh\"` read after the base URL's value, without the path it carries, and without the method the builder sets" }
-  - { call: "* /users", reason: "`\"$base/users\"` read after the base URL's value, without its path, and the literal of `base + \"/users/\" + id` read alone, a root-relative path the configured base resolves to the root, without the value concatenated after it; neither with the method the builder sets" }
-  - { call: "* /health", reason: "`baseUrl.resolve(\"/health\")` read with the GET the builder sends unread" }
+  - { call: "GET /users/{}", reason: "`\"$base/users/$id\"` read after the base URL's value, without the path it carries" }
+  - { call: "PUT /users/{}", reason: "`\"$base/users/$id\"` read after the base URL's value, without the path it carries" }
+  - { call: "PATCH /users/{}", reason: "`\"${base}/users/${id}\"` read after the base URL's value, without the path it carries" }
+  - { call: "HEAD /users/{}", reason: "`\"$base/users/$id\"` read after the base URL's value, without the path it carries" }
+  - { call: "POST /auth/token", reason: "`\"$base/auth/token\"` read after the base URL's value, without the path it carries" }
+  - { call: "GET /search", reason: "`\"$base/search?q=$term\"` read after the base URL's value, without the path it carries" }
+  - { call: "POST /users/{}/refresh", reason: "`\"$base/users/$id/refresh\"` read after the base URL's value, without the path it carries" }
+  - { call: "POST /users", reason: "`\"$base/users\"` read after the base URL's value, without the path it carries" }
+  - { call: "DELETE /users", reason: "the literal of `base + \"/users/\" + id` read alone, a root-relative path the configured base resolves to the root, without the value concatenated after it" }

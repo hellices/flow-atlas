@@ -1,2 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove the entry when atlas reads OpenFeign.
-unread: "OpenFeign's `@RequestLine(\"GET /repos/{owner}/{repo}\")`, a method and a path in one string, is not read as a request; a limit says only that the files yielded nothing"

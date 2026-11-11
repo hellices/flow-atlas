@@ -400,9 +400,9 @@ method of the request it answers (`*`); each reaches
 the page it names as a request of its own. Include `.tsx` in the route
 files to read them. `inventory` offers the `next` style for a file only where the nearest `package.json` above it
 depends on `next`, or none is found. Other languages are read as text: Kotlin templates (`$x`, `${x}`),
-format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the verb
-comes from the call whose first argument the literal is (type arguments allowed, as in `dio.get<T>(`; also when the literal starts the next line) and the scope
-from the last `fun`, `func` or `def` before it. A path given to an exception is a label, not a request: an argument
+format strings (`%s`, `%d`) and `{x}` become wildcards, as does every replacement field of a Python f-string; the
+method is the one the client library sets through its own API (below) and the scope comes from the last `fun`, `func`
+or `def` before it. A path given to an exception is a label, not a request: an argument
 of a call that is thrown (`throw BffUnavailable("/my")`, `throw new X(...)`, Python's `raise X(...)`), of a class named
 as Java's, Kotlin's, Dart's and Python's own exceptions are (`Exception("/x")`, `IllegalStateException("/x")`,
 `SomeError("/x")`), and in
@@ -625,6 +625,50 @@ interface that extends another or that another of the file extends, written with
 `@HttpExchange` interface that extends another and has no type-level mapping of its own (Spring takes it from the
 interfaces it extends), or an exchange not spelled out, leaves those requests unread with a limit; an interface with
 its own mapping that extends another is read for its own methods, and a limit says those it inherits are not.
+
+In code read as text, a request's method is read where the code states it for certain, as the client library
+documents it: a literal method name or the library's own constant for one. A method held in a value, or set where atlas
+does not follow (a builder in a variable, a function of the code's own), leaves it `*`. What decides is the call whose
+URL argument the literal is, the URL also built inside it (`http.get(Uri.parse("$base/users"))`,
+`http.Get(fmt.Sprintf("%s/users", base))`, `session.get(url("/orders"))`), and the code around that call:
+
+- a method call named for a method, the URL its first argument (`client.get(`, `.Post(` on the line after its chain's
+  `.`, as gofmt lays out resty's chains, `dio.get<T>(`);
+- Retrofit's `@GET("users")` and the other method annotations, `@HTTP(method = "DELETE", path = ...)`; Refit's
+  `[Get("/users")]` and the other verb attributes; OpenFeign's `@RequestLine("GET /repos/{owner}")`, a method and a
+  path in one string, split as Feign's contract does (the path after the method, a `/` put before one that starts with
+  a literal, the query left out; a limit names a request line whose URI starts with a value). A Retrofit method whose
+  URL is its `@Url` parameter is a value, and a limit names it;
+- Spring: RestTemplate's `getForObject`, `getForEntity`, `headForHeaders`, `postForObject`, `postForEntity`,
+  `postForLocation`, `put`, `patchForObject`, `delete`, `optionsForAllow`, and `exchange` or `execute` with an
+  `HttpMethod` constant after the URL; RestClient's and WebClient's `get()` (and the other methods) or
+  `method(HttpMethod.X)` before `.uri(...)`;
+- OkHttp: a `Request.Builder()` chain through `.url(...)` to `.build()` sends the method of its last `get()`, `head()`,
+  `post(body)`, `put(body)`, `patch(body)`, `delete()` or `method("PATCH", body)`, and GET where it calls none; a chain
+  with another call, or one that does not reach `.build()`, is `*`;
+- Ktor (with `io.ktor.client.request.request` or `submitForm` imported): `client.request(url) { method =
+  HttpMethod.Patch }`, GET where the block names no `method`; `submitForm`, POST, or GET with `encodeInQuery = true`;
+- Go: net/http's `NewRequest(method, url, body)` and `NewRequestWithContext(ctx, method, url, body)`, by the name the
+  file imports net/http under, and `PostForm`; resty's `Execute(method, url)`; the method a literal or the `MethodX`
+  constant of net/http or resty, by the names the file imports them under;
+- Python: `request(method, url)` and `build_request(method, url)` on any receiver (Requests, HTTPX, urllib3, aiohttp
+  and http.client take the method first), and the `Request(method, url)` of Requests and HTTPX, by the names the file
+  imports; the method upper-cased, as those libraries send it;
+- Dart: package:http's `Request(method, url)`, `MultipartRequest` and `StreamedRequest`, `read` and `readBytes` (GET),
+  by the prefix the file imports the package under; dio's `query` (QUERY) and the method of `request(path, options:
+  Options(method: 'PATCH'))`, `*` without one, since the Dio's own options may set it;
+- Swift: Alamofire's `request(url, method: .patch)`, and `AF.request(url)`, GET; a `URLRequest(url:)` handed on as it
+  is, or held in a `let`, is GET; held in a `var`, it takes the one `httpMethod` (or Alamofire's `method`) its block
+  assigns, GET where it assigns none, and `*` where it is assigned more than once, in a nested block, again as a whole
+  or passed `inout`; URLSession's `data(from:)`, `bytes(from:)` and `download(from:)` are GET;
+- C#: HttpClient's `GetAsync`, `GetStringAsync`, `GetStreamAsync`, `GetByteArrayAsync`, `PostAsync`, `PutAsync`,
+  `PatchAsync`, `DeleteAsync` and System.Net.Http.Json's `GetFromJsonAsync`, `PostAsJsonAsync`, `PutAsJsonAsync`,
+  `PatchAsJsonAsync`, `DeleteFromJsonAsync`; `new HttpRequestMessage(HttpMethod.Patch, uri)` or
+  `new HttpRequestMessage(new HttpMethod("PATCH"), uri)`.
+
+Elsewhere an `HttpMethod.Post` written in the same statement on the line as the URL gives the method. In TypeScript and
+JavaScript, a `new Request(url, init)` handed to fetch has its init's method (GET without one), unless fetch's own init
+sets another, and a Ky instance's `query` sends QUERY.
 
 ### Generated clients
 

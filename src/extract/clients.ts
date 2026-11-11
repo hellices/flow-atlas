@@ -296,14 +296,15 @@ export class Clients {
     if (!ts.isCallExpression(p) || p.arguments[0] !== value) return undefined;
     const found = this.requestCall(p);
     if (!found || found.config) return undefined;
-    return this.request(found.instance, found.options);
+    const request = this.request(found.instance, found.options);
+    return found.method ? { ...request, method: found.method } : request;
   }
 
   /**
    * The instance a call is made through and the options it is given: `api.get(url, options)`, `api(url, options)`; with
    * `config` where the call takes an axios request config first (`api(config)`, `api.request(config)`).
    */
-  private requestCall(call: ts.CallExpression): { instance: Instance; options: ts.Expression | undefined; config?: true } | undefined {
+  private requestCall(call: ts.CallExpression): { instance: Instance; options: ts.Expression | undefined; config?: true; method?: string } | undefined {
     const callee = unwrap(call.expression);
     const m = member(callee);
     const on = m ? this.instanceOf(m.receiver) : undefined;
@@ -313,7 +314,8 @@ export class Clients {
         if (!AXIOS_PATH_FIRST.has(m.name)) return undefined;
         return { instance: on, options: call.arguments[AXIOS_WITH_DATA.has(m.name) ? 2 : 1] };
       }
-      if (on.library === "ky" && KY_METHODS.has(m.name)) return { instance: on, options: call.arguments[1] };
+      // Ky's methods set the method they are named for over the options' (Ky, readme: ky.get(input, options?)...).
+      if (on.library === "ky" && KY_METHODS.has(m.name)) return { instance: on, options: call.arguments[1], method: m.name.toUpperCase() };
       if (on.library === "openapi-fetch" && OPENAPI_FETCH_METHODS.has(m.name)) return { instance: on, options: call.arguments[1] };
       return undefined;
     }

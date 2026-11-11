@@ -393,7 +393,7 @@ describe("in code read as text", () => {
       ["A.cs", 'if (path.StartsWith("/api")) return path.Replace("/api", "");', []],
       ["a.go", 'if strings.HasPrefix(p, "/api") { p = strings.TrimPrefix(p, "/api") }', []],
       // A method of another type, or of another language, is its own: Dart's Uri.replace builds a URL.
-      ["a.dart", "final res = await client.get(baseUri.replace(path: '/v1/users'));", ["* /v1/users"]],
+      ["a.dart", "final res = await client.get(baseUri.replace(path: '/v1/users'));", ["GET /v1/users"]],
       ["a.go", 'if other.HasPrefix(p, "/api") {}', ["* /api"]],
       ["a.rb", 'path.start_with?("/api") || other.startsWith("/admin")', ["* /api", "* /admin"]],
       ["A.swift", 'let bare = path.replacingOccurrences(of: "/api", with: "")', []],

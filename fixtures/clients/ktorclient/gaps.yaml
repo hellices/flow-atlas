@@ -1,9 +1,7 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "PATCH /api/v1/users/{}", reason: "the method set in the block of `client.request(\"users/${id}\") { method = HttpMethod.Patch }` is not read: the path is read with its method unread, and nothing says so" }
   - { call: "DELETE /api/v1/users/{}", reason: "a relative path concatenated with a value (`client.delete(\"users/\" + id)`) is not read, only a whole string is, and nothing says so" }
-  - { call: "POST /api/v1/auth/token", reason: "the POST `client.submitForm(url = \"auth/token\", ...)` sends is not read: the path is read with its method unread, and nothing says so" }
   - { call: "POST /api/v1/users", reason: "a path built with `url { appendPathSegments(\"users\") }` in `client.post { }` is not read, and nothing says so" }
   - { call: "GET /api/v1/orders/{}/items", reason: "a path built with `url { appendPathSegments(\"orders\", id, \"items\") }` in `client.get { }` is not read, and nothing says so" }
   - { call: "GET /api/v1/articles", reason: "a typed request (`client.get(Articles())`, Ktor's Resources plugin) is not read: `@Resource(\"/articles\")` is read as a path with no method, and nothing says so" }
@@ -12,6 +10,4 @@ missing:
   - { call: "PUT /api/v1/articles/{}/edit", reason: "a typed request to a nested resource (`client.put(Articles.Id.Edit(...))`) is not read, and nothing says so" }
   - { call: "DELETE /api/v1/articles/{}", reason: "a typed request to a nested resource (`client.delete(Articles.Id(id = id))`) is not read, and nothing says so" }
 extra:
-  - { call: "* /api/v1/auth/token", reason: "`client.submitForm(url = \"auth/token\", ...)` read with the POST it sends unread" }
-  - { call: "* /api/v1/users/{}", reason: "`client.request(\"users/${id}\") { method = HttpMethod.Patch }` read with the method set in its block unread" }
   - { call: "* /articles", reason: "the resource class's `@Resource(\"/articles\")` read as a request of its own, with no method, at the root its leading `/` gives it under the configured base; the typed requests made with it are the requests" }

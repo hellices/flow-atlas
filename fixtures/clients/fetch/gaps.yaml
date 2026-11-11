@@ -1,6 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "POST /api/uploads", reason: "the method of a `Request` built with an init (`new Request(url, { method })`) and handed to fetch is not read, and nothing says so" }
-extra:
-  - { call: "* /api/uploads", reason: "a `Request` handed to fetch is read with its method unread" }

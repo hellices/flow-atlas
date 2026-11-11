@@ -306,7 +306,6 @@
     "server|PUT /api/workflows/{id}"
   ],
   "calls": [
-    "mobile->server|* /.well-known/immich based @ mobile/lib/services/api.service.dart:141",
     "mobile->server|* /api/archive @ mobile/lib/presentation/actions/open_in_browser.action.dart:33",
     "mobile->server|* /api/favorites @ mobile/lib/presentation/actions/open_in_browser.action.dart:31",
     "mobile->server|* /api/trash @ mobile/lib/presentation/actions/open_in_browser.action.dart:32",
@@ -323,6 +322,7 @@
     "mobile->server|* /users/me based @ mobile/lib/services/auth.service.dart:71",
     "mobile->server|* /users/{}/profile-image based @ mobile/lib/presentation/widgets/people/partner_user_avatar.widget.dart:15",
     "mobile->server|* /users/{}/profile-image based @ mobile/lib/widgets/common/user_circle_avatar.dart:39",
+    "mobile->server|GET /.well-known/immich based @ mobile/lib/services/api.service.dart:141",
     "sdk->server|* /api/activities @ packages/sdk/src/fetch-client.ts:3983",
     "sdk->server|* /api/activities/statistics{} @ packages/sdk/src/fetch-client.ts:3999",
     "sdk->server|* /api/activities{} @ packages/sdk/src/fetch-client.ts:3964",
@@ -683,7 +683,7 @@
     "web->server|GET /admin/database-backups/{} based @ web/src/lib/services/database-backups.service.ts:121"
   ],
   "edges": [
-    "match mobile->server|* /.well-known/immich@mobile/lib/services/api.service.dart:141 -> server|GET /.well-known/immich (text)",
+    "match mobile->server|GET /.well-known/immich@mobile/lib/services/api.service.dart:141 -> server|GET /.well-known/immich (text)",
     "match sdk->server|* /api/admin/config/defaults@packages/sdk/src/fetch-client.ts#getAdminConfigDefaults -> server|GET /api/admin/config/defaults (static)",
     "match sdk->server|* /api/admin/integrity/report/{}/csv@packages/sdk/src/fetch-client.ts#getIntegrityReportCsv -> server|GET /api/admin/integrity/report/{type}/csv (static)",
     "match sdk->server|* /api/admin/integrity/report/{}/file@packages/sdk/src/fetch-client.ts#getIntegrityReportFile -> server|GET /api/admin/integrity/report/{id}/file (static)",

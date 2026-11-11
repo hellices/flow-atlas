@@ -24,8 +24,8 @@
     "client-app->catalog-api|* /items/{} based @ src/ClientApp/Services/Catalog/CatalogService.cs:54",
     "webapp->catalog-api|* /api/catalog/items/{}/pic @ src/WebApp/Program.cs:32",
     "webapp->ordering-api|* /api/Orders @ src/WebApp/Services/OrderingService.cs:5",
-    "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:12",
-    "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:7"
+    "webhook-client->webhooks-api|GET /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:12",
+    "webhook-client->webhooks-api|POST /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:7"
   ],
   "edges": [
     "match webapp->catalog-api|* /api/catalog/items/{}/pic@src/WebApp/Program.cs:32 -> catalog-api|GET /api/catalog/items/by/{name} (text)",

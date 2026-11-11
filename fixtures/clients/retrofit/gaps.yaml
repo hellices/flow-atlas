@@ -1,30 +1,4 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/v1/users", reason: "the method of Retrofit's `@GET(\"users\")` is not read: its URL, relative to the base URL, is read with `*`, and nothing says so" }
-  - { call: "GET /api/v1/users/{}", reason: "the method of Retrofit's `@GET(\"users/{id}\")` is not read, and nothing says so" }
-  - { call: "POST /api/v1/users", reason: "the method of Retrofit's `@POST(\"users\")` is not read, and nothing says so" }
-  - { call: "PUT /api/v1/users/{}", reason: "the method of Retrofit's `@PUT(\"users/{id}\")` is not read, and nothing says so" }
-  - { call: "PATCH /api/v1/users/{}", reason: "the method of Retrofit's `@PATCH(\"users/{id}\")` is not read, and nothing says so" }
-  - { call: "DELETE /api/v1/users/{}", reason: "the method of Retrofit's `@DELETE(\"users/{id}\")` is not read, and nothing says so" }
-  - { call: "HEAD /api/v1/users/{}", reason: "the method of Retrofit's `@HEAD(\"users/{id}\")` is not read, and nothing says so" }
-  - { call: "DELETE /api/v1/users/{}/sessions", reason: "the method of `@HTTP(method = \"DELETE\", path = \"users/{id}/sessions\", hasBody = true)` is not read: its path is read with `*`, and nothing says so" }
-  - { call: "GET /api/v1/groups/{}/users", reason: "the method of Retrofit's `@GET(\"groups/{groupId}/users\")` is not read, and nothing says so" }
-  - { call: "POST /api/v1/auth/token", reason: "the method of Retrofit's `@FormUrlEncoded @POST(\"auth/token\")` is not read, and nothing says so" }
-  - { call: "PUT /api/v1/users/{}/photo", reason: "the method of Retrofit's `@Multipart @PUT(\"users/{id}/photo\")` is not read, and nothing says so" }
-  - { call: "GET /api/v1/users/{}/repos", reason: "the method of Retrofit's `@GET(\"users/{id}/repos\")` (a method returning `Call`) is not read, and nothing says so" }
-  - { call: "GET /api/v1/{}", reason: "a `@GET` whose URL is the method's `@Url` argument, resolved against the base URL, is not read, and nothing says so" }
-  - { call: "GET /analytics/v2/reports/{}", reason: "the method of Retrofit's `@GET(\"reports/{year}\")` is not read, and nothing says so" }
-  - { call: "POST /analytics/v2/events", reason: "the method of Retrofit's `@POST(\"events\")` is not read, and nothing says so" }
-  - { call: "GET /health", reason: "the method of Retrofit's `@GET(\"/health\")` is not read: its URL, which replaces the base URL's path, is read with `*`, and nothing says so" }
-extra:
-  - { call: "* /api/v1/users", reason: "`@GET(\"users\")` and `@POST(\"users\")` read without their annotations' methods" }
-  - { call: "* /api/v1/users/{}", reason: "`@GET`, `@PUT`, `@PATCH`, `@DELETE` and `@HEAD` on `users/{id}` read without their annotations' methods" }
-  - { call: "* /api/v1/users/{}/sessions", reason: "`@HTTP(method = \"DELETE\", path = \"users/{id}/sessions\")` read without its method" }
-  - { call: "* /api/v1/groups/{}/users", reason: "`@GET(\"groups/{groupId}/users\")` read without its annotation's method" }
-  - { call: "* /api/v1/auth/token", reason: "`@POST(\"auth/token\")` read without its annotation's method" }
-  - { call: "* /api/v1/users/{}/photo", reason: "`@PUT(\"users/{id}/photo\")` read without its annotation's method" }
-  - { call: "* /api/v1/users/{}/repos", reason: "`@GET(\"users/{id}/repos\")` read without its annotation's method" }
-  - { call: "* /analytics/v2/reports/{}", reason: "`@GET(\"reports/{year}\")` read without its annotation's method" }
-  - { call: "* /analytics/v2/events", reason: "`@POST(\"events\")` read without its annotation's method" }
-  - { call: "* /health", reason: "`@GET(\"/health\")` read at the root its leading `/` gives it, without its annotation's method" }
+  - { call: "GET /api/v1/{}", reason: "a `@GET` whose URL is the method's `@Url` argument, a value resolved against the base URL, is not read; a limit names it" }
