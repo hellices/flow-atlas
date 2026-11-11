@@ -21,11 +21,12 @@ type Ref =
   | { kind: "module"; file: string };
 
 /**
- * What a module exports under a name: the node that declares it (or the expression `export default` gives), or a module;
- * undefined where the module exports no such name, null where it may but atlas does not read what (a module not read,
- * two `export *` that give it differently).
+ * What a module exports under a name: the node that declares it (or the expression `export default` gives), a module,
+ * or the binding of a package the repository does not hold that it passes on (`export { Route } from "react-router"`),
+ * by the package and the name it exports there; undefined where the module exports no such name, null where it may
+ * but atlas does not read what (a module not read, two `export *` that give it differently).
  */
-type Exported = { node: ts.Node } | { file: string };
+export type Exported = { node: ts.Node } | { file: string } | { module: string; name: string };
 type Found = Exported | null | undefined;
 
 /** Where a module specifier leads: a file of the repository. */
@@ -295,8 +296,17 @@ export class Constants {
     return unreadName ? { kind: "enum", members: new Map(), reverse: undefined } : { kind: "enum", members, reverse };
   }
 
+  /**
+   * What the module an import names exports under a name, followed through its re-exports as `exported` follows them:
+   * the node that declares it, or the expression `export default` gives; a module; or the package and name of a binding
+   * it passes on from a package the repository does not hold. Undefined where it is not read.
+   */
+  exportOf(from: string, spec: string, name: string): Exported | undefined {
+    return this.imported(from, spec, name) ?? undefined;
+  }
+
   private exportedRef(x: Found): Ref | undefined {
-    if (!x) return undefined;
+    if (!x || "module" in x) return undefined;
     if ("file" in x) return { kind: "module", file: x.file };
     // What `export default` gives may be changed by any module that imports it, as a `let` may.
     if (ts.isExpression(x.node)) return this.held(x.node, true);
@@ -314,7 +324,9 @@ export class Constants {
   /** The name a module imports from `spec`, in the module it resolves to; null where that module is not read. */
   private imported(from: string, spec: string, name: string): Found {
     const target = this.resolve(from, spec);
-    return target ? this.exported(target.file, name) : null;
+    if (target) return this.exported(target.file, name);
+    // A package the repository does not hold exports what its own code says; only its name and the binding's are known.
+    return spec.startsWith(".") || spec.startsWith("/") || /^[a-z][\w+.-]*:/i.test(spec) ? null : { module: spec, name };
   }
 
   /**
@@ -379,7 +391,7 @@ export class Constants {
       const x = target ? this.exported(target.file, name) : null;
       if (x === null) return null;
       if (!x) continue;
-      if (found && ("file" in found ? !("file" in x) || found.file !== x.file : !("node" in x) || found.node !== x.node)) return null;
+      if (found && !sameExport(found, x)) return null;
       found = x;
     }
     return found;
@@ -621,6 +633,13 @@ function selected(t: unknown, conditions: Set<string>): string | null | undefine
     }
   }
   return undefined;
+}
+
+/** Whether two exports are one binding: the same node, the same module, or the same name of the same package. */
+function sameExport(a: Exported, b: Exported): boolean {
+  if ("node" in a) return "node" in b && a.node === b.node;
+  if ("file" in a) return "file" in b && a.file === b.file;
+  return "module" in b && a.module === b.module && a.name === b.name;
 }
 
 /** Whether a declaration is ambient: `declare`, in a `declare namespace`, or in a declaration file. */

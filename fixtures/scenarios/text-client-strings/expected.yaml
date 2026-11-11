@@ -1,0 +1,37 @@
+case: |
+  Clients read as text whose strings test, label or name things that are no requests: a Flutter app on a NestJS server
+  under /api, and an ASP.NET Core web app forwarding images to a catalog API. Seen in immich and eShop: the Flutter
+  app's `serverUrl.endsWith('/api')` and `replaceFirst('/api', '')`, the `prefixText` an InputDecoration shows before a
+  link's slug, and the path of a log file it writes came back as calls (FA002s for /api/api, /api/s and the log file);
+  in the web app, the path `UseExceptionHandler` re-executes a failed request at and the route `MapForwarder` serves
+  were calls to the catalog API. Now an argument of a method that tests or cuts text is no request in code read as
+  text, as in parsed code; nor is a text property of Flutter's InputDecoration, a path ending in `.log`, the first
+  argument of ASP.NET Core's `Map...` and `MapForwarder` or the path `UseExceptionHandler` takes. The path the forwarder
+  sends its requests to is still read, and reaches the catalog API's picture route.
+surfaces:
+  - server|GET /api/server/ping
+  - server|GET /api/users/me
+  - catalog-api|GET /api/catalog/items/{id}/pic
+findings: []
+chains:
+  - mobile->server|GET /api/server/ping
+  - mobile->server|GET /api/users/me
+  - webapp->catalog-api|GET /api/catalog/items/{id}/pic
+calls:
+  - mobile->server|GET /api/server/ping @ mobile/lib/services/api.service.dart:12
+  - mobile->server|GET /api/users/me @ mobile/lib/repositories/user.repository.dart:7
+  - webapp->catalog-api|* /api/catalog/items/{}/pic @ webapp/Program.cs:17
+limits:
+  - "routes catalog-api: no handler was found in the configured route files for 1 operation of catalog-api/Catalog.API.json (GetItemPicture)"
+documents: []
+descriptions:
+  - catalog-api chosen catalog-api/Catalog.API.json ReadForRoutes
+  - server none - NoneFound
+inventory:
+  routes:
+    - server/src/controllers/server.controller.ts nest 1
+    - server/src/controllers/user.controller.ts nest 1
+  calls:
+    - mobile/lib/repositories/user.repository.dart 1
+    - mobile/lib/services/api.service.dart 1
+    - mobile/lib/services/logger.service.dart 1

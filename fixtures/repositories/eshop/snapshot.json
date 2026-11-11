@@ -22,9 +22,7 @@
     "client-app->catalog-api|* /catalogtypes based @ src/ClientApp/Services/Catalog/CatalogService.cs:78",
     "client-app->catalog-api|* /items based @ src/ClientApp/Services/Catalog/CatalogService.cs:38",
     "client-app->catalog-api|* /items/{} based @ src/ClientApp/Services/Catalog/CatalogService.cs:54",
-    "webapp->catalog-api|* /Error @ src/WebApp/Program.cs:19",
     "webapp->catalog-api|* /api/catalog/items/{}/pic @ src/WebApp/Program.cs:32",
-    "webapp->catalog-api|* /product-images/{} @ src/WebApp/Program.cs:32",
     "webapp->ordering-api|* /api/Orders @ src/WebApp/Services/OrderingService.cs:5",
     "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:12",
     "webhook-client->webhooks-api|* /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:7"

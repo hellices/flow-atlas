@@ -1,0 +1,5 @@
+{
+  "name": "server",
+  "private": true,
+  "dependencies": { "@koa/router": "^15.7.0", "koa": "^3.0.0" }
+}
