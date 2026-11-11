@@ -169,13 +169,15 @@ function packageLockHosts(text: string): string[] {
   type Entry = { resolved?: string; link?: boolean; dependencies?: Record<string, Entry> };
   const lock = JSON.parse(text) as { packages?: Record<string, Entry>; dependencies?: Record<string, Entry> };
   const resolved = (entries: Record<string, Entry> | undefined): string[] =>
-    Object.values(entries ?? {}).flatMap((e) => [...(e.resolved && !e.link ? [e.resolved] : []), ...resolved(e.dependencies)]);
+    Object.values(entries ?? {}).flatMap((e) => [...(e.resolved && !e.link && !e.resolved.startsWith("file:") ? [e.resolved] : []), ...resolved(e.dependencies)]);
   return [...resolved(lock.packages), ...resolved(lock.dependencies)].map(fetchHost);
 }
 
 /**
- * The hosts a lock file installs from: where each package is fetched, not the projects' home pages. Every URL counts,
- * whatever its scheme (`https://`, `git+ssh://`, Cargo's `registry+https://`), and an scp-like `git@host:org/repo`.
+ * The hosts a lock file installs from: where each package is fetched, not the projects' home pages. Every URL with a
+ * host counts, whatever its scheme (`https://`, `git+ssh://`, Cargo's `registry+https://`), and an scp-like
+ * `git@host:org/repo`. A local source (`file:../x`, a workspace's `link:../x`) is fetched from no host: it sends no
+ * install to a mirror, so it is not one of them.
  */
 function lockHosts(file: string, text = readFileSync(file, "utf8")): string[] {
   if (file.endsWith("composer.lock")) return composerHosts(text);
@@ -290,6 +292,7 @@ describe("routes as each framework serves them", () => {
         "node_modules/a": { resolved: "https://registry.npmjs.org/a/-/a-1.0.0.tgz", funding: { url: "https://funding.example.com" } },
         "node_modules/b": { resolved: "git+ssh://git@git.example.com/org/b.git#0123abc" },
         "node_modules/c": { resolved: "packages/c", link: true },
+        "node_modules/d": { resolved: "file:vendor/d-1.0.0.tgz" },
       },
     });
     expect(lockHosts("package-lock.json", packageLock)).toEqual(["registry.npmjs.org", "git.example.com"]);
@@ -299,6 +302,9 @@ describe("routes as each framework serves them", () => {
     expect(lockHosts("pnpm-lock.yaml", pnpm)).toEqual(["git.example.com", "git.example.com"]);
     expect(lockHosts("yarn.lock", 'b@git@git.example.com:org/b.git:\n  resolved "git@git.example.com:org/b.git#0123abc"\n')).toEqual(["git.example.com", "git.example.com"]);
     expect(lockHosts("Cargo.lock", 'source = "registry+https://github.com/rust-lang/crates.io-index"\n')).toEqual(["github.com"]);
+    // A local source is fetched from no host.
+    expect(lockHosts("yarn.lock", 'd@file:../d:\n  version "1.0.0"\n')).toEqual([]);
+    expect(lockHosts("pnpm-lock.yaml", "importers:\n  .:\n    dependencies:\n      d:\n        version: link:../d\n")).toEqual([]);
   });
   it.runIf(fixtures.length > 0)("prints the board", () => {
     console.log(["routes read per framework:", ...board.map((b) => `  ${b}`)].join("\n"));

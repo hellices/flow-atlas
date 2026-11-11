@@ -77,7 +77,7 @@ function settled(entries, byRaw) {
   for (const r of entries) {
     if (typeof r.method !== "string" || typeof r.path !== "string") throw new Error(`an entry needs a method and a path: ${JSON.stringify(r)}`);
     const entry = { method: r.method, path: r.path, ...(r.raw !== undefined && r.raw !== r.path ? { raw: r.raw } : {}) };
-    const key = `${entry.method} ${entry.path}${byRaw ? ` ${entry.raw ?? ""}` : ""}`;
+    const key = JSON.stringify([entry.method, entry.path, byRaw ? (entry.raw ?? null) : null]);
     if (!seen.has(key)) seen.set(key, entry);
   }
   return [...seen.values()].sort((a, b) =>
