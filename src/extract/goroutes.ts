@@ -73,6 +73,8 @@ interface Router {
   go?: { version: string | undefined; legacy: boolean; file: string | undefined };
   /** The DefaultServeMux. */
   default?: true;
+  /** Where the router is put in a value atlas does not follow (a map, a slice, an index, another package's struct). */
+  escaped?: string;
 }
 
 /** A route registration on a router: the path as the router holds it, the methods, and what serves it. */
@@ -101,8 +103,12 @@ type V =
   | { k: "bool"; value: boolean }
   | { k: "strs"; values: string[] }
   | { k: "func"; fn: Fn; pkg: Pkg; scope: Scope | undefined; recv?: V; recvName?: string }
-  /** A struct value; `untraced` where it is a parameter or receiver no read call passes a value for. */
-  | { k: "obj"; type: TypeRef; fields: Map<string, V>; untraced?: true }
+  /**
+   * A struct: its fields where set (`byValue` where the value is the struct itself, copied as Go copies it, rather than
+   * a pointer to it); `vague` says why its fields not set are unknown rather than zero, `untraced` where it is a
+   * parameter or receiver no read call passes a value for.
+   */
+  | { k: "obj"; type: TypeRef; fields: Map<string, V>; byValue?: true; vague?: string; untraced?: true }
   | { k: "pkg"; path: string }
   | { k: "builtin"; pkg: string; name: string }
   | { k: "method"; recv: V & { k: "router" }; name: string }
@@ -223,6 +229,8 @@ interface Pkg {
   types: Map<string, { type: Expr; file: string }>;
   values: Map<string, { kind: "var" | "const"; type?: Expr; value?: Expr; index: number; count: number; file: string }>;
   globals: Map<string, V>;
+  /** The call from outside the packages (see `Interp.epoch`) each variable's value in `globals` was set in. */
+  epochs: Map<string, number>;
 }
 
 /** The go.mod above a file, read through `read`; undefined where none is. */
@@ -278,7 +286,7 @@ function loadPackages(texts: Map<string, string>, read: (path: string) => string
     if (!found) {
       const rel = module ? posix.relative(module.dir || ".", dir === "." ? "." : dir) : undefined;
       const path = module ? (rel && rel !== "." ? `${module.path}/${rel}` : module.path) : undefined;
-      found = { dir, path, name: go.pkg, module, files: [], funcs: new Map(), methods: new Map(), types: new Map(), values: new Map(), globals: new Map() };
+      found = { dir, path, name: go.pkg, module, files: [], funcs: new Map(), methods: new Map(), types: new Map(), values: new Map(), globals: new Map(), epochs: new Map() };
       byDir.set(dir, found);
     }
     const pkg = found;
@@ -394,16 +402,24 @@ const MAX_DEPTH = 32;
 /** The most values a `range` over a literal list is read for. */
 const MAX_RANGE = 64;
 
-/** The names the statements assign with `=` or an operator, outside function literals: what a branch may change. */
+/**
+ * The names the statements assign with `=` or an operator, outside function literals, and the fields of a name they
+ * assign (`s.router`, written `s.router`): what a branch may change.
+ */
 function assignedNames(stmts: Stmt[], out = new Set<string>()): Set<string> {
+  const target = (l: Expr) => {
+    if (l.k === "ident") out.add(l.name);
+    else if (l.k === "sel" && l.x.k === "ident") out.add(`${l.x.name}.${l.name}`);
+  };
   const walk = (s: Stmt | undefined): void => {
     if (!s) return;
     switch (s.k) {
       case "assign":
-        if (s.op !== ":=") for (const l of s.lhs) if (l.k === "ident") out.add(l.name);
+        if (s.op !== ":=") s.lhs.forEach(target);
+        else s.lhs.forEach((l) => l.k !== "ident" && target(l));
         break;
       case "range":
-        if (!s.define) for (const l of s.lhs) if (l.k === "ident") out.add(l.name);
+        if (!s.define) s.lhs.forEach(target);
         assignedNames(s.body.stmts, out);
         break;
       case "block":
@@ -442,6 +458,15 @@ class Interp {
   /** Methods `chi.RegisterMethod` adds, which `Method` takes. */
   readonly chiMethods = new Set<string>();
   private readonly invoked = new Set<number>();
+  /**
+   * Which call from outside the packages is being read: 0 for `init` and `main`, which run first, each other function
+   * no read code calls a number of its own.
+   */
+  private epoch = 0;
+  /** How many branches or loop bodies, which may not run, the code being read is in. */
+  private conditional = 0;
+  /** The package-level variables (`dir\0name`) a function other than `init` assigns. */
+  private mutable = new Set<string>();
   /** The calls read on a router, by `file:offset`. */
   private readonly handled = new Set<string>();
   /** The functions that may make, register on or return a router or a struct of these packages (see `relevant`). */
@@ -481,7 +506,8 @@ class Interp {
    */
   run(): void {
     const callers = callersOf(this.pkgs);
-    this.relevant = this.relevantFunctions(callers);
+    const assigners = this.assignments();
+    this.relevant = this.relevantFunctions(callers, assigners);
     const all: Array<{ fn: Fn; pkg: Pkg; decl: FuncDecl }> = [];
     for (const pkg of this.pkgs) {
       for (const f of pkg.files) {
@@ -497,12 +523,17 @@ class Interp {
     const main = all.filter((r) => !r.decl.recv && r.decl.name === "main" && r.pkg.name === "main");
     init.forEach(start);
     main.forEach(start);
-    for (const r of all) if (!init.includes(r) && !main.includes(r) && !(callers.get(r.decl)?.size ?? 0)) start(r);
+    for (const r of all) {
+      if (init.includes(r) || main.includes(r) || (callers.get(r.decl)?.size ?? 0)) continue;
+      this.epoch++;
+      start(r);
+    }
     // A function named only where atlas does not read a call to it (a value, a call on a value not traced): its callers
     // first, so that a function they pass a router reads it bound.
     for (;;) {
       const left = all.filter((r) => !this.invoked.has(this.fnKey(r.fn)));
-      if (!left.length) return;
+      if (!left.length || this.exhausted) return;
+      this.epoch++;
       const decls = new Set(left.map((r) => r.decl));
       start(left.find((r) => ![...(callers.get(r.decl) ?? [])].some((c) => c !== null && c !== r.decl && decls.has(c))) ?? left[0]!);
     }
@@ -512,7 +543,7 @@ class Interp {
    * The functions that name one of the routers' packages, return a struct type of the route files' packages, or name
    * such a function: only these can make a router, register on one they did not get, or give back what one is held in.
    */
-  private relevantFunctions(callers: Map<FuncDecl, Set<FuncDecl | null>>): Set<number> {
+  private relevantFunctions(callers: Map<FuncDecl, Set<FuncDecl | null>>, assigners: Set<FuncDecl>): Set<number> {
     const out = new Set<FuncDecl>();
     const keyOf = new Map<FuncDecl, number>();
     for (const pkg of this.pkgs) {
@@ -527,7 +558,7 @@ class Interp {
             return !!ref && ref.pkg.types.get(ref.name)?.type.k === "structtype";
           });
           const names = toks.some((t) => t.kind === "ident" && t.start >= decl.start && t.start < decl.end && libs.has(t.text));
-          if (dotted || returnsStruct || names) out.add(decl);
+          if (dotted || returnsStruct || names || assigners.has(decl)) out.add(decl);
         }
       }
     }
@@ -545,6 +576,49 @@ class Interp {
       }
     }
     return new Set([...out].map((d) => keyOf.get(d)!));
+  }
+
+  /**
+   * The functions that assign a package-level variable (`x = ...`, `pkg.X = ...`, `x++`), from their tokens, function
+   * literals in them included; the variables a function other than `init` assigns are `mutable`.
+   */
+  private assignments(): Set<FuncDecl> {
+    const out = new Set<FuncDecl>();
+    const isAssign = (t: { kind: string; text: string }) =>
+      t.kind === "op" && (t.text === "=" || t.text === "++" || t.text === "--" || (t.text.endsWith("=") && t.text.length > 1 && !["==", "!=", "<=", ">=", ":="].includes(t.text)));
+    for (const pkg of this.pkgs) {
+      for (const f of pkg.files) {
+        const toks = tokenize(f.text);
+        for (const decl of f.go.funcs) {
+          if (!decl.body) continue;
+          const init = !decl.recv && decl.name === "init";
+          for (let i = 0; i < toks.length; i++) {
+            const t = toks[i]!;
+            if (t.start < decl.body.start || t.start >= decl.body.end || !isAssign(t)) continue;
+            // The left side: back to the start of the statement, in parts between commas.
+            const parts: Array<typeof toks> = [[]];
+            for (let j = i - 1; j >= 0 && toks[j]!.start > decl.body.start; j--) {
+              const u = toks[j]!;
+              if (u.kind === ";" || u.kind === "keyword" || (u.kind === "op" && ["{", "}", "(", ")", "[", "]"].includes(u.text) && parts[0]!.length === 0)) break;
+              if (u.kind === "op" && u.text === ",") parts.unshift([]);
+              else parts[0]!.unshift(u);
+            }
+            for (const part of parts) {
+              let target: { pkg: Pkg; name: string } | undefined;
+              if (part.length === 1 && part[0]!.kind === "ident") target = { pkg, name: part[0]!.text };
+              else if (part.length === 3 && part[0]!.kind === "ident" && part[1]!.text === "." && part[2]!.kind === "ident") {
+                const other = this.byPath.get(f.imports.get(part[0]!.text) ?? "");
+                if (other) target = { pkg: other, name: part[2]!.text };
+              }
+              if (!target || target.pkg.values.get(target.name)?.kind !== "var") continue;
+              out.add(decl);
+              if (!init) this.mutable.add(`${target.pkg.dir}\0${target.name}`);
+            }
+          }
+        }
+      }
+    }
+    return out;
   }
 
   private fnKey(fn: Fn): number {
@@ -590,7 +664,7 @@ class Interp {
     const unbound = (name: string, type: Expr | undefined): V => {
       // A struct of the route files' packages, its fields not set: what they hold is unknown, of the types they declare.
       const struct = type ? this.typeRef(type, frame) : undefined;
-      if (struct && struct.pkg.types.get(struct.name)?.type.k === "structtype") return { k: "obj", type: struct, fields: new Map(), untraced: true };
+      if (struct && struct.pkg.types.get(struct.name)?.type.k === "structtype") return { k: "obj", type: struct, fields: new Map(), vague: `a ${struct.name} that no call of the route files passes`, untraced: true };
       const t = type ? this.routerType(type, frame) : undefined;
       const declared = Object.hasOwn(this.declared, fn.file) ? this.declared[fn.file] : undefined;
       if (declared !== undefined && t && t !== "handler") return this.synthetic(t, declared, fn.file, fn.start);
@@ -598,7 +672,14 @@ class Interp {
     };
     if (fn.recv) {
       const name = fn.recv.names[0]?.name;
-      if (name && name !== "_") scope.vars.set(name, f.recv ?? unbound(name, fn.recv.type));
+      // A pointer receiver shares the struct it is called on; a value receiver gets a copy of it.
+      const pointer = fn.recv.type.k === "unary" && fn.recv.type.op === "*";
+      let recv = f.recv ?? unbound(name ?? "_", fn.recv.type);
+      if (recv.k === "obj" && pointer && recv.byValue) {
+        recv = { ...recv };
+        delete recv.byValue;
+      } else if (!pointer) recv = copied(recv, true);
+      if (name && name !== "_") scope.vars.set(name, recv);
     }
     let i = 0;
     for (const p of fn.type.params) {
@@ -609,7 +690,7 @@ class Interp {
           const t = this.routerType(p.type, frame);
           if (t) v = { ...v, type: t };
         }
-        if (name !== "_") scope.vars.set(name, v);
+        if (name !== "_") scope.vars.set(name, copied(v));
         i++;
       }
     }
@@ -618,10 +699,15 @@ class Interp {
     } finally {
       this.stack.pop();
     }
-    if (!frame.returns.length) return unknowns();
+    const types = fn.type.results.flatMap((r) => Array.from({ length: Math.max(1, r.names.length) }, () => r.type));
     return Array.from({ length: resultCount }, (_, k) => {
-      const first = frame.returns[0]![k] ?? UNKNOWN;
-      return frame.returns.every((r) => same(r[k], first)) ? first : UNKNOWN;
+      const first = frame.returns[0]?.[k];
+      if (first && frame.returns.every((r) => same(r[k], first))) return copied(first);
+      // Results that differ, or none read, are what the declared result type says they are.
+      const t = types[k] ? this.routerType(types[k], frame) : undefined;
+      const ref = types[k] ? this.typeRef(types[k], frame) : undefined;
+      if (ref && ref.pkg.types.get(ref.name)?.type.k === "structtype") return { k: "obj", type: ref, fields: new Map(), vague: `a ${ref.name} ${fn.name} returns, which atlas does not settle` };
+      return t ? { k: "unknown", type: t, why: `a router ${fn.name} returns, which atlas does not settle` } : UNKNOWN;
     });
   }
 
@@ -666,24 +752,45 @@ class Interp {
     return frame.pkg.globals;
   }
 
-  /** Reads each branch from the same values, and keeps after them a name every branch leaves at one value. */
+  /** What a branch may assign (see `assignedNames`): a name, or a field of the struct a name holds. */
+  private slot(target: string, scope: Scope, frame: Frame): { get: () => V | undefined; set: (v: V | undefined) => void } | undefined {
+    const dot = target.indexOf(".");
+    if (dot < 0) {
+      const vars = this.binding(target, scope, frame);
+      return vars && { get: () => vars.get(target), set: (v) => v !== undefined && vars.set(target, v) };
+    }
+    const base = this.lookup(target.slice(0, dot), scope, frame, 0);
+    if (base.k !== "obj") return undefined;
+    const field = target.slice(dot + 1);
+    return { get: () => base.fields.get(field), set: (v) => (v === undefined ? base.fields.delete(field) : base.fields.set(field, v)) };
+  }
+
+  /** Reads each branch from the same values, and keeps after them a name or field every branch leaves at one value. */
   private branches(bodies: Array<(scope: Scope) => void>, exhaustive: boolean, scope: Scope, frame: Frame, names: Set<string>): void {
-    const before = new Map<string, V | undefined>();
-    for (const n of names) before.set(n, this.binding(n, scope, frame)?.get(n));
-    const after: Array<Map<string, V | undefined>> = [];
-    for (const body of bodies) {
-      for (const [n, v] of before) if (v !== undefined) this.binding(n, scope, frame)!.set(n, v);
-      body(new Scope(scope));
-      frame.returned = false;
-      after.push(new Map([...before.keys()].map((n) => [n, this.binding(n, scope, frame)?.get(n)])));
+    const slots = [...names].flatMap((n) => {
+      const slot = this.slot(n, scope, frame);
+      return slot ? [{ slot, before: slot.get() }] : [];
+    });
+    const after: Array<Array<V | undefined>> = [];
+    this.conditional++;
+    try {
+      for (const body of bodies) {
+        for (const { slot, before } of slots) slot.set(before);
+        body(new Scope(scope));
+        frame.returned = false;
+        after.push(slots.map(({ slot }) => slot.get()));
+      }
+    } finally {
+      this.conditional--;
     }
-    if (!exhaustive) after.push(before);
-    for (const [n, v] of before) {
-      if (v === undefined) continue;
-      const values = after.map((m) => m.get(n));
+    if (!exhaustive) after.push(slots.map(({ before }) => before));
+    slots.forEach(({ slot, before }, i) => {
+      const values = after.map((a) => a[i]);
       const kept = values[0];
-      this.binding(n, scope, frame)!.set(n, kept !== undefined && values.every((x) => x !== undefined && same(x, kept)) ? kept : forget(v));
-    }
+      if (values.every((x) => (x === undefined && kept === undefined) || (x !== undefined && kept !== undefined && same(x, kept)))) return slot.set(kept);
+      const known = values.find((x) => x !== undefined) ?? before;
+      slot.set(known === undefined ? UNKNOWN : forget(known));
+    });
   }
 
   stmt(s: Stmt, scope: Scope, frame: Frame): void {
@@ -701,11 +808,12 @@ class Interp {
           spec.names.forEach((n, i) => {
             if (n.name === "_") return;
             let v = values[i] ?? UNKNOWN;
+            if (v.k === "unknown" && spec.type && this.httpServer(spec.type, frame)) v = { k: "builtin", pkg: HTTP, name: "Server" };
             if (v.k === "unknown" && spec.type) {
               const t = this.routerType(spec.type, frame);
               if (t) v = { k: "unknown", type: t };
             }
-            scope.vars.set(n.name, v);
+            scope.vars.set(n.name, copied(v));
           });
         }
         return;
@@ -759,10 +867,7 @@ class Interp {
             this.block(s.body.stmts, new Scope(inner), frame);
             frame.returned = false;
           });
-          for (const n of names) {
-            const vars = this.binding(n, scope, frame);
-            if (vars?.has(n)) vars.set(n, forget(vars.get(n)!));
-          }
+          this.forgetAll(names, scope, frame);
           return;
         }
         bind(UNKNOWN, UNKNOWN);
@@ -786,17 +891,25 @@ class Interp {
   /** A loop's body, read once with every name it assigns unknown, as each pass may find it changed. */
   private loop(body: Stmt[], scope: Scope, frame: Frame, before?: () => void): void {
     const names = assignedNames(body);
-    const unknownAll = () => {
-      for (const n of names) {
-        const vars = this.binding(n, scope, frame);
-        if (vars?.has(n)) vars.set(n, forget(vars.get(n)!));
-      }
-    };
-    unknownAll();
+    this.forgetAll(names, scope, frame);
     before?.();
-    this.block(body, new Scope(scope), frame);
+    this.conditional++;
+    try {
+      this.block(body, new Scope(scope), frame);
+    } finally {
+      this.conditional--;
+    }
     frame.returned = false;
-    unknownAll();
+    this.forgetAll(names, scope, frame);
+  }
+
+  /** Makes each name or field a loop may assign unknown, as each pass may find it changed. */
+  private forgetAll(names: Set<string>, scope: Scope, frame: Frame): void {
+    for (const n of names) {
+      const slot = this.slot(n, scope, frame);
+      const v = slot?.get();
+      if (slot && v !== undefined) slot.set(forget(v));
+    }
   }
 
   /** The values of an expression list for `count` names: one each, or a call's results spread over them. */
@@ -825,21 +938,26 @@ class Interp {
       const v = values[i] ?? UNKNOWN;
       if (target.k === "ident" && target.name === "_") return;
       // `:=` declares the names its scope does not hold yet, and assigns the others (go.dev/ref/spec, "Short variable declarations").
-      if (s.op === ":=" && target.k === "ident" && !scope.vars.has(target.name)) scope.vars.set(target.name, v);
+      if (s.op === ":=" && target.k === "ident" && !scope.vars.has(target.name)) scope.vars.set(target.name, copied(v));
       else this.store(target, v, scope, frame);
     });
   }
 
   /** Assigns a value to a name, a package-level variable, a struct field, or a router's setting. */
-  private store(target: Expr, v: V, scope: Scope, frame: Frame): void {
+  private store(target: Expr, given: V, scope: Scope, frame: Frame): void {
+    const v = copied(given);
     if (target.k === "paren") return this.store(target.x, v, scope, frame);
     if (target.k === "ident") {
       const sc = scope.find(target.name);
       if (sc) sc.vars.set(target.name, v);
-      else if (frame.pkg.values.get(target.name)?.kind === "var") frame.pkg.globals.set(target.name, v);
+      else if (frame.pkg.values.get(target.name)?.kind === "var") this.setGlobal(frame.pkg, target.name, v);
       return;
     }
     if (target.k === "unary" && target.op === "*") return this.store(target.x, v, scope, frame);
+    if (target.k === "index") {
+      this.eval(target.x, scope, frame);
+      return this.escape(v, frame, target.start);
+    }
     if (target.k !== "sel") return;
     const x = this.eval(target.x, scope, frame);
     if (x.k === "obj") {
@@ -847,16 +965,21 @@ class Interp {
       return;
     }
     if (x.k === "router" && x.r.lib === "gin" && target.name === "RedirectTrailingSlash") {
-      if (v.k === "bool") x.r.tsr = v.value;
+      if (this.conditional) {
+        x.r.tsr = null;
+        this.limit(`${this.at(frame.file, target.start)} sets Gin's RedirectTrailingSlash in a branch or loop that may not run; whether the engine redirects a request whose trailing / differs is not read`);
+      } else if (v.k === "bool") x.r.tsr = v.value;
       else {
         x.r.tsr = null;
         this.limit(`${this.at(frame.file, target.start)} sets Gin's RedirectTrailingSlash to a value the file does not spell out; whether the engine redirects a request whose trailing / differs is not read`);
       }
       return;
     }
+    if (x.k === "unknown") return this.escape(v, frame, target.start);
+    if (x.k === "builtin" && x.pkg === HTTP && x.name === "Server") return;
     if (x.k === "pkg") {
       const pkg = this.byPath.get(x.path);
-      if (pkg?.values.get(target.name)?.kind === "var") pkg.globals.set(target.name, v);
+      if (pkg?.values.get(target.name)?.kind === "var") this.setGlobal(pkg, target.name, v);
     }
   }
   /** The router type a declared type names, through the file's imports. */
@@ -872,8 +995,27 @@ class Interp {
   }
 
   /** The value of a package-level variable or constant, read once from its declaration. */
+  /**
+   * The value of a package-level variable or constant: its declaration's, read once, or the last one the code read
+   * assigns. A variable a function other than `init` assigns may have been changed before a function another package
+   * calls runs, so there it is unknown unless that call has assigned it itself.
+   */
   private global(pkg: Pkg, name: string): V {
-    if (pkg.globals.has(name)) return pkg.globals.get(name)!;
+    if (!pkg.globals.has(name)) this.initial(pkg, name);
+    if (this.epoch !== 0 && this.mutable.has(`${pkg.dir}\0${name}`) && pkg.epochs.get(name) !== this.epoch) {
+      pkg.globals.set(name, forget(pkg.globals.get(name)!));
+      pkg.epochs.set(name, this.epoch);
+    }
+    return pkg.globals.get(name)!;
+  }
+
+  /** Assigns a package-level variable. */
+  private setGlobal(pkg: Pkg, name: string, v: V): void {
+    pkg.globals.set(name, v);
+    pkg.epochs.set(name, this.epoch);
+  }
+
+  private initial(pkg: Pkg, name: string): void {
     const decl = pkg.values.get(name)!;
     pkg.globals.set(name, UNKNOWN);
     const file = this.fileOf(pkg, decl.file);
@@ -887,9 +1029,8 @@ class Interp {
       const t = this.routerType(decl.type, frame);
       if (t) v = { k: "unknown", type: t };
     }
-    // A constant keeps its value; a variable may be assigned elsewhere, which `store` follows as the code runs.
-    if (!pkg.globals.has(name) || pkg.globals.get(name) === UNKNOWN) pkg.globals.set(name, v);
-    return pkg.globals.get(name)!;
+    if (pkg.globals.get(name) === UNKNOWN) pkg.globals.set(name, v);
+    pkg.epochs.set(name, 0);
   }
 
   /** A name of a package another file imports: a module package's function or value, or a library's. */
@@ -943,6 +1084,13 @@ class Interp {
         return [this.eval(e.x, scope, frame)];
       case "unary": {
         const x = this.eval(e.x, scope, frame);
+        // `&s` points to the struct `s` holds, whose fields it shares; `*p` is the struct a pointer points to.
+        if (x.k === "obj" && e.op === "&") {
+          const pointer = { ...x };
+          delete pointer.byValue;
+          return [pointer];
+        }
+        if (x.k === "obj" && e.op === "*") return [{ ...x, byValue: true }];
         return [e.op === "&" || e.op === "*" ? x : UNKNOWN];
       }
       case "binary": {
@@ -1005,7 +1153,7 @@ class Interp {
         const file = this.fileOf(x.type.pkg, decl.file);
         const t = this.routerType(f.type, { imports: file.imports });
         if (!t) return UNKNOWN;
-        if (x.untraced) return { k: "unknown", type: t, why: `the field ${name} of a ${x.type.name} that no call of the route files passes`, untraced: true };
+        if (x.vague) return { k: "unknown", type: t, why: `the field ${name} of ${x.vague}`, ...(x.untraced ? { untraced: true as const } : {}) };
         return { k: "unknown", type: t, why: `the field ${name} of ${x.type.name}, which no code of the route files sets to a router` };
       }
     }
@@ -1016,18 +1164,25 @@ class Interp {
   private composite(e: Expr & { k: "composite" }, scope: Scope, frame: Frame): V {
     const values = e.elts.map((el) => ({ key: el.key, value: this.eval(el.value, scope, frame) }));
     const type = e.type;
-    if (type?.k === "arraytype") return values.every((v) => v.value.k === "str" && !v.key) ? { k: "strs", values: values.map((v) => (v.value as { value: string }).value) } : UNKNOWN;
+    // A router put in a value atlas does not follow (a map, a slice, another package's struct) may be mounted from there.
+    const lost = () => {
+      for (const v of values) this.escape(v.value, frame, e.start);
+      return UNKNOWN;
+    };
+    if (type?.k === "arraytype") return values.every((v) => v.value.k === "str" && !v.key) ? { k: "strs", values: values.map((v) => (v.value as { value: string }).value) } : lost();
+    // net/http's Server serves its Handler at the root, as a router nothing mounts is.
+    if (type && this.httpServer(type, frame)) return { k: "builtin", pkg: HTTP, name: "Server" };
     const ref = type ? this.typeRef(type, frame) : undefined;
-    if (!ref) return UNKNOWN;
+    if (!ref) return lost();
     const decl = ref.pkg.types.get(ref.name);
-    if (decl?.type.k !== "structtype") return UNKNOWN;
+    if (decl?.type.k !== "structtype") return lost();
     const fields = new Map<string, V>();
     const order = decl.type.fields.flatMap((f) => (f.names.length ? f.names.map((n) => n.name) : [embeddedName(f.type) ?? "_"]));
     values.forEach((v, i) => {
       const name = v.key?.k === "ident" ? v.key.name : v.key ? undefined : order[i];
-      if (name) fields.set(name, v.value);
+      if (name) fields.set(name, copied(v.value));
     });
-    return { k: "obj", type: ref, fields };
+    return { k: "obj", type: ref, fields, byValue: true };
   }
 
   /** The struct type a type expression names in the route files' packages. */
@@ -1064,6 +1219,8 @@ class Interp {
       }
       return this.invoke(callee, e.ellipsis ? args.slice(0, -1) : args);
     }
+    // Go's `append` puts a router in a slice, which atlas does not follow.
+    if (fnExpr.k === "ident" && fnExpr.name === "append") args.forEach((a) => this.escape(a, frame, e.start));
     this.literals(args, `${frame.text.slice(fnExpr.start, fnExpr.end)}`);
     return [UNKNOWN];
   }
@@ -1280,6 +1437,17 @@ class Interp {
     this.reg(r, pattern, "*", frame, at, files ? { implicit: true, convention: "net/http FileServer" } : {});
   }
 
+  /** Whether a type is net/http's `Server` (or a pointer to one). */
+  private httpServer(type: Expr, frame: Pick<Frame, "imports">): boolean {
+    if (type.k === "unary" && type.op === "*") return this.httpServer(type.x, frame);
+    return type.k === "sel" && type.x.k === "ident" && frame.imports.get(type.x.name) === HTTP && type.name === "Server";
+  }
+
+  /** Notes where a router is put in a value atlas does not follow, from which it may be mounted anywhere. */
+  private escape(v: V, frame: Frame, at: number): void {
+    if (v.k === "router" && !v.r.escaped) v.r.escaped = `${frame.file}:${lineOf(frame.text, at)}`;
+  }
+
   /** Mounts a router on another, under a path read or not. */
   private mount(child: Router, parent: Router, prefix: string | undefined, how: Mount["how"], frame: Frame, at: number, arg: Expr | undefined, pattern?: string): void {
     if (prefix === undefined) this.limit(`${this.at(frame.file, at)} mounts a router at a path the file does not spell out (${this.source(arg, frame)}); its routes are not read`);
@@ -1405,10 +1573,11 @@ function embeddedName(type: Expr): string | undefined {
   return undefined;
 }
 
-/** Whether two values are the same: one router, group, object or string. */
+/** Whether two values are the same: one router, group, struct or string. */
 function same(a: V | undefined, b: V | undefined): boolean {
   if (!a || !b) return false;
   if (a === b) return true;
+  if (a.k === "obj" && b.k === "obj") return a.fields === b.fields;
   if (a.k === "router" && b.k === "router") return a.r === b.r && a.base === b.base;
   if (a.k === "str" && b.k === "str") return a.value === b.value;
   return false;
@@ -1417,8 +1586,18 @@ function same(a: V | undefined, b: V | undefined): boolean {
 /** A value made unknown, keeping what its static type says it is. */
 function forget(v: V): V {
   if (v.k === "unknown") return v;
-  if (v.k === "router") return { k: "unknown", type: v.r.lib };
+  if (v.k === "router") return { k: "unknown", type: v.r.lib, why: "a router a branch, a loop or another function may replace" };
+  if (v.k === "obj") return { k: "obj", type: v.type, fields: new Map(), vague: `a ${v.type.name} a branch, a loop or another function may replace` };
   return UNKNOWN;
+}
+
+/**
+ * A value as Go hands it on: a struct value (`byValue`) is copied, with the struct values in its fields; a pointer to a
+ * struct, and anything else, is the same value. `force` copies a struct a pointer points to, as a value receiver does.
+ */
+function copied(v: V, force = false): V {
+  if (v.k !== "obj" || (!v.byValue && !force)) return v;
+  return { ...v, byValue: true, fields: new Map([...v.fields].map(([k, f]) => [k, copied(f)])) };
 }
 
 /**
@@ -1757,7 +1936,8 @@ class Assembly {
   constructor(
     private readonly interp: Interp,
     private readonly modules: (file: string) => Module | undefined,
-    private readonly legacyDirective: boolean,
+    /** The modules (by go.mod) whose main packages say `//go:debug httpmuxgo121=1`. */
+    private readonly legacyDirective: Set<string>,
   ) {}
 
   private limit(text: string): void {
@@ -1774,7 +1954,16 @@ class Assembly {
     seen.add(r);
     const rewrites = r.rewrites ?? [];
     let out: Place[] = [];
-    if (r.declared !== undefined) {
+    const traced = r.mounts.some((m) => m.prefix !== undefined);
+    if (r.escaped) {
+      this.limit(`${r.file}:${r.line} makes a router that ${r.escaped} puts in a value atlas does not follow; ${traced || r.declared !== undefined ? "a mount of it from there" : "where it is served"} is not read${traced || r.declared !== undefined ? "" : ", so its routes are not read"}`);
+      if (!traced && r.declared === undefined) {
+        seen.delete(r);
+        this.places.set(r, []);
+        return [];
+      }
+    }
+    if (r.declared !== undefined && !traced) {
       out = [{ segs: r.declared.split("/").filter(Boolean), patterns: {}, mounted: [], how: "declared", stubs: true, rewrites, headByGet: !!r.headByGet }];
     } else if (!r.mounts.length) {
       out = [{ segs: [], patterns: {}, mounted: [], how: "root", stubs: false, rewrites, headByGet: !!r.headByGet }];
@@ -1826,7 +2015,7 @@ class Assembly {
     const m = this.modules(file);
     if (!m) return { why: `has no go.mod above it to tell which Go reads its ServeMux patterns` };
     // A go.mod without a `go` line is read as Go 1.16 (go.dev/ref/mod#go-mod-file-go).
-    return { legacy: m.legacyMux || this.legacyDirective || !m.go || !atLeast122(m.go) };
+    return { legacy: m.legacyMux || this.legacyDirective.has(m.file) || !m.go || !atLeast122(m.go) };
   }
 
   add(r: Router): void {
@@ -1942,7 +2131,10 @@ export function goRoutes(
   interp.run();
   const modules = new Map(pkgs.flatMap((p) => p.files.map((f) => [f.file, p.module] as const)));
   // `//go:debug httpmuxgo121=1` in a main package's file (go.dev/doc/godebug).
-  const directive = [...texts.values()].some((t) => /^\/\/go:debug\s+(?:[^\n]*[\s,])?httpmuxgo121=1\b/m.test(t));
+  // `//go:debug httpmuxgo121=1` in a file of a main package sets it for that program (go.dev/doc/godebug).
+  const directive = new Set(
+    pkgs.flatMap((p) => (p.name === "main" && p.module && p.files.some((f) => /^\/\/go:debug\s+(?:[^\n]*[\s,])?httpmuxgo121=1\b/m.test(f.text)) ? [p.module.file] : [])),
+  );
   const assembly = new Assembly(interp, (file) => modules.get(file) ?? undefined, directive);
   for (const r of interp.routers) assembly.add(r);
   for (const r of interp.routers) {

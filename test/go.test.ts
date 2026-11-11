@@ -259,7 +259,7 @@ describe("Gin's routes", () => {
     expect(limits).toEqual([
       'routes svc: svc/app.go:6 registers GET "/unbound" on g (g, a parameter of Register that no call of the route files passes a router), which atlas does not trace to a router; it is not read',
       "routes svc: svc/app.go:19 loop calls itself; what the recursive call registers is not read",
-      'routes svc: svc/app.go:15 registers GET "/either" on r, which atlas does not trace to a router; it is not read',
+      'routes svc: svc/app.go:15 registers GET "/either" on r (a router a branch, a loop or another function may replace), which atlas does not trace to a router; it is not read',
     ]);
     // `mounts` gives the path the routers a file makes, and its unbound router parameters, are served under.
     expect(read(files, { mounts: { "svc/app.go": "/ext" } }).surfaces).toEqual(["GET /ext/unbound", "GET /ext/once"]);
@@ -466,7 +466,7 @@ describe("net/http's ServeMux routes", () => {
     const legacy = 'routes svc: svc/app.go:7 registers "GET /new/{id}" is read by Go before 1.22 (or with GODEBUG httpmuxgo121=1) as a path with a host or literal braces, which atlas does not read; the route is not read';
     expect(read({ ...app, "svc/go.mod": lines("module example.com/svc", "go 1.21") })).toMatchObject({ surfaces: ["* /old/**"], limits: [legacy] });
     expect(read({ ...app, "svc/go.mod": lines("module example.com/svc", "go 1.24", "godebug (", "\thttpmuxgo121=1", ")") })).toMatchObject({ surfaces: ["* /old/**"], limits: [legacy] });
-    expect(read({ ...app, "svc/main.go": lines("//go:debug httpmuxgo121=1", "package app") })).toMatchObject({ surfaces: ["* /old/**"], limits: [legacy] });
+    expect(read({ ...app, "svc/cmd/main.go": lines("//go:debug httpmuxgo121=1", "package main") })).toMatchObject({ surfaces: ["* /old/**"], limits: [legacy] });
     // The go.mod of another module, above the file's own, does not count.
     expect(read({ ...app, "go.mod": lines("module example.com/root", "go 1.20") }).surfaces).toEqual(["GET /new/{id}", "* /old/**", "HEAD /new/{id} (implicit)"]);
     const none = extractRoutes(memory(app), normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.go"], styles: ["go"] }] }), undefined, [], []);
@@ -706,6 +706,145 @@ describe("a package-level router", () => {
         "}",
       ),
     };
-    expect(read(files)).toMatchObject({ surfaces: ["GET /init", "GET /later"], limits: ['routes svc: svc/app.go:13 registers GET "/maybe" on maybe, which atlas does not trace to a router; it is not read'] });
+    expect(read(files)).toMatchObject({ surfaces: ["GET /init", "GET /later"], limits: ['routes svc: svc/app.go:13 registers GET "/maybe" on maybe (a router a branch, a loop or another function may replace), which atlas does not trace to a router; it is not read'] });
+  });
+});
+
+describe("values atlas does not settle are not read as settled", () => {
+  const chiApp = (...body: string[]) =>
+    lines("package main", "", "import (", '\t"net/http"', '\t"os"', "", '\t"github.com/go-chi/chi/v5"', ")", "", ...body, "", "func h(w http.ResponseWriter, r *http.Request) {}");
+
+  it("stops after the calls it follows in all, and reads no further", () => {
+    const chain = Array.from({ length: 16 }, (_, i) => `func a${i}(r chi.Router) { a${i + 1}(r); a${i + 1}(r) }`);
+    const { limits } = read({ "svc/main.go": chiApp("func main() { r := chi.NewRouter(); a0(r) }", ...chain, 'func a16(r chi.Router) { r.Get("/x", h) }', "func z() { y() }", "func y() {}") });
+    expect(limits).toContain("routes svc: the calls between the functions of the route files go deeper or further than atlas follows (32 deep, 20000 in all); the routes registered beyond are not read");
+  });
+
+  it("leaves out a router put in a map, a slice or another package's struct, from which it may be mounted anywhere", () => {
+    const { surfaces, limits } = read({
+      "svc/main.go": chiApp(
+        "func main() {",
+        "\tr := chi.NewRouter()",
+        "\tadmin := chi.NewRouter()",
+        '\tadmin.Get("/stats", h)',
+        '\tsubs := map[string]chi.Router{"/admin": admin}',
+        "\tfor p, s := range subs {",
+        "\t\tr.Mount(p, s)",
+        "\t}",
+        "\tlisted := chi.NewRouter()",
+        '\tlisted.Get("/listed", h)',
+        "\thandlers := []http.Handler{}",
+        "\thandlers = append(handlers, listed)",
+        '\thttp.Handle("/l/", http.StripPrefix("/l", handlers[0]))',
+        '\tsrv := &http.Server{Addr: ":80", Handler: r}',
+        "\tsrv.Handler = r",
+        "\t_ = os.Args",
+        "}",
+      ),
+    });
+    expect(surfaces).toEqual(["* /l/**"]);
+    expect(limits).toEqual([
+      "routes svc: svc/main.go:16 mounts s at p, which atlas does not trace to a router or handler; what it serves is not read",
+      "routes svc: svc/main.go:12 makes a router that svc/main.go:14 puts in a value atlas does not follow; where it is served is not read, so its routes are not read",
+      "routes svc: svc/main.go:18 makes a router that svc/main.go:21 puts in a value atlas does not follow; where it is served is not read, so its routes are not read",
+    ]);
+  });
+
+  it("copies a struct value as Go does, where a pointer shares it", () => {
+    const { surfaces } = read({
+      "svc/main.go": chiApp(
+        "type Config struct{ Prefix string }",
+        "type API struct {",
+        "\tr      chi.Router",
+        "\tprefix string",
+        "}",
+        "func (a API) under(p string) API { a.prefix = a.prefix + p; return a }",
+        "func (a API) get(p string) { a.r.Get(a.prefix+p, h) }",
+        "func (a *API) move(p string) { a.prefix = p }",
+        "func main() {",
+        "\tr := chi.NewRouter()",
+        '\tbase := Config{Prefix: "/api"}',
+        "\tv2 := base",
+        '\tv2.Prefix = "/v2"',
+        '\tr.Get(base.Prefix+"/users", h)',
+        '\tapi := API{r: r, prefix: "/api"}',
+        '\tapi.under("/admin").get("/stats")',
+        '\tapi.get("/users2")',
+        "\tp := &api",
+        '\tp.move("/moved")',
+        '\tapi.get("/x")',
+        "}",
+      ),
+    });
+    expect(surfaces).toEqual(["GET /api/users", "GET /api/admin/stats", "GET /api/users2", "GET /moved/x"]);
+  });
+
+  it("reads a package variable as the calls read assign it, and leaves one another entry point may assign unknown", () => {
+    const configured = read({
+      "svc/main.go": chiApp(
+        'var prefix = "/api"',
+        "func main() { configure(); r := chi.NewRouter(); routes(r); http.ListenAndServe(\":80\", r) }",
+        'func configure() { prefix = "/v2" }',
+        'func routes(r chi.Router) { r.Get(prefix+"/users", h) }',
+      ),
+    });
+    expect(configured).toMatchObject({ surfaces: ["GET /v2/users"], limits: [] });
+    const entries = read({
+      "svc/main.go": chiApp(
+        'var prefix = "/api"',
+        "var r = chi.NewRouter()",
+        'func Routes() { r.Get(prefix+"/users", h) }',
+        "func Configure(p string) { prefix = p }",
+      ),
+    });
+    expect(entries).toMatchObject({ surfaces: [], limits: ["routes svc: svc/main.go:12 registers a GET route at a path the file does not spell out (prefix+\"/users\"); it is not read"] });
+  });
+
+  it("forgets a field or a setting a branch or loop may change, keeping its type", () => {
+    const { surfaces, limits, raw } = read({
+      "svc/main.go": chiApp(
+        "type Server struct{ r chi.Router }",
+        "func pick(a, b chi.Router) chi.Router {",
+        '\tif os.Getenv("V2") != "" {',
+        "\t\treturn b",
+        "\t}",
+        "\treturn a",
+        "}",
+        "func main() {",
+        "\troot := chi.NewRouter()",
+        "\tapi := chi.NewRouter()",
+        '\troot.Mount("/api", api)',
+        "\ts := &Server{r: root}",
+        '\tif os.Getenv("X") != "" {',
+        "\t\ts.r = api",
+        "\t}",
+        '\ts.r.Get("/users", h)',
+        '\tpick(root, api).Get("/picked", h)',
+        '\troot.Get("/root", h)',
+        "}",
+      ),
+      "svc/gin.go": ginFile("if cond {", "\tr.RedirectTrailingSlash = false", "}", 'r.GET("/g", h)'),
+    });
+    expect(surfaces).toEqual(["GET /root", "GET /g"]);
+    expect(raw.find((s) => s.path === "/g")!.dispatch).toEqual({ picks: "httprouter" });
+    expect(limits).toEqual([
+      'routes svc: svc/main.go:25 registers Get "/users" on s.r (a router a branch, a loop or another function may replace), which atlas does not trace to a router; it is not read',
+      'routes svc: svc/main.go:26 registers Get "/picked" on pick(root, api) (a router pick returns, which atlas does not settle), which atlas does not trace to a router; it is not read',
+      "routes svc: svc/gin.go:8 sets Gin's RedirectTrailingSlash in a branch or loop that may not run; whether the engine redirects a request whose trailing / differs is not read",
+    ]);
+  });
+
+  it("serves the routers `mounts` places as their own mounts say, under the declared path", () => {
+    const files = {
+      "svc/routes/api.go": lines(
+        "package routes",
+        'import "github.com/go-chi/chi/v5"',
+        "func Register(r chi.Router) {",
+        '\tr.Route("/users", func(u chi.Router) { u.Get("/{id}", nil) })',
+        '\tadmin := chi.NewRouter(); admin.Get("/stats", nil); r.Mount("/admin", admin)',
+        "}",
+      ),
+    };
+    expect(read(files, { mounts: { "svc/routes/api.go": "/api" } }).surfaces).toEqual(["GET /api/users/{id}", "GET /api/admin/stats"]);
   });
 });
