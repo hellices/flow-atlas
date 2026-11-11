@@ -199,9 +199,16 @@ it (`app.route("/book").get(h).post(h)`) at its path; Express and @koa/router ta
 `route({ method, url, handler })`, registers each method of `method` (a list too) at `url`, else `path`, constraints
 aside. Hono's `on(method, path)` registers each of its methods (a custom one too) at each of its paths, a method given
 a handler and no path takes the path the call before it in the chain set (`app.get("/a", h).post(h)`), and a path
-without a leading `/` is joined to the base path as one with it (`app.get("*")` is `/**`). Where a router is not
+without a leading `/` is joined to the base path as one with it (`app.get("*")` is `/**`). @koa/router 15 puts its
+prefixes before a path without a leading `/` as text (`Layer._applyPrefix`), which atlas does exactly: the router's own
+prefix (the constructor's as written, `prefix()`'s without a final `/`), then up each `use(path, r.routes())` that
+nests it the path written there (none written, none put) and that router's prefix, so `router.post("documents.list")`
+nested with `use("/", ...)` is `/documents.list`. A route registered with its own handlers runs those, not the ones of
+the calls before it in a chain. Where a router is not
 traced, only the methods every one of them has, on the receiver itself, are read. A form not read is named in a limit:
-a path that does not start with `/` (other than Hono's; an empty one on Hono, which it joins with a trailing `/`), a
+a path that does not start with `/` (other than Hono's and @koa/router 15's; an empty one on Hono, which it joins with a
+trailing `/`; on @koa/router, one whose joined path has an empty segment, starts with a group or a wildcard, or starts
+with no `/`, which no request has), a
 method with no path whose path an earlier statement set, a route chained on a receiver not traced, an array on a router
 that takes none, a `route` option or a redirect source not spelled out.
 
@@ -361,11 +368,12 @@ with a limit. Configurers and annotation types are read in the entry's files and
 files left out, since a `WebMvcConfigurer` need not be among the controller globs. A controller (`@Controller`,
 `@RestController`) that implements an interface with `@HttpExchange` mappings (`@GetExchange`, `@PostExchange`,
 `@PutExchange`, `@PatchExchange`, `@DeleteExchange`, `@HttpExchange(url, method)`) is served at them, under its own
-prefix, unless it maps that method itself. Spring takes one type-level mapping for the class, the first its type
+prefix, unless it maps a method that overrides it (the same name and parameter types). An interface nested in another
+type is named through it (`Outer.Contract`). Spring takes one type-level mapping for the class, the first its type
 hierarchy holds: its own `@RequestMapping`, else the `@HttpExchange` of the first interface it lists that carries one,
 which the class's own handler methods are served under too. A handler method registered with
 `registerMapping(info, handler, method)` is served at the paths and methods of the `RequestMappingInfo.paths(...)
-.methods(...).build()` it is given, in place or in a local, as given: no `addPathPrefix` prefix applies to it. Router
+.methods(...).build()` it is given (the last `methods` call sets them; none listed is any method), in place or in a local, as given: no `addPathPrefix` prefix applies to it. Router
 functions (WebMvc.fn and WebFlux.fn) a `@Bean` method returns are served at the root, without that prefix too: the
 builder of `RouterFunctions.route()` (`GET(pattern, handler)` and the other methods, with a predicate or none,
 `route`, `add`, `nest`, `path`, `resources`, `resource`), the static `route`, `nest`, `resources` and `resource` with
@@ -375,7 +383,11 @@ a trailing handler). A predicate is read as the methods and paths it takes: `GET
 and `version` leave both as they are. A nested route's pattern is joined after its nest's, a route with no pattern of
 its own takes any rest of the path within its nest (`/teams/**`), and `resources("/files/**", location)` serves GET
 and HEAD at one segment or more under `/files` (`/files/{path}/**`), never the location itself. A local (`final`, `val`, or
-never assigned again) or a helper method of the file with no parameters is followed; a predicate or router function not spelled out, a lookup function,
+never assigned again) or a helper method of the file with no parameters is followed, as is another `@Bean` composed
+under a nest or a method predicate, which serves there too; a Kotlin bean with no declared type is a router function
+where its expression is the DSL or one `RouterFunctions` builds. Alternatives of a nest that leave the same path and
+methods are one; past 20000 nested contexts and statements, or 4096 routes, in a file, the rest is not read, with a
+limit; a predicate or router function not spelled out, a lookup function,
 `pathExtension`, a statement of control flow in the DSL and a router function built outside a `@Bean` method are
 named in a limit and not read. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such

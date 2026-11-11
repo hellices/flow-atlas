@@ -38,6 +38,11 @@ export interface Mounts {
   prefixes(router: string): string[] | undefined;
   /** Why the paths of a router are not read, where `prefixes` gives none: "is mounted where ...". */
   why(router: string): string | undefined;
+  /**
+   * The exact paths @koa/router serves a route path a router registers at, its prefixes joined to it as text, or why
+   * they are not known (see `koaJoined`).
+   */
+  koaPaths(router: string, path: string): { paths: string[] } | { why: string };
   /** The package a router is created from (`express`, `@koa/router`, `koa-router`, `hono` or a preset, `fastify`). */
   packageOf(router: string): string | undefined;
   /**
@@ -243,6 +248,8 @@ interface Mount {
   target: ts.Expression;
   /** Koa's `use(r.routes())`: the target is the router whose routes are handed over. */
   routes?: true;
+  /** The path is written in the call, not the receiver's own one taken where none is (`use(r.routes())`). */
+  explicit?: true;
 }
 
 interface FileFacts {
@@ -314,7 +321,7 @@ function factsOf(text: string, file: string): FileFacts {
           continue;
         }
         const koa = koaRoutes(target);
-        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true });
+        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true, ...(path !== undefined ? { explicit: true as const } : {}) });
         else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target });
       }
     }
@@ -496,8 +503,9 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
 
   const ROOT = "";
   // Each mount, keyed by what it serves; the parent is the instance it is mounted on, ROOT for the root.
-  const mounts = new Map<string, Array<{ parent: string; path: Value | undefined }>>();
-  const mount = (child: string, parent: string, path: Value | undefined) => (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path });
+  const mounts = new Map<string, Array<{ parent: string; path: Value | undefined; explicit?: true }>>();
+  const mount = (child: string, parent: string, path: Value | undefined, explicit?: true) =>
+    (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path, ...(explicit ? { explicit } : {}) });
   /** The instance a handle registers its routes in: Hono's `basePath` shares the routes of the one it is called on. */
   const storeOf = (handle: string): string => (based.has(handle) ? storeOf(based.get(handle)!.parent) : handle);
   for (const [file, f] of facts) {
@@ -521,7 +529,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
         (m.verb === "use" && express(above) && express(kind) && !m.routes) ||
         (m.verb === "use" && koa(above) && kind === "koa-router" && m.routes) ||
         (m.verb === "route" && above === "hono" && kind === "hono");
-      if (fits) mount(storeOf(child), parent, m.path);
+      if (fits) mount(storeOf(child), parent, m.path, m.explicit);
     }
   }
   // An @koa/router router's prefix: the constructor's option or a `prefix()` call, read where it is set once.
@@ -532,6 +540,38 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       if (handle && kindOf(handle) === "koa-router") (koaPrefixes.get(handle) ?? koaPrefixes.set(handle, []).get(handle)!).push(p.value);
     }
   }
+  const MOUNTED = "is mounted where the code gives no literal path";
+  /**
+   * @koa/router's exact paths for a route path a router registers, joined as its `Layer._applyPrefix` does: the text of
+   * each prefix put before the path (a path of `/` alone being replaced by it), first the router's own (the
+   * constructor's `prefix` as written, `prefix()`'s without a final `/`), then, up each `use(path, r.routes())` that
+   * nests it, the path written there (`_mountNestedRouter`; none written, none put) and that router's own prefix, to
+   * the Koa application, which puts none.
+   */
+  const koaJoined = (handle: string, path: string, seen: Set<string>): { paths: string[] } | { why: string } => {
+    if (stores.get(handle)?.kind === "koa-app") return { paths: [path] };
+    const file = handle.slice(0, handle.lastIndexOf("@"));
+    if (declared[file] !== undefined) return { why: "is served under a path the configuration declares, which @koa/router would join to it as text" };
+    const own = stores.get(handle)?.own ?? "";
+    const set = [...(own === "" ? [] : [own]), ...(koaPrefixes.get(handle) ?? []).map((v) => (typeof v === "string" ? v.replace(/\/$/, "") : v))];
+    if (set.length > 1) return { why: "has its prefix set more than once, which @koa/router applies differently by version (stacked before 15.1, replaced since)" };
+    const prefix = set[0] ?? "";
+    if (typeof prefix !== "string") return prefix;
+    const apply = (p: string, before: string) => (before ? (p === "/" ? before : `${before}${p}`) : p);
+    const joined = apply(path, prefix);
+    const all = mounts.get(handle);
+    if (!all?.length || seen.has(handle)) return { why: MOUNTED };
+    const out: string[] = [];
+    for (const m of all) {
+      if (m.parent === ROOT || m.path === undefined || typeof m.path !== "string") return { why: MOUNTED };
+      const kind = stores.get(m.parent)?.kind;
+      if (kind !== "koa-router" && kind !== "koa-app") return { why: MOUNTED };
+      const above = koaJoined(m.parent, apply(joined, m.explicit ? m.path : ""), new Set([...seen, handle]));
+      if ("why" in above) return above;
+      out.push(...above.paths);
+    }
+    return { paths: [...new Set(out)] };
+  };
   const ownOf = (store: string): Value => {
     const own = stores.get(store)?.own ?? "";
     const set = [...(own === "" ? [] : [own]), ...(koaPrefixes.get(store) ?? [])];
@@ -539,7 +579,6 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     return set[0] ?? "";
   };
 
-  const MOUNTED = "is mounted where the code gives no literal path";
   type Served = { paths: string[] } | { why: string };
   const served = (handle: string, seen: Set<string>): Served => {
     const base = based.get(handle);
@@ -591,6 +630,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       return "why" in s ? s.why : undefined;
     },
     packageOf: (handle) => stores.get(storeOf(handle))?.pkg,
+    koaPaths: (handle, path) => (stores.get(handle)?.kind === "koa-router" ? koaJoined(handle, path, new Set()) : { why: "is not an @koa/router router" }),
     originsOf: (handle) => {
       const fileOf = (h: string) => h.slice(0, h.lastIndexOf("@"));
       const store = storeOf(handle);

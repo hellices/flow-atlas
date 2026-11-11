@@ -60,6 +60,8 @@ type Node =
 const MAX_ALTERNATIVES = 256;
 /** The most routes one file's router functions are read as, so that a router function added to itself does not run away. */
 const MAX_ROUTES = 4096;
+/** The most nested contexts and statements one file's router functions are read through. */
+const MAX_WORK = 20000;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 /** Predicates that narrow a request by what is not its method or path. */
 const NARROWING = new Set(["accept", "contentType", "headers", "param", "queryParam", "version"]);
@@ -575,7 +577,14 @@ function methods(toks: Tok[], kotlin: boolean): Method[] {
     const bean = head.some((x, n) => x.text === "@" && head.slice(n + 1).find((y) => y.kind === "id" && y.text !== "org" && y.text !== "springframework" && y.text !== "context" && y.text !== "annotation")?.text === "Bean");
     if (!kotlin) type = head.filter((x) => x.text !== "@").map((x) => x.text).join(" ");
     const first = body[0];
-    const builds = body.length === 1 && first?.t === "return" && first.value?.t === "call" && ["router", "coRouter"].includes(first.value.name) && !first.value.target;
+    // A Kotlin expression body with no declared type: its type is the expression's, a router function where it is the
+    // DSL's or one `RouterFunctions` builds (`route()`, `route`, `nest`, `resources`, `resource`).
+    let root: Node | undefined = first?.t === "return" && kotlin && !type ? first.value : undefined;
+    while (root?.t === "call" && root.target) root = root.target;
+    const builds =
+      body.length === 1 &&
+      !!root &&
+      ((root.t === "call" && ["router", "coRouter", "route", "nest", "resources", "resource"].includes(root.name)) || ((root.t === "id" || root.t === "member") && root.name === "RouterFunctions"));
     out.push({
       name: toks[nameAt]!.text,
       params: close - nameAt > 3 ? 1 + toks.slice(nameAt + 2, close - 1).filter((x) => x.text === ",").length : 0,
@@ -631,6 +640,18 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   const all = methods(toks, kotlin);
   const routes: Route[] = [];
   let capped = false;
+  /**
+   * The work the file's router functions take, one unit a nested context and a statement: nests of alternatives
+   * multiply, so past a bound the rest is not read, and a limit says so.
+   */
+  let work = 0;
+  const spend = (at: number): boolean => {
+    if (capped) return true;
+    if (++work <= MAX_WORK) return false;
+    limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} nests router functions past ${MAX_WORK} contexts and statements; the rest are not read`);
+    capped = true;
+    return true;
+  };
   /** The helpers a bean calls, which are read where it does. */
   const called = new Set<string>();
   const said = new Set<string>();
@@ -782,6 +803,9 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
       }
       const methods = a.methods && ctx.methods ? a.methods.filter((m) => ctx.methods!.includes(m)) : (a.methods ?? ctx.methods);
       if (methods && !methods.length) continue;
+      // Alternatives that leave the same path and methods (`accept(a).or(accept(b))`) are one context.
+      if (out.some((c) => c.prefix === prefix && String(c.methods) === String(methods))) continue;
+      if (spend(at)) return [];
       out.push({ ...ctx, prefix, ...(methods ? { methods } : {}) });
     }
     return out;
@@ -817,6 +841,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   /** A builder's calls in order, from `route()` or a builder parameter to the end of the chain. */
   const builder = (chain: Extract<Node, { t: "call" }>[], ctx: Ctx) => {
     for (const n of chain) {
+      if (spend(n.at)) return;
       if (METHODS.has(n.name) && n.args.length >= 1 && n.args.length <= 3) verb(n, ctx);
       else if (n.name === "route" && n.args.length === 2) {
         const alts = predicate(n.args[0]!, ctx);
@@ -926,7 +951,8 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
       const own = head.target ? undefined : all.find((m) => m.name === head.name && m.params === 0 && !head.args.length);
       if (!own || ctx.seen.has(`${own.name}()`)) return say(head.nameAt, `builds a router function atlas does not read (${short(head)})`);
       if (!own.bean) called.add(own.name);
-      if (!own.bean) body(own.body, { prefix: ctx.prefix, ...(ctx.methods ? { methods: ctx.methods } : {}), locals: new Map(), seen: new Set([...ctx.seen, `${own.name}()`]) });
+      // A bean is read at the root on its own; composed under a nest, it serves there as well.
+      if (!own.bean || ctx.prefix !== "" || ctx.methods) body(own.body, { prefix: ctx.prefix, ...(ctx.methods ? { methods: ctx.methods } : {}), locals: new Map(), seen: new Set([...ctx.seen, `${own.name}()`]) });
     } else staticCall(head, ctx);
     for (const c of rest) onRouterFunction(c, ctx);
   };
@@ -962,6 +988,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
   const dsl = (statements: Node[], outer: Ctx) => {
     const ctx = withLocals(outer, statements);
     for (const s of statements) {
+      if (spend(s.at)) return;
       if (s.t === "decl") continue;
       if (s.t !== "call") {
         say(s.at, `builds a router function with a statement atlas does not read (${short(s)})`);
@@ -1106,7 +1133,8 @@ export function registeredMappingRoutes(file: string, text: string, constant: Co
         if (c.name === "methods") {
           const ms = c.args.map((a) => constantOf(a, "org.springframework.web.bind.annotation.RequestMethod", text));
           if (ms.some((v) => v === undefined || !/^[A-Z]+$/.test(v))) unread = `methods the file does not spell out (${code.slice(c.at, c.end).replace(/\s+/g, " ")})`;
-          else verbs = [...(verbs ?? []), ...(ms as string[])];
+          // `methods(...)` sets the condition anew (`DefaultBuilder.methods`); none given is any method.
+          else verbs = ms.length ? (ms as string[]) : undefined;
         } else if (c.name === "paths") unread = "a second list of paths";
         else if (!INFO_NARROWING.has(c.name)) unread = `a condition atlas does not read (${c.name})`;
       }

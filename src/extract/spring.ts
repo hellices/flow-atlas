@@ -793,7 +793,7 @@ export function routesFromSpring(
   for (const t of types) {
     if (t.handler.kind === "interface" || !(t.handler.annotations.has("Controller") || t.handler.annotations.has("RestController"))) continue;
     const found = supertypes(masked.slice(t.header, t.start), kotlin)
-      .map((name) => exchangeOf(exchanges, name, imports))
+      .map((name) => exchangeOf(exchanges, name, imports, file))
       .filter((f): f is [string, ExchangeInterface] => !!f);
     if (!found.length) continue;
     implemented.set(t, found);
@@ -886,7 +886,10 @@ export function routesFromSpring(
   for (const [t, found] of implemented) {
     const prefix = prefixes ? prefixes.of(t.handler) : "";
     if (prefix === undefined) continue;
-    const own = mappings.filter((m) => m.at > t.start && m.at < t.end && typeAt(m.at) === t).map((m) => methodNameAfter(masked, m.end));
+    const own = mappings
+      .filter((m) => m.at > t.start && m.at < t.end && typeAt(m.at) === t)
+      .map((m) => methodAfter(masked, m.end, kotlin))
+      .filter((m): m is { name: string; params: string[] } => !!m);
     const bases = t.paths;
     const inherited = t.methods;
     if ((!bases || !inherited) && t.from) {
@@ -898,7 +901,7 @@ export function routesFromSpring(
       const where = `${iface.file}:${iface.line}`;
       if (iface.inherits) limits?.push(`routes ${spec.component}: ${where} ${qualified} extends interfaces whose exchanges are not read; the routes ${t.handler.name} serves from them are not read`);
       for (const member of iface.members) {
-        if (own.includes(member.name)) continue;
+        if (own.some((m) => overrides(m, member))) continue;
         if (!member.paths || !member.methods) {
           limits?.push(`routes ${spec.component}: ${iface.file}:${member.line} maps ${member.paths ? "a method" : "a path"} the file does not spell out (${member.args.trim()}); the route ${t.handler.name} serves for it is not read`);
           continue;
@@ -937,8 +940,15 @@ function supertypes(head: string, kotlin: boolean): string[] {
     .filter((x): x is string => !!x);
 }
 
-/** The name of the method declared after an annotation that ends at `end`, past any other annotation. */
-function methodNameAfter(masked: string, end: number): string | undefined {
+/** Kotlin's types that are Java's primitives where they are not nullable. */
+const KOTLIN_PRIMITIVES: Record<string, string> = { Int: "int", Long: "long", Short: "short", Byte: "byte", Boolean: "boolean", Char: "char", Float: "float", Double: "double" };
+
+/**
+ * The method declared after an annotation that ends at `end`, past any other annotation: its name, and the erased
+ * types of its parameters (`Map<String, Object> m` is `Map`, `vararg x: String` and `String... x` are `String[]`, a
+ * Kotlin `Long` is `long`), by which a method overrides another of its name.
+ */
+function methodAfter(masked: string, end: number, kotlin: boolean): { name: string; params: string[] } | undefined {
   let i = end;
   for (;;) {
     while (/\s/.test(masked[i] ?? "")) i++;
@@ -950,8 +960,31 @@ function methodNameAfter(masked: string, end: number): string | undefined {
   }
   const open = masked.indexOf("(", i);
   if (open < 0 || /[;{}=]/.test(masked.slice(i, open))) return undefined;
-  return /(\w+)\s*$/.exec(masked.slice(i, open))?.[1];
+  const name = /(\w+)\s*$/.exec(masked.slice(i, open))?.[1];
+  const close = closing(masked, open);
+  if (!name || close === undefined) return undefined;
+  const params = splitTop(masked.slice(open + 1, close).replace(/<[^<>]*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*>/g, ""), ",")
+    .filter(Boolean)
+    .map((p) => {
+      let text = p.replace(/@[\w.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?/g, " ").replace(/\bfinal\b/g, " ").trim();
+      let array = "";
+      if (kotlin) {
+        if (/^vararg\b/.test(text)) array = "[]";
+        text = (/:\s*([\s\S]*?)\s*(?:=[\s\S]*)?$/.exec(text.replace(/^vararg\s+/, ""))?.[1] ?? text).trim();
+        const nullable = text.endsWith("?");
+        text = text.replace(/\?$/, "");
+        const simple = text.slice(text.lastIndexOf(".") + 1);
+        return (nullable ? simple : (KOTLIN_PRIMITIVES[simple] ?? simple)) + array;
+      }
+      if (text.includes("...")) array = "[]";
+      const type = text.replace(/\.\.\./, " ").replace(/\s+\w+$/, "").replace(/\s+/g, "");
+      return type.slice(type.lastIndexOf(".", type.indexOf("[") < 0 ? type.length : type.indexOf("[")) + 1) + array;
+    });
+  return { name, params };
 }
+
+/** Whether a method of a class overrides one of an interface: the same name and parameter types. */
+const overrides = (a: { name: string; params: string[] }, b: { name: string; params: string[] }): boolean => a.name === b.name && a.params.join(",") === b.params.join(",");
 
 const EXCHANGE = /@(?:[\w.]*\.)?(HttpExchange|GetExchange|PostExchange|PutExchange|PatchExchange|DeleteExchange)\b/g;
 
@@ -966,7 +999,7 @@ export interface ExchangeInterface {
   inherits: boolean;
   /** Whether it carries an `@HttpExchange` of its own. */
   typed: boolean;
-  members: Array<{ name: string; line: number; args: string; paths: string[] | undefined; methods: string[] | undefined }>;
+  members: Array<{ name: string; params: string[]; line: number; args: string; paths: string[] | undefined; methods: string[] | undefined }>;
 }
 /** The interfaces with `@HttpExchange` mappings the files declare, by qualified name; null for one declared twice. */
 export type Exchanges = Map<string, ExchangeInterface | null>;
@@ -1003,6 +1036,12 @@ export function httpExchanges(texts: Map<string, string>): Exchanges {
       const verb = m[1] === "HttpExchange" ? (method === undefined ? [] : (literals(method, kotlin)?.map((v) => v.toUpperCase()) ?? undefined)) : [m[1]!.replace("Exchange", "").toUpperCase()];
       return { at, end: close === undefined ? at + m[0].length : close + 1, args: args ?? "", paths: paths?.some((p) => /:\/\//.test(p)) ? undefined : paths, methods: verb };
     });
+    // Each type's body, for the types an interface is nested in: `p.Outer.Contract`.
+    const bodies = [...masked.matchAll(TYPE)].flatMap((t) => {
+      const open = masked.indexOf("{", (t.index ?? 0) + t[0].length);
+      const close = open < 0 ? undefined : closing(masked, open);
+      return close === undefined ? [] : [{ name: t[0].split(/\s+/).pop()!, start: open, end: close }];
+    });
     for (const t of masked.matchAll(TYPE)) {
       if (!t[0].startsWith("interface")) continue;
       const at = t.index ?? 0;
@@ -1021,11 +1060,12 @@ export function httpExchanges(texts: Map<string, string>): Exchanges {
           return close !== undefined && f.at > body && f.at < close;
         }))
         .flatMap((f) => {
-          const name = methodNameAfter(masked, f.end);
-          return name ? [{ name, line: lineOf(text, f.at), args: f.args, paths: f.paths, methods: f.methods }] : [];
+          const method = methodAfter(masked, f.end, kotlin);
+          return method ? [{ ...method, line: lineOf(text, f.at), args: f.args, paths: f.paths, methods: f.methods }] : [];
         });
       if (!own && !members.length) continue;
-      const name = t[0].split(/\s+/).pop()!;
+      const outer = bodies.filter((b) => b.start < at && at < b.end).sort((a, b) => a.start - b.start).map((b) => b.name);
+      const name = [...outer, t[0].split(/\s+/).pop()!].join(".");
       const key = pkg ? `${pkg}.${name}` : name;
       const head = masked.slice(at + t[0].length, i);
       out.set(key, out.has(key) ? null : { file, line: lineOf(text, own?.at ?? at), paths: own ? own.paths : [""], methods: own ? own.methods : [], inherits: kotlin ? /:/.test(head) : /\bextends\b/.test(head), typed: !!own, members });
@@ -1035,11 +1075,24 @@ export function httpExchanges(texts: Map<string, string>): Exchanges {
 }
 
 /** The exchange interface a name in a type's header means: imported by name, of the file's package, or of a package imported whole. */
-function exchangeOf(exchanges: Exchanges | undefined, written: string, imports: Imports): [string, ExchangeInterface] | undefined {
+function exchangeOf(exchanges: Exchanges | undefined, written: string, imports: Imports, file: string): [string, ExchangeInterface] | undefined {
   if (!exchanges?.size) return undefined;
-  // A name imported by name, else a type of the file's own package, else one of a package imported whole (JLS 6.4.1).
+  // A name imported by name, else a type of the file's own package, else one of a package imported whole (JLS 6.4.1);
+  // `Outer.Contract` by its first name. A type nested in another of the same file is named by its simple name there.
+  const dot = written.indexOf(".");
+  const head = dot < 0 ? written : written.slice(0, dot);
+  const tail = dot < 0 ? "" : written.slice(dot);
   const own = imports.package ? `${imports.package}.${written}` : written;
-  const candidates = written.includes(".") ? [written] : imports.single.has(written) ? [imports.single.get(written)!] : exchanges.get(own) ? [own] : imports.wildcard.map((p) => `${p}.${written}`);
+  const local = [...exchanges].filter(([k, v]) => v?.file === file && dot < 0 && k.endsWith(`.${written}`) && k !== own).map(([k]) => k);
+  const candidates = imports.single.has(head)
+    ? [`${imports.single.get(head)!}${tail}`]
+    : exchanges.get(own)
+      ? [own]
+      : local.length
+        ? local
+        : dot > 0 && exchanges.get(written)
+          ? [written]
+          : imports.wildcard.map((p) => `${p}.${written}`);
   const hits = candidates.filter((c) => exchanges.get(c));
   return hits.length === 1 ? [hits[0]!, exchanges.get(hits[0]!)!] : undefined;
 }

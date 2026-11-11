@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { extractRoutes } from "../src/extract/routes.js";
+import { scan } from "../src/scan.js";
 import type { Source } from "../src/source.js";
 
 /** The ways a framework documents to register a route, beyond `router.get(path, handler)` (#47). */
@@ -124,7 +125,7 @@ describe("@koa/router: chains, named routes, redirects and every method", () => 
       ids: [],
       limits: [
         'routes api: api/app.js:3 redirects from the route named "old" on router, at the path @koa/router builds from it; its route is not read',
-        'routes api: api/app.js:4 registers "items" on router, a path that does not start with `/`; its routes are not read',
+        'routes api: api/app.js:4 registers "items" on router, a path that does not start with `/`, under a path the configuration declares, to which @koa/router would join it as text; its routes are not read',
       ],
     });
   });
@@ -529,5 +530,153 @@ describe("Spring: @HttpExchange interfaces a controller implements, and register
         "routes api: api/Registration.java:10 registers a handler method with a mapping the file does not spell out (other); its route is not read",
       ],
     });
+  });
+});
+
+describe("@koa/router: a path without a leading `/`, joined to its prefixes as text", () => {
+  const files = (version: string, body: string[]) => ({
+    "api/package.json": pkg({ "@koa/router": version, koa: "^3.0.0" }),
+    "api/app.js": lines('import Koa from "koa";', 'import Router from "@koa/router";', ...body),
+  });
+
+  it("reads it where @koa/router 15 puts a mount path or a prefix before it, and says where nothing does", () => {
+    const body = [
+      "const docs = new Router();",
+      'docs.post("documents.list", h);',
+      'docs.get("/", h);',
+      'const api = new Router({ prefix: "/api/" });',
+      'api.post("users.info", h);',
+      'api.use("/", docs.routes());',
+      "const v = new Router();",
+      'v.prefix("/v1/");',
+      'v.get("ping", h);',
+      "const bare = new Router();",
+      'bare.get("lost", h);',
+      "const app = new Koa();",
+      "app.use(api.routes());",
+      "app.use(v.routes());",
+      "app.use(bare.routes());",
+    ];
+    expect(routes(files("^15.7.0", body))).toEqual({
+      ids: ["GET /api", "GET /v1ping", "POST /api/users.info"],
+      limits: [
+        'routes api: api/app.js:4 registers "documents.list" on docs, which @koa/router serves at "/api//documents.list", whose empty segment no path template holds; its routes are not read',
+        'routes api: api/app.js:13 registers "lost" on bare, which @koa/router serves at "lost", a path no request has; its routes are not read',
+      ],
+    });
+  });
+
+  it("leaves it unread before version 15 or where no package.json gives one, and says so", () => {
+    const body = ["const r = new Router();", 'r.post("documents.list", h);', "const app = new Koa();", "app.use(r.routes());"];
+    const why = (extra: string) => `routes api: api/app.js:4 registers "documents.list" on r, a path that does not start with \`/\`, which @koa/router joins to its prefixes as text in a way atlas reads only from version 15${extra}; its routes are not read`;
+    expect(routes(files("^14.0.0", body))).toEqual({ ids: [], limits: [why("")] });
+    expect(routes(files("latest", body))).toEqual({ ids: [], limits: [why(", and no package.json above it gives one major version")] });
+  });
+});
+
+describe("review of #73", () => {
+  it("follows what a chained route's own handlers run, not the ones before it in the chain", () => {
+    const files = { "api/app.js": lines('const app = require("express")();', 'app.get("/a", () => fetch("/a-data")).post("/b", () => fetch("/b-data"));') };
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**"], styles: ["express"] }] });
+    const graph = scan(memory(files), config, { root: ".", requested: "WORKTREE" });
+    const runs = Object.fromEntries(graph.surfaces.map((s) => [`${s.method} ${s.path}`, graph.edges.filter((e) => e.kind === "reach" && e.from === s.id).map((e) => e.to)]));
+    expect(Object.keys(runs).sort()).toEqual(["GET /a", "POST /b"]);
+    expect(runs["POST /b"]!.some((c) => c.includes("/a-data"))).toBe(false);
+  });
+
+  it("reads past Fastify's route(options) in a chain, says where its options are not spelled out, and reads Hono's route(path, app) chain", () => {
+    const files = {
+      "api/package.json": pkg({ fastify: "^5.12.0", hono: "^4.13.0" }),
+      "api/app.js": lines('import Fastify from "fastify";', "const fastify = Fastify();", 'fastify.route(options).get("/ready", h);'),
+      "api/hono.ts": lines('import { Hono } from "hono";', "const app = new Hono();", "const child = new Hono();", 'child.get("/c", h);', 'app.route("/api", child).get("/x", h);'),
+    };
+    expect(routes(files)).toEqual({
+      ids: ["GET /api/c", "GET /ready", "GET /x"],
+      limits: ["routes api: api/app.js:3 declares a route with options the file does not spell out (options); its routes are not read"],
+    });
+  });
+
+  it("reads only add_api_route's own methods argument, and a value that is None alone", () => {
+    const text = lines(
+      "from fastapi import FastAPI",
+      "app = FastAPI()",
+      'app.add_api_route("/items", endpoint_factory(methods=["POST"]), methods=["GET"])',
+      'app.add_api_route("/x", partial(handler, methods=["POST"]))',
+      'app.add_api_route("/y", h, methods=None or ["POST"])',
+      'app.add_api_route("/z", h, methods=["PUT"] + EXTRA)',
+    );
+    expect(routes({ "api/main.py": text }, { styles: ["fastapi"], files: ["api/**/*.py"] })).toEqual({
+      ids: ["GET /items", "GET /x"],
+      limits: [
+        "routes api: api/main.py:5 registers /y with methods the file does not spell out; its routes are not read",
+        "routes api: api/main.py:6 registers /z with methods the file does not spell out; its routes are not read",
+      ],
+    });
+  });
+});
+
+describe("review of #73: Spring", () => {
+  const spring = (files: Record<string, string>) => {
+    const limits: string[] = [];
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.{java,kt}"], styles: ["spring"] }] });
+    const surfaces = extractRoutes(memory(files), config, undefined, [], limits);
+    return { ids: surfaces.map((s) => `${s.method} ${s.path}`).sort(), limits };
+  };
+  const java = (...body: string[]) =>
+    lines("package app;", "import static org.springframework.web.servlet.function.RequestPredicates.*;", "import static org.springframework.web.servlet.function.RouterFunctions.*;", "@Configuration", "class Routes {", ...body, "}");
+
+  it("reads a Kotlin bean whose type is inferred from RouterFunctions' builder", () => {
+    const text = lines("package app", "import org.springframework.web.servlet.function.*", "@Configuration", "class Routes {", '  @Bean fun routes() = RouterFunctions.route().GET("/x") { ok().build() }.build()', "}");
+    expect(spring({ "api/Routes.kt": text })).toEqual({ ids: ["GET /x"], limits: [] });
+  });
+
+  it("reads a bean composed under a nest there too", () => {
+    const text = java(
+      '  @Bean RouterFunction<ServerResponse> outer() { return nest(path("/api"), inner()); }',
+      '  @Bean RouterFunction<ServerResponse> inner() { return route(GET("/x"), h); }',
+    );
+    expect(spring({ "api/Routes.java": text })).toEqual({ ids: ["GET /api/x", "GET /x"], limits: [] });
+  });
+
+  it("reads nests of alternatives that leave the same path once, and stops past its bound", () => {
+    const same = Array.from({ length: 30 }, () => "accept(JSON).or(accept(TEXT)).nest {").join(" ");
+    const kt = (inner: string) => lines("package app", "import org.springframework.web.servlet.function.router", "@Configuration", "class Routes {", `  @Bean fun r() = router { ${inner} }`, "}");
+    expect(spring({ "api/Routes.kt": kt(`${same} GET("/deep") { ok().build() } ${"}".repeat(30)}`) })).toEqual({ ids: ["GET /deep"], limits: [] });
+    const wide = Array.from({ length: 20 }, (_, i) => `(path("/a${i}") or path("/b${i}")).nest {`).join(" ");
+    expect(spring({ "api/Routes.kt": kt(`${wide} ${"}".repeat(20)}`) })).toEqual({
+      ids: [],
+      limits: ["routes api: api/Routes.kt:5 nests router functions past 20000 contexts and statements; the rest are not read"],
+    });
+    const routed = spring({ "api/Routes.kt": kt(`${wide} GET("/x") { ok().build() } ${"}".repeat(20)}`) });
+    expect({ count: routed.ids.length, limits: routed.limits }).toEqual({ count: 4096, limits: ["routes api: api/Routes.kt:5 builds more than 4096 routes in router functions; the rest are not read"] });
+  });
+
+  it("takes the last methods() of a RequestMappingInfo, none being any method", () => {
+    const text = lines(
+      "package app;",
+      "import org.springframework.web.servlet.mvc.method.RequestMappingInfo;",
+      "class Registration {",
+      "  void register(RequestMappingHandlerMapping mapping) {",
+      '    mapping.registerMapping(RequestMappingInfo.paths("/a").methods(RequestMethod.GET).methods(RequestMethod.POST).build(), h, m);',
+      '    mapping.registerMapping(RequestMappingInfo.paths("/b").methods().build(), h, m);',
+      "  }",
+      "}",
+    );
+    expect(spring({ "api/Registration.java": text })).toEqual({ ids: ["* /b", "POST /a"], limits: [] });
+  });
+
+  it("leaves an exchange out only where the controller's mapped method overrides it, nested interfaces included", () => {
+    const files = {
+      "api/Outer.java": lines("package app;", "public class Outer {", '  @HttpExchange("/api")', "  public interface Contract {", '    @GetExchange("/{id}") String get(@PathVariable long id);', '    @GetExchange("/list") java.util.List<String> list(Map<String, Object> filter, String... tags);', "  }", "}"),
+      "api/C.java": lines(
+        "package app;",
+        "@RestController",
+        "class C implements Outer.Contract {",
+        '  @GetMapping("/other") public String get() { return ""; }',
+        '  @GetMapping("/mine") public List<String> list(final Map<String, Object> f, String... t) { return null; }',
+        "}",
+      ),
+    };
+    expect(spring(files)).toEqual({ ids: ["GET /api/mine", "GET /api/other", "GET /api/{id}"], limits: [] });
   });
 });

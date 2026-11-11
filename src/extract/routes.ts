@@ -16,7 +16,7 @@ import type { Reach } from "./reach.js";
 import { declarationOf, unwrap } from "./binding.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
-import { nestSyntax, packageRanges, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
+import { nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -535,16 +535,41 @@ export function routesFromTypeScript(
    * A route a registration on `inst` makes. A path must start with `/`, except on Hono, which joins one that does not
    * (`*`, `users`) to the base path as if it did (`mergePath`); an empty one it joins with a trailing `/`, not read.
    */
-  const register = (inst: Instance, method: string, path: string, node: ts.CallExpression) => {
+  /**
+   * The route a registration on `inst` makes, its handlers being where what it runs is followed from (not the calls
+   * before it in a chain). A path must start with `/`, except on Hono, which joins one that does not (`*`, `users`) to
+   * the base path as if it did (`mergePath`), an empty one with a trailing `/`, not read; and on @koa/router 15, which
+   * puts its prefixes before it as text (see `Mounts.koaPaths`).
+   */
+  const register = (inst: Instance, method: string, path: string, node: ts.CallExpression, handlers: readonly ts.Node[]) => {
     // A route is placed where its method is named, which in a chain is not where the chain starts.
     const place = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
-    if (!path.startsWith("/") && (!hono(inst) || path === "")) {
-      limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, a path that does not start with \`/\`; its routes are not read`);
-      return;
-    }
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
-    for (const p of servedUnder(inst) ?? []) add(verb, joinRoute(p, path.startsWith("/") ? path : `/${path}`), place, node, undefined, { syntax });
+    const more = { syntax, alongside: handlers.slice(1).map((h) => ({ file, node: h })) };
+    const not = (why: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, ${why}; its routes are not read`);
+    if (!path.startsWith("/") && koa(inst) && path !== "") {
+      const range = (inst.router ? mounts!.originsOf(inst.router) : []).flatMap((f) => ranges?.(f, inst.pkg!) ?? []);
+      const major = range.length ? rangeMajor([...new Set(range)].join(" || ")) : undefined;
+      if (!inst.router || major === undefined || major < 15) return not(`a path that does not start with \`/\`, which @koa/router joins to its prefixes as text in a way atlas reads only from version 15${major === undefined ? ", and no package.json above it gives one major version" : ""}`);
+      const joined = mounts!.koaPaths(inst.router, path);
+      if ("why" in joined) {
+        if (joined.why.startsWith("is served under")) not("a path that does not start with `/`, under a path the configuration declares, to which @koa/router would join it as text");
+        else unmounted.set(inst.name, joined.why);
+        return;
+      }
+      for (const p of joined.paths) {
+        // A request's path starts with `/`, which literal text or a parameter (`:id`) at the start does not take; a group
+        // or a wildcard there may.
+        if (/^[{*\\]/.test(p)) not(`which @koa/router serves at ${JSON.stringify(p)}, whose syntax before its first \`/\` atlas does not read`);
+        else if (!p.startsWith("/")) not(`which @koa/router serves at ${JSON.stringify(p)}, a path no request has`);
+        else if (p.includes("//")) not(`which @koa/router serves at ${JSON.stringify(p)}, whose empty segment no path template holds`);
+        else add(verb, p, place, handlers[0], undefined, more);
+      }
+      return;
+    }
+    if (!path.startsWith("/") && (!hono(inst) || path === "")) return not("a path that does not start with `/`");
+    for (const p of servedUnder(inst) ?? []) add(verb, joinRoute(p, path.startsWith("/") ? path : `/${path}`), place, handlers[0], undefined, more);
   };
   /**
    * The literal paths an argument gives: a string, or an array of strings on the routers that take one (Express's
@@ -638,10 +663,11 @@ export function routesFromTypeScript(
     const said = (what: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(callee.name)} ${what}`);
     // Express's `route(path)` returns a route whose methods take only handlers (router 2 `Route`).
     const route = expressRoute(callee.expression);
-    if (route) {
-      const inst = instanceAt((route.expression as ts.PropertyAccessExpression).expression);
-      if (!inst || !express(inst) || !verbsOf("express").has(name) || !args.length) return;
-      for (const path of pathsAt(route.arguments[0]!, inst, name) ?? []) register(inst, name, path, node);
+    const on = route && instanceAt((route.expression as ts.PropertyAccessExpression).expression);
+    // On another router `route(x)` is no Express route: Fastify's `route(options)` returns the instance.
+    if (route && on && express(on)) {
+      if (!verbsOf("express").has(name) || !args.length) return;
+      for (const path of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args);
       return;
     }
     const inst = instanceAt(callee.expression);
@@ -658,10 +684,10 @@ export function routesFromTypeScript(
         if (!first) return;
         if (ts.isStringLiteralLike(first)) {
           span(first);
-          if (args.length > 1) register(inst, name, first.text, node);
+          if (args.length > 1) register(inst, name, first.text, node, args.slice(1));
         } else if (handlerAt(first)) {
           const path = honoPath(callee.expression);
-          if (path !== undefined) register(inst, name, path, node);
+          if (path !== undefined) register(inst, name, path, node, args);
           else said(`registers ${name.toUpperCase()} on ${inst.name} with no path, at the one the last registration on it set; its route is not read`);
         } else if (args.length > 1 || !ts.isIdentifier(first)) unread(first, name === "all" ? "*" : name, prefixesOf(inst));
         else said(`registers ${name.toUpperCase()} on ${inst.name} with ${first.text}, a path or a handler the file does not settle; its route is not read`);
@@ -673,7 +699,11 @@ export function routesFromTypeScript(
       const second = unwrap(args[1]!);
       const named = koa(inst) && (ts.isStringLiteralLike(second) || ts.isTemplateExpression(second) || ts.isRegularExpressionLiteral(second));
       if (named && args.length < 3) return;
-      for (const path of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node);
+      for (const path of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1));
+      return;
+    }
+    if (name === "route" && args.length === 1 && inst.pkg === "fastify" && !ts.isObjectLiteralExpression(unwrap(args[0]!))) {
+      said(`declares a route with options the file does not spell out (${args[0]!.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
       return;
     }
     // Fastify's full declaration, `route({ method, url, handler })`: `url`, else `path` (lib/route.js), each method of a list.
@@ -699,7 +729,7 @@ export function routesFromTypeScript(
       if (!methods || unknown) return;
       const written = url || path || "";
       for (const k of ["url", "path"]) if (given.has(k)) span(given.get(k));
-      for (const m of methods) register(inst, m.toLowerCase(), written, node);
+      for (const m of methods) register(inst, m.toLowerCase(), written, node, args);
       return;
     }
     // Hono's `on(method or [methods], path or [paths], ...handlers)`: each method at each path (hono-base.js).
@@ -712,7 +742,7 @@ export function routesFromTypeScript(
       if (paths.some((x) => x === undefined) || !paths.length) unread(args[1]!, methods?.length === 1 ? methods[0] : undefined, prefixesOf(inst));
       if (!methods || paths.some((x) => x === undefined) || !paths.length) return;
       span(args[1]);
-      for (const path of paths as string[]) for (const m of methods) register(inst, m.toUpperCase() === "ALL" ? "all" : m.toLowerCase(), path, node);
+      for (const path of paths as string[]) for (const m of methods) register(inst, m.toUpperCase() === "ALL" ? "all" : m.toLowerCase(), path, node, args.slice(2));
       return;
     }
     // @koa/router's `redirect(source, destination)` registers `all` at the source; a source that is no path names a route.
@@ -720,7 +750,7 @@ export function routesFromTypeScript(
       const source = unwrap(args[0]!);
       if (ts.isStringLiteralLike(source) && source.text.startsWith("/")) {
         span(source);
-        register(inst, "all", source.text, node);
+        register(inst, "all", source.text, node, []);
       } else if (ts.isStringLiteralLike(source)) said(`redirects from the route named ${JSON.stringify(source.text)} on ${inst.name}, at the path @koa/router builds from it; its route is not read`);
       else unread(source, "*", prefixesOf(inst));
     }
@@ -883,13 +913,19 @@ export function closingParen(code: string, from: number): number {
  */
 function apiRouteMethods(text: string, code: string, argsStart: number): string[] | undefined {
   const end = closingParen(code, argsStart);
-  const m = /\bmethods\s*=\s*/.exec(code.slice(argsStart, end));
-  if (!m) return ["GET"];
-  const valueStart = argsStart + m.index + m[0].length;
-  if (/^None\b/.test(code.slice(valueStart))) return ["GET"];
-  const open = code[valueStart];
+  // The call's own `methods` argument: one of a call among its arguments (an endpoint factory's) is not the route's.
+  const starts = pythonArgStarts(code, argsStart);
+  const k = starts.findIndex((at) => /^methods\s*=(?!=)/.test(code.slice(at)));
+  if (k < 0) return ["GET"];
+  const valueStart = starts[k]! + /^methods\s*=\s*/.exec(code.slice(starts[k]))![0].length;
+  const valueEnd = k + 1 < starts.length ? code.lastIndexOf(",", starts[k + 1]) : end;
+  const value = code.slice(valueStart, valueEnd).trim();
+  if (value === "None") return ["GET"];
+  const open = value[0];
   if (!open || !"[({".includes(open)) return undefined;
   const close = closingParen(code, valueStart + 1);
+  // The list alone: `["GET"] + more` is computed.
+  if (code.slice(close + 1, valueEnd).trim()) return undefined;
   const items = text.slice(valueStart + 1, close).split(",").map((x) => x.trim()).filter(Boolean);
   const methods = items.map((x) => /^[rRuU]?(["'])([A-Za-z]+)\1$/.exec(x)?.[2]?.toUpperCase());
   return methods.length && methods.every(Boolean) ? [...new Set(methods as string[])] : undefined;
