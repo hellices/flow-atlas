@@ -294,7 +294,7 @@ describe("framework rules", () => {
       calls: [{ from: "web", to: "web", files: ["app/**/*.tsx", "components/**/*.tsx"] }],
     });
     const graph = scan(memory(files), config);
-    const page = graph.surfaces.find((s) => s.id === "web|GET /notes/{id}")!;
+    const page = graph.surfaces.find((s) => s.id === "web|* /notes/{id}")!;
     expect(page.at.line).toBe(14);
     const reach = graph.edges.filter((e) => e.kind === "reach" && e.from === page.id && !offersNext(e)).map((e) => graph.calls.find((c) => c.id === e.to)!.path);
     // makeHandler, track and the function called on the spot run while rendering; the handler makeHandler returns, the

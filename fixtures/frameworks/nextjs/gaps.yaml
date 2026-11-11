@@ -1,30 +1,8 @@
 # Where atlas's reading differs from the routes Next.js serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { route: "* /blog/{}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /photos/{}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /products/{}/{}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /teams/{}/members/{}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /shop/{**}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /shop/{}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /docs", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /docs/{**}", reason: "a page Next.js does not prerender is rendered for any method (a Server Action posts to it); atlas reads every page as GET, and nothing says so" }
-  - { route: "* /archive/{**}", reason: "a page with getServerSideProps is rendered for any method; atlas reads every page as GET, and nothing says so" }
-  - { route: "* /wiki", reason: "a page with getServerSideProps is rendered for any method; atlas reads every page as GET, and nothing says so" }
-  - { route: "* /wiki/{**}", reason: "a page with getServerSideProps is rendered for any method; atlas reads every page as GET, and nothing says so" }
   - { route: "GET /icon", reason: "a metadata image route (`icon.jsx`) is not read; a limit names it" }
-  - { route: "GET /apple-icon.png", reason: "a metadata image written as a file (`app/apple-icon.png`) is not read, and nothing says so" }
-  - { route: "GET /_next/static/{**}", reason: "the build's assets Next.js serves by itself are not a surface" }
-  - { route: "* /_next/image", reason: "the image optimizer Next.js serves by itself (`next/image`) is not a surface" }
   - { route: "GET /api/catalog/{}", reason: "the catch-all `[...path]` is read as a parameter with `**` after it (`/api/catalog/{path}/**`), which beside the parameter route `[id]` compares as one route of one segment or more" }
-extra:
-  - { route: "GET /blog/{}", reason: "the page read as GET alone" }
-  - { route: "GET /photos/{}", reason: "the page read as GET alone" }
-  - { route: "GET /products/{}/{}", reason: "the page read as GET alone" }
-  - { route: "GET /teams/{}/members/{}", reason: "the page read as GET alone" }
-  - { route: "GET /shop/{**}", reason: "the page read as GET alone" }
-  - { route: "GET /docs", reason: "the page read as GET alone" }
-  - { route: "GET /docs/{**}", reason: "the page read as GET alone" }
-  - { route: "GET /archive/{**}", reason: "the page read as GET alone" }
-  - { route: "GET /wiki", reason: "the page read as GET alone" }
-  - { route: "GET /wiki/{**}", reason: "the page read as GET alone" }
+  - { route: "* /shop/{}", reason: "the catch-all `[...slug]` is read as a parameter with `**` after it (`/shop/{slug}/**`), which beside the parameter route `[category]` compares as one route of one segment or more" }
+dispatch:
+  - { request: "GET /_next/static/rest/of/it", reason: "the build's files are read as one route under `/_next/static`, their names coming from the build; a path no file of the build has reaches it, where Next.js finds nothing" }

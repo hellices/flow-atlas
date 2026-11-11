@@ -78,6 +78,7 @@
   "limits": [
     "calls frontend->backend: 6 functions of frontend/src/client/sdk.gen.ts, which @hey-api/openapi-ts generated, are named in no other configured file, so their requests are not read: testToken, recoverPasswordHtmlContent, readUserById, testEmail, healthCheck, readItem",
     "calls frontend->backend: URLs to github.com (frontend/src/components/Common/Footer.tsx:7), x.com (frontend/src/components/Common/Footer.tsx:10), linkedin.com (frontend/src/components/Common/Footer.tsx:13) are not read as requests to backend; set origins.backend if that is its host",
+    "routes backend: backend/app/main.py:21 creates the FastAPI application app with openapi_url the file does not spell out as a path (f\"{settings.API_V1_STR}/openapi.json\"); the routes FastAPI serves by itself for it (its OpenAPI document, Swagger UI and ReDoc) are not read",
     "routes backend: backend/app/main.py:36 serves a frontend's files at / (app.frontend), with a fallback page for GET and HEAD where no route matches; their paths are not read"
   ]
 }

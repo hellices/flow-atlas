@@ -426,6 +426,11 @@ export class Constants {
     return this.imported(sf.fileName, spec, ts.isImportSpecifier(node) ? (node.propertyName ?? node.name).text : "default") ?? null;
   }
 
+  /** The file of the repository a module specifier names from `from`, resolved as imports are here; undefined for any other. */
+  module(from: string, spec: string): string | undefined {
+    return this.resolve(from, spec)?.file;
+  }
+
   /** A module specifier resolved as TypeScript and the workspace resolve it: relative, by `paths` and `baseUrl`, to a package. */
   private resolve(from: string, spec: string): Resolved | undefined {
     const exists = (f: string) => isScript(f) && this.source.read(f) !== undefined;

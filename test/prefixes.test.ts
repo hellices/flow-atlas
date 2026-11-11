@@ -14,7 +14,10 @@ const memory = (files: Record<string, string>): Source => ({
 const routes = (files: Record<string, string>, entry: Record<string, unknown>, components = [{ name: "api", path: "api" }]) => {
   const limits: string[] = [];
   const config = normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], ...entry }] });
-  const ids = extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`);
+  // The documentation routes FastAPI serves by itself are read in test/served.test.ts.
+  const ids = extractRoutes(memory(files), config, undefined, [], limits)
+    .filter((s) => !s.convention?.startsWith("fastapi "))
+    .map((s) => `${s.method} ${s.path}`);
   return { ids, limits };
 };
 
@@ -168,7 +171,7 @@ describe("FastAPI router prefixes", () => {
   it("reads one file's routers alone, and a receiver it cannot trace at the paths written, with a limit", () => {
     const limits: string[] = [];
     const text = 'router = APIRouter(prefix="/a")\napp = FastAPI()\napp.include_router(router, prefix="/b")\n@router.get("")\ndef a(): ...\n@app.get("")\ndef b(): ...\n';
-    expect(routesFromPython("m.py", text, { component: "c", files: [] }, limits).map((s) => s.path)).toEqual(["/b/a"]);
+    expect(routesFromPython("m.py", text, { component: "c", files: [] }, limits).filter((s) => !s.convention).map((s) => s.path)).toEqual(["/b/a"]);
     expect(limits).toEqual([]);
     expect(routesFromPython("n.py", "def f(router):\n    @router.get('/x')\n    def a(): ...\n", { component: "c", files: [] }, limits).map((s) => s.path)).toEqual(["/x"]);
     expect(limits).toEqual([

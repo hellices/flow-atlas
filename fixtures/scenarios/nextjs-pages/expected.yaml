@@ -5,23 +5,24 @@ case: |
   parameter type `"/m" | "/r"` was read as two more requests. Now each page is a GET surface at its folder path (with the
   HEAD Next.js answers itself), a link reaches the page it names, a literal type is no request, and inventory offers the
   pages. A link to the home page, `/`, reaches it too, though a lone `/` elsewhere is a separator, not a request.
+  The page under a dynamic segment, which Next.js renders on each request rather than prerendering, takes any method
+  (`*`); a limit names the pages read as prerendered, which take GET alone.
 surfaces:
   - web|GET /
   - web|GET /api/assistant
   - web|GET /create
   - web|GET /create/manual
   - web|GET /m
-  - web|GET /notes/{slug}
   - web|GET /r
   - web|HEAD / (implicit)
   - web|HEAD /api/assistant (implicit)
   - web|HEAD /create (implicit)
   - web|HEAD /create/manual (implicit)
   - web|HEAD /m (implicit)
-  - web|HEAD /notes/{slug} (implicit)
   - web|HEAD /r (implicit)
   - web|OPTIONS /api/assistant (implicit)
   - web|POST /api/assistant
+  - web|* /notes/{slug}
 findings: []
 chains:
   - web->web|GET /
@@ -29,9 +30,11 @@ chains:
   - web->web|GET /create
   - web->web|GET /create/manual
   - web->web|GET /m
-  - web->web|GET /notes/{slug}
   - web->web|GET /r
   - web->web|POST /api/assistant
+  - web->web|* /notes/{slug}
+limits:
+  - "routes web: Next.js prerenders a page at build unless rendering it calls a request-time API"
 descriptions:
   - web none - NoneFound
 inventory:

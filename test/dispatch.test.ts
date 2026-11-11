@@ -563,6 +563,7 @@ describe("Spring's trailing slash", () => {
     const none = reach({ "api/pom.xml": "<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency></dependencies></project>", "api/Owners.java": controller }, spring, []);
     expect(none.limits).toEqual([
       "routes api: no build file above api/Owners.java names the version of Spring Boot or Spring Framework, so whether Spring matches a request with a trailing / to a route without one is not read; a call is matched to its route either way",
+      "routes api: api/pom.xml:1 brings in Spring Boot's web stack, in a version the build files do not spell out; the routes Spring Boot serves by itself (its error page, static resources, WebJars and actuator) are not read",
     ]);
     expect(reach({ "api/Owners.java": controller }, spring, []).limits).toEqual([]);
   });

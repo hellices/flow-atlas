@@ -1,10 +1,4 @@
 # Where atlas's reading differs from the routes Spring Boot (WebFlux) serves. Remove an entry when atlas reads it right;
 # the test fails while a listed difference no longer occurs.
-missing:
-  - { route: "GET /", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`, which takes `/` too) are not a surface" }
-  - { route: "GET /{**}", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`) are not a surface" }
-  - { route: "GET /actuator", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /actuator/health", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
-  - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
+dispatch:
+  - { request: "GET /api/members", reason: "Spring's RequestMappingHandlerMapping refuses a path an annotated route takes by another method (405) before the static resources' mapping is tried; atlas does not read the order of Spring's handler mappings, so the request reaches the static resources (`/**`)" }

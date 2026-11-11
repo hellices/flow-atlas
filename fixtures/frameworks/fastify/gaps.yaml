@@ -1,5 +1,2 @@
 # Where atlas's reading differs from the routes Fastify serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-missing:
-  - { route: "GET /public", reason: "the route @fastify/static registers under its `prefix` (`/public/*`, which also takes `/public/`) is not read, and nothing says so" }
-  - { route: "GET /public/{**}", reason: "the route @fastify/static registers under its `prefix` is not read, and nothing says so" }

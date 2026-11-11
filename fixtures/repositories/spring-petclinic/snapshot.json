@@ -1,6 +1,11 @@
 {
   "surfaces": [
+    "server|* /error (implicit)",
     "server|GET /",
+    "server|GET /** (implicit)",
+    "server|GET /actuator (implicit)",
+    "server|GET /actuator/health (implicit)",
+    "server|GET /actuator/health/** (implicit)",
     "server|GET /oups",
     "server|GET /owners",
     "server|GET /owners/find",
@@ -12,6 +17,9 @@
     "server|GET /owners/{ownerId}/pets/{petId}/visits/new",
     "server|GET /vets",
     "server|GET /vets.html",
+    "server|GET /webjars/** (implicit)",
+    "server|HEAD /** (implicit)",
+    "server|HEAD /webjars/** (implicit)",
     "server|POST /owners/new",
     "server|POST /owners/{ownerId}/edit",
     "server|POST /owners/{ownerId}/pets/new",
@@ -143,6 +151,7 @@
   ],
   "limits": [
     "calls web->server: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: src/main/resources/templates/fragments/layout.html:31",
-    "calls web->server: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: src/main/resources/templates/fragments/inputField.html:6, src/main/resources/templates/fragments/selectField.html:6"
+    "calls web->server: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: src/main/resources/templates/fragments/inputField.html:6, src/main/resources/templates/fragments/selectField.html:6",
+    "routes server: src/main/resources/application.properties:21 exposes every actuator endpoint over HTTP (*); which endpoints there are depends on the classpath and the code, so of them only the discovery page and health are read"
   ]
 }

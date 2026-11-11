@@ -50,7 +50,15 @@ describe("shop fixture", () => {
       "orders GET /orders/{id}",
       "orders GET /orders/{id}/history",
       "orders POST /orders",
+      "pricing GET /docs",
+      "pricing GET /docs/oauth2-redirect",
+      "pricing GET /openapi.json",
       "pricing GET /quotes",
+      "pricing GET /redoc",
+      "pricing HEAD /docs",
+      "pricing HEAD /docs/oauth2-redirect",
+      "pricing HEAD /openapi.json",
+      "pricing HEAD /redoc",
       "pricing POST /discounts",
     ]);
   });

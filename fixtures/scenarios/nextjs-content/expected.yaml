@@ -12,14 +12,14 @@ case: |
   GET; robots.ts serves GET /robots.txt and sitemap.ts GET /sitemap.xml, implicit like public files, since crawlers
   request them by convention and no code of the app does; a page offers the links and forms its server components and
   layouts render as `next`; and `.` is the repository root. The one finding is the post list nothing requests.
+  The editor and the catch-all, under dynamic segments, are rendered on each request and take any method (`*`); the
+  other pages are read as prerendered, taking GET alone, and a limit names them.
 surfaces:
   - site|GET /
   - site|GET /dashboard
-  - site|GET /editor/{postId}
   - site|GET /login
   - site|GET /pricing
   - site|GET /register
-  - site|GET /{slug}/**
   - site|GET /api/posts
   - site|POST /api/posts
   - site|GET /robots.txt (implicit)
@@ -29,11 +29,9 @@ surfaces:
   - site|GET /site.webmanifest (implicit)
   - site|HEAD / (implicit)
   - site|HEAD /dashboard (implicit)
-  - site|HEAD /editor/{postId} (implicit)
   - site|HEAD /login (implicit)
   - site|HEAD /pricing (implicit)
   - site|HEAD /register (implicit)
-  - site|HEAD /{slug}/** (implicit)
   - site|HEAD /api/posts (implicit)
   - site|HEAD /robots.txt (implicit)
   - site|HEAD /sitemap.xml (implicit)
@@ -43,6 +41,8 @@ surfaces:
   - site|OPTIONS /api/posts (implicit)
   - site|OPTIONS /robots.txt (implicit)
   - site|OPTIONS /sitemap.xml (implicit)
+  - site|* /editor/{postId}
+  - site|* /{slug}/**
 calls:
   - site->site|* /favicon.ico @ app/layout.tsx:5
   - site->site|* /site.webmanifest @ app/layout.tsx:6
@@ -63,14 +63,14 @@ findings:
 chains:
   - site->site|GET /
   - site->site|GET /dashboard
-  - site->site|GET /editor/{postId}
   - site->site|GET /favicon.ico
   - site->site|GET /login
   - site->site|GET /pricing
   - site->site|GET /register
   - site->site|GET /site.webmanifest
-  - site->site|GET /{slug}/**
   - site->site|POST /api/posts
+  - site->site|* /editor/{postId}
+  - site->site|* /{slug}/**
 next:
   - site->site|GET / => site->site|GET /register (view app/(marketing)/page.tsx)
   - site->site|GET / => site->site|GET /pricing (view app/(marketing)/layout.tsx)
@@ -80,13 +80,15 @@ next:
   - site->site|GET /pricing => site->site|GET /pricing (view app/(marketing)/layout.tsx)
   - site->site|GET /pricing => site->site|GET /dashboard (view components/user-nav.tsx)
   - site->site|GET /pricing => site->site|GET /login (view components/user-nav.tsx)
-  - site->site|GET /{slug}/** => site->site|GET /pricing (view app/(marketing)/layout.tsx)
-  - site->site|GET /{slug}/** => site->site|GET /dashboard (view components/user-nav.tsx)
-  - site->site|GET /{slug}/** => site->site|GET /login (view components/user-nav.tsx)
   - site->site|GET /login => site->site|GET / (view app/(auth)/login/page.tsx)
   - site->site|GET /login => site->site|GET /register (view app/(auth)/login/page.tsx)
-  - site->site|GET /register => site->site|GET /{slug}/** (view app/(auth)/register/page.tsx)
-  - site->site|GET /dashboard => site->site|GET /editor/{postId} (view components/post-item.tsx)
+  - site->site|* /{slug}/** => site->site|GET /dashboard (view components/user-nav.tsx)
+  - site->site|* /{slug}/** => site->site|GET /login (view components/user-nav.tsx)
+  - site->site|* /{slug}/** => site->site|GET /pricing (view app/(marketing)/layout.tsx)
+  - site->site|GET /dashboard => site->site|* /editor/{postId} (view components/post-item.tsx)
+  - site->site|GET /register => site->site|* /{slug}/** (view app/(auth)/register/page.tsx)
+limits:
+  - "routes site: Next.js prerenders a page at build unless rendering it calls a request-time API"
 descriptions:
   - site none - NoneFound
 inventory:

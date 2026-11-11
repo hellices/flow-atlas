@@ -17,6 +17,14 @@ surfaces:
   - backend|GET /api/v1/items
   - backend|POST /api/v1/items
   - backend|DELETE /api/v1/items/{id}
+  - backend|GET /docs (implicit)
+  - backend|GET /docs/oauth2-redirect (implicit)
+  - backend|GET /openapi.json (implicit)
+  - backend|GET /redoc (implicit)
+  - backend|HEAD /docs (implicit)
+  - backend|HEAD /docs/oauth2-redirect (implicit)
+  - backend|HEAD /openapi.json (implicit)
+  - backend|HEAD /redoc (implicit)
 findings:
   - FA001|backend|POST /api/v1/items
   - FA001|backend|DELETE /api/v1/items/{id}

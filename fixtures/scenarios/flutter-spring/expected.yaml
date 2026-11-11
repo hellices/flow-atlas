@@ -11,6 +11,11 @@ surfaces:
   - backend|GET /api/v1/courses/{id}/related
   - backend|POST /api/v1/courses
   - backend|POST /api/v1/forum/courses/{courseId}/posts
+  - backend|* /error (implicit)
+  - backend|GET /** (implicit)
+  - backend|GET /webjars/** (implicit)
+  - backend|HEAD /** (implicit)
+  - backend|HEAD /webjars/** (implicit)
 findings:
   - FA001|backend|POST /api/v1/courses
 chains:

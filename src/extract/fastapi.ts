@@ -36,6 +36,14 @@ export interface Routers {
    * the `/` at its end added or removed (`redirect_slashes`, on by default): undefined where that is not read.
    */
   redirects(key: string): boolean | undefined;
+  /** The applications a file creates, where (`at`), and the routes each serves by itself (see `documentation`). */
+  applications(file: string): Array<{ key: string; at: number; routes: DocsRoute[] | { why: string } }>;
+}
+
+/** A route FastAPI serves by itself, with the setting that gives its path (`convention`). */
+export interface DocsRoute {
+  path: string;
+  convention: string;
 }
 
 /** A literal, or the expression text where the file does not spell the value out. */
@@ -44,6 +52,9 @@ type Value = string | { unread: string };
 interface Binding {
   kind: "app" | "router";
   prefix: Value;
+  /** Where `FastAPI(` is called, and the routes the application serves by itself. */
+  at?: number;
+  docs?: DocsRoute[] | { why: string };
   /**
    * The `redirect_slashes` of an application, or of a router (which holds only where it is mounted as an application,
    * not where `include_router` copies its routes): true where it is not given, null where it is not spelled out.
@@ -175,6 +186,53 @@ function booleanKeyword(text: string, code: string, from: number, name: string):
   return value.unread === "True" ? true : value.unread === "False" ? false : null;
 }
 
+/**
+ * A path setting of `FastAPI(...)`: its default where it is not given, null where it is `None`, the path where it is a
+ * literal, and the expression where the file does not spell it out (or a `**` argument may give it).
+ */
+function pathSetting(text: string, code: string, from: number, name: string, fallback: string): string | null | { unread: string } {
+  const starts = pythonArgStarts(code, from);
+  for (const at of starts) {
+    const m = new RegExp(`^${name}\\s*=(?!=)\\s*`).exec(code.slice(at));
+    if (!m) continue;
+    const v = valueAt(text, code, at + m[0].length);
+    if (typeof v === "string") return v;
+    return v.unread === "None" ? null : v;
+  }
+  const spread = starts.find((at) => code.startsWith("**", at));
+  return spread === undefined ? fallback : { unread: pythonArg(text, code, spread).replace(/\s+/g, " ") };
+}
+
+/**
+ * The routes an application serves by itself, which `FastAPI.setup()` adds when the application is made, before any
+ * route of the code (fastapi/applications.py): the OpenAPI document at `openapi_url` (`/openapi.json`); where it is
+ * set, the Swagger UI at `docs_url` (`/docs`) and its OAuth2 redirect at `swagger_ui_oauth2_redirect_url`
+ * (`/docs/oauth2-redirect`), and ReDoc at `redoc_url` (`/redoc`). A setting that is `None` or empty turns its route off;
+ * one the file does not spell out leaves them all unread, with why.
+ */
+function documentation(text: string, code: string, from: number): DocsRoute[] | { why: string } {
+  const settings: Array<[string, string]> = [
+    ["openapi_url", "/openapi.json"],
+    ["docs_url", "/docs"],
+    ["swagger_ui_oauth2_redirect_url", "/docs/oauth2-redirect"],
+    ["redoc_url", "/redoc"],
+  ];
+  const value = new Map(settings.map(([name, fallback]) => [name, pathSetting(text, code, from, name, fallback)]));
+  const unread = [...value].filter(([, v]) => v !== null && (typeof v === "object" || (v !== "" && !v.startsWith("/"))));
+  if (unread.length) return { why: unread.map(([name, v]) => `${name} the file does not spell out as a path (${typeof v === "object" ? v!.unread : JSON.stringify(v)})`).join(" and ") };
+  const on = (name: string) => !!value.get(name);
+  const out: DocsRoute[] = [];
+  const add = (name: string) => out.push({ path: value.get(name) as string, convention: `fastapi ${name}` });
+  if (!on("openapi_url")) return out;
+  add("openapi_url");
+  if (on("docs_url")) {
+    add("docs_url");
+    if (on("swagger_ui_oauth2_redirect_url")) add("swagger_ui_oauth2_redirect_url");
+  }
+  if (on("redoc_url")) add("redoc_url");
+  return out;
+}
+
 /** `redirect_slashes` as given: on where it is not given (Starlette's `Router` default), null where not spelled out. */
 const redirectsGiven = (given: boolean | undefined | null): boolean | null => (given === undefined ? true : given);
 
@@ -193,11 +251,13 @@ function factsOf(text: string): Facts {
     const from = (m.index ?? 0) + m[0].length;
     const binding: Binding =
       m[2] === "FastAPI"
-        ? { kind: "app", prefix: "", redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) }
+        ? { kind: "app", prefix: "", redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")), at: (m.index ?? 0) + m[0].search(/\S/), docs: documentation(text, code, from) }
         : { kind: "router", prefix: keyword(text, code, from, "prefix"), redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) };
     const before = facts.routers.get(name);
     const same = before && before.kind === binding.kind && JSON.stringify(before.prefix) === JSON.stringify(binding.prefix) && before.redirects === binding.redirects;
-    facts.routers.set(name, before === undefined || same ? binding : null);
+    // An application made twice with other documentation settings (in two branches) serves routes one of them gives.
+    if (same && JSON.stringify(before.docs) !== JSON.stringify(binding.docs)) before.docs = { why: "documentation settings that differ where the file makes it twice" };
+    facts.routers.set(name, before === undefined ? binding : same ? before : null);
   }
   for (const m of code.matchAll(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|.*(?:\\\n.*)*)/gm)) {
     for (const item of m[2]!.replace(/[()\\]/g, " ").split(",")) {
@@ -375,6 +435,8 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
     },
     redirects: (key) => redirectsOf(key, new Set()) ?? undefined,
     traced: (file, expr, at) => included(file, expr, at) !== undefined,
+    applications: (file) =>
+      [...(facts.get(file)?.routers ?? [])].flatMap(([name, b]) => (b?.kind === "app" && b.docs && b.at !== undefined ? [{ key: `${file}#${name}`, at: b.at, routes: b.docs }] : [])),
     served: (key) => {
       const s = servedAt(key, new Set());
       if ("paths" in s) return s.paths;

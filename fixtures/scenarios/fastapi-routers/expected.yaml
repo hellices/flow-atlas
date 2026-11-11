@@ -31,6 +31,14 @@ surfaces:
   - backend|POST /api/v1/admin
   # Included only where settings.ENVIRONMENT is "local"; which branch runs is decided at launch, and the code includes it.
   - backend|POST /api/v1/private/users
+  - backend|GET /docs (implicit)
+  - backend|GET /docs/oauth2-redirect (implicit)
+  - backend|GET /openapi.json (implicit)
+  - backend|GET /redoc (implicit)
+  - backend|HEAD /docs (implicit)
+  - backend|HEAD /docs/oauth2-redirect (implicit)
+  - backend|HEAD /openapi.json (implicit)
+  - backend|HEAD /redoc (implicit)
 findings:
   - FA001|backend|GET /healthz
   - FA001|backend|POST /api/v1/admin

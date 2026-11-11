@@ -105,9 +105,9 @@ describe("Next.js", () => {
       ["src/app/robots.txt", "/robots.txt"],
       ["app/manifest.json", "/manifest.json"],
       ["app/(docs)/docs/sitemap.xml", "/docs/sitemap.xml"],
-      // Only the root of app/ holds a favicon; an image's path is generated.
+      // Only the root of app/ holds a favicon; an image written as a file is served at its name in any segment.
       ["app/blog/favicon.ico", undefined],
-      ["app/icon.png", undefined],
+      ["app/icon.png", "/icon.png"],
       ["app/_private/sitemap.xml", undefined],
     ];
     expect(rows.map(([file]) => nextStaticFile(file, "")?.path)).toEqual(rows.map(([, path]) => path));
@@ -118,7 +118,7 @@ describe("Next.js", () => {
       "public/fonts/inter.woff2": "",
       "app/[...slug]/page.tsx": "export default function Page() { return null; }",
       "app/layout.tsx": 'export const metadata = { icons: { icon: "/favicon.ico" } };\nexport default function Root({ children }) { return <html><head><link rel="preload" href="/fonts/inter.woff2" /></head><body>{children}</body></html>; }',
-    }, { publicSurfaces: ["web|GET /{slug}/**"] });
+    }, { publicSurfaces: ["web|* /{slug}/**"] });
     // Next.js serves public files before any dynamic route, so neither reaches the catch-all.
     expect(targets(graph, "/favicon.ico")).toEqual(["web|GET /favicon.ico"]);
     expect(targets(graph, "/fonts/inter.woff2")).toEqual(["web|GET /fonts/inter.woff2"]);
@@ -165,11 +165,11 @@ describe("Next.js", () => {
       ].join("\n"),
     });
     // The static page may be the one, the dynamic segment takes every other value, and the catch-all none.
-    expect(targets(graph, "/editor/{}")).toEqual(["web|GET /editor/new", "web|GET /editor/{id}"]);
-    expect(targets(graph, "/editor/n{}")).toEqual(["web|GET /editor/new", "web|GET /editor/{id}"]);
+    expect(targets(graph, "/editor/{}")).toEqual(["web|* /editor/{id}", "web|GET /editor/new"]);
+    expect(targets(graph, "/editor/n{}")).toEqual(["web|* /editor/{id}", "web|GET /editor/new"]);
     // Two segments under /editor fit only the catch-all.
-    expect(targets(graph, "/editor/{}/{}")).toEqual(["web|GET /{slug}/**"]);
-    expect(targets(graph, "/docs/{}")).toEqual(["web|GET /docs/{*slug}"]);
+    expect(targets(graph, "/editor/{}/{}")).toEqual(["web|* /{slug}/**"]);
+    expect(targets(graph, "/docs/{}")).toEqual(["web|* /docs/{*slug}"]);
     // A public file is served before the route handler of the dynamic segment.
     expect(targets(graph, "/files/{}")).toEqual(["web|GET /files/report.pdf", "web|GET /files/{name}"]);
     // A route all of whose requests from the call a more specific route takes is reached by none of them: the call
@@ -180,7 +180,7 @@ describe("Next.js", () => {
       "app/[section]/new/page.tsx": "export default function Add() { return null; }",
       "lib/links.ts": "export const add = (section) => fetch(`/${section}/new`);",
     });
-    expect(targets(crossed.graph, "/{}/new")).toEqual(["web|GET /editor/new", "web|GET /{section}/new"]);
+    expect(targets(crossed.graph, "/{}/new")).toEqual(["web|* /{section}/new", "web|GET /editor/new"]);
   });
 
   it("reads no request in the matcher of a middleware or proxy", () => {

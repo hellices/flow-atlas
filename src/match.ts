@@ -80,7 +80,17 @@ function compare(a: number[], b: number[]): number {
  * method is not known, each method it may have picks its own route.
  */
 function reached(call: Call, candidates: Array<{ surface: Surface; index: number }>, ranked: Map<string, Ranking>): Array<{ surface: Surface; index: number }> {
-  if (ranked.get(call.to) !== "spring" || call.path.includes(HOLE)) return candidates;
+  if (ranked.get(call.to) !== "spring") return candidates;
+  if (call.path.includes(HOLE)) {
+    // Each request a call with interpolations stands for goes to the most specific pattern that takes it: the call
+    // reaches every pattern down to the first that takes any value they may hold, less one whose every request it shares
+    // with the call a more specific pattern takes (`/teams/**` beside `/teams/{id}` for `/teams/${id}`).
+    const order = [...new Map(candidates.map((c) => [c.surface.path, c.surface])).values()].sort((a, b) => compare(springRank(a.path), springRank(b.path)));
+    const covering = order.findIndex((s) => pathCovers(s.path, call.path, s.patterns));
+    const before = covering < 0 ? order : order.slice(0, covering + 1);
+    const keep = new Set(before.filter((s, i) => !order.slice(0, i).some((q) => pathCovers(q.path, narrowedPath(s.path, call.path), q.patterns))).map((s) => s.path));
+    return candidates.filter((c) => keep.has(c.surface.path));
+  }
   const best = (group: Array<{ surface: Surface; index: number }>) => {
     const rank = (c: { surface: Surface }) => [...springRank(c.surface.path), c.surface.method === "*" ? 1 : 0, c.surface.method === "GET" ? 1 : 0];
     const top = group.reduce((t, c) => (compare(rank(c), t) < 0 ? rank(c) : t), rank(group[0]!));
@@ -424,8 +434,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
         if (surface.component !== call.to) return;
         if (paths && !paths.has(surface.path)) return;
         // What the framework answers by itself beside a GET (HEAD, OPTIONS) is reached only by a request that names that
-        // method; a file it serves with no handler is reached by GET as a route is.
-        if (surface.implicit && surface.method !== "GET" && call.method.toUpperCase() !== surface.method) return;
+        // method; a route it serves with no handler of the app's (a file, its error page) is reached as any route is.
+        if (surface.implicit && (surface.method === "HEAD" || surface.method === "OPTIONS") && call.method.toUpperCase() !== surface.method) return;
         if (!methodsMatch(surface.method, call.method) && !(headByGet && surface.method === "GET")) return;
         if (fits(surface, slash)) out.push({ surface, index: si });
       });

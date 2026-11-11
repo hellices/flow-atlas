@@ -351,7 +351,10 @@ describe("routesFromTypeScript", () => {
       "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
-    const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);
+    // The documentation routes FastAPI serves by itself are read in test/served.test.ts.
+    const routes = routesFromPython("a.py", text, spec, limits)
+      .filter((s) => !s.convention?.startsWith("fastapi "))
+      .map((s) => `${s.method} ${s.path}`);
     expect(routes).toEqual(["GET /ok", "POST /agent"]);
     const not = (line: number, expr: string) => `routes svc: a.py:${line} registers a path the file does not spell out (${expr}); its routes are not read`;
     expect(limits).toEqual([not(2, "ITEMS"), not(4, 'f"/items/{KIND}"'), not(11, "AGENT_PATH")]);

@@ -13,7 +13,9 @@ const memory = (files: Record<string, string>): Source => ({
 const routes = (files: Record<string, string>, entry: Record<string, unknown>) => {
   const limits: string[] = [];
   const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**"], ...entry }] });
+  // The documentation routes FastAPI serves by itself are read in test/served.test.ts.
   const ids = extractRoutes(memory(files), config, undefined, [], limits)
+    .filter((s) => !s.convention?.startsWith("fastapi "))
     .map((s) => `${s.method} ${s.path}`)
     .sort();
   return { ids, limits };
