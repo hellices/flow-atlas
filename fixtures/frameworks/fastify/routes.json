@@ -7,6 +7,7 @@
     {"method":"*","path":"/any"},
     {"method":"GET","path":"/api"},
     {"method":"HEAD","path":"/api"},
+    {"method":"HEAD","path":"/api","raw":"/api/"},
     {"method":"GET","path":"/api/admin/dashboard"},
     {"method":"HEAD","path":"/api/admin/dashboard"},
     {"method":"PATCH","path":"/api/admin/settings/{}","raw":"/api/admin/settings/:key"},

@@ -15,6 +15,7 @@
     {"method":"PATCH","path":"/about-us","raw":"^about\\-us/\\Z"},
     {"method":"POST","path":"/about-us","raw":"^about\\-us/\\Z"},
     {"method":"PUT","path":"/about-us","raw":"^about\\-us/\\Z"},
+    {"method":"*","path":"/admin","raw":"^admin/(?P<url>.*)$"},
     {"method":"*","path":"/admin","raw":"^admin/\\Z"},
     {"method":"*","path":"/admin/{}","raw":"^admin/(?P<app_label>auth|api)/$"},
     {"method":"*","path":"/admin/{**}","raw":"^admin/(?P<url>.*)$"},
