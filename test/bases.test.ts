@@ -494,3 +494,74 @@ describe("a client's requests as its library sends them", () => {
     expect(read({ "web/a.js": 'import axios from "axios";\nconst api = axios.create({ baseURL: "/api/v1" });\napi.get("../health");' })).toEqual({ calls: ["GET /api/health @3"], limits: [] });
   });
 });
+
+describe("the values Angular gives a URL's lead", () => {
+  const app = { files: ["web/src/app/**"] };
+  const env = (url: string, extra = "") => `export const environment = {\n  production: false,\n  apiUrl: '${url}',${extra}\n};\n`;
+  const service = [
+    "import { Injectable, inject } from '@angular/core';",
+    "import { HttpClient } from '@angular/common/http';",
+    "import { environment } from '../environments/environment';",
+    "@Injectable({ providedIn: 'root' })",
+    "export class UserService {",
+    "  private readonly http = inject(HttpClient);",
+    "  get(id: string) { return this.http.get(`${environment.apiUrl}/users/${id}`); }",
+    "  avatar(id: string) { return this.http.get(environment.apiUrl + '/users/' + id + '/avatar'); }",
+    "}",
+  ].join("\n");
+
+  it("reads an environment's property where every file the build may put in its place gives the same value", () => {
+    const files = { "web/src/app/user.service.ts": service, "web/src/environments/environment.ts": env("/api") };
+    const read1 = read(files, app);
+    expect(read1).toEqual({ calls: ["GET /api/users/{} @7", "GET /api/users/{}/avatar @8"], limits: [] });
+    const angular = (prod: string) => ({
+      ...files,
+      "web/src/environments/environment.prod.ts": env(prod),
+      "web/angular.json": JSON.stringify({ projects: { web: { architect: { build: { configurations: { production: { fileReplacements: [{ replace: "src/environments/environment.ts", with: "src/environments/environment.prod.ts" }] } } } } } } }),
+    });
+    expect(read(angular("/api"), app)).toEqual(read1);
+    expect(read(angular("https://api.example.com/v1"), app)).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where its leading value is not read: web/src/environments/environment.ts and web/src/environments/environment.prod.ts give environment.apiUrl different values: web/src/app/user.service.ts:7, web/src/app/user.service.ts:8"],
+    });
+  });
+
+  it("reads the fileReplacements of an Nx project.json from the workspace's root, and no property the code writes", () => {
+    const nx = {
+      "nx.json": "{}",
+      "web/project.json": JSON.stringify({ targets: { build: { executor: "@nx/angular:application", configurations: { production: { fileReplacements: [{ replace: "web/src/environments/environment.ts", with: "web/src/environments/environment.prod.ts" }] } } } } }),
+      "web/src/app/user.service.ts": service,
+      "web/src/environments/environment.ts": env("/api"),
+      "web/src/environments/environment.prod.ts": env("/v2"),
+    };
+    expect(read(nx, app).limits).toEqual([
+      "calls web->api: requests through a client are not read where its leading value is not read: web/src/environments/environment.ts and web/src/environments/environment.prod.ts give environment.apiUrl different values: web/src/app/user.service.ts:7, web/src/app/user.service.ts:8",
+    ]);
+    const written = { "web/src/app/user.service.ts": service, "web/src/environments/environment.ts": env("/api"), "web/src/main.ts": "import { environment } from './environments/environment';\nenvironment.apiUrl = window.config.api;" };
+    expect(read(written, app)).toEqual({ calls: [], limits: ["calls web->api: requests through a client are not read where its leading value is not read: the code writes environment.apiUrl: web/src/app/user.service.ts:7, web/src/app/user.service.ts:8"] });
+  });
+
+  it("reads an InjectionToken's value from the providers that give it, through inject() and @Inject()", () => {
+    const token = "import { InjectionToken } from '@angular/core';\nexport const API_URL = new InjectionToken<string>('API_URL');";
+    const reports = [
+      "import { Inject, Injectable, inject } from '@angular/core';",
+      "import { HttpClient } from '@angular/common/http';",
+      "import { API_URL } from './token';",
+      "@Injectable()",
+      "export class ReportService {",
+      "  private readonly base = inject(API_URL);",
+      "  constructor(private http: HttpClient, @Inject(API_URL) private api: string) {}",
+      "  year(y: number) { return this.http.get(`${this.base}/reports/${y}`); }",
+      "  export(y: number) { return this.http.post(`${this.api}/reports/${y}/export`, null); }",
+      "}",
+    ].join("\n");
+    const config = (providers: string) => `import { API_URL } from './token';\nexport const appConfig = { providers: [${providers}] };`;
+    const files = (providers: string) => ({ "web/src/app/token.ts": token, "web/src/app/report.service.ts": reports, "web/src/app/app.config.ts": config(providers) });
+    expect(read(files("{ provide: API_URL, useValue: '/api/v2' }"), app)).toEqual({ calls: ["GET /api/v2/reports/{} @8", "POST /api/v2/reports/{}/export @9"], limits: [] });
+    expect(read(files("{ provide: API_URL, useFactory: () => '/api/v2' }, { provide: API_URL, useValue: '/api/v2' }"), app).calls).toEqual(["GET /api/v2/reports/{} @8", "POST /api/v2/reports/{}/export @9"]);
+    const unread = (why: string) => ({ calls: [], limits: [`calls web->api: requests through a client are not read where its leading value is not read: ${why}: web/src/app/report.service.ts:8, web/src/app/report.service.ts:9`] });
+    expect(read(files("{ provide: API_URL, useValue: '/api/v2' }, { provide: API_URL, useValue: '/api/v3' }"), app)).toEqual(unread("the providers of API_URL give it different values"));
+    expect(read(files("{ provide: API_URL, useFactory: (c) => c.api, deps: [Config] }"), app)).toEqual(unread("a provider of API_URL gives it a value atlas does not read"));
+    expect(read(files(""), app)).toEqual(unread("no provider the code writes gives API_URL a value"));
+  });
+});

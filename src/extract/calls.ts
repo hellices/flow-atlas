@@ -3,6 +3,7 @@ import { baseOf, type CallSource, type Config } from "../config.js";
 import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
 import { callPath, HOLE, hostOf, isLoopback, joinRoute, onBase, pathsMatch, relativePath, resolveReference, type Base, type CallPath } from "../paths.js";
 import { lineOf, matcher, select, type Source } from "../source.js";
+import { AngularValues } from "./angular.js";
 import { Clients, type ClientRequest } from "./clients.js";
 import { httpExchanges } from "./spring.js";
 import { addCoverage } from "./coverage.js";
@@ -1622,6 +1623,8 @@ export interface ReadContext {
   clients?: Clients;
   /** Whether any file of the repository imports a client library whose instances atlas reads; undefined: may. */
   anyClient?: boolean;
+  /** The values Angular's environments and injection tokens give (see `AngularValues`). */
+  angular?: AngularValues;
   /** Whether a route of the target serves a path, its file extension included (see `serves`). */
   routes?: (path: string) => boolean;
   /** Collects where the configured base is written as a value of its own, which is the base and no request. */
@@ -1688,9 +1691,14 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
   const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
+  // Leads whose value Angular fixes but atlas cannot read for certain (environments that differ, a token no provider gives).
+  const unreadLeads = new Map<ts.Node, string>();
   const urlText = (node: ts.Node, depth: number): string | undefined => {
     const lead: Lead = (expr) => {
-      if (depth > 4 || !ts.isIdentifier(expr)) return undefined;
+      if (depth > 4) return undefined;
+      const fixed = ts.isIdentifier(expr) ? undefined : angularLead(expr);
+      if (fixed !== undefined) return fixed;
+      if (!ts.isIdentifier(expr)) return undefined;
       const decl = constFor(expr);
       const value = decl?.initializer ? urlText(decl.initializer, depth + 1) : undefined;
       // An origin with no path (`https://api.example.com`) is a base too; its host decides the target.
@@ -1707,6 +1715,22 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);
     return undefined;
   };
+  /**
+   * The text a URL's leading value is where Angular fixes it (`environment.apiUrl`, `inject(TOKEN)`, a readonly field
+   * holding one): a path or an origin, as a const's lead is.
+   */
+  const angularLead = (expr: ts.Expression): string | undefined => {
+    const u = unwrap(expr);
+    const v = context.angular?.fixed(u);
+    if (!v) return undefined;
+    if ("unread" in v) {
+      unreadLeads.set(u, v.unread);
+      return undefined;
+    }
+    const origin = !callPath(v.text) && hostOf(v.text) !== undefined;
+    if (!callPath(v.text) && !origin) return undefined;
+    return origin ? v.text.replace(/\/+$/, "") : v.text;
+  };
   const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
   repositories.set(sf, constants);
@@ -1719,11 +1743,19 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
   const requested = (node: ts.Node, raw: string, report: boolean): Requested | undefined => {
     if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw) || middlewareMatcher(node, file)) return undefined;
+    const leadExpr = ts.isTemplateExpression(node) && !node.head.text ? node.templateSpans[0]!.expression : isPlus(node) ? operands(node)[0] : undefined;
+    const unreadLead = leadExpr && unreadLeads.get(unwrap(leadExpr));
+    if (unreadLead) {
+      if (report) context.unjoined?.push({ why: `its leading value is not read: ${unreadLead}`, at: at(node) });
+      return undefined;
+    }
     // A client router's own route, unless it names another origin (`<Link to="https://...">`), which the browser loads.
     if (clientRoute(node) === "route" && hostOf(raw) === undefined) return undefined;
     // A client's base option is where its requests start, and an interceptor's rewrite of a request's own URL is that
     // request's: neither is a request of its own.
     if (clients.baseOption(node) || rewritesOwnUrl(node)) return undefined;
+    // What a provider gives an Angular InjectionToken is the token's value, read where the code injects it.
+    if (context.angular?.provided(node)) return undefined;
     if (appended && prefixing(node, appended)) {
       if (report) prefixed?.push(at(node));
       return undefined;
@@ -3107,6 +3139,7 @@ export function extractCalls(
   importersOf.set(constants, new Importers(source, constants, matcher(config.exclude)));
   const clients = new Clients(constants, importersOf.get(constants), packageRanges(source));
   clientsOf.set(constants, clients);
+  const angular = new AngularValues(source, constants);
   // A URL held in a const is followed to its uses only where a client may take it.
   const CLIENT_IMPORT = /\bfrom\s*["'](?:axios|ky|openapi-fetch|@reduxjs\/toolkit\/query(?:\/react)?)["']/;
   const anyClient = source.list().some((f) => SCRIPT.test(f) && !/(?:^|\/)node_modules\//.test(f) && CLIENT_IMPORT.test(source.read(f) ?? ""));
@@ -3172,7 +3205,7 @@ export function extractCalls(
       const text = source.read(file);
       if (text === undefined) continue;
       let calls = SCRIPT.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, anyClient, base, written, unjoined, helpers })
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, angular, anyClient, base, written, unjoined, helpers })
         : /\.html?$/.test(file)
           ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased, base, written, unjoined, helpers })
           : callsFromText(file, text, spec, spans, labels, served, { base, written, unbaseRelative, untyped });

@@ -530,7 +530,7 @@ are skipped.
 
 Most HTTP clients take a base URL and join each path they are given to it; how, each library documents. atlas reads
 the base where the code states it, for the calls made through that client, and the call source's `base` (with `join`)
-or `prefix` where it does not: a base held in a value (`process.env.API_URL`, an Angular `environment`, a build's
+or `prefix` where it does not: a base held in a value (`process.env.API_URL`, a build's
 `BuildConfig`), or a client atlas does not follow. A client's base option is its base, no request of its own.
 
 - `join: resolve` is RFC 3986's resolution of a reference (section 5.2), as the URL Standard, .NET's `Uri` (HttpClient's
@@ -595,6 +595,22 @@ api.get(url)`), followed across the files that import it for a path from the roo
 different clients, or through a client and otherwise, a limit names it. A file's path (`/status.json`) is read where
 a route of the target serves it under the client's base. A request to the configured base's own path (`fetch("/api")`)
 is a request; the base is no request only where it is a value of its own.
+
+In an Angular app, a URL that starts with a value Angular fixes is read with that value
+([Configuring application environments](https://angular.dev/tools/cli/environments),
+[Defining dependency providers](https://angular.dev/guide/di/dependency-injection-providers)):
+
+- a property of the `environment` object an `environments/environment*.ts` file exports
+  (`` `${environment.apiUrl}/users` ``), where each file a `fileReplacements` entry of angular.json (paths from its
+  directory) or of an Nx project.json (paths from the workspace's root) puts in its place gives the same literal value,
+  and no code writes the property or the object; where they differ, the URLs are left unread with a limit that names
+  the files;
+- an `InjectionToken`'s value, through `inject(TOKEN)` or a constructor parameter `@Inject(TOKEN)`: what every provider
+  the repository writes gives it (`{ provide: TOKEN, useValue: "/api" }`, or `useFactory` returning a value with no
+  `deps`), where they agree, else the token's own `factory`; providers that differ, one not read, or none, leave the
+  URLs unread with a limit. What a provider gives a token is no request of its own;
+- a `readonly` or `private` field initialized with one of these, or such a constructor parameter, that no code of the
+  class writes (`` `${this.baseUrl}/${year}` ``).
 
 In code read as text, a path without a leading `/` is read relative to the call source's `base` (or `prefix`) where it
 is a whole string argument (not `"users/" + id`) of: Retrofit's `@GET("users/{id}")` and the other verb annotations,
