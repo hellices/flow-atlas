@@ -1,10 +1,9 @@
 # Where atlas's reading differs from the routes Spring Boot (WebFlux) serves. Remove an entry when atlas reads it right;
 # the test fails while a listed difference no longer occurs.
 missing:
-  - { route: "GET /", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`, which takes `/` too) are not a surface" }
-  - { route: "GET /{**}", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`) are not a surface" }
-  - { route: "GET /actuator", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /actuator/health", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
-  - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
+  - { route: "GET /", reason: "Spring Boot maps its static resources at `/**` (which takes `/` too), and answers 404 where no file is; atlas reads them as the files of the static locations, each at its path (`GET /css/site.css`), so a request for a path no file has stays one no route takes" }
+  - { route: "GET /{**}", reason: "Spring Boot maps its static resources at `/**`, and answers 404 where no file is; atlas reads them as the files of the static locations, each at its path, so a request for a path no file has stays one no route takes: the sample `GET /nowhere/value1` the resource handler takes, and answers 404, reaches none" }
+  - { route: "GET /webjars", reason: "Spring Boot maps `/webjars/**` whether or not a WebJar is on the classpath; atlas reads it only where the build brings in a WebJars dependency, which this one does not, since without one every request there is answered 404" }
+  - { route: "GET /webjars/{**}", reason: "Spring Boot maps `/webjars/**` whether or not a WebJar is on the classpath; atlas reads it only where the build brings in a WebJars dependency, which this one does not" }
+extra:
+  - { route: "GET /css/site.css", reason: "a file of `classpath:/static/`, which the resource handler at `/**` serves at its path; the framework lists the pattern, not its files" }

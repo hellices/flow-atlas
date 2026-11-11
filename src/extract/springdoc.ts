@@ -30,10 +30,10 @@ const READ = [PATH, ENABLED, DEFAULT_DOCS, MANAGEMENT, CONTEXT_PATH, BASE_PATH];
  * fails to start or moves the documents off the main port. Undefined when unset, null for any other value.
  */
 const flag = (s: { value: string } | undefined): boolean | null | undefined => (s === undefined ? undefined : /^true$/i.test(s.value) ? true : /^false$/i.test(s.value) ? false : null);
-const relaxed = (key: string): string => key.toLowerCase().replace(/[-_]/g, "");
+export const relaxed = (key: string): string => key.toLowerCase().replace(/[-_]/g, "");
 const canonical = new Map(READ.map((k) => [relaxed(k), k]));
 
-interface Setting {
+export interface Setting {
   key: string;
   value: string;
   file: string;
@@ -41,13 +41,13 @@ interface Setting {
 }
 
 /** One document of a configuration file, and the profile or platform it applies under; none for always. */
-interface Part {
+export interface Part {
   settings: Setting[];
   when?: string;
 }
 
 /** The read settings of a YAML file, a part per `---` document, keys flattened as Spring Boot does (`a.b[0].c`). */
-function yamlParts(file: string, text: string): Part[] {
+export function yamlParts(file: string, text: string): Part[] {
   return parseAllDocuments(text).flatMap((doc) => {
     if (!("contents" in doc) || doc.errors.length) return [];
     const settings: Setting[] = [];
@@ -92,7 +92,7 @@ const unescape = (s: string): string =>
  * continued with `\`. A `\u` without four hex digits makes the file one Spring Boot cannot load ("Malformed \uxxxx
  * encoding"): `malformed` is then its line, and nothing of the file is read.
  */
-function propertiesParts(file: string, text: string): Part[] | { malformed: number } {
+export function propertiesParts(file: string, text: string): Part[] | { malformed: number } {
   const parts: Setting[][] = [[]];
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -137,10 +137,10 @@ function readName(key: string): string | undefined {
 }
 
 /** XML comments blanked, as `withoutComments` blanks Java's, so offsets and lines stay. */
-const withoutXmlComments = (text: string): string => text.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
+export const withoutXmlComments = (text: string): string => text.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
 
 /** Maven scopes that put a dependency on the application's runtime classpath (Maven, "Dependency Scope"). */
-const MAVEN_RUNTIME = new Set(["", "compile", "runtime"]);
+export const MAVEN_RUNTIME = new Set(["", "compile", "runtime"]);
 
 /**
  * Where a `pom.xml` declares a springdoc-openapi artifact as one of the project's own dependencies (`project/dependencies`),
@@ -181,10 +181,10 @@ function mavenSpringdoc(text: string): { at?: number; artifact?: string; profile
 }
 
 /** Gradle configurations on the main runtime classpath (Gradle, "The Java Plugin" and "The Java Library Plugin"). */
-const GRADLE_RUNTIME = new Set(["implementation", "api", "runtimeOnly", "compile", "runtime"]);
+export const GRADLE_RUNTIME = new Set(["implementation", "api", "runtimeOnly", "compile", "runtime"]);
 
 /** The unclosed `(`, `[` and `{` around `at`, innermost first. */
-function openersAround(code: string, at: number): number[] {
+export function openersAround(code: string, at: number): number[] {
   const out: number[] = [];
   let depth = 0;
   for (let i = at - 1; i >= 0; i--) {

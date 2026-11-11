@@ -9,6 +9,7 @@ import { extractCalls } from "../src/extract/calls.js";
 import { inventory } from "../src/inventory.js";
 import { scan } from "../src/scan.js";
 import type { Source } from "../src/source.js";
+import { fastapiDocumentation } from "./documentation.js";
 
 const memory = (files: Record<string, string>): Source => ({
   ref: "WORKTREE",
@@ -246,7 +247,7 @@ describe("files served from a directory", () => {
   const limitsOf = (files: Record<string, string>, styles: string[]) => {
     const config = normalizeConfig({ components: [{ name: "api", path: "" }], routes: [{ component: "api", files: ["**/*.{js,ts,py}"], styles }] });
     const graph = scan(memory(files), config);
-    return { surfaces: graph.surfaces.map((s) => s.id), limits: graph.limits };
+      return { surfaces: graph.surfaces.filter((s) => !fastapiDocumentation(s)).map((s) => s.id), limits: graph.limits };
   };
 
   it("are named in a limit where express.static serves them, at the paths its mounts give", () => {

@@ -22,6 +22,8 @@ chains:
   - outside->web|GET /
   - web->web|GET /api/public-config
   - web->web|POST /api/chat/stream
+limits:
+  - "routes web: Next.js prerenders a page at build unless rendering it calls a request-time API"
 descriptions:
   - web none - NoneFound
 inventory:

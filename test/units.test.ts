@@ -15,6 +15,7 @@ import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
 import type { Graph } from "../src/model.js";
 import { coverageDrops } from "../src/commands.js";
+import { fastapiDocumentation } from "./documentation.js";
 
 describe("callPath", () => {
   it("takes a leading interpolation as a base address", () => {
@@ -351,7 +352,9 @@ describe("routesFromTypeScript", () => {
       "app = FastAPI()",
     ].join("\n");
     const spec = { component: "svc", files: [], styles: ["fastapi" as const], calls: [{ name: "add_endpoint", pathArg: 1, method: "POST" }] };
-    const routes = routesFromPython("a.py", text, spec, limits).map((s) => `${s.method} ${s.path}`);
+      const routes = routesFromPython("a.py", text, spec, limits)
+      .filter((s) => !fastapiDocumentation(s))
+      .map((s) => `${s.method} ${s.path}`);
     expect(routes).toEqual(["GET /ok", "POST /agent"]);
     const not = (line: number, expr: string) => `routes svc: a.py:${line} registers a path the file does not spell out (${expr}); its routes are not read`;
     expect(limits).toEqual([not(2, "ITEMS"), not(4, 'f"/items/{KIND}"'), not(11, "AGENT_PATH")]);

@@ -16,6 +16,63 @@ function requestCallee(e: ts.Expression): boolean {
 
 /** JSX props the browser acts on after the page renders: addresses it requests and handlers it runs. */
 const LATER_PROPS = /^(?:href|src|srcSet|poster|action|formAction|on[A-Z]\w*)$/;
+
+/**
+ * The functions of Next.js that read the request a page is rendered for, by the module they come from: calling one
+ * while Next.js prerenders a page stops it, and the page is rendered on each request (`cookies`, `headers`:
+ * server/request/cookies.ts, headers.ts; `connection`: connection.ts; `unstable_noStore`: dynamic-rendering.ts).
+ */
+const REQUEST_TIME: Record<string, string[]> = { "next/headers": ["cookies", "headers"], "next/server": ["connection"], "next/cache": ["unstable_noStore"] };
+
+/**
+ * The request-time API a call makes, as `cookies()` or `fetch(..., { cache: "no-store" })`, where it is one: a function
+ * of `REQUEST_TIME` called by its imported name (aliased or not) or through a namespace import, and a `fetch` whose
+ * options it spells out as `cache: "no-store"` or `"no-cache"`, or `next: { revalidate: 0 }`, which Next.js renders on
+ * each request, but where the two disagree (server/lib/patch-fetch.ts).
+ */
+export function requestTimeCall(call: ts.CallExpression): string | undefined {
+  const callee = unwrap(call.expression);
+  if (ts.isIdentifier(callee)) {
+    for (const [module, names] of Object.entries(REQUEST_TIME)) {
+      const name = importedFrom(callee, [module]);
+      if (name !== undefined && names.includes(name)) return `${name}()`;
+    }
+  }
+  if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
+    const decl = declarationOf(callee.expression);
+    const from = decl && ts.isNamespaceImport(decl) && ts.isStringLiteral(decl.parent.parent.moduleSpecifier) ? decl.parent.parent.moduleSpecifier.text : undefined;
+    if (from !== undefined && Object.hasOwn(REQUEST_TIME, from) && REQUEST_TIME[from]!.includes(callee.name.text)) return `${callee.name.text}()`;
+  }
+  if (requestCallee(callee) && call.arguments[1]) {
+    const options = unwrap(call.arguments[1]);
+    if (!ts.isObjectLiteralExpression(options)) return undefined;
+    const cache = ownProperty(options, "cache");
+    const next = ownProperty(options, "next");
+    const revalidate = next && ts.isObjectLiteralExpression(next) ? ownProperty(next, "revalidate") : undefined;
+    const store = !!cache && ts.isStringLiteralLike(cache) && cache.text === "no-store";
+    const zero = !!revalidate && ts.isNumericLiteral(revalidate) && Number(revalidate.text) === 0;
+    // Next.js unsets both where they disagree (`no-store` with a revalidate above 0 or false, `force-cache` with 0),
+    // and what the fetch then does depends on its cache, so neither is read.
+    const otherRevalidate = !!revalidate && ((ts.isNumericLiteral(revalidate) && Number(revalidate.text) > 0) || revalidate.kind === ts.SyntaxKind.FalseKeyword);
+    if ((store && otherRevalidate) || (zero && !!cache && ts.isStringLiteralLike(cache) && cache.text === "force-cache")) return undefined;
+    if (store) return 'fetch with cache: "no-store"';
+    if (cache && ts.isStringLiteralLike(cache) && cache.text === "no-cache") return 'fetch with cache: "no-cache"';
+    if (zero) return "fetch with next: { revalidate: 0 }";
+  }
+  return undefined;
+}
+
+/** The value an object literal holds under a name, where nothing after it (a spread, a computed name) may replace it. */
+function ownProperty(o: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
+  for (let i = o.properties.length - 1; i >= 0; i--) {
+    const p = o.properties[i]!;
+    if (ts.isSpreadAssignment(p) || !p.name) return undefined;
+    const key = ts.isComputedPropertyName(p.name) ? (ts.isStringLiteralLike(unwrap(p.name.expression)) ? (unwrap(p.name.expression) as ts.StringLiteral).text : undefined) : ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name) ? p.name.text : undefined;
+    if (key === undefined) return undefined;
+    if (key === name) return ts.isPropertyAssignment(p) ? unwrap(p.initializer) : undefined;
+  }
+  return undefined;
+}
 /**
  * Whether a JSX prop holds the address a link or a form the page renders goes to: the `href` of an `<a>` or `<area>`,
  * the `action` of a `<form>` and the `formAction` of a `<button>` or `<input>` (HTML, Links and Form submission), and
@@ -240,9 +297,10 @@ export class Reach {
    * modules (`"use client"`), addresses (`href`, `src`, `action`), event handlers (`onClick`) and functions passed as
    * props are left out: the browser makes those requests later. `offered` collects the `file@offset` of each address a
    * link or a form the page renders holds (see `offeredProp`), through a comma's last operand, a conditional's branches
-   * and the `const`s it names: the requests the page offers to make next.
+   * and the `const`s it names: the requests the page offers to make next. `requestTime` collects each request-time API
+   * the code calls (see `requestTimeCall`), as `cookies() at file:line`.
    */
-  from(file: string, start: ts.Node, executed?: Set<string>, render = false, offered?: Set<string>): string[] {
+  from(file: string, start: ts.Node, executed?: Set<string>, render = false, offered?: Set<string>, requestTime?: Set<string>): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -381,6 +439,10 @@ export class Reach {
             if (!ts.isCallExpression(m) && !ts.isNewExpression(m) && !ts.isFunctionLike(m)) ts.forEachChild(m, mark);
           };
           mark(n);
+        }
+        if (requestTime && ts.isCallExpression(n)) {
+          const api = requestTimeCall(n);
+          if (api) requestTime.add(`${api} at ${f}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
         }
         // The registration call a handler starts from (`app.get(...)`) is the framework's, not a port of the component.
         if (n !== start && ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {

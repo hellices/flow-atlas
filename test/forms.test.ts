@@ -3,6 +3,7 @@ import { normalizeConfig } from "../src/config.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { scan } from "../src/scan.js";
 import type { Source } from "../src/source.js";
+import { fastapiDocumentation } from "./documentation.js";
 
 /** The ways a framework documents to register a route, beyond `router.get(path, handler)` (#47). */
 const memory = (files: Record<string, string>): Source => ({
@@ -15,7 +16,7 @@ const memory = (files: Record<string, string>): Source => ({
 const routes = (files: Record<string, string>, entry: Record<string, unknown> = { styles: ["express"] }) => {
   const limits: string[] = [];
   const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.{js,ts}"], ...entry }] });
-  const surfaces = extractRoutes(memory(files), config, undefined, [], limits);
+  const surfaces = extractRoutes(memory(files), config, undefined, [], limits).filter((s) => !fastapiDocumentation(s));
   return { ids: surfaces.map((s) => `${s.method} ${s.path}`).sort(), limits };
 };
 const lines = (...l: string[]) => l.join("\n");

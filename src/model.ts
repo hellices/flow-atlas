@@ -68,10 +68,17 @@ export interface Surface {
   reaches?: string[];
   /**
    * Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS
-   * with an Allow header, and serves the files of `public/`; or requested by convention from outside the code, as
-   * crawlers fetch Next.js's robots.txt and sitemaps. A request can reach it; no rule expects a caller for it.
+   * with an Allow header and serves the files of `public/`, FastAPI its OpenAPI document and Spring Boot its error page;
+   * requested by convention from outside the code, as crawlers fetch Next.js's robots.txt and sitemaps; or by the
+   * framework's own client, as a Next.js Server Action posts to its page. A request can reach it; no rule expects a
+   * caller for it.
    */
   implicit?: boolean;
+  /**
+   * The rule of the framework that serves the route where no code of the application handles it, with `at` the place
+   * that brings it in: `fastapi docs_url`, `spring-boot error`, `next public`, `@fastify/static`.
+   */
+  convention?: string;
   /**
    * The regular expression the text of each parameter named here must match, as its router tests it: Fastify's
    * `:file(^\d+)` and Hono's `:date{[0-9]+}`, and where a parameter shares its segment, Fastify's `(.*?)` and Spring's

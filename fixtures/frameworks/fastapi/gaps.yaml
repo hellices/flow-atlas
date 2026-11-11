@@ -1,14 +1,5 @@
 # Where atlas's reading differs from the routes FastAPI serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-missing:
-  - { route: "GET /openapi.json", reason: "the document FastAPI serves by itself (`openapi_url`) is not a surface" }
-  - { route: "GET /docs", reason: "the Swagger UI FastAPI serves by itself (`docs_url`) is not a surface" }
-  - { route: "GET /docs/oauth2-redirect", reason: "the Swagger UI's OAuth2 redirect FastAPI serves by itself is not a surface" }
-  - { route: "GET /redoc", reason: "the ReDoc page FastAPI serves by itself (`redoc_url`) is not a surface" }
-  - { route: "GET /subapi/openapi.json", reason: "a mounted FastAPI application serves its own document, which is not a surface" }
-  - { route: "GET /subapi/docs", reason: "a mounted FastAPI application serves its own Swagger UI, which is not a surface" }
-  - { route: "GET /subapi/docs/oauth2-redirect", reason: "a mounted FastAPI application serves its own OAuth2 redirect, which is not a surface" }
-  - { route: "GET /subapi/redoc", reason: "a mounted FastAPI application serves its own ReDoc page, which is not a surface" }
 # Sample requests atlas matches otherwise than Starlette dispatches them (dispatch.json). Starlette tries the routes
 # in the order they are registered and takes the first that matches ("Route priority" in Starlette's routing guide,
 # FastAPI's "Order matters"); a path no route takes, but would with its trailing `/` added or removed, is answered by

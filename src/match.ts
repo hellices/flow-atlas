@@ -424,8 +424,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
         if (surface.component !== call.to) return;
         if (paths && !paths.has(surface.path)) return;
         // What the framework answers by itself beside a GET (HEAD, OPTIONS) is reached only by a request that names that
-        // method; a file it serves with no handler is reached by GET as a route is.
-        if (surface.implicit && surface.method !== "GET" && call.method.toUpperCase() !== surface.method) return;
+        // method; a route it serves with no handler of the app's (a file, its error page) is reached as any route is.
+        if (surface.implicit && (surface.method === "HEAD" || surface.method === "OPTIONS") && call.method.toUpperCase() !== surface.method) return;
         if (!methodsMatch(surface.method, call.method) && !(headByGet && surface.method === "GET")) return;
         if (fits(surface, slash)) out.push({ surface, index: si });
       });

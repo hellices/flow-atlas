@@ -296,7 +296,15 @@ whose form no path template holds (a wildcard before the end, a Hono regexp that
 RegExpRouter and TrieRouter read differently), and any syntax beyond `:name` on a receiver not traced to its router,
 of an unread version or of another router (Hono's presets, @koa/router before 14) is not read, and a limit names its
 file, line, path and why. `express.static` serves the files of a directory and passes on any path it does not hold, so
-what it serves is the directory's content: a limit names where it is mounted, and its paths are not read. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
+what it serves is the directory's content: a limit names where it is mounted, and its paths are not read.
+@fastify/static (`register(fastifyStatic, { root, prefix })`, the plugin imported under any name, through a
+namespace, required or loaded with `import()`, its options in place or in a `const`) registers one route of its own
+(index.js, v10): GET and HEAD at its `prefix` (`/` by default, a `/` added unless `prefixAvoidTrailingSlash`) with `*`
+after it, under the prefixes of the instance `register` is called on, since fastify-plugin wraps it and the `prefix`
+option is its own; with `redirect: true`, where the `/` was added, GET at the prefix as written too. `serve: false`
+registers none; `wildcard: false` registers a route per file under `root` as the server starts, which is not read, and
+options not spelled out leave its route unread; each says so in a limit. Its routes are `implicit` (`@fastify/static`).
+The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
 read and a limit says so. A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
@@ -366,12 +374,24 @@ it exports `generateSitemaps`, which the request runs too, to find the id asked 
 Next.js answers. All three are `implicit`: crawlers
 fetch `/robots.txt` by RFC 9309 and the sitemaps it names, browsers the manifest Next.js links from every page's head,
 and no code of the app requests them, so no rule expects a caller; a call that fetches one still reaches it. An `icon`, `apple-icon`,
-`opengraph-image` or `twitter-image` file is served at a path Next.js generates, so it is not read and a limit names it.
+`opengraph-image` or `twitter-image` route written as code (`icon.tsx`) is served at a path Next.js generates, so it is
+not read and a limit names it.
 Files Next.js serves with no handler of the app's are `implicit` surfaces, listed whatever the route `files` say (an
 `exclude` leaves them out): every file under `public/` at the component's directory, at its path from the root as a
 request holds it (what the URL Standard percent-encodes in a path, and `%`, percent-encoded: `a b.pdf` is `a%20b.pdf`),
-answering GET and HEAD; and `favicon.ico`, `robots.txt`, `manifest.json`, `manifest.webmanifest` at the root of `app/`
-and `sitemap.xml` in any segment, answering GET, HEAD and OPTIONS through the route handler Next.js makes of them. A request whose method is not read reaches such a file's GET; no rule expects a caller for one. A path ending
+answering GET and HEAD; and `favicon.ico`, `robots.txt`, `manifest.json`, `manifest.webmanifest` at the root of `app/`,
+`sitemap.xml` in any segment, and the images written as files in any segment (`icon` as `.ico`, `.jpg`, `.jpeg`, `.png`
+or `.svg`, `apple-icon` as `.jpg`, `.jpeg` or `.png`, `opengraph-image` and `twitter-image` as `.jpg`, `.jpeg`, `.png` or
+`.gif`, each numbered too, `icon1.png`), at their names in their segment, answering GET, HEAD and OPTIONS through the
+route handler Next.js makes of them; in a folder under a route group or a slot an image's name takes the suffix Next.js
+computes from the folders (`-` and six base-36 digits of the djb2 hash of `/(group)/folder`,
+lib/metadata/get-metadata-route.ts). `next start` serves two routes of its own as well, under the configuration's
+`basePath`, where the component's package.json names `next` or it has a `next.config.*`: the build's files at
+`/_next/static/{file}/**`, to GET and HEAD, and the image optimizer `next/image` requests at `/_next/image`, to any
+method, which it answers only with the default image loader, without `images.unoptimized` and without `output: "export"`
+(next-server.ts, `handleNextImageRequest`); a configuration not read (a plugin's wrapper, a value not spelled out)
+leaves the routes it decides unread, with a limit. All of these are `implicit`, with a `convention` naming the rule
+(`next public`, `next metadata file`, `next build assets`, `next image optimizer`). A request whose method is not read reaches such a file's GET; no rule expects a caller for one. A path ending
 in an extension of a file kept in repositories (`.png`, `.svg`, `.json`, `.txt`, `.xml`, `.css`, `.log` and the like) is no call
 in any language, being a file path far more often than a request, so a request for such a file is not read. As Next.js does, a
 request is matched to the most specific route path first (a public file or a static name, then `[x]`, then
@@ -380,7 +400,36 @@ reaches each path down to the first that takes every value (`/editor/new` and `/
 a path whose every request it shares with the call a more specific path takes (`/${section}/new` reaches `/editor/new`
 and `/{section}/new`, not `/editor/{id}`). API routes under `pages/api` answer every method from their default export, written or
 re-exported, and their folders are plain segments. Pages (`app/**/page.tsx`, and Pages Router pages outside
-`pages/api`) are GET routes at their paths, with the HEAD Next.js answers itself. What the server runs while it renders
+`pages/api`) are routes at their paths, with the methods Next.js answers them with (server/base-server.ts): a page it
+prerenders at build answers GET, and HEAD by itself, and any other method with 405; a page it renders on each request
+answers any method (`*`). Under the Pages Router a page with `getServerSideProps`, or with `getInitialProps` (its own,
+or a custom `_app`'s for a page without `getStaticProps`), renders on each request; any other is prerendered (as HTML,
+or by `getStaticProps`). Under the App Router a page under a dynamic segment (`[id]`, `[...rest]`, `[[...rest]]`) is
+never prerendered as a route, whatever `generateStaticParams` gives, so it answers any method; so does a page where it
+or a layout above it exports `dynamic = "force-dynamic"`, or `revalidate = 0` with no `dynamic = "force-static"` from
+the root down to it (create-component-tree.tsx), and one where what renders it (the page, its layouts and templates,
+`generateMetadata`, and what they run, as below) calls a request-time API: `cookies()` or `headers()` from
+`next/headers`, `connection()` from `next/server`, `unstable_noStore()` from `next/cache`, under any name they are
+imported by, or a `fetch` with `cache: "no-store"` or `"no-cache"` or `next: { revalidate: 0 }` (not where the two
+disagree, `no-store` with a revalidate above 0 or false, or `force-cache` with 0, which Next.js unsets), or where the
+page reads its `searchParams` (awaits them, reads a property of them or hands them to `use`, from its props
+destructured or `props.searchParams`, directly or through a `const`; taking the value alone reads nothing). A page
+under `dynamic = "force-static"` is prerendered whatever it calls, request-time APIs answering as for no request; one
+under `dynamic = "error"` is prerendered where the build succeeds, which it does not where the page reads the
+request; and every page of an app built with `output: "export"` is prerendered. Every page
+of one path counts, the slots a layout renders beside it included. A request-time API called in code atlas does not
+follow (a package, a module imported by another path than a relative one) or `searchParams` handed on whole are not
+seen, so the App Router pages read as prerendered without `force-static` are named in one limit; a segment config
+not spelled out is named in a limit too, and the page read as prerendered. Under `cacheComponents` or partial
+prerendering Next.js prerenders a shell even of a page that reads the request; a configuration that turns them on, or
+may (one not read, or a value not spelled out, from Next.js 14 on), or that may build a static export (`output` not
+spelled out), is named in a limit and the pages are read as if it did not. A Server Action
+posts to the page it is called from, and Next.js passes such a POST to any App Router page
+(`getIsPossibleServerAction`): a prerendered page whose module graph (the page, its layouts and templates, and what
+they import, through relative imports, tsconfig `paths` and the workspace's packages, client modules included; not an
+import or re-export whose every name is a type, which TypeScript erases) holds
+a Server Action (a module marked `"use server"`, or a function whose body starts with it) answers POST too, an
+`implicit` surface (`next server action`) Next.js's own client requests. What the server runs while it renders
 the default export (a function component, also one named by `export { Page as default }` or re-exported from another
 module, or a class component's `render`, its own or one it inherits from a class of the file or a relative import) belongs to the page's request, prop values and what computes a handler or an
 address included; client modules (`"use client"`), addresses (`href`, `src`, `srcSet`, `poster`, `action`), event handlers (`onClick`) and functions
@@ -438,10 +487,48 @@ directory, and a fallback page for GET and HEAD, wherever no route matches: whic
 so they are not read and a limit names the call. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 (and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; an application or router of the route files
 that it mounts serves the routes read there under `/x`, as an include would; another mounted application is not read,
-and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+and a limit says so. Each application (`FastAPI()`) serves routes of its own, which it adds as it is made, before any
+route of the code (fastapi/applications.py, `setup`): GET, and the HEAD Starlette adds, at `openapi_url`
+(`/openapi.json`), and where that is set, at `docs_url` (`/docs`) with `swagger_ui_oauth2_redirect_url`
+(`/docs/oauth2-redirect`) and at `redoc_url` (`/redoc`), under where the application is served (a mounted one under its
+mount). `None` or `""` turns one off; a value the file does not spell out as a path (an f-string, a name, a `**`
+argument) leaves them all unread, with a limit. They are `implicit`, with the setting as their `convention` and the
+`FastAPI(` line as their place; where a route of the code has the same path, on the application or a router it includes
+from any file, FastAPI's answers and is the surface kept. A setting counts only where its route is served:
+`docs_url` and the others not at all where `openapi_url` is off, the redirect not where `docs_url` is. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
-`formLogin` and `logout` serve, in the lambda or the chained form. A handler type's routes are served under the
+`formLogin` and `logout` serve, in the lambda or the chained form. Spring Boot 3 and 4 serve routes of their own in an
+application whose own build file (`pom.xml` `project/dependencies`, or a Gradle `dependencies` block, in a runtime
+configuration) brings in a web starter (`spring-boot-starter-web`, `-webmvc` or `-webflux`; Spring MVC where both),
+with the version from the nearest build file at or above it, as their auto-configuration does: Spring MVC's error page
+(`BasicErrorController`), for any method, at `spring.web.error.path` (Spring Boot 4) or `server.error.path` (3), else
+`error.path`, else `/error`, none where the code has an `ErrorController` of its own; the static resources, to GET and
+HEAD: Spring Boot maps `spring.mvc.static-path-pattern` (`spring.webflux.` under WebFlux), `/**` by default, and
+answers 404 for a path no resource is at, so each file of the module's static locations is a route at its path under
+the pattern (written as a request holds it, as a Next.js public file is): `spring.web.resources.static-locations`, by
+default `classpath:/META-INF/resources/`, `/resources/`, `/static/` and `/public/`, a `classpath:` location read as
+`src/main/resources/` and any other (`file:`, a placeholder) named in a limit; the files a dependency's jar holds under
+those locations, and a war's `src/main/webapp` (named in a limit), are not read; the WebJars at
+`spring.mvc.webjars-path-pattern`, `/webjars/**`, only where the build brings in a WebJars dependency (`org.webjars`
+and its groups); none of these where `spring.web.resources.add-mappings` is false or the code takes the web
+configuration over (`@EnableWebMvc`, `WebMvcConfigurationSupport`, and WebFlux's); and with
+`spring-boot-starter-actuator`, the discovery page at `management.endpoints.web.base-path` (`/actuator`), none where
+`management.endpoints.web.discovery.enabled` is false or the base path is empty or `/`, and the health endpoint at
+`<base>/health` and `<base>/health/**`, to GET, where the exposure (`management.endpoints.web.exposure.include`,
+`health` alone by default, and `exclude`) and its access let it (`management.endpoint.health.access` and
+`management.endpoints.access.default`, capped by `access.max-permitted`, from Spring Boot 3.4, and the `enabled`
+switches before and beside them); any other endpoint exposed exists where the classpath and the code give it, and a
+limit names it.
+Settings are read from `application.properties` and `application.yml` as for springdoc (`references/openapi.md`). A
+context path, a servlet path or a WebFlux base path, auto-configuration excluded, the actuator on its own port, another
+Spring Boot version, a `spring.main.web-application-type` whose starter the build lacks, a setting a profile gives or
+one with a placeholder (an exclusion included) leave the routes they decide unread, with a limit, as does an
+application the configuration splits into several components, whose routes none of them serves alone.
+They are `implicit`, with a `convention` (`spring-boot error`, `spring-boot static resources`, `spring-boot webjars`,
+`spring-boot actuator`, `spring-boot actuator health`) and the setting or dependency that brings each in as their
+place: a static resource's is its file.
+A handler type's routes are served under the
 prefix `PathMatchConfigurer.addPathPrefix(prefix, predicate)` gives the types its predicate accepts, the first that
 accepts in a configurer's order (docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html).
 The prefix is a literal or a constant of the file (one with a `${...}` placeholder is resolved at run time and not

@@ -18,7 +18,9 @@ reaches"), so a route that an earlier one of its router always answers for is re
 route that takes its requests. A route that a call of unread method may reach, among routes of several methods, is not
 reported, nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than
 GET or HEAD, one a call reaches only after its router's trailing-slash redirect, or one taken only with headers that
-meet its constraints (Fastify's); a `limit:` line names that call.
+meet its constraints (Fastify's); a `limit:` line names that call. A route the framework serves by itself (`implicit`:
+FastAPI's OpenAPI document, Spring Boot's error page and static resources, Next.js's public files and build files) is
+not reported either.
 
 Common causes: the provider was built ahead of its client; the client was removed or renamed; the client builds
 the path in a way the extractor cannot read (a URL returned by the server, a path assembled across functions); the
@@ -42,7 +44,9 @@ answers with a redirect to the path with the `/` added or removed (Next.js's `tr
 `redirect_slashes`), which reaches the route there once the client follows it, and for one whose route takes only
 requests whose headers meet its constraints. A call that no route takes as its framework dispatches is reported: a
 path with a trailing `/` on a router that tells it apart (Fastify, Hono, Spring 6 and later), or a value a parameter's
-matcher refuses (AdonisJS), is answered with 404 or 405.
+matcher refuses (AdonisJS), is answered with 404 or 405. A route the framework serves by itself takes a call as any
+route does; Spring Boot's static resources are read as the files they are, so a GET for a path no file or route has is
+still reported, though Spring hands it to its resource handler, which answers 404.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.

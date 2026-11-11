@@ -41,6 +41,8 @@ descriptions:
   - ingest ambiguous - SeveralServedDocuments
   - internal ambiguous - SeveralServedDocuments
   - reports ambiguous - SeveralServedDocuments
+limits:
+  - "routes enrollment, ingest, internal, reports: their route files are one application (the repository's root), whose routes Spring Boot serves by itself belong to none of them alone"
 inventory:
   # The build file at the root is the one manifest: the application itself, named after no directory.
   components:

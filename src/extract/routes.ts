@@ -17,6 +17,8 @@ import type { Reach } from "./reach.js";
 import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
+import { springBootRoutes } from "./springboot.js";
+import { metadataSuffix, nextBuiltins, nextConfig, nextPageMethods, nextSetting, type NextConfig, type NextPage, type PageMethods } from "./next.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
 import { nestSpecificity, nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
 
@@ -187,18 +189,30 @@ function nextSegments(rest: string, app: boolean): string[] | undefined {
   return segments;
 }
 
+/** The image metadata files written as files, by their extensions (lib/metadata/is-metadata-route.ts, `STATIC_METADATA_IMAGES`). */
+const METADATA_IMAGE_FILES = /^(?:icon\d?\.(?:ico|jpg|jpeg|png|svg)|apple-icon\d?\.(?:jpg|jpeg|png)|(?:opengraph|twitter)-image\d?\.(?:jpg|jpeg|png|gif))$/;
+
 /**
  * The path Next.js serves a static file at, without a handler of the app's: a file under `public/` at the component's
  * root, from the base URL (Next.js, public Folder); and the metadata files written as files in `app/` (Next.js,
  * Metadata Files): `favicon.ico`, `robots.txt`, `manifest.json` and `manifest.webmanifest` at its root, `sitemap.xml` in
- * any segment. Undefined for any other file. A public file's name is written as a request holds it: the characters the
- * URL Standard's path percent-encode set holds, and `%`, percent-encoded; Next.js matches a request to the file both
- * encoded and decoded (filesystem.ts, `encodeURIPath`).
+ * any segment, and the images `icon`, `apple-icon`, `opengraph-image` and `twitter-image` (numbered too, `icon1.png`)
+ * in any segment, by their name and extension. In a folder under a route group or a slot an image's name takes a
+ * suffix Next.js computes from the folders (`metadataSuffix`). Undefined for any other file. A public file's name is
+ * written as a request holds it: the characters the URL Standard's path percent-encode set holds, and `%`,
+ * percent-encoded; Next.js matches a request to the file both encoded and decoded (filesystem.ts, `encodeURIPath`).
  */
 export function nextStaticFile(file: string, root: string): { path: string; kind: "public" | "metadata" } | undefined {
   const inside = root === "" ? file : file.startsWith(`${root}/`) ? file.slice(root.length + 1) : undefined;
   if (inside === undefined) return undefined;
   if (inside.startsWith("public/")) return { path: `/${inside.slice("public/".length).replace(/[\0- "#%<>?^`{}\x7F-\u{10FFFF}]/gu, encodeURIComponent)}`, kind: "public" };
+  const image = /^(?:src\/)?app\/((?:[^]*\/)?)([^/]+)$/.exec(inside);
+  if (image && METADATA_IMAGE_FILES.test(image[2]!)) {
+    const segments = nextSegments(image[1]!, true);
+    const folders = image[1]!.split("/").filter(Boolean);
+    const dot = image[2]!.lastIndexOf(".");
+    return segments && { path: joinRoute(...segments, `${image[2]!.slice(0, dot)}${metadataSuffix(folders)}${image[2]!.slice(dot)}`), kind: "metadata" };
+  }
   const meta = /^(?:src\/)?app\/((?:[^]*\/)?)(favicon\.ico|robots\.txt|manifest\.json|manifest\.webmanifest|sitemap\.xml)$/.exec(inside);
   if (!meta) return undefined;
   if (meta[2] !== "sitemap.xml") return meta[1] ? undefined : { path: `/${meta[2]}`, kind: "metadata" };
@@ -315,6 +329,8 @@ export function routesFromTypeScript(
     ranges?: (file: string, pkg: string) => string | undefined;
     /** Reads the constants Nest paths are held in, across the repository's files. */
     constants?: Constants;
+    /** The methods Next.js answers each page with, by its file (see `nextPageMethods`); GET where a page is not there. */
+    pages?: Map<string, PageMethods>;
   } = {},
 ): Surface[] {
   const { reach, executed, mounts, limits, spans, root, offered, ranges } = context;
@@ -353,6 +369,8 @@ export function routesFromTypeScript(
       handlerFile?: string;
       render?: boolean;
       served?: boolean;
+      /** The framework's rule that serves the route with no code of the app's (`Surface.convention`). */
+      convention?: string;
       offers?: boolean;
       alongside?: Array<{ file: string; node: ts.Node }>;
       /** The syntax of the router the path is registered on, which reads it; without one, `:name` is the only syntax. */
@@ -394,6 +412,7 @@ export function routesFromTypeScript(
       ...(operationId ? { operationId } : {}),
       ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers)))].sort() } : {}),
       ...(more.implicit ? { implicit: true } : {}),
+      ...(more.convention ? { convention: more.convention } : {}),
       ...(served.patterns || matched ? { patterns: { ...served.patterns, ...matched } } : {}),
       ...(dispatch && Object.keys(dispatch).length ? { dispatch } : {}),
     });
@@ -458,10 +477,16 @@ export function routesFromTypeScript(
       handlerFile = found?.file;
     }
     // An App Router page renders inside the layouts and templates of its folders; the GET response holds the links and
-    // forms they render, which the page offers to follow. HEAD answers with no body.
+    // forms they render, which the page offers to follow. HEAD answers with no body. A page Next.js renders on each
+    // request answers any method alike; a prerendered one GET alone, and the POST of a Server Action that may post to it.
     const wrappers = reach && next.app !== undefined ? nextWrappers(file, next.app, reach) : [];
-    add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, alongside: wrappers });
-    add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, alongside: wrappers });
+    const methods = context.pages?.get(file)?.methods ?? ["GET"];
+    if (methods.includes("*")) add("*", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, alongside: wrappers });
+    else {
+      add("GET", next.path, page ?? sf, component, undefined, { render: true, handlerFile, offers: true, alongside: wrappers });
+      add("HEAD", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, alongside: wrappers });
+      if (methods.includes("POST")) add("POST", next.path, page ?? sf, component, undefined, { implicit: true, render: true, handlerFile, alongside: wrappers, convention: "next server action" });
+    }
   } else if (next) {
     const handlers = new Map<string, { node: ts.Node; handler?: ts.Node; file?: string }>();
     for (const st of sf.statements) {
@@ -771,7 +796,14 @@ export function routesFromTypeScript(
     }
     return Object.keys(out).length ? out : undefined;
   };
-  const register = (inst: Instance, method: string, path: string, node: ts.CallExpression, handlers: readonly ts.Node[], at: { order?: ts.Node; options?: ts.ObjectLiteralExpression } = {}) => {
+  const register = (
+    inst: Instance,
+    method: string,
+    path: string,
+    node: ts.CallExpression,
+    handlers: readonly ts.Node[],
+    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string } } = {},
+  ) => {
     // A route is placed where its method is named, which in a chain is not where the chain starts.
     const place = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
@@ -782,7 +814,7 @@ export function routesFromTypeScript(
     const routeHandlers = given ? handlers.filter((h) => h !== given) : handlers;
     const dispatch = (prefix: string) => dispatchAt(inst, path, prefix, at.order ?? place, routeHandlers, options);
     const matchers = adonisMatchers(node);
-    const more = { syntax, alongside: handlers.slice(1).map((h) => ({ file, node: h })), ...(matchers ? { matchers } : {}) };
+    const more = { syntax, alongside: handlers.slice(1).map((h) => ({ file, node: h })), ...(matchers ? { matchers } : {}), ...(at.served ? { implicit: at.served.implicit, convention: at.served.convention } : {}) };
     const not = (why: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, ${why}; its routes are not read`);
     if (!path.startsWith("/") && koa(inst) && path !== "") {
       const range = (inst.router ? mounts!.originsOf(inst.router) : []).flatMap((f) => ranges?.(f, inst.pkg!) ?? []);
@@ -889,11 +921,85 @@ export function routesFromTypeScript(
   };
   const express = (inst: Instance) => inst.pkg === undefined || inst.pkg === "express";
 
+  /**
+   * Whether an expression is the plugin of @fastify/static: its default or `fastifyStatic` export, imported (aliased,
+   * through a namespace), required, or loaded with `import()`, in place or held in a `const`.
+   */
+  const fastifyStaticPlugin = (e: ts.Expression, seen = new Set<ts.Node>()): boolean => {
+    const STATIC = "@fastify/static";
+    const u = unwrap(e);
+    const loads = (x: ts.Expression): boolean => {
+      const c = unwrap(x);
+      const spec = ts.isCallExpression(c) && c.arguments.length === 1 ? unwrap(c.arguments[0]!) : undefined;
+      if (!spec || !ts.isStringLiteralLike(spec) || spec.text !== STATIC) return false;
+      const callee = (c as ts.CallExpression).expression;
+      return callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require" && declarationOf(callee) === undefined);
+    };
+    const named = (name: string) => name === "default" || name === "fastifyStatic";
+    if (loads(u)) return true;
+    if (ts.isPropertyAccessExpression(u) && named(u.name.text)) {
+      const base = unwrap(u.expression);
+      if (loads(base)) return true;
+      const decl = ts.isIdentifier(base) ? declarationOf(base) : undefined;
+      return !!decl && ts.isNamespaceImport(decl) && ts.isStringLiteral(decl.parent.parent.moduleSpecifier) && decl.parent.parent.moduleSpecifier.text === STATIC;
+    }
+    if (!ts.isIdentifier(u)) return false;
+    const imported = importedFrom(u, [STATIC]);
+    if (imported !== undefined) return named(imported);
+    const decl = declarationOf(u);
+    if (!decl || seen.has(decl)) return false;
+    seen.add(decl);
+    // `const { fastifyStatic } = require("@fastify/static")`.
+    if (ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent) && ts.isVariableDeclaration(decl.parent.parent) && decl.parent.parent.initializer) {
+      const key = decl.propertyName && ts.isIdentifier(decl.propertyName) ? decl.propertyName.text : ts.isIdentifier(decl.name) ? decl.name.text : undefined;
+      return key !== undefined && named(key) && loads(decl.parent.parent.initializer);
+    }
+    return ts.isVariableDeclaration(decl) && !!(decl.parent.flags & ts.NodeFlags.Const) && !!decl.initializer && fastifyStaticPlugin(decl.initializer, seen);
+  };
+  /**
+   * The route @fastify/static registers on the instance `register` is called on (the plugin is wrapped in
+   * fastify-plugin, so the instance's prefixes apply and the `prefix` option is its own): GET and HEAD at `prefix`
+   * (`/` by default, with a `/` added unless `prefixAvoidTrailingSlash`) and `*`; with `redirect: true`, where that
+   * added the `/`, GET at the prefix as written too, which redirects to it (index.js, v10). With `serve: false` it
+   * registers none; with `wildcard: false` one per file under its root when the server starts, which is not read.
+   */
+  const staticFiles = (node: ts.CallExpression): void => {
+    const callee = node.expression as ts.PropertyAccessExpression;
+    const args = node.arguments;
+    if (!args[0] || !fastifyStaticPlugin(args[0])) return;
+    const inst = instanceAt(callee.expression);
+    if (!inst || (inst.pkg !== undefined && inst.pkg !== "fastify")) return;
+    const not = (why: string): void => void limits?.push(`routes ${spec.component}: ${file}:${at0(callee.name)} registers @fastify/static ${why}; the route it serves its files at is not read`);
+    const options = args[1] ? fastifyOptions(args[1]) : undefined;
+    if (!options) return void (args[1] && not(`with options the file does not spell out (${args[1].getText(sf).replace(/\s+/g, " ")})`));
+    const given = (name: string): string | boolean | undefined | null => {
+      const v = property(options, name);
+      if (v === undefined || v === null) return v;
+      const u = unwrap(v);
+      if (u.kind === ts.SyntaxKind.TrueKeyword) return true;
+      if (u.kind === ts.SyntaxKind.FalseKeyword) return false;
+      return constants.text(u) ?? null;
+    };
+    const unread = ["serve", "wildcard", "prefix", "prefixAvoidTrailingSlash", "redirect"].filter((k) => given(k) === null);
+    if (unread.length) return not(`with ${unread.join(" and ")} the file does not spell out`);
+    if (given("serve") === false) return;
+    if (given("wildcard") === false) return not("with wildcard: false, under which it registers a route for each file under its root as the server starts");
+    const written = (given("prefix") as string | undefined) ?? "/";
+    if (typeof written !== "string" || !written.startsWith("/")) return not(`at a prefix that is no path (${JSON.stringify(written)})`);
+    const prefix = given("prefixAvoidTrailingSlash") === true || written.endsWith("/") ? written : `${written}/`;
+    const served = { implicit: true, convention: "@fastify/static" };
+    // HEAD is said not read where GET is, once.
+    const said = limits?.length ?? 0;
+    register(inst, "get", `${prefix}*`, node, [], { options, served });
+    if ((limits?.length ?? 0) === said) register(inst, "head", `${prefix}*`, node, [], { options, served });
+    if (given("redirect") === true && prefix !== written) register(inst, "get", written, node, [], { options, served });
+  };
   /** The routes a call of the express style registers: a method's, `route(path)`'s, Fastify's `route`, Hono's `on`, @koa/router's `redirect`. */
   const expressRoutes = (node: ts.CallExpression): void => {
     const callee = node.expression;
     if (!ts.isPropertyAccessExpression(callee)) return;
     const name = callee.name.text;
+    if (name === "register") return staticFiles(node);
     if (!REGISTERING.has(name)) return;
     const args = node.arguments;
     const said = (what: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(callee.name)} ${what}`);
@@ -1337,7 +1443,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} registers a path the file does not spell out (${arg.replace(/\s+/g, " ")}); its routes are not read`);
     }
   };
-  const add = (verb: string, raw: string, at: number, implicit = false, dispatch?: Dispatch) => {
+  const add = (verb: string, raw: string, at: number, implicit = false, dispatch?: Dispatch, convention?: string) => {
     // A `path` converter takes the rest of the path only at its end; one before a suffix is a match atlas does not do.
     if (/\{\w+:path\}./.test(raw)) {
       limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} has a path converter before the end of ${raw}; the route is not read`);
@@ -1353,6 +1459,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       at: { file, line: lineOf(text, at) },
       evidence: "text",
       ...(implicit ? { implicit: true } : {}),
+      ...(convention ? { convention } : {}),
       ...(dispatch ? { dispatch } : {}),
     });
   };
@@ -1379,6 +1486,22 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   };
   // A name traced to an application or router of the files read registers routes whatever it is called (`subapi`).
   const traced = (name: string, at: number) => (routers ?? own!).receiver(file, name, at);
+  // What each application the file creates serves by itself, under every path it is served at, before its own routes:
+  // to GET, and HEAD, which Starlette's `Route` adds beside it. Read first, so that where a route of the code has the
+  // same path, the one that answers is the surface kept.
+  for (const app of fastapi ? (routers ?? own!).applications(file) : []) {
+    const where = `${file}:${lineOf(text, app.at)}`;
+    if ("why" in app.routes) {
+      limits?.push(`routes ${spec.component}: ${where} creates the FastAPI application ${app.key.slice(app.key.lastIndexOf("#") + 1)} with ${app.routes.why}; the routes FastAPI serves by itself for it (its OpenAPI document, Swagger UI and ReDoc) are not read`);
+      continue;
+    }
+    for (const prefix of (routers ?? own!).served(app.key) ?? []) {
+      for (const r of app.routes) {
+        add("GET", joinRoute(prefix, r.path), app.at, true, dispatchAt(app.key, app.at, r.path, prefix), r.convention);
+        add("HEAD", joinRoute(prefix, r.path), app.at, true, dispatchAt(app.key, app.at, r.path, prefix), r.convention);
+      }
+    }
+  }
   // The decorators, and `add_api_route(path, endpoint, methods=...)`, which they call (fastapi/routing.py `APIRouter`).
   const registrations = fastapi ? [...code.matchAll(FASTAPI), ...code.matchAll(/\b(\w+)\.(add_api_route)\(\s*/g)].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)) : [];
   for (const m of registrations) {
@@ -1645,36 +1768,12 @@ function documentedSurfaces(
  * place or held in a `const` of the file; one a function returns or a plugin wraps, `skipTrailingSlashRedirect`, or a
  * value not spelled out is not read, and why is given.
  */
-export function nextSlashes(source: Pick<Source, "read">, root: string): { slashes: "removed" | "added" } | { why: string } {
-  const dir = root.replace(/\/+$/, "");
-  const files = ["js", "mjs", "cjs", "ts", "mts", "cts"].map((ext) => `${dir ? `${dir}/` : ""}next.config.${ext}`).filter((f) => source.read(f) !== undefined);
-  if (!files.length) return { slashes: "removed" };
-  if (files.length > 1) return { why: `${files.join(" and ")} are both there, and which Next.js reads is not read` };
-  const file = files[0]!;
-  const sf = ts.createSourceFile(file, source.read(file)!, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  let exported: ts.Expression | undefined;
-  for (const st of sf.statements) {
-    if (ts.isExportAssignment(st) && !st.isExportEquals) exported = st.expression;
-    if (ts.isExpressionStatement(st) && ts.isBinaryExpression(st.expression) && st.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken && st.expression.left.getText(sf) === "module.exports") exported = st.expression.right;
-  }
-  if (!exported) return { why: `${file} exports no configuration atlas reads` };
-  let config = unwrap(exported);
-  if (ts.isIdentifier(config)) {
-    const decl = declarationOf(config);
-    const init = decl && ts.isVariableDeclaration(decl) && decl.parent.flags & ts.NodeFlags.Const && decl.initializer ? unwrap(decl.initializer) : undefined;
-    if (init) config = init;
-  }
-  if (!ts.isObjectLiteralExpression(config)) return { why: `${file} exports ${config.getText(sf).replace(/\s+/g, " ").slice(0, 80)}, not an object it spells out` };
-  const flag = (name: string): boolean | null => {
-    const given = property(config, name);
-    if (given === undefined) return false;
-    const v = given && unwrap(given);
-    return v?.kind === ts.SyntaxKind.TrueKeyword ? true : v?.kind === ts.SyntaxKind.FalseKeyword ? false : null;
-  };
-  const skip = flag("skipTrailingSlashRedirect");
-  if (skip !== false) return { why: `${file} ${skip ? "turns off Next.js's trailing slash redirects (skipTrailingSlashRedirect)" : "sets skipTrailingSlashRedirect to a value it does not spell out"}` };
-  const trailing = flag("trailingSlash");
-  if (trailing === null) return { why: `${file} sets trailingSlash to a value it does not spell out` };
+export function nextSlashes(source: Pick<Source, "read">, root: string, read: NextConfig = nextConfig(source, root)): { slashes: "removed" | "added" } | { why: string } {
+  if ("why" in read) return { why: read.why };
+  const skip = nextSetting(read, "skipTrailingSlashRedirect");
+  if (skip !== undefined && skip !== false) return { why: `${read.file} ${skip === true ? "turns off Next.js's trailing slash redirects (skipTrailingSlashRedirect)" : "sets skipTrailingSlashRedirect to a value it does not spell out"}` };
+  const trailing = nextSetting(read, "trailingSlash");
+  if (trailing !== undefined && typeof trailing !== "boolean") return { why: `${read.file} sets trailingSlash to a value it does not spell out` };
   return { slashes: trailing ? "added" : "removed" };
 }
 
@@ -1836,9 +1935,23 @@ function springSources(source: Source, config: Config, files: string[], root: st
  */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Map<string, Surface>();
+  // FastAPI adds its documentation routes as an application is made, before any route registered on it or on a router
+  // it includes, whichever file that is in: where a route of the code has the same path, FastAPI's is the one kept.
+  const documentation = (s: Surface) => !!s.convention?.startsWith("fastapi ");
+  for (const s of surfaces) {
+    const k = `${s.component}|${s.method}|${s.path}`;
+    if (documentation(s) && !seen.has(k)) seen.set(k, s);
+  }
+  const placed = new Set<string>();
   return surfaces.filter((s) => {
     const k = `${s.component}|${s.method}|${s.path}`;
     const kept = seen.get(k);
+    if (kept === s && !placed.has(k)) {
+      placed.add(k);
+      return true;
+    }
+    // A route of the code FastAPI's own takes the place of is never dispatched to: nothing of it merges in.
+    if (kept && kept !== s && documentation(kept)) return false;
     if (kept) {
       if (kept.patterns && JSON.stringify(kept.patterns) !== JSON.stringify(s.patterns)) delete kept.patterns;
       if (kept.dispatch) {
@@ -1893,6 +2006,29 @@ export function extractRoutes(
   const constants = new Constants(source);
   /** The routes Next.js serves from the files of a next entry, which its `trailingSlash` redirects to. */
   const nextRoutes: Surface[] = [];
+  /** The Spring entries' route files by component, and how their routes treat a trailing `/`. */
+  const booted = new Map<string, { files: string[]; slashes: SpringSlashes | undefined }>();
+  // How Next.js answers each page, read once per component from every page its next entries list.
+  const isNext = (r: RouteSource) => (r.styles ?? []).includes("next");
+  const nextConfigs = new Map<string, NextConfig>();
+  const pages = new Map<string, PageMethods>();
+  for (const component of new Set(config.routes.filter(isNext).map((r) => r.component))) {
+    const root = roots.get(component);
+    if (root === undefined) continue;
+    const read = nextConfig(source, root);
+    nextConfigs.set(component, read);
+    const files = new Set(config.routes.filter((r) => isNext(r) && r.component === component).flatMap((r) => select(source, r.files ?? [], config.exclude)));
+    const listed: NextPage[] = [];
+    for (const file of files) {
+      const route = nextRoute(file, root);
+      if (route?.kind !== "page") continue;
+      const inside = root ? file.slice(root.length + 1) : file;
+      listed.push({ file, path: route.path, ...(route.app !== undefined ? { app: route.app } : { pages: `${root ? `${root}/` : ""}${inside.startsWith("src/pages/") ? "src/pages" : "pages"}` }) });
+    }
+    const range = listed.length ? ranges(listed[0]!.file, "next") : undefined;
+    const major = range === undefined ? undefined : rangeMajor(range);
+    for (const [file, methods] of nextPageMethods(listed, { component, root, config: read, source, reach, constants, limits, major })) pages.set(file, methods);
+  }
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
     const files = select(source, spec.files ?? [], config.exclude);
@@ -1912,15 +2048,21 @@ export function extractRoutes(
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges, constants }));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges, constants, pages }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges, slashes));
     }
     if (routers) limits.push(...routers.limits(spec.component));
     if (prefixes) limits.push(...prefixes.limits(spec.component));
+    if (java) {
+      const boot = booted.get(spec.component) ?? booted.set(spec.component, { files: [], slashes }).get(spec.component)!;
+      boot.files.push(...files.filter((f) => /\.(java|kt|kts)$/.test(f)));
+    }
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
     if ((spec.styles ?? []).includes("next")) nextRoutes.push(...out.slice(before));
   }
+  // What Spring Boot serves by itself in the applications the Spring entries' files belong to.
+  out.push(...springBootRoutes(source, booted, config.exclude, limits));
   // What Next.js serves from files with no handler of the app's: public/ as files, to GET and HEAD, and the metadata
   // files written as files through a route handler it generates, which answers OPTIONS too (next-metadata-route-loader,
   // auto-implement-methods). After the code, so a route a file also names keeps the handler's place.
@@ -1932,14 +2074,22 @@ export function extractRoutes(
       const served = skip(file) ? undefined : nextStaticFile(file, root);
       if (served === undefined) continue;
       const { path } = served;
+      const convention = served.kind === "metadata" ? "next metadata file" : "next public";
       for (const method of served.kind === "metadata" ? ["GET", "HEAD", "OPTIONS"] : ["GET", "HEAD"]) {
-        const surface: Surface = { id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true };
+        const surface: Surface = { id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true, convention };
         out.push(surface);
         nextRoutes.push(surface);
       }
     }
+    // What `next start` serves by itself: the build's files and the image optimizer.
+    const read = nextConfigs.get(component) ?? nextConfig(source, root);
+    for (const r of nextBuiltins(source, root, component, read, limits)) {
+      const surface: Surface = { id: surfaceId({ component, method: r.method, path: r.path }), component, method: r.method, path: r.path, at: r.at, evidence: r.at.file.endsWith("package.json") ? "declared" : "static", implicit: true, convention: r.convention };
+      out.push(surface);
+      nextRoutes.push(surface);
+    }
     // Next.js redirects a request whose trailing `/` differs from what `trailingSlash` asks for, before any route.
-    const slashes = nextSlashes(source, root);
+    const slashes = nextSlashes(source, root, read);
     if ("why" in slashes) limits.push(`routes ${component}: ${slashes.why}; whether Next.js redirects a request with or without a trailing / is not read, so a call is matched to its route either way`);
     else for (const s of nextRoutes) if (s.component === component) s.dispatch = { ...s.dispatch, slashes: slashes.slashes };
   }

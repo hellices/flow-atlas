@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import type { Source } from "../src/source.js";
+import { fastapiDocumentation } from "./documentation.js";
 
 const memory = (files: Record<string, string>): Source => ({
   ref: "WORKTREE",
@@ -14,6 +15,7 @@ const routes = (files: Record<string, string>, entry: Record<string, unknown>) =
   const limits: string[] = [];
   const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**"], ...entry }] });
   const ids = extractRoutes(memory(files), config, undefined, [], limits)
+    .filter((s) => !fastapiDocumentation(s))
     .map((s) => `${s.method} ${s.path}`)
     .sort();
   return { ids, limits };
