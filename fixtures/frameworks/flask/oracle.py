@@ -13,13 +13,14 @@ from app import create_app
 
 app = create_app()
 
-VARIABLE = re.compile(r"<(?:(\w+)(?:\([^()]*\))?:)?[^<>:]+>")
+VARIABLE = re.compile(r"<(?:\w+(?:\([^()]*\))?:)?([^<>:]+)>")
 
 
 def canonical(rule) -> str:
     # A variable whose converter's regex takes a slash (`path`) takes the rest of the path; any other one segment's text.
+    # The converter is the one bound to the rule, whose regex can depend on its arguments (`any('a/b', 'c')`).
     def variable(m: re.Match) -> str:
-        regex = app.url_map.converters[m.group(1) or "default"].regex
+        regex = rule._converters[m.group(1)].regex
         return "{**}" if re.fullmatch(regex, "a/b") else "{}"
 
     path = VARIABLE.sub(variable, rule.rule)

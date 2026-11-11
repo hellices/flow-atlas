@@ -44,10 +44,10 @@ def walk(routes: list[BaseRoute], prefix: str, out: list[dict], answered_by: lis
         if isinstance(route, Mount):
             mounted = route.routes
             if mounted:
-                walk(mounted, prefix + route.path, out, answered_by)
+                walk(mounted, prefix + context.path, out, answered_by)
             else:
                 # An ASGI application with no route table of its own (StaticFiles) takes every path under the mount.
-                raw = prefix + route.path + "/{path:path}"
+                raw = prefix + context.path + "/{path:path}"
                 for method in ("GET", "HEAD"):
                     for path in canonical(raw):
                         out.append({"method": method, "path": path, "raw": raw})

@@ -28,7 +28,9 @@ func main() {
 			}
 		}
 	}
-	json.NewEncoder(os.Stdout).Encode(map[string]string{"library": "resty", "version": version})
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]string{"library": "resty", "version": version}); err != nil {
+		fail("%v", err)
+	}
 }
 
 func callAll(client any) {

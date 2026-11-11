@@ -50,85 +50,90 @@ Future<void> main() async {
     lock.writeAsStringSync(locked);
   }
 
-  final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = probe.port;
-  await probe.close();
-  final server = await Process.start(Platform.resolvedExecutable, ['build/bin/server.dart'], environment: {'PORT': '$port'});
-  server.stderr.listen(stderr.add);
-  final lines = server.stdout.transform(utf8.decoder).transform(const LineSplitter()).asBroadcastStream();
-  await lines.firstWhere((line) => line.contains('Running on'));
-  lines.listen(stderr.writeln);
-
+  // The server, the client and the build are put away however the requests end.
   final client = HttpClient();
-  final base = Uri.parse('http://127.0.0.1:$port');
-
-  /// The status the server answers [method] [path] with, and its body.
-  Future<(int, String)> request(String method, String path) async {
-    final req = await client.openUrl(method, base.replace(path: path));
-    final res = await req.close();
-    return (res.statusCode, await res.transform(utf8.decoder).join());
-  }
-
-  /// The methods the server answers [path] with: neither the router's 404 nor the handler's 405.
-  Future<Set<String>> answered(String path) async {
-    final methods = <String>{};
-    for (final m in HttpMethod.values) {
-      final (status, body) = await request(m.value, path);
-      if (status == HttpStatus.methodNotAllowed) continue;
-      if (status == HttpStatus.notFound && body == 'Route not found') continue;
-      methods.add(m.value);
-    }
-    return methods;
-  }
-
-  final every = HttpMethod.values.map((m) => m.value).toSet();
   final routes = <Map<String, String>>[];
-  void add(Set<String> methods, String path, String raw) {
-    final names = methods.containsAll(every) ? ['*'] : (methods.toList()..sort());
-    for (final m in names) {
-      routes.add({'method': m, 'path': path, 'raw': raw});
-    }
-  }
+  Process? running;
+  try {
+    final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = probe.port;
+    await probe.close();
+    final server = await Process.start(Platform.resolvedExecutable, ['build/bin/server.dart'], environment: {'PORT': '$port'});
+    running = server;
+    server.stderr.listen(stderr.add);
+    final lines = server.stdout.transform(utf8.decoder).transform(const LineSplitter()).asBroadcastStream();
+    await lines.firstWhere((line) => line.contains('Running on'));
+    lines.listen(stderr.writeln);
 
-  final matchers = {
-    for (final MapEntry(key: endpoint, value: files) in config.endpoints.entries)
-      endpoint: matcher(endpoint, files.any((f) => f.wildcard)),
-  };
-  for (final MapEntry(key: endpoint, value: files) in config.endpoints.entries) {
-    if (files.length != 1) throw StateError('$endpoint resolves to ${files.map((f) => f.path)}');
-    final file = files.single;
-    final raw = 'routes/${file.path.replaceFirst('../routes/', '')}';
-    final base = endpoint.replaceAll(_param, 'value1');
-    final sample = file.wildcard ? '${base == '/' ? '' : base}/rest/of/it' : base;
-    final others = [for (final MapEntry(key: e, value: m) in matchers.entries) if (e != endpoint && m.hasMatch(sample)) e];
-    if (others.isNotEmpty) throw StateError('$sample of $endpoint would also be $others');
-    final methods = await answered(sample);
-    if (methods.isEmpty) throw StateError('nothing answers $sample of $endpoint');
-    if (!file.wildcard) {
-      add(methods, canonical(endpoint), raw);
-      continue;
-    }
-    add(methods, '${canonical(endpoint) == '/' ? '' : canonical(endpoint)}/{**}', raw);
-    // A wildcard the server also dispatches with nothing after its `/` serves its directory's path too.
-    final parent = await answered('${base == '/' ? '' : base}/');
-    if (parent.isNotEmpty) add(parent, canonical(endpoint), raw);
-  }
+    final base = Uri.parse('http://127.0.0.1:$port');
 
-  final public = Directory('public');
-  if (config.serveStaticFiles && public.existsSync()) {
-    final files = public.listSync(recursive: true).whereType<File>().toList()..sort((a, b) => a.path.compareTo(b.path));
-    for (final file in files) {
-      final path = '/${file.path.substring(public.path.length + 1).replaceAll(r'\', '/')}';
-      final (status, body) = await request('GET', path);
-      if (status != HttpStatus.ok || body != file.readAsStringSync()) throw StateError('$path is not served from ${file.path}');
-      add(await answered(path), path, file.path.replaceAll(r'\', '/'));
+    /// The status the server answers [method] [path] with, and its body.
+    Future<(int, String)> request(String method, String path) async {
+      final req = await client.openUrl(method, base.replace(path: path));
+      final res = await req.close();
+      return (res.statusCode, await res.transform(utf8.decoder).join());
     }
-  }
 
-  client.close(force: true);
-  server.kill();
-  await server.exitCode;
-  Directory('build').deleteSync(recursive: true);
+    /// The methods the server answers [path] with: neither the router's 404 nor the handler's 405.
+    Future<Set<String>> answered(String path) async {
+      final methods = <String>{};
+      for (final m in HttpMethod.values) {
+        final (status, body) = await request(m.value, path);
+        if (status == HttpStatus.methodNotAllowed) continue;
+        if (status == HttpStatus.notFound && body == 'Route not found') continue;
+        methods.add(m.value);
+      }
+      return methods;
+    }
+
+    final every = HttpMethod.values.map((m) => m.value).toSet();
+    void add(Set<String> methods, String path, String raw) {
+      final names = methods.containsAll(every) ? ['*'] : (methods.toList()..sort());
+      for (final m in names) {
+        routes.add({'method': m, 'path': path, 'raw': raw});
+      }
+    }
+
+    final matchers = {
+      for (final MapEntry(key: endpoint, value: files) in config.endpoints.entries)
+        endpoint: matcher(endpoint, files.any((f) => f.wildcard)),
+    };
+    for (final MapEntry(key: endpoint, value: files) in config.endpoints.entries) {
+      if (files.length != 1) throw StateError('$endpoint resolves to ${files.map((f) => f.path)}');
+      final file = files.single;
+      final raw = 'routes/${file.path.replaceFirst('../routes/', '')}';
+      final base = endpoint.replaceAll(_param, 'value1');
+      final sample = file.wildcard ? '${base == '/' ? '' : base}/rest/of/it' : base;
+      final others = [for (final MapEntry(key: e, value: m) in matchers.entries) if (e != endpoint && m.hasMatch(sample)) e];
+      if (others.isNotEmpty) throw StateError('$sample of $endpoint would also be $others');
+      final methods = await answered(sample);
+      if (methods.isEmpty) throw StateError('nothing answers $sample of $endpoint');
+      if (!file.wildcard) {
+        add(methods, canonical(endpoint), raw);
+        continue;
+      }
+      add(methods, '${canonical(endpoint) == '/' ? '' : canonical(endpoint)}/{**}', raw);
+      // A wildcard the server also dispatches with nothing after its `/` serves its directory's path too.
+      final parent = await answered('${base == '/' ? '' : base}/');
+      if (parent.isNotEmpty) add(parent, canonical(endpoint), raw);
+    }
+
+    final public = Directory('public');
+    if (config.serveStaticFiles && public.existsSync()) {
+      final files = public.listSync(recursive: true).whereType<File>().toList()..sort((a, b) => a.path.compareTo(b.path));
+      for (final file in files) {
+        final path = '/${file.path.substring(public.path.length + 1).replaceAll(r'\', '/')}';
+        final (status, body) = await request('GET', path);
+        if (status != HttpStatus.ok || body != file.readAsStringSync()) throw StateError('$path is not served from ${file.path}');
+        add(await answered(path), path, file.path.replaceAll(r'\', '/'));
+      }
+    }
+  } finally {
+    client.close(force: true);
+    running?.kill();
+    await running?.exitCode;
+    Directory('build').deleteSync(recursive: true);
+  }
 
   final library = await Isolate.resolvePackageUri(Uri.parse('package:dart_frog/dart_frog.dart'));
   final pubspec = File.fromUri(library!.resolve('../pubspec.yaml')).readAsStringSync();

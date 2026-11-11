@@ -136,8 +136,10 @@ func main() {
 	routes := []route{}
 	for _, pattern := range patterns {
 		got := served[pattern]
+		// A route in the trees that answers no method was not reached by its sample (a parameter's expression may not
+		// match `1`), so it would be left out without a word.
 		if len(got) == 0 {
-			continue
+			panic(fmt.Sprintf("%s answers no method at %s", pattern, sample(strings.Split(pattern, "/"), "1")))
 		}
 		segments := strings.Split(pattern, "/")
 		last := segments[len(segments)-1]

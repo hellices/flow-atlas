@@ -185,15 +185,21 @@ def arguments(chain: list, path: str) -> tuple[tuple, dict]:
     The arguments Django's resolver passes the view of the last pattern in chain for path: each pattern matches its part
     of the path, converting what it captures (`to_python()`), and adds its extra options, as URLResolver.resolve does.
     """
-    rest, args, kwargs = path, (), {}
+    rest, matches = path, []
     for pattern in chain:
         match = pattern.pattern.match(rest)
         if match is None:
             raise ValueError(f"{path!r} is no path of {chain[-1]!r}")
         rest, captured_args, captured = match
-        extra = pattern.default_kwargs if isinstance(pattern, URLResolver) else pattern.default_args
-        args, kwargs = args + captured_args, {**kwargs, **captured, **extra}
-    return (() if kwargs else args), kwargs
+        matches.append((captured_args, captured))
+    args, captured = matches[-1]
+    kwargs = {**captured, **chain[-1].default_args}
+    # Each resolver, from the innermost out, keeps its own positional captures only when no keyword argument is passed.
+    for pattern, (captured_args, captured) in reversed(list(zip(chain[:-1], matches[:-1]))):
+        kwargs = {**captured, **pattern.default_kwargs, **kwargs}
+        if not kwargs:
+            args = captured_args + args
+    return args, kwargs
 
 
 def walk(patterns, chain: list, out: list[dict]) -> list[dict]:

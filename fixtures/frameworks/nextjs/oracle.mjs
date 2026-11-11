@@ -209,7 +209,7 @@ try {
   };
   for (const path of probes) {
     for (const method of methods) {
-      const response = await fetch(base + path, { method, redirect: "manual", body: method === "GET" ? undefined : "{}" });
+      const response = await fetch(base + path, { method, redirect: "manual", body: method === "GET" || method === "HEAD" ? undefined : "{}" });
       await response.arrayBuffer();
       const { status, headers } = response;
       const at = `${method} ${path} (${status})`;
