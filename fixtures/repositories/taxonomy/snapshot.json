@@ -264,6 +264,7 @@
     "FA001|taxonomy|GET /guides/{slug}/**"
   ],
   "limits": [
-    "calls taxonomy->taxonomy: URLs to stripe.com (app/(dashboard)/dashboard/billing/page.tsx:57), api.github.com (app/(marketing)/page.tsx:11), www.w3.org (app/(marketing)/page.tsx:206), tx.shadcn.com (config/site.ts:8), twitter.com (config/site.ts:10), github.com (config/site.ts:11) are not read as requests to taxonomy; set origins.taxonomy if that is its host"
+    "calls taxonomy->taxonomy: URLs to stripe.com (app/(dashboard)/dashboard/billing/page.tsx:57), api.github.com (app/(marketing)/page.tsx:11), www.w3.org (app/(marketing)/page.tsx:206), tx.shadcn.com (config/site.ts:8), twitter.com (config/site.ts:10), github.com (config/site.ts:11) are not read as requests to taxonomy; set origins.taxonomy if that is its host",
+    "routes taxonomy: next.config.mjs exports withContentlayer(nextConfig), not an object it spells out; whether Next.js redirects a request with or without a trailing / is not read, so a call is matched to its route either way"
   ]
 }

@@ -1,7 +1,2 @@
 # Where atlas's reading differs from the routes Express serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-# Express runs the first route whose path matches, in the order they are registered (expressjs.com/en/guide/routing.html);
-# atlas does not rank Express's routes.
-dispatch:
-  - { request: "GET /users/me", reason: "registration order: Express runs the first route that matches, and `/users/me`, registered before `/users/:id`, answers; atlas also matches `/users/:id`" }
-  - { request: "GET /users/me/", reason: "registration order: Express runs the first route that matches, and `/users/me`, registered before `/users/:id`, answers; atlas also matches `/users/:id`" }

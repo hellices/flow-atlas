@@ -228,7 +228,8 @@ describe("routes as each framework serves them", () => {
     it(name, () => {
       const dir = join(root, name);
       const served = JSON.parse(readFileSync(join(dir, "routes.json"), "utf8")) as Routes;
-      const gaps = (existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) as Gaps;
+      // A gaps.yaml left with no difference holds only its comments, which YAML reads as null.
+      const gaps = ((existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) ?? {}) as Gaps;
       const config = loadConfig(join(dir, "atlas.config.yaml"));
       const graph = scan(new WorktreeSource(dir), config, { root: dir, requested: "WORKTREE" });
       const oracle = routeKeys(served.routes, (path) => [path]);
@@ -242,7 +243,8 @@ describe("routes as each framework serves them", () => {
     });
     it.runIf(existsSync(join(root, name, "dispatch.json")))(`${name}: requests reach the routes the framework dispatches them to`, () => {
       const dir = join(root, name);
-      const gaps = (existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) as Gaps;
+      // A gaps.yaml left with no difference holds only its comments, which YAML reads as null.
+      const gaps = ((existsSync(join(dir, "gaps.yaml")) ? parse(readFileSync(join(dir, "gaps.yaml"), "utf8")) : {}) ?? {}) as Gaps;
       const config = loadConfig(join(dir, "atlas.config.yaml"));
       const graph = scan(new WorktreeSource(dir), config, { root: dir, requested: "WORKTREE" });
       const dispatch = JSON.parse(readFileSync(join(dir, "dispatch.json"), "utf8")) as Dispatch;

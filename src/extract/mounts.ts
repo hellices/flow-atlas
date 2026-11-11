@@ -55,6 +55,23 @@ export interface Mounts {
    * at, undefined where a mount is not read.
    */
   statics(file: string): Array<{ line: number; paths: string[] | undefined }>;
+  /**
+   * How a router picks among the routes a request fits and treats a trailing `/` (see `Dispatch`), from its package and
+   * the options the code gives literally: `picks` and `slashes` left out where they are not read.
+   */
+  dispatchOf(router: string): { picks?: "registration" | "find-my-way"; slashes?: "ignored" | "strict" };
+  /**
+   * The steps registration order places a router's routes under, from the application a request enters down to the
+   * sequence `step` names for a registration on the router at `node` of `file`; undefined where the router is mounted
+   * more than once or where it is not read.
+   */
+  orderOf(router: string, file: string, node: ts.Node): Array<{ router: string; at: number }> | undefined;
+}
+
+/** The start of the function a node is in, or -1 at a module's top level: registrations in one run in order. */
+export function scopeOf(node: ts.Node): number {
+  for (let n = node.parent; n; n = n.parent) if (ts.isFunctionLike(n)) return n.getStart();
+  return -1;
 }
 
 type Kind = "express-router" | "express-app" | "koa-router" | "koa-app" | "hono" | "fastify" | "plugin";
@@ -190,6 +207,26 @@ function prefixOption(o: ts.ObjectLiteralExpression, unread: (p: ts.Node) => Val
   return "";
 }
 
+/**
+ * A boolean an options object gives at `path` (`["routerOptions", "ignoreTrailingSlash"]`): undefined where it gives
+ * none, null where it is not spelled out (an object that is not a literal, a spread, a computed name, another value).
+ */
+function booleanOption(options: ts.Expression | undefined, path: string[]): boolean | undefined | null {
+  if (!options) return undefined;
+  const o = unwrap(options);
+  if (!ts.isObjectLiteralExpression(o) || o.properties.some(ts.isSpreadAssignment)) return null;
+  for (const p of [...o.properties].reverse()) {
+    const key = p.name ? propertyKey(p.name) : undefined;
+    if (key === null) return null;
+    if (key !== path[0]) continue;
+    if (!ts.isPropertyAssignment(p)) return null;
+    if (path.length > 1) return booleanOption(p.initializer, path.slice(1));
+    const v = unwrap(p.initializer);
+    return v.kind === ts.SyntaxKind.TrueKeyword ? true : v.kind === ts.SyntaxKind.FalseKeyword ? false : null;
+  }
+  return undefined;
+}
+
 /** The `prefix` an @koa/router constructor's options give: "" with none, unread where not spelled out. */
 function koaPrefix(options: ts.Expression | undefined): Value {
   const u = options && unwrap(options);
@@ -202,13 +239,19 @@ function koaPrefix(options: ts.Expression | undefined): Value {
  * What an expression creates: an Express, @koa/router, Koa, Hono or Fastify router or application, with its own prefix
  * and the package it is created from.
  */
-function creation(e: ts.Expression): { kind: Kind; own: Value; pkg: string } | undefined {
+function creation(e: ts.Expression): { kind: Kind; own: Value; pkg: string; options?: ts.Expression } | undefined {
   const u = unwrap(e);
   if (!ts.isCallExpression(u) && !ts.isNewExpression(u)) return undefined;
   const from = packageName(u.expression);
   if (!from) return undefined;
   const { spec, name } = from;
   const made = ts.isNewExpression(u);
+  const options = u.arguments?.[0];
+  const made2 = (m: { kind: Kind; own: Value; pkg: string } | undefined) => (m && options ? { ...m, options } : m);
+  return made2(created(spec, name, made, u));
+}
+
+function created(spec: string, name: string, made: boolean, u: ts.CallExpression | ts.NewExpression): { kind: Kind; own: Value; pkg: string } | undefined {
   if (spec === "express") return name === "Router" ? { kind: "express-router", own: "", pkg: spec } : name === "default" && !made ? { kind: "express-app", own: "", pkg: spec } : undefined;
   if (spec === "@koa/router" || spec === "koa-router") return name === "default" || name === "Router" ? { kind: "koa-router", own: koaPrefix(u.arguments?.[0]), pkg: spec } : undefined;
   if (spec === "koa") return made && (name === "default" || name === "Koa") ? { kind: "koa-app", own: "", pkg: spec } : undefined;
@@ -250,6 +293,9 @@ interface Mount {
   routes?: true;
   /** The path is written in the call, not the receiver's own one taken where none is (`use(r.routes())`). */
   explicit?: true;
+  /** Where the call is, and the start of the function it is in (`scopeOf`). */
+  at: number;
+  scope: number;
 }
 
 interface FileFacts {
@@ -264,11 +310,13 @@ interface FileFacts {
   prefixes: Array<{ receiver: ts.Expression; value: Value }>;
   /** Where `express.static` is mounted. */
   statics: Array<{ receiver: ts.Expression; path: string | undefined; line: number }>;
+  /** Express's `set`, `enable` and `disable` of `strict routing`: whether it is turned on, null where not spelled out. */
+  strict: Array<{ receiver: ts.Expression; on: boolean | null }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, exports: new Map(), stars: [], mounts: [], prefixes: [], statics: [] };
+  const facts: FileFacts = { sf, exports: new Map(), stars: [], mounts: [], prefixes: [], statics: [], strict: [] };
   const modifier = (n: ts.Node, kind: ts.SyntaxKind): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === kind);
   const exported = (n: ts.Node): boolean => modifier(n, ts.SyntaxKind.ExportKeyword);
   const visit = (node: ts.Node): void => {
@@ -306,6 +354,15 @@ function factsOf(text: string, file: string): FileFacts {
       }
     }
     const call = methodCall(node);
+    // A call's place is where its method is named: in a chain `app.use(a).use(b)` every call starts at `app`.
+    const callee = ts.isCallExpression(node) ? unwrap(node.expression) : undefined;
+    const named = callee && ts.isPropertyAccessExpression(callee) ? callee.name : callee && ts.isElementAccessExpression(callee) ? callee.argumentExpression : node;
+    const where = { at: named.getStart(sf), scope: scopeOf(node) };
+    if (call && ["set", "enable", "disable"].includes(call.name) && literal(call.args[0]) === "strict routing") {
+      const value = call.name === "set" ? unwrap(call.args[1] ?? call.args[0]!) : undefined;
+      const on = call.name === "enable" ? true : call.name === "disable" ? false : value?.kind === ts.SyntaxKind.TrueKeyword ? true : value?.kind === ts.SyntaxKind.FalseKeyword ? false : null;
+      facts.strict.push({ receiver: unwrap(call.receiver), on });
+    }
     if (call?.name === "use") {
       const { args, receiver } = call;
       const first = args[0] && unwrap(args[0]);
@@ -321,19 +378,19 @@ function factsOf(text: string, file: string): FileFacts {
           continue;
         }
         const koa = koaRoutes(target);
-        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true, ...(path !== undefined ? { explicit: true as const } : {}) });
-        else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target });
+        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true, ...(path !== undefined ? { explicit: true as const } : {}), ...where });
+        else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target, ...where });
       }
     }
     // Hono's `route(path, app)`; Express's `route(path)` takes one argument and mounts nothing.
-    if (call?.name === "route" && call.args.length === 2) facts.mounts.push({ verb: "route", receiver: unwrap(call.receiver), path: literal(call.args[0]), target: unwrap(call.args[1]!) });
+    if (call?.name === "route" && call.args.length === 2) facts.mounts.push({ verb: "route", receiver: unwrap(call.receiver), path: literal(call.args[0]), target: unwrap(call.args[1]!), ...where });
     // Fastify's `register(plugin, { prefix })`: no options, or none named prefix, adds none.
     if (call?.name === "register" && call.args.length >= 1 && call.args.length <= 2) {
       const options = call.args[1] && unwrap(call.args[1]);
       let path: Value = "";
       if (options && (!ts.isObjectLiteralExpression(options) || options.properties.some(ts.isSpreadAssignment))) path = { why: `is registered with options the code does not spell out (${short(options)})` };
       else if (options) path = prefixOption(options, (p) => ({ why: `is registered with a prefix the code does not spell out (${short(p)})` }));
-      facts.mounts.push({ verb: "register", receiver: unwrap(call.receiver), path, target: unwrap(call.args[0]!) });
+      facts.mounts.push({ verb: "register", receiver: unwrap(call.receiver), path, target: unwrap(call.args[0]!), ...where });
     }
     if (call?.name === "prefix" && call.args.length === 1) {
       facts.prefixes.push({ receiver: unwrap(call.receiver), value: literal(call.args[0]) ?? { why: `has a prefix the code does not spell out (${short(call.args[0]!)})` } });
@@ -397,7 +454,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   };
 
   /** The routers, applications and plugins found, by key, with what they are and the prefix they set themselves. */
-  const stores = new Map<string, { kind: Kind; own: Value; pkg: string }>();
+  const stores = new Map<string, { kind: Kind; own: Value; pkg: string; options?: ts.Expression }>();
   /** Hono's `basePath(path)`: the routes of the instance it is called on, under another base path. */
   const based = new Map<string, { parent: string; path: Value }>();
   /** The functions `register` takes in as Fastify plugins. */
@@ -503,9 +560,10 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
 
   const ROOT = "";
   // Each mount, keyed by what it serves; the parent is the instance it is mounted on, ROOT for the root.
-  const mounts = new Map<string, Array<{ parent: string; path: Value | undefined; explicit?: true }>>();
-  const mount = (child: string, parent: string, path: Value | undefined, explicit?: true) =>
-    (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path, ...(explicit ? { explicit } : {}) });
+  type Placed = { parent: string; path: Value | undefined; explicit?: true; file: string; at: number; scope: number };
+  const mounts = new Map<string, Placed[]>();
+  const mount = (child: string, parent: string, path: Value | undefined, m: Mount, file: string) =>
+    (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path, ...(m.explicit ? { explicit: m.explicit } : {}), file, at: m.at, scope: m.scope });
   /** The instance a handle registers its routes in: Hono's `basePath` shares the routes of the one it is called on. */
   const storeOf = (handle: string): string => (based.has(handle) ? storeOf(based.get(handle)!.parent) : handle);
   for (const [file, f] of facts) {
@@ -514,8 +572,8 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       const above = parent ? kindOf(parent) : undefined;
       if (m.verb === "register") {
         const fn = functionAt(file, m.target, new Set());
-        if (fn && plugins.has(fn) && (above === "fastify" || above === "plugin")) mount(fn, parent!, m.path);
-        else if (fn && plugins.has(fn) && parent === undefined && untracedPlugin(m.receiver)) mount(fn, ROOT, m.path);
+        if (fn && plugins.has(fn) && (above === "fastify" || above === "plugin")) mount(fn, parent!, m.path, m, file);
+        else if (fn && plugins.has(fn) && parent === undefined && untracedPlugin(m.receiver)) mount(fn, ROOT, m.path, m, file);
         continue;
       }
       const child = handleAt(file, m.target, new Set());
@@ -529,7 +587,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
         (m.verb === "use" && express(above) && express(kind) && !m.routes) ||
         (m.verb === "use" && koa(above) && kind === "koa-router" && m.routes) ||
         (m.verb === "route" && above === "hono" && kind === "hono");
-      if (fits) mount(storeOf(child), parent, m.path, m.explicit);
+      if (fits) mount(storeOf(child), parent, m.path, m, file);
     }
   }
   // An @koa/router router's prefix: the constructor's option or a `prefix()` call, read where it is set once.
@@ -612,6 +670,86 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const s = served(handle, new Set());
     return "paths" in s ? s.paths : undefined;
   };
+  /** The applications a router's requests enter by: itself where nothing mounts it; undefined where a mount is not traced. */
+  const rootsOf = (handle: string, seen: Set<string>): string[] | undefined => {
+    const store = storeOf(handle);
+    const all = mounts.get(store);
+    if (!all?.length) return APPLICATIONS.has(stores.get(store)?.kind as Kind) ? [store] : undefined;
+    if (seen.has(store)) return undefined;
+    const out: string[] = [];
+    for (const m of all) {
+      const up = m.parent === ROOT ? undefined : rootsOf(m.parent, new Set([...seen, store]));
+      if (!up) return undefined;
+      out.push(...up);
+    }
+    return [...new Set(out)];
+  };
+  /** One value every root gives, or undefined where they differ or one gives none. */
+  const agreed = <T>(handle: string, of: (root: string) => T | undefined): T | undefined => {
+    const values = (rootsOf(handle, new Set()) ?? []).map(of);
+    return values.length && values.every((v) => v !== undefined && v === values[0]) ? values[0] : undefined;
+  };
+  const dispatchOf = (handle: string): ReturnType<Mounts["dispatchOf"]> => {
+    const store = storeOf(handle);
+    const made = stores.get(store);
+    const slashes = (strict: boolean | null | undefined) => (strict === null ? {} : { slashes: strict ? ("strict" as const) : ("ignored" as const) });
+    switch (made?.kind) {
+      case "express-router":
+        // Express's Router option `strict` (router 2, `Layer`): off by default, a trailing `/` is optional.
+        return { picks: "registration", ...(booleanOption(made.options, ["strict"]) === null || booleanOption(made.options, ["strict"]) ? {} : slashes(false)) };
+      case "express-app": {
+        // An application's own router takes `strict routing` from its settings (express `lazyrouter`).
+        const set = [...facts].flatMap(([file, f]) => f.strict.filter((x) => handleAt(file, x.receiver, new Set()) !== undefined && storeOf(handleAt(file, x.receiver, new Set())!) === store));
+        return { picks: "registration", ...(set.every((x) => x.on === false) ? slashes(false) : {}) };
+      }
+      case "koa-router": {
+        // @koa/router's `exclusive` runs only the last route a request matches, and `strict` makes the `/` count.
+        const exclusive = booleanOption(made.options, ["exclusive"]);
+        const strict = booleanOption(made.options, ["strict"]);
+        return { ...(exclusive === undefined || exclusive === false ? { picks: "registration" as const } : {}), ...(strict === undefined || strict === false ? slashes(false) : {}) };
+      }
+      case "hono": {
+        // The application a request enters reads its path with `getPath`, strict unless `strict: false` (hono-base.js).
+        const strict = agreed(store, (root) => {
+          const options = stores.get(root)?.options;
+          if (booleanOption(options, ["getPath"]) !== undefined) return null;
+          const strict = booleanOption(options, ["strict"]);
+          return strict === undefined ? true : strict;
+        });
+        return { picks: "registration", ...(strict === undefined ? {} : slashes(strict)) };
+      }
+      case "fastify":
+      case "plugin": {
+        // find-my-way's `ignoreTrailingSlash`, given at the top of Fastify's options or in `routerOptions`.
+        const ignore = agreed(store, (root) => {
+          const options = stores.get(root)?.options;
+          const top = booleanOption(options, ["ignoreTrailingSlash"]);
+          const router = booleanOption(options, ["routerOptions", "ignoreTrailingSlash"]);
+          return top === null || router === null ? null : !!(top || router);
+        });
+        return { picks: "find-my-way", ...(ignore === undefined ? {} : slashes(ignore === null ? null : !ignore)) };
+      }
+      default:
+        return {};
+    }
+  };
+  /** The mount steps above a router: none for an application nothing mounts; undefined where a mount is not the only one. */
+  const chainOf = (store: string, seen: Set<string>): Array<{ router: string; at: number }> | undefined => {
+    if (declared[store.slice(0, store.lastIndexOf("@"))] !== undefined) return undefined;
+    const all = mounts.get(store);
+    if (!all?.length) return APPLICATIONS.has(stores.get(store)?.kind as Kind) ? [] : undefined;
+    if (all.length !== 1 || seen.has(store)) return undefined;
+    const m = all[0]!;
+    if (m.parent === ROOT) return undefined;
+    const parent = storeOf(m.parent);
+    const above = chainOf(parent, new Set([...seen, store]));
+    return above && [...above, { router: `${parent} ${m.file}@${m.scope}`, at: m.at }];
+  };
+  const orderOf = (handle: string, file: string, node: ts.Node): Array<{ router: string; at: number }> | undefined => {
+    const store = storeOf(handle);
+    const chain = chainOf(store, new Set());
+    return chain && [...chain, { router: `${store} ${file}@${scopeOf(node)}`, at: node.getStart() }];
+  };
   const statics = (file: string): Array<{ line: number; paths: string[] | undefined }> => {
     const out: Array<{ line: number; paths: string[] | undefined }> = [];
     for (const s of facts.get(file)?.statics ?? []) {
@@ -647,5 +785,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       return [...out];
     },
     statics,
+    dispatchOf,
+    orderOf,
   };
 }

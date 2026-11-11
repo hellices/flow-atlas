@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import { ruleEnabled } from "./config.js";
-import { matchCalls, plausibleRequest, rankedComponents } from "./match.js";
+import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { isRedirect, surfaceId } from "./model.js";
 
@@ -34,21 +34,30 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
 /** Findings for a graph. What the rules could not settle completely is added to `limits`. */
 export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];
-  const { callersOf, targetsOf, unsettled, slashless } = matchCalls(graph, rankedComponents(config));
-  // A call whose method is not read may reach any route it fits, and one without the trailing slash its route's document
-  // writes may reach that route: none of them is shown to lack a caller.
-  const mayBeCalled = new Set([...unsettled.values(), ...slashless.values()].flat());
+  const { callersOf, targetsOf, unsettled, slashless, redirected, constrained } = matchCalls(graph, rankedComponents(config));
+  // A call whose method is not read may reach any route it fits, one without the trailing slash its route's document
+  // writes may reach that route, one answered with a redirect reaches its route once the client follows it, and one
+  // that fits a route taken only with a header may send it: none of those routes is shown to lack a caller, nor any of
+  // those calls to reach nothing.
+  const mayBeCalled = new Set([...unsettled.values(), ...slashless.values(), ...constrained.values(), ...[...redirected.values()].map((r) => r.surfaces)].flat());
+  const unmatched = (i: number) => !targetsOf.has(i) && !unsettled.has(i) && !slashless.has(i) && !redirected.has(i) && !constrained.has(i);
   const isPublic = surfacePattern(config.publicSurfaces);
 
   if (ruleEnabled(config, "FA001")) {
     const called = new Set(config.calls.map((c) => c.to));
     // A component's own API document is read by tools and people, not by the components the configuration lists.
     const documents = new Set(graph.apiDocuments.filter((d) => d.kind === "served").map((d) => `${d.component}|${d.location}`));
+    // A route an earlier one of its router always takes the requests of is reached by none: the finding says which.
+    const shadowed = shadowedRoutes(graph.surfaces);
     graph.surfaces.forEach((s, i) => {
       if (s.implicit || !called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
       const id = surfaceId(s);
       if (isPublic(id) || callersOf.has(i) || mayBeCalled.has(s)) return;
-      out.push(finding("FA001", id, `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites.`, [s.at]));
+      const by = shadowed.get(i);
+      const why = by
+        ? ` No request reaches it: ${by.method === "*" ? "any method" : by.method} ${by.path} (${by.at.file}:${by.at.line}), registered before it, takes every request it fits.`
+        : "";
+      out.push(finding("FA001", id, `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites.${why}`, by ? [s.at, by.at] : [s.at]));
     });
   }
 
@@ -56,7 +65,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     // Components whose routes are configured: a call to one is checked even when none of its routes is left.
     const served = new Set(config.routes.map((r) => r.component));
     graph.calls.forEach((c, i) => {
-      if (targetsOf.has(i) || unsettled.has(i) || slashless.has(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
+      if (!unmatched(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
       out.push(
         finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.`, [c.at]),
       );
@@ -71,7 +80,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     graph.calls.forEach((c, i) => {
       // Whichever route a call of unread method reaches, or one without its route's trailing slash, the component it
       // calls is known.
-      if ((!targetsOf.has(i) && !unsettled.has(i) && !slashless.has(i)) || redirects.has(c.id)) return;
+      if (unmatched(i) || redirects.has(c.id)) return;
       const k = `${c.from}->${c.to}`;
       (actual.get(k) ?? actual.set(k, []).get(k)!).push(c.at);
     });

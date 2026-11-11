@@ -25,6 +25,17 @@ export interface Routers {
   traced(file: string, expr: string, at?: number): boolean;
   /** Why the routers asked about were not read, one line per cause. */
   limits(component: string): string[];
+  /**
+   * The steps registration order places a route registered on a router at offset `at` of `file` under (see
+   * `Dispatch.order`): each `include_router` or `mount` that takes the router in, from the application down, then the
+   * function body the registration is in. Undefined where a router is taken in more than once or where it is not read.
+   */
+  order(key: string, file: string, at: number): Array<{ router: string; at: number }> | undefined;
+  /**
+   * Whether the application whose router serves a router's routes redirects a request no route takes to the path with
+   * the `/` at its end added or removed (`redirect_slashes`, on by default): undefined where that is not read.
+   */
+  redirects(key: string): boolean | undefined;
 }
 
 /** A literal, or the expression text where the file does not spell the value out. */
@@ -33,6 +44,8 @@ type Value = string | { unread: string };
 interface Binding {
   kind: "app" | "router";
   prefix: Value;
+  /** An application's `redirect_slashes`: true where it is not given, null where it is not spelled out. */
+  redirects?: boolean | null;
 }
 
 interface Facts {
@@ -131,15 +144,37 @@ function keyword(text: string, code: string, from: number, name: string): Value 
   return spread === undefined ? "" : { unread: pythonArg(text, code, spread).replace(/\s+/g, " ") };
 }
 
+/**
+ * A `True` or `False` the keyword argument `name` gives: undefined where it is not given, null where it is another
+ * value or a `**` argument may give it.
+ */
+function booleanKeyword(text: string, code: string, from: number, name: string): boolean | undefined | null {
+  const value = keyword(text, code, from, name);
+  if (value === "") return undefined;
+  if (typeof value === "string") return null;
+  return value.unread === "True" ? true : value.unread === "False" ? false : null;
+}
+
+/** `redirect_slashes` as given: on where it is not given (Starlette's `Router` default), null where not spelled out. */
+const redirectsGiven = (given: boolean | undefined | null): boolean | null => (given === undefined ? true : given);
+
+/** The start of the innermost function a file's offset is in, or -1 at its top level. */
+function scopeAt(scopes: Scope[], at: number): number {
+  const around = scopes.filter((s) => s.start <= at && at < s.end);
+  return around.length ? Math.max(...around.map((s) => s.start)) : -1;
+}
+
 function factsOf(text: string): Facts {
   const code = pythonCode(text);
   const facts: Facts = { routers: new Map(), imports: new Map(), includes: [], scopes: scopesOf(code) };
   // `app = FastAPI(...)`, `router: APIRouter = fastapi.APIRouter(prefix="/items")`, at any indentation.
   for (const m of code.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:[A-Za-z_][\w.]*\.)?(FastAPI|APIRouter)[ \t]*\(/gm)) {
     const name = m[1]!;
-    const binding: Binding = { kind: m[2] === "FastAPI" ? "app" : "router", prefix: m[2] === "FastAPI" ? "" : keyword(text, code, (m.index ?? 0) + m[0].length, "prefix") };
+    const from = (m.index ?? 0) + m[0].length;
+    const binding: Binding =
+      m[2] === "FastAPI" ? { kind: "app", prefix: "", redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) } : { kind: "router", prefix: keyword(text, code, from, "prefix") };
     const before = facts.routers.get(name);
-    const same = before && before.kind === binding.kind && JSON.stringify(before.prefix) === JSON.stringify(binding.prefix);
+    const same = before && before.kind === binding.kind && JSON.stringify(before.prefix) === JSON.stringify(binding.prefix) && before.redirects === binding.redirects;
     facts.routers.set(name, before === undefined || same ? binding : null);
   }
   for (const m of code.matchAll(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|.*(?:\\\n.*)*)/gm)) {
@@ -287,8 +322,34 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
     return { paths: [...new Set(out)] };
   };
 
+  /** The include steps above a router: none for an application nothing mounts. */
+  const chainOf = (key: string, seen: Set<string>): Array<{ router: string; at: number }> | undefined => {
+    const binding = facts.get(fileOf(key))?.routers.get(name(key));
+    const all = includes.get(key);
+    if (!binding || seen.has(key) || declared[fileOf(key)] !== undefined) return undefined;
+    if (binding.kind === "app" && !all?.length) return [];
+    if (all?.length !== 1 || !all[0]!.parent) return undefined;
+    const inc = all[0]!;
+    const above = chainOf(inc.parent!, new Set([...seen, key]));
+    return above && [...above, { router: `${inc.parent} ${inc.file}@${scopeAt(facts.get(inc.file)!.scopes, inc.at)}`, at: inc.at }];
+  };
+  /** The `redirect_slashes` of the application whose router a router's routes are copied into, or that it is. */
+  const redirectsOf = (key: string, seen: Set<string>): boolean | null | undefined => {
+    const binding = facts.get(fileOf(key))?.routers.get(name(key));
+    if (!binding || seen.has(key)) return undefined;
+    if (binding.kind === "app") return binding.redirects;
+    const all = includes.get(key) ?? [];
+    const values = all.map((inc) => (inc.parent ? redirectsOf(inc.parent, new Set([...seen, key])) : undefined));
+    return values.length && values.every((v) => v !== undefined && v === values[0]) ? values[0] : undefined;
+  };
+
   return {
     receiver,
+    order: (key, file, at) => {
+      const chain = chainOf(key, new Set());
+      return chain && [...chain, { router: `${key} ${file}@${scopeAt(facts.get(file)?.scopes ?? [], at)}`, at }];
+    },
+    redirects: (key) => redirectsOf(key, new Set()) ?? undefined,
     traced: (file, expr, at) => included(file, expr, at) !== undefined,
     served: (key) => {
       const s = servedAt(key, new Set());

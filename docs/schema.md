@@ -189,7 +189,7 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller), `patterns` (the regexp each parameter named there must match, as Fastify, Hono or Spring tests it) |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller), `patterns` (the regexp each parameter named there must match, as Fastify, Hono, Spring or AdonisJS's matchers test it), `dispatch` (how its router picks it and treats a trailing `/`: `picks`, `order`, `passes`, `slashes`, `trailing`, `constrained`; see below) |
 | call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `page` (the path a URL relative to its page was resolved against), `slash` (the path is written with a trailing `/`) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
@@ -211,14 +211,21 @@ matches the rest of a request's path, and a wildcard within a segment (`*.txt`, 
 character), which matches any text in that segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written
 `{*rest}`, Hono's final `/*`, written `**`, and path-to-regexp 8's `/x{/*rest}`, written `/x/{*rest}`) match the path
 without them too. Fastify's and Express 4's final `/*` (written `**`) and path-to-regexp 8's `/x/{*rest}` (Nest's
-`/x/*`) take `/x/`, with nothing after its `/`, but not `/x`; since paths that differ only in a trailing `/` are one
-route here, a request for `/x` is matched to them as well. `{rest}/**` (Next.js's `[...rest]`, path-to-regexp 8's
-`*rest`) takes one segment or more;
-Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`), is `.*` after the `/` before it, so a
-request without that segment reaches it only by the redirect to the path with a `/` added, which Starlette's router
-answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
+`/x/*`) take `/x/`, with nothing after its `/`, but not `/x`: the route's `dispatch.trailing` is `slash`, and a request
+for `/x` is not matched to it. `{rest}/**` (Next.js's `[...rest]`, path-to-regexp 8's `*rest`) takes one segment or
+more; Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`), is `.*` after the `/` before it,
+so a request without that segment is answered with the redirect to the path with a `/` added, which Starlette's router
+answers when no route, of any method, matches the path: it is matched to none, and a `limit:` names the redirect
+(where the route's router is not read, it is matched to the route, through the redirect). A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a
 description that declares it does; without one, the operation path it writes keeps the router's form, which an Arazzo
-tool cannot resolve. Paths that differ only in a trailing `/` are one route; where an OpenAPI document writes the
+tool cannot resolve. Paths that differ only in a trailing `/` are one route, whose `dispatch.trailing` says which
+forms it is served at where its router tells them apart (`slash`, `both`; neither where only the form without is).
+`dispatch` holds how the route's router dispatches, as far as atlas reads it: `picks` (`registration`, the first
+route registered that a request fits, in the `order` of the route's steps from the router a request enters to the one
+holding it, each a sequence of registrations and a place in it; `find-my-way`, Fastify's precedence), `passes` (its
+handler may pass the request on to a later route), `slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed`
+and `added` for Next.js's `trailingSlash`) and `constrained` (Fastify takes a request to it only with headers that meet
+its constraints). Where an OpenAPI document writes the
 `/` (a server path or `basePath` before the root key `/` puts one after it), a call that leaves it out is matched to
 the route only by GET or HEAD. Whether another method reaches it depends on the framework (Starlette's redirect keeps
 the method, Django's may lose a POST's body), so such a call is matched to none and a `limit:` names it. A route

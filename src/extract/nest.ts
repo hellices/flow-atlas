@@ -26,6 +26,12 @@ export interface NestApp {
    * hold it; null where they are not read. A controller of no routed module is not there.
    */
   modules?: Map<string, string[] | null>;
+  /**
+   * The order the application registers routes in on an order-sensitive adapter (Express): `declaration`, Nest's
+   * default, where every `NestFactory.create` of the files gives no other `routeResolutionStrategy`; undefined where one
+   * gives another or one the file does not spell out, or where no `NestFactory.create` is read.
+   */
+  order?: "declaration";
 }
 
 /** A node's text on one line, shortened, from the file it is in. */
@@ -110,6 +116,57 @@ export function excludePattern(path: string): RegExp | undefined {
   return depth ? undefined : new RegExp(`^${source}/?$`, "i");
 }
 
+/** The `routeResolutionStrategy` an options object gives: "declaration" where it gives none, null where not spelled out. */
+function strategyOf(options: ts.Expression | undefined): string | null {
+  if (!options) return "declaration";
+  const o = unwrap(options);
+  if (!ts.isObjectLiteralExpression(o)) return null;
+  const given = property(o, "routeResolutionStrategy");
+  if (given === undefined) return "declaration";
+  return given && ts.isStringLiteralLike(unwrap(given)) ? (unwrap(given) as ts.StringLiteralLike).text : null;
+}
+
+/**
+ * The values an options argument may hold: the expression written, or where it is a parameter of a named function, the
+ * argument each call of the function in `texts` gives there (its default where it gives none), each call found in its
+ * own file or in a file that imports the function from it. Null stands for a value not read: a function used other than
+ * by a call, or called nowhere in the files read.
+ */
+function optionValues(options: ts.Expression | undefined, file: string, texts: Map<string, string>): Array<ts.Expression | undefined | null> {
+  const id = options && unwrap(options);
+  const param = id && ts.isIdentifier(id) ? declarationOf(id) : undefined;
+  if (!param || !ts.isParameter(param)) return [options];
+  const fn = param.parent;
+  const index = fn.parameters.indexOf(param);
+  const named = ts.isFunctionDeclaration(fn) ? fn.name : ts.isVariableDeclaration(fn.parent) && ts.isIdentifier(fn.parent.name) ? fn.parent.name : undefined;
+  if (!named || param.dotDotDotToken) return [null];
+  const target = ts.isFunctionDeclaration(fn) ? fn : fn.parent;
+  const out: Array<ts.Expression | undefined | null> = [];
+  const exists = (f: string) => texts.has(f);
+  for (const [other, text] of texts) {
+    if (!text.includes(named.text)) continue;
+    const sf = other === file ? fn.getSourceFile() : ts.createSourceFile(other, text, ts.ScriptTarget.Latest, true, /x$/.test(other) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && n !== named) {
+        const d = declarationOf(n);
+        const local = other === file && d === target;
+        const spec = d && ts.isImportSpecifier(d) ? (d.parent.parent.parent.moduleSpecifier as ts.StringLiteral).text : undefined;
+        // `import { createApp as make }` calls it `make`; what it imports is the name before `as`.
+        const imported = spec !== undefined && ((d as ts.ImportSpecifier).propertyName ?? (d as ts.ImportSpecifier).name).text === named.text && resolveModule(other, spec, exists) === file;
+        if ((local || imported) && !ts.isImportSpecifier(n.parent)) {
+          if (ts.isCallExpression(n.parent) && n.parent.expression === n) {
+            const arg = n.parent.arguments[index];
+            out.push(arg ? unwrap(arg) : param.initializer);
+          } else if (!ts.isExportSpecifier(n.parent)) out.push(null);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out.length ? out : [null];
+}
+
 const REQUEST_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "SEARCH", "QUERY", "ALL"]);
 
 /**
@@ -121,12 +178,20 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
   // `key` is what a call sets, to compare calls by.
   const prefixes: Array<{ where: string; key: string; value: string | undefined; exclude: NestApp["exclude"]; limits: string[] }> = [];
   const versionings: Array<{ where: string; key: string; value: NonNullable<NestApp["versioning"]>; limits: string[] }> = [];
+  /** Each `NestFactory.create`'s `routeResolutionStrategy`: "declaration" where it gives none, null where not spelled out. */
+  const strategies: Array<string | null> = [];
   for (const [file, text] of texts) {
-    if (!/\b(?:setGlobalPrefix|enableVersioning)\s*\(/.test(text)) continue;
+    if (!/\b(?:setGlobalPrefix|enableVersioning|NestFactory)\b/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const visit = (node: ts.Node): void => {
       const name = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
       const call = node as ts.CallExpression;
+      // `NestFactory.create(module, options?)` or `(module, adapter, options?)` (nest-factory.js `create`).
+      if (name === "create" && ts.isIdentifier((call.expression as ts.PropertyAccessExpression).expression) && ((call.expression as ts.PropertyAccessExpression).expression as ts.Identifier).text === "NestFactory") {
+        const second = call.arguments[1] && unwrap(call.arguments[1]);
+        const options = call.arguments.length >= 3 ? unwrap(call.arguments[2]!) : second && !ts.isNewExpression(second) ? second : undefined;
+        for (const given of optionValues(options, file, texts)) strategies.push(given === null ? null : strategyOf(given));
+      }
       if (name === "setGlobalPrefix") {
         const value = constants.text(call.arguments[0]);
         const own: string[] = [];
@@ -195,7 +260,7 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
     };
     visit(sf);
   }
-  const app: NestApp = { prefix: declared ?? "", exclude: [] };
+  const app: NestApp = { prefix: declared ?? "", exclude: [], ...(strategies.length && strategies.every((x) => x === "declaration") ? { order: "declaration" as const } : {}) };
   const differ = <T extends { key: string }>(calls: T[]) => new Set(calls.map((c) => c.key)).size > 1;
   if (differ(prefixes) || differ(versionings)) {
     const calls = differ(prefixes) ? prefixes : versionings;

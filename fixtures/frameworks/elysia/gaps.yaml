@@ -19,44 +19,19 @@ missing:
   - { route: "* /any", reason: "`.all(path)`, chained on `new Elysia()`, is not read, and nothing says so" }
   - { route: "* /legacy", reason: "a handler mounted with `.mount(path, handler)` (served at the path and under it) is not read, and nothing says so" }
   - { route: "* /legacy/{**}", reason: "a handler mounted with `.mount(path, handler)` is not read, and nothing says so" }
-  - { route: "POST /user/sign-in", reason: "a group's route (`.group(\"/user\", (app) => app.post(...))`) is read without the group's path, and nothing says so" }
+  - { route: "POST /user/sign-in", reason: "a group's route (`.group(\"/user\", (app) => app.post(...))`) is not read: the group's path is not, so it is left out (named in a limit)" }
   - { route: "POST /user/sign-up", reason: "a group's route chained after its first one (`app.post(a).post(b)`) is not read (named in a limit: a route chained on `app`, which atlas does not trace to a framework it reads)" }
   - { route: "POST /user/profile", reason: "a group's route chained after its first one is not read (named in a limit)" }
-  - { route: "POST /account/rename", reason: "a group's route (a group with a guard) is read without the group's path, and nothing says so" }
-  - { route: "PUT /account/settings/{}", reason: "a nested group's route is read without either group's path, and nothing says so" }
+  - { route: "POST /account/rename", reason: "a group's route (a group with a guard) is not read, the group's path being unread (named in a limit)" }
+  - { route: "PUT /account/settings/{}", reason: "a nested group's route is not read, the groups' paths being unread (named in a limit)" }
   - { route: "GET /api/users", reason: "routes chained on a plugin instance (`new Elysia({ prefix })`) are not read, nor its prefix and the group it is used in, and nothing says so" }
   - { route: "POST /api/users", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
   - { route: "GET /api/users/{}", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
   - { route: "GET /version", reason: "routes chained on a plugin instance a function returns are not read, and nothing says so" }
   - { route: "GET /health", reason: "routes chained on a named plugin instance are not read, and nothing says so" }
   - { route: "GET /admin/dashboard", reason: "routes chained on a plugin instance with a `prefix` are not read, and nothing says so" }
-  - { route: "DELETE /admin/cache", reason: "a group's route in a prefixed plugin is read without the group's path and the plugin's prefix, and nothing says so" }
+  - { route: "DELETE /admin/cache", reason: "a group's route in a prefixed plugin is not read, the group's path and the plugin's prefix being unread (named in a limit)" }
   - { route: "DELETE /admin/cache/{}", reason: "a group's route chained after its first one is not read (named in a limit)" }
   - { route: "GET /admin/reports/{}", reason: "routes chained on a prefixed plugin used in another are not read, and nothing says so" }
   - { route: "GET /admin/reports/{**}", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`), and nothing says so" }
   - { route: "GET /admin/reports", reason: "routes chained on a prefixed plugin used in another are not read (here the wildcard `/*`, which also takes the prefix with `/`), and nothing says so" }
-extra:
-  - { route: "POST /sign-in", reason: "a group's route read without the group's path (`/user`)" }
-  - { route: "POST /rename", reason: "a group's route read without the group's path (`/account`)" }
-  - { route: "PUT /{}", reason: "a nested group's route read without the groups' paths (`/account/settings`)" }
-  - { route: "DELETE /", reason: "a group's route read without the group's path and the plugin's prefix (`/admin/cache`)" }
-dispatch:
-  # No route takes these (Elysia answers 404); atlas sends them to the surfaces it reads without their groups' paths
-  # (listed under `extra`).
-  - { request: "DELETE /", reason: "a surface the framework does not serve: atlas reaches `DELETE /`, the `/admin` plugin's `/cache` group route read without the group's path and the plugin's prefix; Elysia serves it at `/admin/cache/` only" }
-  - { request: "PUT /callback", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /callback/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /health", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /health/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /hi", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /hi/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /id", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /id/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /items", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /items/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /m-search", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /m-search/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /optional", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /optional/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /version", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
-  - { request: "PUT /version/", reason: "a surface the framework does not serve: atlas reaches `PUT /{}`, the nested group's route read without the groups' paths; Elysia serves it at `/account/settings/:key` only, and no route takes PUT here" }
