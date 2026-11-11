@@ -268,7 +268,8 @@ other excluded files left out), or in the `bootstrap` file the entry names. Ever
 takes (decorators, `setGlobalPrefix` and its `exclude`, `enableVersioning`, `RouterModule.register`) is read where it is
 written in place or held in a constant of any file: a `const` initialized with a literal, a template or a `+` of
 such values; an enum member initialized with a literal, or with none: 0 first, else one more than the numeric member before it
-(TypeScript's auto-increment; `E[0]` maps a numeric enum's value back to its name); the last own property of that name of an object
+(TypeScript's auto-increment, which an ambient enum that is not `const` does not have; `E[0]` maps a numeric enum's
+value back to its name); the last own property of that name of an object
 literal held `as const` (or in `Object.freeze`, one level deep), where no spread or computed name not read after it may
 set it; the elements of a `const` array. A `let`, a parameter, an enum member computed from anything else, an accessor
 and what an object inherits (`constructor`) are not read. A name is followed through its imports (aliased, default,

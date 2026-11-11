@@ -83,8 +83,8 @@ function literal(e: ts.Expression): Value | undefined {
  * and `+` of those, and names that hold them, followed through imports to the module that declares them.
  *
  * A name holds a value where it is a `const` initialized with one; a member of an enum whose member is initialized with
- * a literal, or follows a numeric member with none (TypeScript's auto-increment), with a numeric enum's reverse mapping
- * (`E[0]`); a property of an object literal held in a `const` with `as const` (or frozen with `Object.freeze`, one level
+ * a literal, or has none and is first (0) or follows a numeric member (TypeScript's auto-increment, which an ambient
+ * enum that is not `const` does not have), with a numeric enum's reverse mapping (`E[0]`); a property of an object literal held in a `const` with `as const` (or frozen with `Object.freeze`, one level
  * deep), as its last own property of that name (a spread or a computed name not read may set any); the elements of a
  * `const` array. A `let`, a parameter, a member computed from anything else, an accessor, a method and anything an
  * object inherits (`constructor`) are not read.
@@ -259,10 +259,13 @@ export class Constants {
     const value = (e: ts.Expression) => this.value(e);
     let unreadName = false;
     for (const decl of all) {
+      // A member of an ambient enum that is not const takes its value from the code that defines the enum at run time,
+      // not from its place: TypeScript counts it computed, so only an initializer gives it one.
+      const counted = hasModifier(decl, ts.SyntaxKind.ConstKeyword) || !ambient(decl);
       // Each declaration counts from 0 again; TypeScript requires an initializer on the first member of all but one.
       let previous: Value | null | undefined;
       for (const m of decl.members) {
-        const v = m.initializer ? (literal(m.initializer) ?? null) : previous === undefined ? 0 : typeof previous === "number" ? previous + 1 : null;
+        const v = m.initializer ? (literal(m.initializer) ?? null) : !counted ? null : previous === undefined ? 0 : typeof previous === "number" ? previous + 1 : null;
         previous = v;
         const name = keyOf(m.name, value);
         if (name === undefined) unreadName = true;
@@ -351,12 +354,10 @@ export class Constants {
         continue;
       }
       if (!hasModifier(st, ts.SyntaxKind.ExportKeyword)) continue;
+      // The module's own export of the name hides any `export *` that gives it, read or not.
       const isDefault = hasModifier(st, ts.SyntaxKind.DefaultKeyword);
-      if (ts.isVariableStatement(st) && name !== "default") {
-        const d = st.declarationList.declarations.find((x) => ts.isIdentifier(x.name) && x.name.text === name);
-        if (d) return { node: d };
-      }
-      if ((ts.isEnumDeclaration(st) || ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st)) && (isDefault ? name === "default" : st.name?.text === name)) return { node: st };
+      const d = isDefault ? (name === "default" ? st : undefined) : binding(st, name);
+      if (d) return { node: d };
     }
     // `export *` passes on no default, and a name two of them give differently is exported by neither.
     if (name === "default") return undefined;
@@ -573,8 +574,8 @@ export class Constants {
           }
         }
         if (!hasModifier(st, ts.SyntaxKind.ExportKeyword) || hasModifier(st, ts.SyntaxKind.DefaultKeyword)) continue;
-        if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === name) found.add(d);
-        if ((ts.isEnumDeclaration(st) || ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st) || ts.isModuleDeclaration(st)) && st.name?.text === name) found.add(first(st));
+        const d = binding(st, name);
+        if (d) found.add(first(d));
       }
     }
     const node = found.size === 1 && !outside ? [...found][0] : undefined;
@@ -588,6 +589,31 @@ function first(node: ts.Node): ts.Node {
   if (!ts.isEnumDeclaration(node)) return node;
   const scope = node.parent as ts.SourceFile | ts.ModuleBlock;
   return scope.statements.find((s) => ts.isEnumDeclaration(s) && s.name.text === node.name.text) ?? node;
+}
+
+/** Whether a declaration is ambient: `declare`, in a `declare namespace`, or in a declaration file. */
+function ambient(node: ts.Node): boolean {
+  for (let n: ts.Node | undefined = node; n; n = n.parent) {
+    if (ts.isSourceFile(n)) return n.isDeclarationFile;
+    if (hasModifier(n, ts.SyntaxKind.DeclareKeyword)) return true;
+  }
+  return false;
+}
+
+/** The names a binding pattern binds. */
+function namesOf(name: ts.BindingName): string[] {
+  return ts.isIdentifier(name) ? [name.text] : name.elements.flatMap((e) => (ts.isOmittedExpression(e) ? [] : namesOf(e.name)));
+}
+
+/**
+ * The node of a top-level statement that binds a value under a name: a variable's declaration (one that destructures
+ * included, which is not read), an enum, a class, a function, a namespace or an `import X =`. Types bind no value.
+ */
+function binding(st: ts.Statement, name: string): ts.Node | undefined {
+  if (ts.isVariableStatement(st)) return st.declarationList.declarations.find((d) => namesOf(d.name).includes(name));
+  if (ts.isModuleDeclaration(st)) return ts.isIdentifier(st.name) && st.name.text === name ? st : undefined;
+  if (ts.isEnumDeclaration(st) || ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st) || ts.isImportEqualsDeclaration(st)) return st.name?.text === name ? st : undefined;
+  return undefined;
 }
 
 /** The module an import binding is imported from; undefined for any other node. */

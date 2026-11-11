@@ -47,14 +47,15 @@ const within = (texts: Map<string, string>) => new Constants({ read: (f) => text
  * A version or list of versions as Nest takes them: strings the code spells out (see `Constants`), `VERSION_NEUTRAL`,
  * or an array of those; undefined otherwise.
  */
-export function versionsOf(e: ts.Expression, constants: Constants): string[] | undefined {
+export function versionsOf(e: ts.Expression, constants: Constants, within = new Set<readonly ts.Expression[]>()): string[] | undefined {
   const u = unwrap(e);
   if ((ts.isIdentifier(u) && u.text === "VERSION_NEUTRAL") || (ts.isPropertyAccessExpression(u) && u.name.text === "VERSION_NEUTRAL")) return [NEUTRAL];
   const v = constants.text(u);
   if (v !== undefined) return [v];
   const list = constants.elements(u);
-  if (!list) return undefined;
-  const all = list.map((x) => (ts.isSpreadElement(x) ? undefined : versionsOf(x, constants)));
+  // An array that holds itself, through constants of other files, gives no version.
+  if (!list || within.has(list)) return undefined;
+  const all = list.map((x) => (ts.isSpreadElement(x) ? undefined : versionsOf(x, constants, new Set([...within, list]))));
   return all.every(Boolean) ? (all as string[][]).flat() : undefined;
 }
 
@@ -297,7 +298,8 @@ export function nestModules(texts: Map<string, string>, component: string, limit
           unknown = `${where(call)} registers routes the file does not spell out (${short(arg ?? call)}) with RouterModule, and which controllers they serve under which path is not read, so no route of the controllers is`;
           return;
         }
-        const entries = (list: readonly ts.Expression[], parent: string | null | undefined, top: boolean): void => {
+        const entries = (list: readonly ts.Expression[], parent: string | null | undefined, top: boolean, within: Set<readonly ts.Expression[]>): void => {
+          const inner = new Set([...within, list]);
           for (const element of list) {
             const item = unwrap(element);
             // The file the entry is written in, whose imports name its modules.
@@ -329,13 +331,14 @@ export function nestModules(texts: Map<string, string>, component: string, limit
             if (value === null) limits.push(`routes ${component}: ${where(own ?? item)} gives RouterModule a path the file does not spell out (${short(own ?? item)}); the routes of the controllers it reaches are not read`);
             const children = property(item, "children");
             const list = children ? constants.elements(children) : undefined;
-            if (list) entries(list, path === undefined ? "" : path, false);
+            // Children that hold their own parent, through constants of other files, are not read.
+            if (list && !inner.has(list)) entries(list, path === undefined ? "" : path, false, inner);
             else if (children !== undefined) {
               unknown = `${where(item)} gives RouterModule children the file does not spell out (${short(children ?? item)}), and which controllers they serve under which path is not read, so no route of the controllers is`;
             }
           }
         };
-        entries(routes, undefined, true);
+        entries(routes, undefined, true, new Set());
       }
       ts.forEachChild(node, visit);
     };

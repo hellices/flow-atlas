@@ -63,9 +63,19 @@ describe("constants read across files", () => {
       "export const enum Inlined { A, B }",
       "export enum Merged { A = 'a' }",
       "export enum Merged { B = 'b' }",
+      "export declare enum Ambient { Low, High = 'high' }",
+      "export declare const enum AmbientConst { Low, High }",
     ].join("\n");
     const main = [
-      "import { Path, Code, Mixed, Computed, Inlined, Merged } from './enums';",
+      "import { Path, Code, Mixed, Computed, Inlined, Merged, Ambient, AmbientConst } from './enums';",
+      "import { Declared } from '@declared';",
+      // An ambient enum's member with no initializer takes its value from the code that defines it at run time.
+      "const probeAmbientLow = `${Ambient.Low}`;",
+      "const probeAmbientReverse = Ambient[0];",
+      "const probeAmbientHigh = Ambient.High;",
+      "const probeAmbientConst = `${AmbientConst.High}`;",
+      "const probeDeclared = `${Declared.A}`;",
+      "const probeDeclaredB = Declared.B;",
       "const probeUsers = Path.Users;",
       "const probeOrders = Path['Orders'];",
       "const probeQuoted = Path.Quoted;",
@@ -84,7 +94,13 @@ describe("constants read across files", () => {
       "const probeConstructor = Path.constructor;",
       "const probeEnum = Path;",
     ].join("\n");
-    expect(probes({ "src/main.ts": main, "src/enums.ts": enums })).toEqual({
+    expect(probes({ "src/main.ts": main, "src/enums.ts": enums, "src/declared.d.ts": "export enum Declared { A, B = 'b' }", "tsconfig.json": '{ "compilerOptions": { "paths": { "@declared": ["src/declared.d.ts"] } } }' })).toEqual({
+      probeAmbientLow: undefined,
+      probeAmbientReverse: undefined,
+      probeAmbientHigh: "high",
+      probeAmbientConst: "1",
+      probeDeclared: undefined,
+      probeDeclaredB: "b",
       probeUsers: "users",
       probeOrders: "orders",
       probeQuoted: "quoted",
@@ -206,6 +222,13 @@ describe("constants read across files", () => {
       probeTypeOnly2: undefined,
       probeMissing: undefined,
     });
+    // A module's own export of a name hides what `export *` gives under it, even one atlas does not read.
+    const shadowed = {
+      "src/idx.ts": "export const { users } = { users: '/real' };\nexport namespace Paths { export const users = '/real'; }\nexport * from './other';",
+      "src/other.ts": "export const users = '/wrong';\nexport const Paths = { users: '/wrong' } as const;\nexport const free = '/free';",
+      "src/main.ts": "import { users, Paths, free } from './idx';\nconst probeDestructured = users;\nconst probeNamespace = Paths.users;\nconst probeFree = free;",
+    };
+    expect(probes(shadowed)).toEqual({ probeDestructured: undefined, probeNamespace: undefined, probeFree: "/free" });
     // An object `export default` gives may be changed by any module that imports it, unless it is `as const`.
     const objects = { "src/a.ts": "export default { a: '/a' };", "src/b.ts": "export default { b: '/b' } as const;", "src/main.ts": "import A from './a';\nimport B from './b';\nconst probeA = A.a;\nconst probeB = B.b;" };
     expect(probes(objects)).toEqual({ probeA: undefined, probeB: "/b" });
@@ -379,6 +402,23 @@ describe("NestJS paths held in constants of other files", () => {
     expect(routes(files)).toEqual({
       ids: ["GET /orders"],
       limits: ["routes api: api/src/b.controller.ts:1 registers a path the file does not spell out ({ ...options, version: '1' }); its routes are not read"],
+    });
+  });
+
+  it("leaves out versions and RouterModule children held in arrays that hold themselves", () => {
+    const files = {
+      "api/src/a.ts": "import { B } from './b';\nexport const A = [B];\nexport const ROUTES = [{ path: 'a', children: CHILD }];\nimport { CHILD } from './b';",
+      "api/src/b.ts": "import { A, ROUTES } from './a';\nexport const B = [A];\nexport const CHILD = [{ path: 'b', children: ROUTES }];",
+      "api/src/app.module.ts": "import { RouterModule } from '@nestjs/core';\nimport { ROUTES } from './a';\n@Module({ imports: [RouterModule.register(ROUTES)] })\nexport class AppModule {}",
+      "api/src/main.ts": "app.enableVersioning({ type: VersioningType.URI });",
+      "api/src/x.controller.ts": "import { A } from './a';\n@Controller('x')\nexport class X {\n  @Version(A) @Get() list() {}\n}",
+    };
+    expect(routes(files)).toEqual({
+      ids: [],
+      limits: [
+        "routes api: api/src/b.ts:3 gives RouterModule children the file does not spell out (ROUTES), and which controllers they serve under which path is not read, so no route of the controllers is",
+        "routes api: api/src/x.controller.ts:4 gives a version the file does not spell out (A); its routes are not read",
+      ],
     });
   });
 
