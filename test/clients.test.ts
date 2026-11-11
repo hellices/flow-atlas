@@ -47,6 +47,10 @@ const keys = (calls: Array<{ method: string; path: string }>): string[] =>
 
 describe("calls as each client library sends them", () => {
   const board: string[] = [];
+  it("finds the client fixtures", () => {
+    // Without them every test below would be left out, and the suite would pass on nothing.
+    expect(fixtures.length, `no client fixture under ${root}`).toBeGreaterThan(0);
+  });
   for (const name of fixtures) {
     it(name, () => {
       const dir = join(root, name);
