@@ -23,7 +23,7 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi | spring | next | flask
+    styles: [nest]            # nest | express | fastapi | spring | next | flask | aspnetcore
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
       "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, or a Flask blueprint's url_prefix
@@ -625,6 +625,46 @@ code are values, a relative URL is resolved against the route's path, and one st
 limit. A route source's
 `openapi` document adds every operation it declares, whatever the language; see `references/openapi.md`.
 
+The `aspnetcore` style reads ASP.NET Core in C#, from a lexer that keeps comments, preprocessor lines and every string
+form (verbatim, raw, interpolated, UTF-8) out of the code. It follows what the program's top-level statements, a static
+`Main` and the `Configure` methods of a `UseStartup<T>()` class map on the application (`WebApplication.CreateBuilder`
+and its kind, `Build()`, `WebApplication.Create`, an `IApplicationBuilder` or `WebApplication` parameter of
+`Configure`, a parameter of `UseEndpoints`' lambda), through locals, the groups `MapGroup` makes (nested, their prefixes
+joined), the conventions that return the builder they are called on (`RequireAuthorization`, `WithTags`, Asp.Versioning's
+`HasApiVersion`, its `NewVersionedApi`, a group with no prefix) and the extension and static methods of the files it
+passes a builder to, each call with its own (`MapTodos(this RouteGroupBuilder group)` called on two groups maps its routes
+under both). `MapGet`, `MapPost`, `MapPut`, `MapDelete` and `MapPatch` register their method, `MapMethods` the methods of
+an array, list or collection expression (`HttpMethods.Get` included), `Map` any method, and `MapFallback`,
+`MapFallbackToFile` and `MapFallbackToController` any method at `{*path:nonfile}` or the pattern given, last of all
+(`Order` int.MaxValue). A path is a string literal, a constant of the file or another (`Paths.Api`), `nameof`, or `+`
+and interpolation of those. Controllers are read where `MapControllers`, `MapControllerRoute`,
+`MapDefaultControllerRoute` or `MapAreaControllerRoute` maps them, under that builder's prefix: public classes, not
+nested, abstract or generic, without `[NonController]`, named `...Controller` or deriving from `Controller`,
+`ControllerBase` or a class of the files that does (whose route attributes, area and actions they inherit); their
+public methods that are not static, generic or `[NonAction]` are actions, named by `[ActionName]` or by the method
+without `Async`. `[Route]`, `[HttpGet]` and the other method attributes and `[AcceptVerbs(..., Route = ...)]` give the
+routes as `DefaultApplicationModelProvider` builds selectors: each attribute with a template, an `Order` or a `Name` one
+route, a template starting with `/` or `~/` replacing the controller's, the others joined to each controller route,
+`[controller]`, `[action]` and `[area]` replaced (`[[` and `]]` for brackets) and a method attribute without a template
+constraining the methods; an attribute may be written with its namespace, with or without `Attribute`, or through a
+`using` alias. An action no attribute route reaches is served by each conventional route whose values it meets
+(`DefaultRoutePatternTransformer.SubstituteRequiredValues`): `{controller}` and `{action}` are its names, which the
+request writes unless they equal the route's defaults (`{controller=Home}/{action=Index}/{id?}` serves HomeController's
+Index at `/`, `/Home`, `/Home/Index` and `/Home/Index/{id}`), and an area route only the controllers of its area.
+Templates are read as `RoutePatternParser` reads them: `{id:int}` is `{id}` with the constraint's test as its pattern
+(`int`, `long`, `alpha`, `minlength`, `maxlength`, `length`, `required`, and a `regex` within the syntax .NET and
+JavaScript read alike, in either case); a constraint atlas does not repeat (`min`, `range`, `guid`, `datetime`, one the
+application registers) leaves the parameter `unchecked`; an optional parameter or one with a default serves the path
+with and without it (and every segment after it), `{filename}.{ext?}` serves `{filename}` for a segment `{filename}.{ext}` does not take,
+and `{*rest}` and `{**rest}` are `{*rest}`. `MapOpenApi` (`/openapi/{documentName}.json`), `MapHealthChecks`, and the
+files under the project's `wwwroot` that `MapStaticAssets` and `UseStaticFiles` serve, to GET and HEAD, are `implicit`
+(`aspnetcore MapOpenApi`, `aspnetcore MapHealthChecks`, `aspnetcore MapStaticAssets`, `aspnetcore UseStaticFiles`);
+`MapStaticAssets`' fingerprinted and compressed names are not read. A path, method list, prefix or receiver not spelled
+out, a builder a method maps on that no call read passes it, a controller deriving from a class not among the files, a
+`RouteTokenTransformerConvention`, `UsePathBase`, Razor Pages, Razor components, SignalR hubs, gRPC services, YARP and
+dynamic routes are left out and named in a limit; so is a `Map(path, x => ...)` whose lambda may branch the middleware
+(`IApplicationBuilder.Map`). Carter's modules, FastEndpoints' endpoints and Blazor's pages are not read.
+
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
 (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and
 `th:attr` items, and root-relative URLs in `href`, `action`, `src`, `formaction` and the configured `data-*`; also the
@@ -682,8 +722,15 @@ it does not, the call joins every route its path fits, and a limit names what is
   its variables, and the variables by their weight (`Weighting`: more pieces of static text in the segment first, the
   longer first, then more converters, then lower converter weights: `int` and `float` 50, `string`, `any`, `uuid` and a
   `BaseConverter` 100, `path` 200), whatever the order they were added in; two of one weight with other regexes are
-  tried in the order their rules were added, which atlas does not read, so both stay targets.
-- Trailing `/`. Express, @koa/router and Nest on Express ignore it. Express's `Router({ strict: true })` makes a
+  tried in the order their rules were added, which atlas does not read, so both stay targets. ASP.NET Core's endpoint routing takes, of the routes whose template and constraints a
+  request meets, the one with the lowest `Order` (an attribute's `Order` or a literal `WithOrder(n)` chained on the route, 0 for the others, 1 and up for conventional
+  routes in the order they are mapped, int.MaxValue for a fallback; one not spelled out leaves the route out of the
+  ranking, with a limit), then the lowest precedence (segment by segment: a
+  literal, then a constrained parameter or a segment of several parts, then a parameter, then a constrained catch-all,
+  then a catch-all), then one that names the method before one that takes any; a route whose constraint atlas does not
+  read may refuse the request and keeps no other route from it. It matches a path's literal text whatever its case,
+  and HEAD only to a route that takes HEAD.
+- Trailing `/`. Express, @koa/router, Nest on Express and ASP.NET Core ignore it. Express's `Router({ strict: true })` makes a
   route take the path as written, a router's `/` taking its mount's path with and without the `/`; an application's
   `strict routing` is read where every `set`, `enable` or `disable` of it is at the top level of the file that creates
   the application, before every route registered there, since the application's router takes it when first used (the

@@ -1,4 +1,4 @@
 components:
   - { name: app, path: . }
 routes:
-  - { component: app, files: ["src/App/**/*.cs"] }
+  - { component: app, files: ["src/App/**/*.cs"], styles: [aspnetcore] }

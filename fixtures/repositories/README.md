@@ -30,5 +30,5 @@ To add a repository: a directory with `repository.yaml` and `atlas.config.yaml`,
 | `node-express-realworld-example-app` | an Express API of chained routers, the RealWorld backend |
 | `immich` | NestJS under a global prefix, a SvelteKit app, a Flutter app (Dart) and the SDK oazapfts generates, which the web app calls |
 | `twenty` | an Nx monorepo: NestJS (GraphQL mostly, REST controllers on a shared path enum) and a React front |
-| `eshop` | .NET Aspire: ASP.NET Core minimal APIs (not read; Catalog's committed OpenAPI documents), Blazor and MAUI clients in C# |
+| `eshop` | .NET Aspire: ASP.NET Core minimal APIs under versioned groups (Catalog's committed OpenAPI documents beside them), Blazor and MAUI clients in C# |
 | `outline` | Koa with @koa/router read in the express style, a React app on its own API client |
