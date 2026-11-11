@@ -1,7 +1,11 @@
 package main
 
-import "example.com/echoroutes/app"
+import (
+	"log"
+
+	"example.com/echoroutes/app"
+)
 
 func main() {
-	app.New().Start(":1323")
+	log.Fatal(app.New().Start(":1323"))
 }

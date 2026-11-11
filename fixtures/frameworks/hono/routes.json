@@ -4,6 +4,7 @@
   "routes": [
     {"method":"DELETE","path":"/"},
     {"method":"GET","path":"/"},
+    {"method":"GET","path":"/","raw":"/*"},
     {"method":"POST","path":"/"},
     {"method":"PUT","path":"/"},
     {"method":"GET","path":"/{**}","raw":"/*"},

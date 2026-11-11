@@ -68,15 +68,21 @@ if (unknown.length) {
   process.exit(2);
 }
 
-/** Entries in a fixed order, each once, so the file changes only when one does. */
-function settled(entries) {
+/**
+ * Entries in a fixed order, each once, so the file changes only when one does. A route is told by its raw as well, the
+ * registration it was read from; a call by method and path alone, its raw only the first URL that sent it.
+ */
+function settled(entries, byRaw) {
   const seen = new Map();
   for (const r of entries) {
     if (typeof r.method !== "string" || typeof r.path !== "string") throw new Error(`an entry needs a method and a path: ${JSON.stringify(r)}`);
-    const key = `${r.method} ${r.path}`;
-    if (!seen.has(key)) seen.set(key, { method: r.method, path: r.path, ...(r.raw !== undefined && r.raw !== r.path ? { raw: r.raw } : {}) });
+    const entry = { method: r.method, path: r.path, ...(r.raw !== undefined && r.raw !== r.path ? { raw: r.raw } : {}) };
+    const key = JSON.stringify([entry.method, entry.path, byRaw ? (entry.raw ?? null) : null]);
+    if (!seen.has(key)) seen.set(key, entry);
   }
-  return [...seen.values()].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
+  return [...seen.values()].sort((a, b) =>
+    a.path !== b.path ? a.path.localeCompare(b.path) : a.method !== b.method ? a.method.localeCompare(b.method) : (a.raw ?? "").localeCompare(b.raw ?? ""),
+  );
 }
 
 /** A request's path with each argument written `{}`, without its query and without a trailing `/` but on the root. */
@@ -152,8 +158,12 @@ function writeDispatch(f, out) {
     console.error(`   ${entries.length} sample requests`);
     return false;
   }
+  if (!committed) {
+    console.error(`   ${out.framework} ${out.version} dispatches ${entries.length} sample requests, and there is no dispatch.json`);
+    return true;
+  }
   const key = (r) => `${r.method} ${r.path} -> ${r.route}`;
-  const before = new Set(committed ? JSON.parse(committed).requests.map(key) : []);
+  const before = new Set(JSON.parse(committed).requests.map(key));
   const now = new Set(entries.map(key));
   const gone = [...before].filter((x) => !now.has(x));
   const added = [...now].filter((x) => !before.has(x));
@@ -174,7 +184,7 @@ for (const f of names.length ? all.filter((g) => names.includes(g.name)) : all) 
     f.kind === "client"
       ? await recordCalls(f, spec.oracle)
       : JSON.parse(execSync(spec.oracle, { cwd: f.dir, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 }));
-  const result = { by: out[k.by], version: out.version, entries: settled(out[k.list]) };
+  const result = { by: out[k.by], version: out.version, entries: settled(out[k.list], f.kind === "framework") };
   if (f.kind === "framework" && out.requests !== undefined) {
     failed = writeDispatch(f, out) || failed;
   }
@@ -182,10 +192,15 @@ for (const f of names.length ? all.filter((g) => names.includes(g.name)) : all) 
   // One entry a line, so a change shows as the lines of the entries it moves.
   const lines = result.entries.map((r) => `    ${JSON.stringify(r)}`).join(",\n");
   const text = `{\n  ${JSON.stringify(k.by)}: ${JSON.stringify(result.by)},\n  "version": ${JSON.stringify(result.version)},\n  ${JSON.stringify(k.list)}: [\n${lines}\n  ]\n}\n`;
-  const committed = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { [k.list]: [] };
+  const committed = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
   if (!check || keep) writeFileSync(file, text);
   if (!check) {
     console.error(`   ${result.entries.length} ${k.list}, ${result.by} ${result.version}`);
+    continue;
+  }
+  if (!committed) {
+    failed = true;
+    console.error(`   ${result.by} ${result.version} reports ${result.entries.length} ${k.list}, and there is no ${k.file}`);
     continue;
   }
   // The fixture's own spelling counts too: the file records it.

@@ -32,6 +32,7 @@
     {"method":"POST","path":"/somePost"},
     {"method":"PUT","path":"/somePut"},
     {"method":"GET","path":"/user/{}","raw":"/user/:name"},
+    {"method":"GET","path":"/user/{}","raw":"/user/:name/"},
     {"method":"POST","path":"/user/{}","raw":"/user/:name/"},
     {"method":"GET","path":"/user/{}/{**}","raw":"/user/:name/*action"},
     {"method":"POST","path":"/user/{}/{**}","raw":"/user/:name/*action"},

@@ -101,10 +101,13 @@ for (const path of probes) {
       continue;
     }
     const any = routes.some((r) => r.path === route && r.method === "ALL");
-    if (!any && !routes.some((r) => r.path === route && r.method === method)) throw new Error(`${method} ${path} is answered by ${route}, which takes no ${method}`);
+    const takes = (m: string) => routes.some((r) => r.path === route && r.method === m);
+    // A HEAD where the path registers none but a GET is Elysia's own, answered by that GET route.
+    const as = method === "HEAD" && !takes("HEAD") && takes("GET") ? "GET" : method;
+    if (!any && !takes(as)) throw new Error(`${method} ${path} is answered by ${route}, which takes no ${method}`);
     const form = (forms.get(route) ?? []).find((f) => shape(f).test(path.replace(/\/+$/, "") || "/"));
     if (form === undefined) throw new Error(`${method} ${path} is answered by ${route}, none of whose forms it has`);
-    requests.push({ method, path, route: `${any ? "*" : method} ${form}` });
+    requests.push({ method, path, route: `${any ? "*" : as} ${form}` });
   }
 }
 

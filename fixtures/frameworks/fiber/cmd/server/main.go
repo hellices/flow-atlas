@@ -1,7 +1,11 @@
 package main
 
-import "example.com/fiberroutes/app"
+import (
+	"log"
+
+	"example.com/fiberroutes/app"
+)
 
 func main() {
-	app.New().Listen(":3000")
+	log.Fatal(app.New().Listen(":3000"))
 }

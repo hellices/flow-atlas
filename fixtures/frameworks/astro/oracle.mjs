@@ -98,6 +98,7 @@ async function answered(path, from) {
   const methods = [];
   for (const method of [...PROBED, OTHER]) {
     const response = await request(method, path);
+    if (response.status >= 500) throw new Error(`${method} ${path} is answered with ${response.status}`);
     if (response.status >= 400) continue;
     const wrong = from(response);
     if (wrong) throw new Error(`${method} ${path}: ${wrong}`);

@@ -270,8 +270,17 @@ fn trimmed(path: &str) -> String {
     if path.is_empty() { "/".to_owned() } else { path.to_owned() }
 }
 
-const METHODS: [Method; 8] =
-    [Method::GET, Method::HEAD, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS, Method::TRACE];
+const METHODS: [Method; 9] = [
+    Method::GET,
+    Method::HEAD,
+    Method::POST,
+    Method::PUT,
+    Method::PATCH,
+    Method::DELETE,
+    Method::OPTIONS,
+    Method::TRACE,
+    Method::CONNECT,
+];
 
 /// What the probe middleware saw of the last response: the route actix matched and the resource map.
 static SEEN: Mutex<(Option<String>, Option<String>)> = Mutex::new((None, None));

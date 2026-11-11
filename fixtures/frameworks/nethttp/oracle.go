@@ -83,18 +83,31 @@ func main() {
 
 	routes := []route{}
 	for id, pattern := range r.patterns {
+		// ServeMux splits the method from the path at the first space or tab, and trims spaces and tabs before the path.
 		method, path := "*", pattern
-		if m, p, found := strings.Cut(pattern, " "); found {
-			method, path = m, strings.TrimLeft(p, " \t")
+		if i := strings.IndexAny(pattern, " \t"); i >= 0 {
+			method, path = pattern[:i], strings.TrimLeft(pattern[i+1:], " \t")
+			if method == "" {
+				method = "*"
+			}
 		}
 		if !strings.HasPrefix(path, "/") {
 			panic(fmt.Sprintf("%q names a host, which a route's path cannot hold", pattern))
 		}
-		request := method
-		if request == "*" {
-			request = http.MethodPatch
+		// A methodless pattern answers any method a pattern for the same path does not name, so methods are tried
+		// until it answers one.
+		requests := []string{method}
+		if method == "*" {
+			requests = []string{http.MethodPatch, http.MethodPut, http.MethodDelete, http.MethodPost, http.MethodGet,
+				http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodConnect}
 		}
-		if answered := answers(r.mux, request, sample(path)); answered != strconv.Itoa(id) {
+		var request, answered string
+		for _, request = range requests {
+			if answered = answers(r.mux, request, sample(path)); answered == strconv.Itoa(id) {
+				break
+			}
+		}
+		if answered != strconv.Itoa(id) {
 			panic(fmt.Sprintf("%s %s is answered by route %q, not by %q that registers it", request, sample(path), answered, pattern))
 		}
 		routes = append(routes, route{Method: method, Path: canonical(path), Raw: path})

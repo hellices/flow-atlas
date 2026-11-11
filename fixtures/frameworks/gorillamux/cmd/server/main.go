@@ -1,11 +1,12 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"example.com/muxroutes/app"
 )
 
 func main() {
-	http.ListenAndServe(":8000", app.New())
+	log.Fatal(http.ListenAndServe(":8000", app.New()))
 }
