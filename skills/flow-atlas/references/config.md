@@ -273,12 +273,16 @@ value back to its name); the last own property of that name of an object
 literal held `as const` (or in `Object.freeze`, one level deep), where no spread or computed name not read after it may
 set it; the elements of a `const` array. A `let`, a parameter, an enum member computed from anything else, an accessor
 and what an object inherits (`constructor`) are not read. A name is followed through its imports (aliased, default,
-`import * as`) and re-exports (`export { x as y } from`, `export *`, of which two giving the name differently give
-none, `export * as`): a relative specifier; else the `paths` (and `baseUrl`) of the nearest tsconfig.json above the
-importing file, with what it extends by a relative path, matched as TypeScript does; else a package the root
-package.json's `workspaces` or pnpm-workspace.yaml list, by its `exports` (or `types`, `module`, `main`), and where that
-names a build output not committed, the one declaration the package's TypeScript files export under the name (two, or
-a re-export from outside the package, leave it unread). Cycles of imports or constants, and a value built longer than
+`import * as`) and re-exports (`export { x as y } from`, `export { imported }`, `export * as`, `export *`, which a
+module's own export of the name hides; two giving it from different bindings, or one reaching a module not read, give
+none), as ECMAScript resolves exports: a relative specifier; else the `paths` (and `baseUrl`) of the nearest
+tsconfig.json above the importing file, with what it extends by a relative path, matched as TypeScript does; else a
+package the root package.json's `workspaces` or pnpm-workspace.yaml list, at the file Node.js loads: the `exports`
+subpath (or its `*` pattern with the longest text before `*`, then the longest key) and the target its conditions
+select, which must be one file for an `import` and a `require`, with or without `module-sync` (a subpath not listed or
+blocked with null names nothing), else the subpath as a file or `main`. Where that file is a build output not committed,
+the package's one TypeScript source whose path mirrors it below their first directories is read in its place
+(`dist/types/index.d.ts` and `dist/types.mjs` from `src/types/index.ts`); none or two, and the value is not read. Cycles of imports or constants, and a value built longer than
 2048 characters, are left unread; what is not read is named in a limit as above.
 Calls that set different values (two applications) leave the controllers' routes unread; a setting not spelled out
 agrees with no other. A prefix, version or versioning option

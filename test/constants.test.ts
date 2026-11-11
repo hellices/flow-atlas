@@ -222,6 +222,18 @@ describe("constants read across files", () => {
       probeTypeOnly2: undefined,
       probeMissing: undefined,
     });
+    // A barrel whose `export *` reaches a module not read may give the name from there: a barrel above it does not read
+    // the name from its other `export *` either. Two modules that pass on one binding give the same.
+    const nested = {
+      "src/path.ts": "export const PATH = '/path';",
+      "src/unread-barrel.ts": "export * from 'not-in-the-repository';",
+      "src/parent.ts": "export * from './unread-barrel';\nexport * from './path';",
+      "src/passes.ts": "import { PATH } from './path';\nexport { PATH };",
+      "src/both.ts": "export * from './path';\nexport * from './passes';",
+      "src/type-only.ts": "import type { PATH } from './path';\nexport { PATH };",
+      "src/main.ts": "import { PATH } from './parent';\nimport { PATH as Both } from './both';\nimport { PATH as TypeOnly } from './type-only';\nconst probeNested = PATH;\nconst probeBoth = Both;\nconst probeTypeOnly = TypeOnly;",
+    };
+    expect(probes(nested)).toEqual({ probeNested: undefined, probeBoth: "/path", probeTypeOnly: undefined });
     // A module's own export of a name hides what `export *` gives under it, even one atlas does not read.
     const shadowed = {
       "src/idx.ts": "export const { users } = { users: '/real' };\nexport namespace Paths { export const users = '/real'; }\nexport * from './other';",
@@ -280,44 +292,92 @@ describe("constants read across files", () => {
       "server/deep/d.ts": "export const D = '/deep';",
       "server/src/deep/d.ts": "export const D = '/not-this-one';",
       "based/tsconfig.json": '{ "compilerOptions": { "baseUrl": "./src" } }',
+      // Each base is read under each configuration that extends it: B's inherited paths come after A's.
+      "diamond/base.json": '{ "compilerOptions": { "paths": { "@d/*": ["base/*"] } } }',
+      "diamond/a.json": '{ "extends": "./base.json", "compilerOptions": { "paths": { "@d/*": ["a/*"] } } }',
+      "diamond/b.json": '{ "extends": "./base.json" }',
+      "diamond/tsconfig.json": '{ "extends": ["./a.json", "./b.json"] }',
+      "diamond/main.ts": "import { D } from '@d/d';\nconst probe = D;",
+      "diamond/a/d.ts": "export const D = '/a';",
+      "diamond/base/d.ts": "export const D = '/base';",
       "based/src/main.ts": "import { B } from 'util/b';\nconst probe = B;",
       "based/src/util/b.ts": "export const B = '/based';",
     };
     expect(probes(files, "app/src/main.ts")).toEqual({ probeLib: "/lib", probeExact: "/exact", probeNone: undefined });
     expect(probes(files, "server/src/main.ts")).toEqual({ probeAlias: "/server", probeLongest: "/deep" });
     expect(probes(files, "based/src/main.ts")).toEqual({ probe: "/based" });
+    expect(probes(files, "diamond/main.ts")).toEqual({ probe: "/base" });
   });
 
-  it("reads a workspace package by its exports, and where its entry is built, the one declaration of the name it exports", () => {
+  it("reads a workspace package at the file Node.js loads, and a build output not committed at the source it mirrors", () => {
     const shared = {
       "package.json": '{ "workspaces": { "packages": ["packages/*", "!packages/ignored"] } }',
-      "packages/shared/package.json": '{ "name": "shared", "exports": { ".": "./dist/index.js", "./types": { "types": "./dist/types/index.d.ts", "import": "./dist/types.mjs" }, "./src": "./src/index.ts" } }',
+      "packages/shared/package.json": JSON.stringify({
+        name: "shared",
+        exports: {
+          ".": "./dist/index.js",
+          "./types": { types: "./dist/types/index.d.ts", import: "./dist/types.mjs", require: "./dist/types.cjs" },
+          "./src": "./src/index.ts",
+          // Conditions are alternatives: one Node.js does not set is passed over, whatever file it names.
+          "./conditional": { "atlas-never-active": "./inactive.ts", default: "./active.ts" },
+          // An import and a require that load different files leave the value unread.
+          "./split": { import: "./split-esm.ts", require: "./split-cjs.ts" },
+          "./esm-only": { import: "./split-esm.ts" },
+          "./feature/*": "./broad/*",
+          "./feature/*.js": "./narrow/*.ts",
+          "./blocked": null,
+        },
+      }),
       "packages/shared/src/index.ts": "export * from './types';\nexport const ROOT = '/root';",
-      "packages/shared/src/types/index.ts": "export { ApiPath } from './ApiPath';\nexport { Twice } from './twice-a';",
+      "packages/shared/src/types/index.ts": "export { ApiPath } from './ApiPath';\nexport { Twice } from './twice-a';\nexport * from './starred';",
       "packages/shared/src/types/ApiPath.ts": "export enum ApiPath { Rest = 'rest' }",
       "packages/shared/src/types/twice-a.ts": "export const Twice = '/a';",
       "packages/shared/src/types/twice-b.ts": "export const Twice = '/b';",
-      "packages/shared/src/types/outside.ts": "export { Outside } from 'elsewhere';",
-      "packages/shared/src/types/outside-local.ts": "export const Outside = '/o';",
-      "packages/shared/nested/package.json": '{ "name": "nested" }',
-      "packages/shared/nested/n.ts": "export const ApiPath = 'nested';",
+      "packages/shared/src/types/starred.ts": "export * from 'elsewhere';\nexport const Local = '/local';",
+      "packages/shared/src/types/unexported.ts": "export const Unlisted = '/unlisted';",
+      "packages/shared/inactive.ts": "export const C = '/inactive';",
+      "packages/shared/active.ts": "export const C = '/active';",
+      "packages/shared/split-esm.ts": "export const S = '/esm';",
+      "packages/shared/split-cjs.ts": "export const S = '/cjs';",
+      "packages/shared/broad/item.js": "export const F = '/broad';",
+      "packages/shared/narrow/item.ts": "export const F = '/narrow';",
+      "packages/shared/blocked.ts": "export const B = '/blocked';",
+      "packages/twin/package.json": '{ "name": "twin", "exports": { "./types": "./dist/types.js" } }',
+      "packages/twin/src/types.ts": "export const T = '/src';",
+      "packages/twin/lib/types/index.ts": "export const T = '/lib';",
       "packages/ignored/package.json": '{ "name": "ignored" }',
-      "packages/ignored/src/index.ts": "export const IGNORED = '/ignored';",
+      "packages/ignored/index.ts": "export const IGNORED = '/ignored';",
       "other/package.json": '{ "name": "other" }',
       "other/index.ts": "export const OTHER = '/other';",
       "packages/server/src/main.ts": [
-        "import { ApiPath, Twice, Outside } from 'shared/types';",
+        "import { ApiPath, Twice, Local, Elsewhere, Unlisted } from 'shared/types';",
         "import { ROOT } from 'shared';",
         "import { ROOT as FromSource } from 'shared/src';",
+        "import { C } from 'shared/conditional';",
+        "import { S } from 'shared/split';",
+        "import { S as EsmOnly } from 'shared/esm-only';",
+        "import { F } from 'shared/feature/item.js';",
+        "import { B } from 'shared/blocked';",
         "import { ApiPath as Unexported } from 'shared/unexported';",
+        "import { T } from 'twin/types';",
         "import { IGNORED } from 'ignored';",
         "import { OTHER } from 'other';",
         "const probeEnum = `/${ApiPath.Rest}`;",
         "const probeRoot = ROOT;",
         "const probeSource = FromSource;",
         "const probeTwice = Twice;",
-        "const probeOutside = Outside;",
+        // A name `export *` may take from a module not read is not read; one the module declares itself is.
+        "const probeLocal = Local;",
+        "const probeElsewhere = Elsewhere;",
+        "const probeUnlisted = Unlisted;",
+        "const probeConditional = C;",
+        "const probeSplit = S;",
+        "const probeEsmOnly = EsmOnly;",
+        "const probeFeature = F;",
+        "const probeBlocked = B;",
         "const probeUnexported = Unexported.Rest;",
+        // Two sources mirror dist/types.js.
+        "const probeTwin = T;",
         "const probeIgnored = IGNORED;",
         "const probeOther = OTHER;",
       ].join("\n"),
@@ -326,9 +386,17 @@ describe("constants read across files", () => {
       probeEnum: "/rest",
       probeRoot: "/root",
       probeSource: "/root",
-      probeTwice: undefined,
-      probeOutside: undefined,
+      probeTwice: "/a",
+      probeLocal: "/local",
+      probeElsewhere: undefined,
+      probeUnlisted: undefined,
+      probeConditional: "/active",
+      probeSplit: undefined,
+      probeEsmOnly: undefined,
+      probeFeature: "/narrow",
+      probeBlocked: undefined,
       probeUnexported: undefined,
+      probeTwin: undefined,
       probeIgnored: undefined,
       probeOther: undefined,
     });
@@ -345,7 +413,7 @@ describe("NestJS paths held in constants of other files", () => {
   const base = {
     "package.json": '{ "workspaces": ["packages/*"] }',
     "packages/shared/package.json": '{ "name": "@acme/shared", "exports": { "./types": "./dist/types.js" } }',
-    "packages/shared/src/api-path.ts": "export enum ApiPath { Rest = 'rest', WellKnown = '.well-known' }",
+    "packages/shared/src/types.ts": "export enum ApiPath { Rest = 'rest', WellKnown = '.well-known' }",
     "api/tsconfig.json": '{ "compilerOptions": { "paths": { "src/*": ["./src/*"] } } }',
     "api/src/route-key.ts": "export enum RouteKey { Asset = 'assets', User = 'users' }\nexport const VERSIONS = ['1', '2'];\nexport let LATER = 'later';",
     "api/src/constants.ts": "export const excludePaths = ['/.well-known/acme', { path: '/custom.css', method: RequestMethod.GET }];\nexport const PREFIX = 'api';",
