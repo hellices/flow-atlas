@@ -8,28 +8,6 @@ missing:
   - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
   - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
   - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
-  - { route: "GET /api/members/{}", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
-  - { route: "POST /api/members", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
-  - { route: "GET /user/{}", reason: "a handler method registered with `RequestMappingHandlerMapping.registerMapping` is not read, and nothing says so" }
-  - { route: "GET /files/{**}", reason: "the resources a router function serves (`RouterFunctions.resources`, WebFlux.fn) are not read, and nothing says so" }
-  - { route: "GET /hello-world", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /people", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "POST /people", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /people/{}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /teams", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "POST /teams", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "PUT /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "DELETE /teams/{}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /teams/{**}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read; a route with no path of its own within `.path(\"/teams\", ..)` takes any rest of the path; and nothing says so" }
-  - { route: "POST /teams/{**}", reason: "a router function (`RouterFunctions.route()`, WebFlux.fn) is not read; a route with no path of its own within `.path(\"/teams\", ..)` takes any rest of the path; and nothing says so" }
-  - { route: "GET /orders/{}", reason: "a router function composed statically (`RouterFunctions.nest(path(..), route(..).andRoute(..))`, predicates joined with `and`/`or`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /orders/{}/items", reason: "a router function composed statically (`RouterFunctions.nest(path(..), route(..).andRoute(..))`, predicates joined with `and`/`or`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /orders/{}/lines", reason: "a router function composed statically (`RouterFunctions.nest(path(..), route(..).andRoute(..))`, predicates joined with `and`/`or`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "POST /orders", reason: "a router function composed statically (`RouterFunctions.nest(path(..), route(..).andRoute(..))`, predicates joined with `and`/`or`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /memos", reason: "a router function of the Kotlin coroutines router DSL (`coRouter { }`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "POST /memos", reason: "a router function of the Kotlin coroutines router DSL (`coRouter { }`, WebFlux.fn) is not read, and nothing says so" }
-  - { route: "GET /memos/{}", reason: "a router function of the Kotlin coroutines router DSL (`coRouter { }`, WebFlux.fn) is not read, and nothing says so" }
 dispatch:
   - { request: "POST /owners/1/faq/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/faq/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "POST /owners/1/help/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/help/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
@@ -45,3 +23,11 @@ dispatch:
   - { request: "DELETE /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "PATCH /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "PUT /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /teams/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /teams/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /teams/hello.txt/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/hello.txt/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /teams/hello.txt/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/hello.txt/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "GET /teams/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/{id}` does not take `/teams/1/` and the route with no path of its own in the `/teams` nest does; atlas drops the `/` and matches `/teams/{id}`" }
+  - { request: "GET /teams/hello.txt/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/teams/{id}` does not take `/teams/hello.txt/` and the route with no path of its own in the `/teams` nest does; atlas drops the `/` and matches `/teams/{id}`" }
+  - { request: "POST /api/members/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/members/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /people/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/people/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }

@@ -34,9 +34,9 @@ missing:
   - { route: "PUT /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
   - { route: "PATCH /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
   - { route: "DELETE /api/v1/account/tokens/{}", reason: "a resource in a group is not read, and nothing says so" }
-  - { route: "POST /api/v1/auth/signup", reason: "a path without a leading `/` (`router.post('signup', ...)`) is not read, and nothing says so; nor are the prefixes of the groups around it (`auth`, `/api/v1`)" }
-  - { route: "POST /api/v1/auth/login", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
-  - { route: "GET /api/v1/account/profile", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
+  - { route: "POST /api/v1/auth/signup", reason: "a path without a leading `/` (`router.post('signup', ...)`) is not read (named in a limit); nor are the prefixes of the groups around it (`auth`, `/api/v1`), and nothing says so" }
+  - { route: "POST /api/v1/auth/login", reason: "a path without a leading `/` is not read (named in a limit); nor are the groups' prefixes, and nothing says so" }
+  - { route: "GET /api/v1/account/profile", reason: "a path without a leading `/` is not read (named in a limit); nor are the groups' prefixes, and nothing says so" }
   - { route: "GET /drafts", reason: "an optional last param (`:id?`) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
   - { route: "GET /drafts/{}", reason: "an optional last param (`:id?`) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
   - { route: "GET /docs/{}/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }

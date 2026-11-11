@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
-import { pathPrefixes, routesFromSpring, type Views } from "./spring.js";
+import { httpExchanges, pathPrefixes, routesFromSpring, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
@@ -32,6 +32,8 @@ const NEST_METHODS: Record<string, string> = {
   QueryMethod: "QUERY",
 };
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
+/** The names of the calls that may register a route on a router the express style reads. */
+const REGISTERING = new Set([...["express", "@koa/router", "fastify", "hono"].flatMap((p) => [...verbsOf(p)]), "route", "on", "redirect"]);
 /** The names whose calls the express style reads as routes when no router is traced, unless the entry names others. */
 const EXPRESS_RECEIVERS = ["app", "router", "server", "fastify"];
 
@@ -631,6 +633,7 @@ export function routesFromTypeScript(
     const callee = node.expression;
     if (!ts.isPropertyAccessExpression(callee)) return;
     const name = callee.name.text;
+    if (!REGISTERING.has(name)) return;
     const args = node.arguments;
     const said = (what: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(callee.name)} ${what}`);
     // Express's `route(path)` returns a route whose methods take only handlers (router 2 `Route`).
@@ -1390,7 +1393,9 @@ export function extractRoutes(
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts, spec.receivers ?? EXPRESS_RECEIVERS) : undefined;
     const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
-    const prefixes = (spec.styles ?? []).includes("spring") ? pathPrefixes(springSources(source, config, files, roots.get(spec.component))) : undefined;
+    const java = (spec.styles ?? []).includes("spring") ? springSources(source, config, files, roots.get(spec.component)) : undefined;
+    const prefixes = java ? pathPrefixes(java) : undefined;
+    const exchanges = java ? httpExchanges(java) : undefined;
     const routers = (spec.styles ?? []).includes("fastapi")
       ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
       : undefined;
@@ -1400,7 +1405,7 @@ export function extractRoutes(
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
-      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges));
     }
     if (routers) limits.push(...routers.limits(spec.component));
     if (prefixes) limits.push(...prefixes.limits(spec.component));

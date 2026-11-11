@@ -188,6 +188,23 @@ from a variable), or a router is mounted nowhere atlas reads, its routes are not
 `basePath` not spelled out takes the path `mounts` declares for its file, and a literal `basePath` called on it adds
 to that.
 
+Each router registers routes in the forms its documentation gives, read on a router traced to its package. Every
+method it has is a route of that method: Node's HTTP methods on Express and @koa/router (`purge`, `query`; `del` is
+`delete` on @koa/router), Fastify's shorthands (`query` and `all` included) and Hono's (`query`, `all`); `all` is any
+method (`*`). A registration returns its router, so a chain of them (`router.get(...).post(...)`, after `param`,
+`use`, `prefix` or `register`) registers each on that router. Express's `route(path)` registers the methods chained on
+it (`app.route("/book").get(h).post(h)`) at its path; Express and @koa/router take an array of paths, each a route.
+@koa/router takes a route name before the path where its second argument is a string (`router.get("user",
+"/user/:id", h)`), and `redirect(source, destination)` registers `all` at the source. Fastify's full declaration,
+`route({ method, url, handler })`, registers each method of `method` (a list too) at `url`, else `path`, constraints
+aside. Hono's `on(method, path)` registers each of its methods (a custom one too) at each of its paths, a method given
+a handler and no path takes the path the call before it in the chain set (`app.get("/a", h).post(h)`), and a path
+without a leading `/` is joined to the base path as one with it (`app.get("*")` is `/**`). Where a router is not
+traced, only the methods every one of them has, on the receiver itself, are read. A form not read is named in a limit:
+a path that does not start with `/` (other than Hono's; an empty one on Hono, which it joins with a trailing `/`), a
+method with no path whose path an earlier statement set, a route chained on a receiver not traced, an array on a router
+that takes none, a `route` option or a redirect source not spelled out.
+
 Each router reads a path in its own syntax, which atlas takes from the package the router is created from, at the
 major version the nearest package.json above the file that creates the router gives it (`^5.1.0` gives one; `>=4`, a
 tag or a link none): for a Fastify plugin, the file of each `Fastify()` instance it is registered under, ranges that
@@ -311,7 +328,7 @@ Kotlin of the standard library's throwing functions `error`, `TODO`, `require` a
 a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
 the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the
 language. FastAPI
-decorators are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
+decorators, and `add_api_route(path, endpoint, methods=...)` (GET where `methods` is not given or None), are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
 none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
 that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,
 unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, so a call written `/x/` is read as
@@ -341,7 +358,25 @@ or carries an annotation not so resolved, may take one through it and is not dec
 prefix not spelled out, a mapping in an interface (whose implementing class decides) and two configurers (two
 `configurePathMatch` methods, in one file or two) that disagree leave the routes of the types they may reach unread,
 with a limit. Configurers and annotation types are read in the entry's files and the component's code, the excluded
-files left out, since a `WebMvcConfigurer` need not be among the controller globs. A mapping path may be a string constant the file
+files left out, since a `WebMvcConfigurer` need not be among the controller globs. A controller (`@Controller`,
+`@RestController`) that implements an interface with `@HttpExchange` mappings (`@GetExchange`, `@PostExchange`,
+`@PutExchange`, `@PatchExchange`, `@DeleteExchange`, `@HttpExchange(url, method)`) is served at them, under its own
+prefix: the interface's `@HttpExchange` joined to each method's, unless the controller maps that method itself or
+carries its own `@RequestMapping`, which Spring finds first in the type hierarchy. A handler method registered with
+`registerMapping(info, handler, method)` is served at the paths and methods of the `RequestMappingInfo.paths(...)
+.methods(...).build()` it is given, in place or in a local, as given: no `addPathPrefix` prefix applies to it. Router
+functions (WebMvc.fn and WebFlux.fn) a `@Bean` method returns are served at the root, without that prefix too: the
+builder of `RouterFunctions.route()` (`GET(pattern, handler)` and the other methods, with a predicate or none,
+`route`, `add`, `nest`, `path`, `resources`, `resource`), the static `route`, `nest`, `resources` and `resource` with
+`and`, `andRoute`, `andNest`, and Kotlin's `router { }` and `coRouter { }` (`"/x".nest { }`, `"/x" { }`, a method with
+a trailing handler). A predicate is read as the methods and paths it takes: `GET(pattern)` and the others, `path`,
+`method`, `methods` and `all()`, joined with `and` and `or`; `accept`, `contentType`, `headers`, `param`, `queryParam`
+and `version` leave both as they are. A nested route's pattern is joined after its nest's, a route with no pattern of
+its own takes any rest of the path within its nest (`/teams/**`), and `resources("/files/**", location)` serves GET
+and HEAD at one segment or more under `/files` (`/files/{path}/**`), never the location itself. A local or a helper
+method of the file with no parameters is followed; a predicate or router function not spelled out, a lookup function,
+`pathExtension`, a statement of control flow in the DSL and a router function built outside a `@Bean` method are
+named in a limit and not read. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
 constants), since an annotation argument is a compile-time constant. A name is found as the language finds it: in the
 types around the mapping, innermost first, then a Kotlin file's top level, or `Type.PATH` for a type the file declares
