@@ -62,6 +62,17 @@ describe("C# lexing", () => {
     expect(read(program(text)).routes).toEqual(["GET /real"]);
   });
 
+  it("reads past an interpolation hole with space before its brace, and names a string it cannot read", () => {
+    const text = ['app.Logger.LogInformation($"Started { DateTime.Now /* now */ }");', 'var n = $@"{a', '}";', 'app.MapGet("/after", () => 1);'].join("\n");
+    expect(read(program(text)).routes).toEqual(["GET /after"]);
+    // An alignment pads the value: the hole is not read as the bare constant.
+    const aligned = read(program('const string P = "api";\napp.MapGet($"/{P,5}/x", () => 1);\napp.MapGet($"/{P:x}/y", () => 1);'));
+    expect(aligned.routes).toEqual(["GET /api/y"]);
+    expect(aligned.limits).toEqual(["routes api: Program.cs:4 MapGet is given a path atlas does not read; the route is not read"]);
+    const open = read(program('app.MapGet("/before", () => 1);\nvar s = "unterminated;\napp.MapGet("/lost", () => 1);'));
+    expect(open).toMatchObject({ routes: ["GET /before"], limits: ["routes api: Program.cs:4 has a string atlas cannot read as C#; the code after it is not read"] });
+  });
+
   it("reads each string form's value", () => {
     const value = (src: string) => stringValue(lexCSharp(src)[0]);
     expect(value('"/a\\tb\\u0041"')).toBe("/a\tbA");
@@ -145,15 +156,16 @@ describe("ASP.NET Core route templates", () => {
     expect(["0", "-5", "+5", " 7 ", "0002147483647", "-2147483648", "2147483647"].map((v) => test(["int"], v))).toEqual([true, true, true, true, true, true, true]);
     expect(["2147483648", "-2147483649", "1.0", "a", "", "--1"].map((v) => test(["int"], v))).toEqual([false, false, false, false, false, false]);
     expect(["9223372036854775807", "9223372036854775808"].map((v) => test(["long"], v))).toEqual([true, false]);
-    expect(["abc", "ABC", "a1"].map((v) => test(["alpha"], v))).toEqual([true, true, false]);
+    expect(["abc", "ABC", "a1", "\u212A", "abc\n"].map((v) => test(["alpha"], v))).toEqual([true, true, false, false, true]);
     expect(["ab", "abc", "abcd"].map((v) => test(["minlength(3)"], v))).toEqual([false, true, true]);
     expect(["ab", "abc", "abcdef"].map((v) => test(["length(3,5)"], v))).toEqual([false, true, false]);
     expect(["12", "123"].map((v) => test(["int", "maxlength(2)"], v))).toEqual([true, false]);
     // .NET tests the regex anywhere in the value, in either case.
     expect(["Post-1", "x_y", "a b"].map((v) => test(["regex(^[a-z0-9_-]+$)"], v))).toEqual([true, true, false]);
     expect(test(["regex(\\.json)"], "data.JSON")).toBe(true);
+    expect(["k", "K", "\u212A", "\u017F"].map((v) => test(["regex(^[k-s]$)"], v))).toEqual([true, true, true, false]);
     // What atlas does not repeat leaves the parameter unchecked: a range, a parse, Unicode classes, inline options.
-    for (const c of [["min(2000)"], ["range(1,12)"], ["guid"], ["datetime"], ["custom"], ["regex(^\\d+$)"], ["regex((?i)x)"], ["int", "min(1)"]]) expect(constraintPattern(c)).toBeUndefined();
+    for (const c of [["min(2000)"], ["range(1,12)"], ["guid"], ["datetime"], ["custom"], ["regex(^\\d+$)"], ["regex((?i)x)"], ["regex(^café$)"], ["regex([à-ÿ])"], ["int", "min(1)"]]) expect(constraintPattern(c)).toBeUndefined();
     expect(constraintPattern([])).toBeNull();
     expect(dotnetRegex("a$")).toBe("[\\s\\S]*?(?:[aA](?=\\n?$))[\\s\\S]*");
   });
@@ -256,7 +268,7 @@ describe("minimal APIs", () => {
     const { routes, limits } = read(files);
     expect(routes).toEqual([]);
     expect(limits).toEqual([
-      "routes api: Program.cs:3 MapGet is called on a, which atlas does not read; what it maps is not read",
+      "routes api: Program.cs:3 MapGet is called on a builder atlas does not read (a is a parameter of the local function Extra); what it maps is not read",
       "routes api: Holder.cs:1 declares Holder.Run, which maps routes on a builder no call atlas reads passes it; they are not read",
     ]);
   });
@@ -319,6 +331,53 @@ describe("minimal APIs", () => {
     ]);
   });
 
+  it("reads a reassignment from its own value, and no local function's parameter as an outer local", () => {
+    const files = program(
+      [
+        'var api = app.MapGroup("/api");',
+        "api = api.RequireAuthorization();",
+        'api.MapGet("/a", () => 1);',
+        'var g = app.MapGroup("/g");',
+        'g = g.MapGroup("/h");',
+        'g.MapGet("/b", () => 1);',
+        'MapRoutes(app.MapGroup("/v2"));',
+        'static void MapRoutes(IEndpointRouteBuilder api) { api.MapGet("/c", () => 1); }',
+      ].join("\n"),
+    );
+    const { routes, limits } = read(files);
+    expect(routes).toEqual(["GET /api/a"]);
+    expect(limits).toEqual([
+      "routes api: Program.cs:8 MapGet is called on a builder atlas does not read (g is assigned more than one value); what it maps is not read",
+      "routes api: Program.cs:10 MapGet is called on a builder atlas does not read (api is a parameter of the local function MapRoutes); what it maps is not read",
+    ]);
+  });
+
+  it("reads no Map whose handler may be a middleware branch, and a fallback's pattern by its overload", () => {
+    const files = {
+      ...program(
+        [
+          'app.Map("/map1", HandleMapTest1);',
+          'app.Map("/map2", (IApplicationBuilder b) => b.Run(c => c.Response.WriteAsync("x")));',
+          'app.Map("/map3", Handle);',
+          'app.Map("/map4", async (HttpContext c) => await c.Response.WriteAsync("x"));',
+          "var spa = builder.Configuration[\"Spa\"];",
+          'app.MapFallbackToFile(spa, "index.html");',
+          'app.MapFallbackToFile("/spa/{*p}", "index.html");',
+          'app.MapFallbackToFile("index.html", new StaticFileOptions());',
+          'app.MapFallbackToController("Index", "Home");',
+        ].join("\n"),
+      ),
+      "Handlers.cs": "public static class Handlers { public static void HandleMapTest1(IApplicationBuilder a) {} public static Task Handle(HttpContext c) => Task.CompletedTask; }",
+    };
+    const { routes, limits } = read(files);
+    expect(routes).toEqual(["* /map3", "* /map4", "* /spa/{*p}", "* /{*path}"]);
+    expect(limits).toEqual([
+      "routes api: Program.cs:3 calls Map with a lambda that may branch the middleware pipeline (IApplicationBuilder.Map) or handle a route; it is not read",
+      "routes api: Program.cs:4 calls Map with a lambda that may branch the middleware pipeline (IApplicationBuilder.Map) or handle a route; it is not read",
+      "routes api: Program.cs:8 MapFallbackToFile is given a path atlas does not read; the route is not read",
+    ]);
+  });
+
   it("does not run away on methods and constants that refer to themselves", () => {
     const files = {
       ...program("Loop.A(app);"),
@@ -355,6 +414,7 @@ describe("minimal APIs", () => {
     expect(limits).toEqual([expect.stringMatching(/^routes api: Program\.cs:3 calls MapStaticAssets, which also serves each file under the fingerprinted name/)]);
     // UseStaticFiles' files are served by middleware, not endpoint routing: they keep no dispatch of their own.
     const middleware = read({ ...program("app.UseStaticFiles();"), "wwwroot/a.js": "" }).surfaces;
+    expect(read({ ...program("app.UseStaticFiles();"), "wwwroot/a.js": "" }, { prefix: "/svc" }).routes).toEqual(["GET /svc/a.js", "HEAD /svc/a.js"]);
     expect(middleware.map((s) => [s.method, s.path, s.convention, s.dispatch])).toEqual([
       ["GET", "/a.js", "aspnetcore UseStaticFiles", undefined],
       ["HEAD", "/a.js", "aspnetcore UseStaticFiles", undefined],
@@ -408,6 +468,18 @@ describe("controllers", () => {
     expect(limits).toEqual([]);
   });
 
+  it("reads each overload of an action as its own", () => {
+    const files = {
+      ...program("app.MapDefaultControllerRoute();\napp.MapControllers();"),
+      "Items.cs": '[Route("api/[controller]")] public class ItemsController : ControllerBase { [HttpGet("{id:int}")] public void Get(int id) {} [HttpGet("by-name/{name}")] public void Get(string name) {} }',
+      "Home.cs": 'public class HomeController : Controller { public void Find(int id) {} [HttpPost("find/{q}")] public void Find(string q) {} [NonAction] public void Hidden(int a) {} public void Hidden(string a) {} }',
+    };
+    expect(read(files)).toMatchObject({
+      routes: ["GET /api/Items/{id}", "GET /api/Items/by-name/{name}", "* /Home/Find", "* /Home/Find/{id}", "POST /find/{q}", "* /Home/Hidden", "* /Home/Hidden/{id}"],
+      limits: [],
+    });
+  });
+
   it("crosses several controller routes with several action routes, and reads areas", () => {
     const files = {
       ...mapped(""),
@@ -432,7 +504,14 @@ describe("controllers", () => {
 
   it("reads conventional routes for the controllers without attribute routes, in their order", () => {
     const files = {
-      ...program(['app.MapControllerRoute(name: "default", pattern: "{controller=Home}/{action=Index}/{id?}");', 'app.MapAreaControllerRoute("admin", "Admin", "admin/{controller}/{action=Index}");', 'app.MapControllerRoute("blog", "blog/{action}", defaults: new { controller = "Blog" });'].join("\n")),
+      ...program(
+        [
+          'app.MapControllerRoute(name: "default", pattern: "{controller=Home}/{action=Index}/{id?}");',
+          'app.MapAreaControllerRoute("admin", "Admin", "admin/{controller}/{action=Index}");',
+          'app.MapControllerRoute("blog", "blog/{action}", defaults: new { controller = "Blog" });',
+          'app.MapControllerRoute("areas", "{area:exists}/{controller}/{action}");',
+        ].join("\n"),
+      ),
       "Home.cs": "public class HomeController : Controller { public IActionResult Index() => View(); [HttpPost] public IActionResult Contact() => View(); }",
       "Blog.cs": "public class BlogController : Controller { public IActionResult Latest() => View(); }",
       "Users.cs": '[Area("Admin")] public class UsersController : Controller { public IActionResult Index() => View(); }',
@@ -451,6 +530,7 @@ describe("controllers", () => {
       "* /blog/Latest [3,1,1]",
       "* /admin/Users [2,1,1,1]",
       "* /admin/Users/Index [2,1,1,1]",
+      "* /Admin/Users/Index [4,1,1,1]",
     ]);
   });
 

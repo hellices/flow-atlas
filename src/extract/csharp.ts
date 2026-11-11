@@ -43,14 +43,21 @@ function disabledEnd(t: string, from: number): number {
 
 /** The tokens of C# source text. Text it cannot lex as C# (an unterminated string) ends the tokens there. */
 export function lexCSharp(text: string): Token[] {
+  return lex(text).tokens;
+}
+
+/** The tokens of C# source text, and where a string it cannot read (one left open) stops them, if one does. */
+export function lex(text: string): { tokens: Token[]; stopped?: number } {
   const lexer = new Lexer(text);
-  const out: Token[] = [];
-  for (let t = lexer.next(); t; t = lexer.next()) out.push(t);
-  return out;
+  const tokens: Token[] = [];
+  for (let t = lexer.next(); t; t = lexer.next()) tokens.push(t);
+  return { tokens, ...(lexer.failed !== undefined ? { stopped: lexer.failed } : {}) };
 }
 
 class Lexer {
   pos = 0;
+  /** Where a string literal this lexer cannot read starts. */
+  failed: number | undefined;
   /** Whether only whitespace stands between the last line start and `pos`, where a `#` starts a directive. */
   private lineStart = true;
   constructor(private readonly text: string) {}
@@ -98,7 +105,11 @@ class Lexer {
     const c = t[start]!;
     // String forms that start with `$` or `@`, in either order.
     const prefix = /^(\$+@?|@\$+|@)(?=")/.exec(t.slice(start, start + 12));
-    if (prefix || c === '"') return this.string(start, prefix?.[1] ?? "");
+    if (prefix || c === '"') {
+      const str = this.string(start, prefix?.[1] ?? "");
+      if (!str && this.failed === undefined) this.failed = start;
+      return str;
+    }
     if (c === "@" && isIdStart(t[start + 1] ?? "")) {
       this.pos = start + 1;
       const id = this.identifier();
@@ -219,20 +230,20 @@ class Lexer {
     const tokens: Token[] = [];
     let depth = 0;
     for (;;) {
-      const save = this.pos;
       const tok = this.next();
       if (!tok) return undefined;
       if (tok.kind === "punct" && "([{".includes(tok.text)) depth++;
       else if (tok.kind === "punct" && ")]".includes(tok.text)) depth--;
       else if (tok.kind === "punct" && tok.text === "}") {
         if (depth === 0) {
-          this.pos = save;
+          this.pos = tok.start;
           break;
         }
         depth--;
-      } else if (depth === 0 && tok.kind === "punct" && (tok.text === ":" || tok.text === ",")) {
-        // The format (or alignment and format) runs to the closing brace.
-        this.pos = save;
+      } else if (depth === 0 && tok.kind === "punct" && tok.text === ":") {
+        // The format runs to the closing brace; an alignment (`,5`) stays among the tokens, so the hole's value is
+        // not read as the bare expression's.
+        this.pos = tok.end;
         while (this.pos < t.length && t[this.pos] !== "}") this.pos++;
         break;
       }

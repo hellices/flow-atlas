@@ -662,8 +662,11 @@ files under the project's `wwwroot` that `MapStaticAssets` and `UseStaticFiles` 
 `MapStaticAssets`' fingerprinted and compressed names are not read. A path, method list, prefix or receiver not spelled
 out, a builder a method maps on that no call read passes it, a controller deriving from a class not among the files, a
 `RouteTokenTransformerConvention`, `UsePathBase`, Razor Pages, Razor components, SignalR hubs, gRPC services, YARP and
-dynamic routes are left out and named in a limit; so is a `Map(path, x => ...)` whose lambda may branch the middleware
-(`IApplicationBuilder.Map`). Carter's modules, FastEndpoints' endpoints and Blazor's pages are not read.
+dynamic routes are left out and named in a limit; so are a `Map(path, handler)` whose handler may branch the middleware
+(`IApplicationBuilder.Map`: a lambda whose one parameter has no type or is an `IApplicationBuilder`, a method that takes
+one or is not found), a value a compound assignment, `ref` or `out` changes, a parameter of a local function, an
+interpolation hole with an alignment, and the code after a string the lexer cannot read. Carter's modules,
+FastEndpoints' endpoints and Blazor's pages are not read.
 
 HTML files in a call source are read as templates, from the attributes of start tags: Thymeleaf link expressions
 (`@{/reviews/{id}(id=${...})}`) in `th:href`, `th:src`, `th:action`, `th:formaction`, the configured `th:data-*` and

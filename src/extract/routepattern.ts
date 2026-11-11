@@ -347,7 +347,8 @@ function constraintRegex(constraint: string): string | undefined {
     case "long":
       return arg === undefined ? integer("9223372036854775807") : undefined;
     case "alpha":
-      return arg === undefined ? dotnetRegex("^[A-Za-z]*$") : undefined;
+      // AlphaRouteConstraint's `^[A-Za-z]*$`, which has no IgnoreCase; `$` also takes a last `\n`.
+      return arg === undefined ? "[A-Za-z]*\\n?" : undefined;
     case "required":
       return arg === undefined ? "[\\s\\S]+" : undefined;
     case "minlength": {
@@ -375,7 +376,8 @@ function constraintRegex(constraint: string): string | undefined {
  * anywhere in the value and in either case), written for JavaScript, or undefined where it uses syntax the two engines
  * read differently or atlas does not translate: `\d`, `\w`, `\s` and `\b` (Unicode in .NET), backreferences, inline
  * options, atomic groups, class subtraction. `.` takes any character but `\n`, `$` the end or a `\n` before it, as in
- * .NET. A letter takes both its ASCII cases, and `k` and `s` the Kelvin sign and long s .NET's case table pairs them with.
+ * .NET. An ASCII letter takes both its cases, and `k` the Kelvin sign .NET's case table pairs it with; a character
+ * beyond ASCII, whose case pairs atlas does not repeat, is not translated.
  */
 export function dotnetRegex(source: string): string | undefined {
   let out = "";
@@ -384,7 +386,7 @@ export function dotnetRegex(source: string): string | undefined {
     const lower = ch.toLowerCase();
     const upper = ch.toUpperCase();
     if (!/^[a-z]$/.test(lower)) return ch;
-    return `${lower}${upper}${lower === "k" ? "\\u212A" : lower === "s" ? "\\u017F" : ""}`;
+    return `${lower}${upper}${lower === "k" ? "\\u212A" : ""}`;
   };
   const escapeChar = (ch: string) => (/[\\^$.*+?()[\]{}|/-]/.test(ch) ? `\\${ch}` : ch);
   /** One character an escape stands for, at `j` (after the backslash), or undefined for a class or anything else. */
@@ -398,7 +400,8 @@ export function dotnetRegex(source: string): string | undefined {
     if (/[^\w\s]/.test(c)) return { ch: c, end: j + 1 };
     return undefined;
   };
-  const literal = (ch: string): string => {
+  const literal = (ch: string): string | undefined => {
+    if (ch.charCodeAt(0) > 0x7f) return undefined;
     const both = caseless(ch);
     return both === ch ? escapeChar(ch) : `[${both}]`;
   };
@@ -413,7 +416,8 @@ export function dotnetRegex(source: string): string | undefined {
       else {
         const e = escaped(i + 1);
         if (!e) return undefined;
-        out += /[a-zA-Z]/.test(e.ch) ? literal(e.ch) : code(e.ch);
+        if (e.ch.charCodeAt(0) > 0x7f) return undefined;
+        out += /[a-zA-Z]/.test(e.ch) ? literal(e.ch)! : code(e.ch);
         i = e.end;
         continue;
       }
@@ -457,7 +461,7 @@ export function dotnetRegex(source: string): string | undefined {
           }
           end = k;
         }
-        if (to.charCodeAt(0) < ch.charCodeAt(0)) return undefined;
+        if (to.charCodeAt(0) < ch.charCodeAt(0) || to.charCodeAt(0) > 0x7f) return undefined;
         items.push([ch.charCodeAt(0), to.charCodeAt(0)]);
         j = end;
       }
@@ -470,7 +474,6 @@ export function dotnetRegex(source: string): string | undefined {
         }
         const has = (n: number) => a <= n && n <= b;
         if (has(75) || has(107)) extra.push([0x212a, 0x212a]);
-        if (has(83) || has(115)) extra.push([0x17f, 0x17f]);
       }
       const body = [...items, ...extra].map(([a, b]) => (a === b ? code(String.fromCharCode(a)) : `${code(String.fromCharCode(a))}-${code(String.fromCharCode(b))}`)).join("");
       out += `[${negated ? "^" : ""}${body}]`;
@@ -520,7 +523,9 @@ export function dotnetRegex(source: string): string | undefined {
       continue;
     }
     if (c === "]" || c === "}") return undefined;
-    out += literal(c);
+    const lit = literal(c);
+    if (lit === undefined) return undefined;
+    out += lit;
     i++;
   }
   try {

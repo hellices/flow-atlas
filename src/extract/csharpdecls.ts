@@ -1,5 +1,5 @@
 import { lineOf } from "../source.js";
-import { bracketPairs, lexCSharp, type Token } from "./csharp.js";
+import { bracketPairs, lex, type Token } from "./csharp.js";
 
 /**
  * The declarations of a C# file, read from its tokens (see `csharp.ts`): `using` aliases, namespaces, types with their
@@ -19,6 +19,8 @@ export interface CsFile {
   types: TypeDecl[];
   /** The token range of the top-level statements, where the file has any. */
   topLevel?: [number, number];
+  /** Where the lexer stopped before the end, at a string literal it cannot read. */
+  stopped?: number;
 }
 
 export interface Argument {
@@ -81,10 +83,10 @@ const MODIFIERS = new Set([
 const TYPE_KEYWORDS = new Set(["class", "struct", "interface", "enum"]);
 
 export function readCsFile(file: string, text: string): CsFile {
-  const tokens = lexCSharp(text);
+  const { tokens, stopped } = lex(text);
   const pairs = bracketPairs(tokens);
   const opens = new Map([...pairs].map(([o, c]) => [c, o]));
-  const f: CsFile = { file, text, tokens, pairs, opens, aliases: new Map(), types: [] };
+  const f: CsFile = { file, text, tokens, pairs, opens, aliases: new Map(), types: [], ...(stopped !== undefined ? { stopped } : {}) };
   scope(f, 0, tokens.length, "", undefined, true);
   return f;
 }

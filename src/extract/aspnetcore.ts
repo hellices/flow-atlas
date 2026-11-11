@@ -1,7 +1,7 @@
 import type { RouteSource } from "../config.js";
 import type { Dispatch, Place, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
-import { matcher, type Source } from "../source.js";
+import { lineOf, matcher, type Source } from "../source.js";
 import type { Token } from "./csharp.js";
 import { argumentsOf, genericClose, lineAt, readCsFile, skip, type Argument, type Attribute, type CsFile, type MethodDecl, type TypeDecl } from "./csharpdecls.js";
 import { constraintPattern, parsePattern, precedence, servedPaths, type PatternSegment } from "./routepattern.js";
@@ -112,11 +112,25 @@ const tok = (f: CsFile, i: number): Token | undefined => f.tokens[i];
 const isP = (t: Token | undefined, text: string): boolean => !!t && t.kind === "punct" && t.text === text;
 const isWord = (t: Token | undefined, text?: string): boolean => !!t && t.kind === "id" && (text === undefined || t.text === text);
 
-/** The lambdas of a region: their parameters, their body, and the token they start at. */
+/** The lambdas and local functions of a file: their parameters, their body, and the token they start at. */
 interface Lambda {
   params: string[];
   start: number;
   body: [number, number];
+  /** A local function's name: its parameters hold what each call passes, which is not read. */
+  local?: string;
+}
+
+const NOT_TYPES = new Set(["return", "await", "new", "else", "in", "yield", "throw", "case", "is", "as", "out", "ref", "typeof", "nameof", "sizeof", "default", "when", "using", "var", "if", "while", "for", "foreach", "switch", "catch", "lock", "fixed"]);
+
+/** The parameters of a list opening at `open`: the last word of each before any default value. */
+function paramNames(f: CsFile, open: number): string[] {
+  return argumentsOf(f, open).flatMap((p) => {
+    let e = p.start;
+    while (e < p.end && !isP(tok(f, e), "=")) e = skip(f, e);
+    const name = tok(f, e - 1);
+    return name && isWord(name) ? [name.text] : [];
+  });
 }
 
 const lambdaCache = new WeakMap<CsFile, Lambda[]>();
@@ -125,8 +139,23 @@ function lambdas(f: CsFile): Lambda[] {
   const cached = lambdaCache.get(f);
   if (cached) return cached;
   const out: Lambda[] = [];
+  f.tokens.forEach((t, o) => {
+    // A function declared in a body: a type, its name and parameters, then its body (or `where` constraints first).
+    if (!isP(t, "(") || !f.pairs.has(o) || !isWord(tok(f, o - 1))) return;
+    const type = tok(f, o - 2);
+    if (!type || !(isWord(type) || isP(type, ">") || isP(type, "]") || isP(type, "?")) || (isWord(type) && NOT_TYPES.has(type.text))) return;
+    const after = f.pairs.get(o)! + 1;
+    if (isP(tok(f, after), "{") && f.pairs.has(after)) out.push({ params: paramNames(f, o), start: o - 1, body: [after + 1, f.pairs.get(after)!], local: tok(f, o - 1)!.text });
+    else if (isP(tok(f, after), "=>")) {
+      let end = after + 1;
+      while (end < f.tokens.length && !isP(tok(f, end), ";")) end = skip(f, end);
+      out.push({ params: paramNames(f, o), start: o - 1, body: [after + 1, end], local: tok(f, o - 1)!.text });
+    }
+  });
   f.tokens.forEach((t, a) => {
     if (!isP(t, "=>")) return;
+    // A local function's expression body, read above.
+    if (isP(tok(f, a - 1), ")") && out.some((l) => l.local && l.body[0] === a + 1)) return;
     let params: string[];
     let start: number;
     if (isWord(tok(f, a - 1))) {
@@ -134,13 +163,7 @@ function lambdas(f: CsFile): Lambda[] {
       start = a - 1;
     } else if (isP(tok(f, a - 1), ")") && f.opens.has(a - 1)) {
       start = f.opens.get(a - 1)!;
-      params = argumentsOf(f, start).flatMap((p) => {
-        // The name is the last word before any default value.
-        let e = p.start;
-        while (e < p.end && !isP(tok(f, e), "=")) e = skip(f, e);
-        const name = tok(f, e - 1);
-        return name && isWord(name) ? [name.text] : [];
-      });
+      params = paramNames(f, start);
     } else return;
     // A member's expression body (`int X => 1;`) is read as one too; it holds no region it could stand in.
     let end: number;
@@ -290,6 +313,7 @@ function lookup(ctx: Ctx, name: string, at: number): Value | undefined {
   around.sort((a, b) => b.start - a.start);
   for (const l of around) {
     if (!l.params.includes(name)) continue;
+    if (l.local) return unknown(`${name} is a parameter of the local function ${l.local}`);
     // The call the lambda is an argument of: the name before the `(` it stands in.
     let open = l.start - 1;
     while (open >= rs && !(isP(tok(f, open), "(") && (f.pairs.get(open) ?? -1) >= l.body[1] - 1)) open--;
@@ -312,6 +336,8 @@ function lookup(ctx: Ctx, name: string, at: number): Value | undefined {
     if (!isP(next, "=")) continue;
     let e = q + 2;
     while (e < re && ![";", ","].some((p) => isP(tok(f, e), p)) && !isP(tok(f, e), ")") && !isP(tok(f, e), "}")) e = skip(f, e);
+    // The assignment `at` stands in (`g = g.MapGroup("/b")`) gives the name its value only after it.
+    if (at >= q && at < e) continue;
     values.push(evaluate(ctx, q + 2, e));
   }
   if (values.length) {
@@ -650,7 +676,7 @@ class Reader {
         // IApplicationBuilder.Map(path, branch => ...) branches the middleware: a lambda of one parameter whose type is
         // not written may be either, so the call is not read.
         const handler = args[1];
-        if (handler && this.untypedSingleLambda(f, handler)) {
+        if (handler && this.mayBranch(f, handler)) {
           this.limit(f, n, `calls Map with a lambda that may branch the middleware pipeline (IApplicationBuilder.Map) or handle a route; it is not read`);
           return;
         }
@@ -665,8 +691,20 @@ class Reader {
         // Each falls back with `{*path:nonfile}` unless it is given a pattern first, at Order int.MaxValue
         // (FallbackEndpointRouteBuilderExtensions, StaticFilesEndpointRouteBuilderExtensions,
         // ControllerEndpointRouteBuilderExtensions).
-        const strings = args.filter((a) => text(a) !== undefined).length;
-        const withPattern = name === "MapFallback" ? args.length >= 2 : name === "MapFallbackToFile" ? strings >= 2 : name === "MapFallbackToController" ? strings >= 3 : strings >= 4;
+        // The overload with a pattern has one argument more; MapFallbackToFile's second argument is the file of that
+        // overload, or the StaticFileOptions of the other.
+        const count = args.length;
+        let withPattern: boolean | undefined =
+          name === "MapFallback" ? count >= 2 : name === "MapFallbackToController" ? count >= 3 : name === "MapFallbackToAreaController" ? count >= 4 : count >= 3 || undefined;
+        if (withPattern === undefined && count === 2) {
+          const second = args[1]!;
+          if (text(second) !== undefined) withPattern = true;
+          else if (isWord(tok(f, second.start), "new") && isWord(tok(f, second.start + 1), "StaticFileOptions")) withPattern = false;
+        } else if (withPattern === undefined) withPattern = false;
+        if (withPattern === undefined) {
+          this.limit(f, n, `calls ${name} with arguments atlas does not tell apart (a pattern and a file, or a file and options); the route is not read`);
+          return;
+        }
         const p = withPattern ? pattern(arg(0, "pattern")) : "{*path:nonfile}";
         if (p !== undefined) this.mapped.push({ methods: ["*"], prefix, pattern: p, at, order: order(2147483647) });
         return;
@@ -773,11 +811,25 @@ class Reader {
     return out.length ? out : undefined;
   }
 
-  private untypedSingleLambda(f: CsFile, a: Argument): boolean {
+  /**
+   * Whether `Map`'s handler may be `IApplicationBuilder.Map`'s branch (`Action<IApplicationBuilder>`): a lambda whose
+   * one parameter has no type written or is an `IApplicationBuilder`, or a method that takes one or that is not found.
+   */
+  private mayBranch(f: CsFile, a: Argument): boolean {
     let s = a.start;
-    if (isWord(tok(f, s), "async") || isWord(tok(f, s), "static")) s++;
+    while (isWord(tok(f, s), "async") || isWord(tok(f, s), "static")) s++;
     if (isWord(tok(f, s)) && isP(tok(f, s + 1), "=>")) return true;
-    return isP(tok(f, s), "(") && isWord(tok(f, s + 1)) && isP(tok(f, s + 2), ")") && isP(tok(f, s + 3), "=>");
+    if (isP(tok(f, s), "(") && f.pairs.has(s) && isP(tok(f, f.pairs.get(s)! + 1), "=>")) {
+      const close = f.pairs.get(s)!;
+      const words = f.tokens.slice(s + 1, close).filter((t) => t.kind === "id");
+      return (words.length === 1 && close === s + 2) || words.some((w) => w.text === "IApplicationBuilder");
+    }
+    const names = f.tokens.slice(a.start, a.end);
+    if (names.every((t, i) => (i % 2 ? isP(t, ".") : isWord(t)))) {
+      const methods = this.model.methodsByName.get(names[names.length - 1]!.text) ?? [];
+      return !methods.length || methods.some((m) => /(^|\.)IApplicationBuilder$/.test(m.params[0]?.type ?? ""));
+    }
+    return false;
   }
 }
 
@@ -950,7 +1002,8 @@ function substitute(segments: PatternSegment[], defaults: Map<string, string>, r
       continue;
     }
     if (param) {
-      const pattern = constraintPattern(param.constraints);
+      // `exists` (ExistsRouteConstraint) takes any value the route has, as every one required here is.
+      const pattern = constraintPattern(param.constraints.filter((c) => c.toLowerCase() !== "exists"));
       if (pattern === undefined) return undefined;
       if (pattern !== null && !new RegExp(`^(?:${pattern})$`).test(v)) return null;
       continue;
@@ -1089,14 +1142,15 @@ function controllers(model: Model, reader: Reader, suppressAsync: boolean): Cont
     for (const level of chain) {
       for (const t of level) {
         for (const m of t.methods) {
-          const signature = `${m.name}/${m.params.length}`;
+          const signature = `${m.name}(${m.params.map((p) => p.type).join(",")})`;
           if (seen.has(signature)) continue;
           seen.add(signature);
           if (!m.modifiers.has("public") || m.modifiers.has("static") || m.modifiers.has("abstract") || m.generic || m.explicit) continue;
           if (m.modifiers.has("override") && ["ToString", "Equals", "GetHashCode"].includes(m.name)) continue;
           if (m.name === "Dispose" && m.params.length === 0 && (disposable || chain.some((l) => l.some((x) => x.bases.includes("IDisposable"))))) continue;
           // [NonAction] and the route attributes of the nearest declaration up the chain that has any.
-          const overridden = chain.flatMap((l) => l.flatMap((x) => x.methods.filter((b) => b.name === m.name && b.params.length === m.params.length)));
+          const same = (b: MethodDecl) => b.name === m.name && b.params.map((p) => p.type).join(",") === m.params.map((p) => p.type).join(",");
+          const overridden = chain.flatMap((l) => l.flatMap((x) => x.methods.filter(same)));
           if (overridden.some((b) => b.attributes.some((a) => a.name === "NonAction"))) continue;
           const declaring = overridden.find((b) => b.attributes.some((a) => Object.hasOwn(ROUTE_ATTRIBUTES, a.name))) ?? m;
           const providers = routeProviders(ctxOf(declaring.owner), declaring.attributes);
@@ -1332,6 +1386,9 @@ export function aspnetcoreRoutes(source: Source, spec: RouteSource, files: strin
   if (!texts.size) return [];
   const model = csharpModel(texts);
   const reader = new Reader(model, spec.component, spans);
+  for (const f of model.files) {
+    if (f.stopped !== undefined) reader.said.push(`routes ${spec.component}: ${f.file}:${lineOf(f.text, f.stopped)} has a string atlas cannot read as C#; the code after it is not read`);
+  }
   const base = (f: CsFile, region: [number, number]): Ctx => ({ model, file: f, region, params: new Map(), stack: [] });
   for (const f of model.files) if (f.topLevel) reader.walk(base(f, f.topLevel));
   for (const t of model.types) for (const m of t.methods) if (m.name === "Main" && m.modifiers.has("static") && m.body) reader.walk(enter(base(t.file, m.body), m, new Map()));
@@ -1424,10 +1481,10 @@ function staticRoutes(source: Source, spec: RouteSource, model: Model, reader: R
     if (typeof prefix === "string") continue;
     for (const file of listed) {
       if (!file.startsWith(root) || skipped(file) || /[{}*?]/.test(file)) continue;
-      const path = `/${file.slice(root.length)}`;
-      const segments = [...prefix, ...path.split("/").filter(Boolean).map((l) => [{ literal: l }])];
+      const segments = [...prefix, ...file.slice(root.length).split("/").filter(Boolean).map((l) => [{ literal: l }])];
       if (s.kind === "MapStaticAssets") out.push(...surfacesOf(spec.component, { segments, methods: ["GET", "HEAD"], at: { file, line: 1 }, order: 0, convention: "aspnetcore MapStaticAssets" }, () => {}));
       else {
+        const path = servedPaths(segments)[0]!.path;
         for (const method of ["GET", "HEAD"]) {
           out.push({ id: surfaceId({ component: spec.component, method, path }), component: spec.component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true, convention: "aspnetcore UseStaticFiles" });
         }
