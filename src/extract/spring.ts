@@ -688,6 +688,8 @@ interface TypeScope {
   responseBody: boolean;
   /** The type's own `@RequestMapping`, where a limit names it when its paths or methods are not read. */
   mapping?: { at: number; args: string | undefined };
+  /** What a `PathMatchConfigurer` predicate tests the type by. */
+  handler: HandlerType;
 }
 
 /**
@@ -698,10 +700,11 @@ interface TypeScope {
  * expression) is unknown: no route is registered for it, and `limits` says so.
  * `views` collects, per route, the view names its handler renders.
  */
-export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans, limits?: string[]): Surface[] {
+export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans, limits?: string[], prefixes?: PathPrefixes): Surface[] {
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
+  const pkg = /^\s*package\s+([\w.]+)/m.exec(masked)?.[1] ?? "";
   const constant = stringConstants(code, masked, kotlin);
   const unread = (at: number, args: string | undefined, what: string) =>
     limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} maps ${what} the file does not spell out (${(args ?? "").trim()}); its routes are not read`);
@@ -732,7 +735,16 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     const own = mappings.find((m) => m.kind === "RequestMapping" && m.at >= header && m.at < at && onlyAnnotations(masked, m.end, at));
     if (own) typeLevel.add(own.at);
     const annotations = code.slice(header, at);
+    const head = masked.slice(at + t[0].length, i);
     types.push({
+      handler: {
+        name: t[0].split(/\s+/).pop()!,
+        kind: t[0].split(/\s+/)[0]!,
+        annotations: new Set([...masked.slice(header, at).matchAll(/@(?:[\w.]*\.)?(\w+)/g)].map((a) => a[1]!)),
+        package: pkg,
+        // A supertype past the parameters of a Kotlin primary constructor, or after `extends` or `implements`.
+        inherits: /\b(?:extends|implements)\b/.test(head) || /:/.test(head.replace(/\([^()]*\)/g, "")),
+      },
       start: i,
       end,
       paths: own ? mappingPaths(own.args, kotlin, constant, own.at) : [""],
@@ -770,6 +782,9 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     if (typeLevel.has(m.at)) continue;
     // The innermost type whose body holds the handler; a nested type closed before it does not count.
     const owner = types.filter((t) => t.start < m.at && m.at < t.end).sort((a, b) => b.start - a.start)[0];
+    // The prefix a `PathMatchConfigurer` gives the handler type: none decided, its routes are not read.
+    const prefix = owner && prefixes ? prefixes.of(owner.handler) : "";
+    if (prefix === undefined) continue;
     const bases = owner ? owner.paths : [""];
     const paths = mappingPaths(m.args, kotlin, constant, m.at);
     const own = m.kind === "RequestMapping" ? requestMethods(m.args) : [SHORTCUTS[m.kind]!];
@@ -796,7 +811,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
     }
     for (const base of bases) {
       for (const path of paths) {
-        const full = springTemplate(joinRoute(spec.prefix ?? "", base, path));
+        const full = springTemplate(joinRoute(spec.prefix ?? "", prefix, base, path));
         const redirects = (reply?.redirects ?? []).flatMap((r) => {
           const target = redirectPath(r.url, full);
           return target ? [{ path: target, line: lineOf(text, r.at) }] : [];
@@ -819,10 +834,6 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
   return out;
 }
 
-/**
- * What a configurer call sets, in its configuration: the literal it passes, `null` when it is called with something
- * else (a constant, an expression), or undefined when it is not called.
- */
 /** Where the parenthesis that `close` closes opens, in masked code. */
 function opening(masked: string, close: number): number | undefined {
   let depth = 0;
@@ -1102,4 +1113,133 @@ export function groupedOpenApis(file: string, text: string): GroupedOpenApiBuild
     out.push(found);
   }
   return out;
+}
+
+/** What a `PathMatchConfigurer` predicate tests a handler type by: the annotations written on it and where it is. */
+export interface HandlerType {
+  name: string;
+  /** `class`, `interface`, `object` or `record`. */
+  kind: string;
+  annotations: Set<string>;
+  package: string;
+  /** Whether it names a supertype, whose annotations it may take. */
+  inherits: boolean;
+}
+
+/** The path prefixes `PathMatchConfigurer.addPathPrefix` gives handler types, read from every Spring file. */
+export interface PathPrefixes {
+  /** The prefix a handler type's routes are served under ("" for none), or undefined where it is not read. */
+  of(type: HandlerType): string | undefined;
+  /** Why handler types were left unread, one line per cause. */
+  limits(component: string): string[];
+}
+
+const ANNOTATION_CLASS = /^(?:[\w.]*\.)?(\w+)(?:\.class|::class(?:\.java)?)$/;
+
+/**
+ * Reads `addPathPrefix(prefix, predicate)` calls, which serve the handler methods of every handler type the predicate
+ * accepts under the prefix (docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html). The
+ * predicate is read where it is one of these, decided for certain from the type's declaration:
+ *
+ * - `HandlerTypePredicate.forAnnotation(A.class, ...)`: a type annotated with one of them, `@RestController` counting as
+ *   `@Controller` (it is meta-annotated with it). `HandlerTypePredicate` finds an annotation on supertypes and through
+ *   meta-annotations too (`AnnotationUtils.findAnnotation`), so a type without one is decided only where it names no
+ *   supertype and is a `@Controller` or `@RestController` itself.
+ * - `HandlerTypePredicate.forBasePackage("p", ...)`: a type whose qualified name starts with one of the packages and a
+ *   `.` (`HandlerTypePredicate.Builder.basePackage`).
+ * - a lambda `c -> c.isAnnotationPresent(A.class)` (Kotlin `{ it.isAnnotationPresent(A::class.java) }`): `A` written on
+ *   the type itself, which Spring's stereotypes, not `@Inherited`, cannot get from a supertype.
+ *
+ * Spring takes the first prefix whose predicate accepts the type, in the order the calls are made; the order of calls in
+ * different configurers is not read, so prefixes from two of them that disagree leave the type unread.
+ */
+export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
+  type Entry = { where: string; file: string; prefix: string | undefined; prefixText: string; predicate: string; test: ((t: HandlerType) => boolean | undefined) | undefined };
+  const entries: Entry[] = [];
+  for (const [file, text] of texts) {
+    if (!/\baddPathPrefix\s*\(/.test(text)) continue;
+    const code = withoutComments(file, text);
+    const masked = maskStrings(file, code);
+    const kotlin = /\.kts?$/.test(file);
+    const constant = stringConstants(code, masked, kotlin);
+    for (const m of masked.matchAll(/\.\s*addPathPrefix\s*\(/g)) {
+      const open = (m.index ?? 0) + m[0].length - 1;
+      const close = closing(masked, open);
+      if (close === undefined) continue;
+      const args = splitTop(code.slice(open + 1, close), ",").map((a) => a.trim());
+      // Kotlin passes a last lambda after the parentheses: `addPathPrefix("/api") { it.isAnnotationPresent(...) }`.
+      const trailing = kotlin && args.length === 1 ? /^\s*\{/.exec(masked.slice(close + 1)) : null;
+      const end = trailing ? closing(masked, close + 1 + trailing[0].length - 1) : undefined;
+      if (end !== undefined) args.push(code.slice(close + 1, end + 1).trim());
+      const [prefixText = "", predicate = ""] = args;
+      const literal = literals(prefixText, kotlin);
+      const value = literal?.length === 1 ? literal[0] : constant(prefixText, m.index ?? 0);
+      // Spring resolves `${...}` placeholders in a prefix from the environment (RequestMappingHandlerMapping).
+      const prefix = value === undefined || /\$\{/.test(value) ? undefined : value;
+      entries.push({ where: `${file}:${lineOf(text, m.index ?? 0)}`, file, prefix, prefixText, predicate: predicate.replace(/\s+/g, " "), test: args.length === 2 ? predicateTest(predicate, kotlin) : undefined });
+    }
+  }
+  const causes = new Map<string, Set<string>>();
+  const unread = (why: string, type: HandlerType) => {
+    (causes.get(why) ?? causes.set(why, new Set()).get(why)!).add(type.name);
+    return undefined;
+  };
+  return {
+    of: (type) => {
+      if (!entries.length) return "";
+      // What each configurer decides, in the order of its calls: a prefix, or the entry that leaves it undecided.
+      const decided = new Map<string, { prefix: string } | { entry: Entry; why: string }>();
+      for (const e of entries) {
+        if (decided.has(e.file)) continue;
+        if (type.kind === "interface") {
+          decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which the class that implements an interface decides` });
+          continue;
+        }
+        const accepts = e.test?.(type);
+        if (e.test === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types a predicate atlas does not read accepts (${e.predicate})` });
+        else if (accepts === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives a path prefix to the handler types ${e.predicate} accepts, which a supertype or a meta-annotation may decide` });
+        else if (accepts && e.prefix === undefined) decided.set(e.file, { entry: e, why: `${e.where} gives the handler types ${e.predicate} accepts a path prefix the file does not spell out (${e.prefixText})` });
+        else if (accepts) decided.set(e.file, { prefix: e.prefix! });
+      }
+      const all = [...decided.values()];
+      const open = all.find((d): d is { entry: Entry; why: string } => "why" in d);
+      if (open) return unread(open.why, type);
+      const values = [...new Set(all.map((d) => (d as { prefix: string }).prefix))];
+      if (values.length > 1) return unread(`${[...decided.keys()].join(", ")} give path prefixes (${values.join(", ")}) in configurers whose order is not read`, type);
+      return values[0] ?? "";
+    },
+    limits: (component) => [...causes].map(([why, types]) => `routes ${component}: ${why}; the routes of ${[...types].sort().join(", ")} are not read`),
+  };
+}
+
+/** A predicate on handler types atlas decides: a test giving undefined where it cannot decide for a type, or undefined. */
+function predicateTest(predicate: string, kotlin: boolean): ((t: HandlerType) => boolean | undefined) | undefined {
+  const text = predicate.trim();
+  const call = /^(?:[\w.]*\.)?(forAnnotation|forBasePackage)\s*\(([\s\S]*)\)$/.exec(text);
+  if (call) {
+    const args = splitTop(call[2]!, ",").map((a) => a.trim()).filter(Boolean);
+    if (!args.length) return undefined;
+    if (call[1] === "forBasePackage") {
+      const packages = args.map((a) => literals(a, kotlin));
+      if (!packages.every((p) => p?.length === 1)) return undefined;
+      const bases = packages.map((p) => (p![0]!.endsWith(".") ? p![0]! : `${p![0]!}.`));
+      return (t) => bases.some((b) => `${t.package}.${t.name}`.startsWith(b));
+    }
+    const names = args.map((a) => ANNOTATION_CLASS.exec(a)?.[1]);
+    if (!names.every(Boolean)) return undefined;
+    return (t) => {
+      const has = (a: string) => t.annotations.has(a) || (a === "Controller" && t.annotations.has("RestController"));
+      if (names.some((n) => has(n!))) return true;
+      // Without one written on it, a supertype or a stereotype of its own may carry one.
+      return t.inherits || !(t.annotations.has("Controller") || t.annotations.has("RestController")) ? undefined : false;
+    };
+  }
+  // `c -> c.isAnnotationPresent(A.class)`, `(Class<?> c) -> ...`, `{ it.isAnnotationPresent(A::class.java) }`.
+  const lambda =
+    /^\(?\s*(?:[\w<>?,\s]+\s+)?(\w+)\s*\)?\s*->\s*\1\s*\.\s*isAnnotationPresent\s*\(([^()]*)\)$/.exec(text) ??
+    /^\{\s*(?:(\w+)\s*->\s*\1|it)\s*\.\s*isAnnotationPresent\s*\(([^()]*)\)\s*\}$/.exec(text);
+  const name = lambda && ANNOTATION_CLASS.exec(lambda[2]!.trim())?.[1];
+  if (!name) return undefined;
+  // Class.isAnnotationPresent sees an annotation of a supertype only where it is @Inherited, which Spring's stereotypes are not.
+  return (t) => (t.annotations.has(name) ? true : t.inherits && name !== "Controller" && name !== "RestController" ? undefined : false);
 }

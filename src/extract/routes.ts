@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
-import { routesFromSpring, type Views } from "./spring.js";
+import { pathPrefixes, routesFromSpring, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, type Mounts } from "./mounts.js";
@@ -15,7 +15,7 @@ import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 import { declarationOf } from "./binding.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
-import { nestApp, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
+import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -29,6 +29,8 @@ const NEST_METHODS: Record<string, string> = {
   All: "*",
 };
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
+/** The names whose calls the express style reads as routes when no router is traced, unless the entry names others. */
+const EXPRESS_RECEIVERS = ["app", "router", "server", "fastify"];
 
 /** A property's name as written, quoted or not: `path` and `"path"` are the same key. */
 function propertyName(p: ts.ObjectLiteralElementLike): string | undefined {
@@ -286,8 +288,9 @@ export function routesFromTypeScript(
   };
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const styles = new Set(spec.styles ?? []);
-  const receivers = new Set(spec.receivers ?? ["app", "router", "server", "fastify"]);
-  const unmounted = new Set<string>();
+  const receivers = new Set(spec.receivers ?? EXPRESS_RECEIVERS);
+  /** Routers whose routes are not read, by name, with why. */
+  const unmounted = new Map<string, string>();
   const constPattern = spec.constants ? new RegExp(spec.constants) : undefined;
   const out: Surface[] = [];
   const at = (node: ts.Node) => ({ file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1 });
@@ -457,7 +460,9 @@ export function routesFromTypeScript(
           if (version === null) unreadVersion(given ?? options!);
         }
       }
-      if (bases !== undefined) {
+      // The paths RouterModule puts before the controller's, from the module that holds it; none read, no route is.
+      const routed = node.name ? nest.modules?.get(`${file}#${node.name.text}`) : undefined;
+      if (bases !== undefined && routed !== null) {
         const className = node.name?.text;
         for (const member of node.members) {
           const explicit = decorators(member)
@@ -481,9 +486,11 @@ export function routesFromTypeScript(
             if (!paths) continue;
             for (const a of call!.args) span(a);
             if (versions === null) continue;
-            for (const base of bases) {
-              for (const path of paths) {
-                for (const served of nestPaths(nest, method!, joinRoute(base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true });
+            for (const module of routed ?? [""]) {
+              for (const base of bases) {
+                for (const path of paths) {
+                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true });
+                }
               }
             }
           }
@@ -507,7 +514,7 @@ export function routesFromTypeScript(
           if (router) {
             const prefixes = mounts!.prefixes(router);
             if (prefixes) for (const p of prefixes) add(method, joinRoute(p, path), node, node);
-            else unmounted.add(receiver.text);
+            else unmounted.set(receiver.text, mounts!.why(router) ?? "is mounted where the code gives no literal path");
           } else if (receivers.has(receiver.text)) add(method, path, node, node);
         }
       }
@@ -544,8 +551,8 @@ export function routesFromTypeScript(
     if (value && method?.toUpperCase() === "GET" && prefixes?.length && prefixes.every((p) => route(joinRoute(p, value)) === route(value))) continue;
     limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
   }
-  for (const name of unmounted) {
-    limits?.push(`routes ${spec.component}: router ${name} in ${file} is mounted where the code gives no literal path; its routes are not read (declare it in mounts)`);
+  for (const [name, why] of unmounted) {
+    limits?.push(`routes ${spec.component}: router ${name} in ${file} ${why}; its routes are not read (declare it in mounts)`);
   }
   // express.static answers with the files of a directory, and passes on what it does not hold: what it serves is the
   // directory's content, not the code's.
@@ -771,8 +778,10 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
       ...(implicit ? { implicit: true } : {}),
     });
   };
+  // A name traced to an application or router of the files read registers routes whatever it is called (`subapi`).
+  const traced = (name: string, at: number) => (routers ?? own!).receiver(file, name, at);
   for (const m of fastapi ? code.matchAll(FASTAPI) : []) {
-    if (!receivers.has(m[1]!)) continue;
+    if (!receivers.has(m[1]!) && !traced(m[1]!, m.index ?? 0)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
     // The path is the first argument, or the one named `path` (`@app.get(path="/items")`).
     const first = /^[A-Za-z_]\w*\s*=(?!=)/.test(code.slice(argsStart)) ? undefined : argsStart;
@@ -798,7 +807,7 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   // `/{path:path}` joined. StaticFiles answers GET and HEAD, under every prefix the receiver is served at; what another
   // application serves is not read here.
   for (const m of fastapi ? code.matchAll(/\b(\w+)\.mount\(\s*/g) : []) {
-    if (!receivers.has(m[1]!)) continue;
+    if (!receivers.has(m[1]!) && !traced(m[1]!, m.index ?? 0)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
     // `mount("/x", app)` or by name, `mount(path="/x", app=...)`.
     const all = pythonArgStarts(code, argsStart);
@@ -1044,16 +1053,19 @@ function buildRoot(file: string, files: Set<string>): string | undefined {
  */
 function nestBootstrap(source: Source, config: Config, spec: RouteSource, files: string[], root: string | undefined, limits: string[]): NestApp {
   const script = (f: string) => /\.(c|m)?[jt]sx?$/.test(f);
-  if (spec.bootstrap !== undefined) {
-    const text = source.read(spec.bootstrap);
-    if (text === undefined) limits.push(`routes ${spec.component}: the bootstrap file ${spec.bootstrap} is not there${source.ref === "WORKTREE" ? "" : " at this revision"}`);
-    return nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix);
-  }
   const dir = root?.replace(/\/+$/, "");
   const component = dir === undefined ? [] : select(source, [dir ? `${dir}/**` : "**"], config.exclude);
   const candidates = [...new Set([...files, ...component])].filter(script);
   const texts = new Map(candidates.map((f) => [f, source.read(f) ?? ""]));
-  return nestApp(texts, spec.component, limits, spec.prefix);
+  let app: NestApp;
+  if (spec.bootstrap !== undefined) {
+    const text = source.read(spec.bootstrap);
+    if (text === undefined) limits.push(`routes ${spec.component}: the bootstrap file ${spec.bootstrap} is not there${source.ref === "WORKTREE" ? "" : " at this revision"}`);
+    app = nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix);
+  } else app = nestApp(texts, spec.component, limits, spec.prefix);
+  // The modules RouterModule routes are those of the application's code, wherever its bootstrap is.
+  const { modules, unknown } = nestModules(texts, spec.component, limits);
+  return { ...app, modules, ...(unknown && !app.unknown ? { unknown } : {}) };
 }
 
 /** Surfaces with one per component, method and path, the first kept. */
@@ -1089,8 +1101,11 @@ export function extractRoutes(
     const known = codeFiles.get(spec.component) ?? codeFiles.set(spec.component, new Set()).get(spec.component)!;
     const before = out.length;
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
-    const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts) : undefined;
+    const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts, spec.receivers ?? EXPRESS_RECEIVERS) : undefined;
     const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
+    const prefixes = (spec.styles ?? []).includes("spring")
+      ? pathPrefixes(new Map(files.filter((f) => /\.(java|kt|kts)$/.test(f)).map((f) => [f, source.read(f) ?? ""])))
+      : undefined;
     const routers = (spec.styles ?? []).includes("fastapi")
       ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
       : undefined;
@@ -1100,9 +1115,10 @@ export function extractRoutes(
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
-      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes));
     }
     if (routers) limits.push(...routers.limits(spec.component));
+    if (prefixes) limits.push(...prefixes.limits(spec.component));
     addCoverage(coverage, `routes ${spec.component}`, files.length, out.length - before);
   }
   // What Next.js serves from files with no handler of the app's: public/ as files, to GET and HEAD, and the metadata

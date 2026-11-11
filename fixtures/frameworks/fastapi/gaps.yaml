@@ -6,7 +6,6 @@ missing:
   - { route: "GET /docs/oauth2-redirect", reason: "the Swagger UI's OAuth2 redirect FastAPI serves by itself is not a surface" }
   - { route: "GET /redoc", reason: "the ReDoc page FastAPI serves by itself (`redoc_url`) is not a surface" }
   - { route: "GET /health", reason: "`app.add_api_route(path, endpoint)` is not read, and nothing says so" }
-  - { route: "GET /subapi/sub", reason: "a FastAPI application other than `app` is not read; mounted with `app.mount`, its routes are left out and nothing says so" }
   - { route: "GET /subapi/openapi.json", reason: "a mounted FastAPI application serves its own document, which is not a surface" }
   - { route: "GET /subapi/docs", reason: "a mounted FastAPI application serves its own Swagger UI, which is not a surface" }
   - { route: "GET /subapi/docs/oauth2-redirect", reason: "a mounted FastAPI application serves its own OAuth2 redirect, which is not a surface" }
@@ -33,3 +32,4 @@ dispatch:
   - { request: "DELETE /v1/items/value1/", reason: "trailing slash: no route takes `/v1/items/value1/`, Starlette redirects it to `/v1/items/value1`; atlas drops the `/` and matches" }
   - { request: "GET /v1/items/value1/reviews/", reason: "trailing slash: no route takes `/v1/items/value1/reviews/`, Starlette redirects it to `/v1/items/value1/reviews`; atlas drops the `/` and matches" }
   - { request: "POST /v1/items/value1/reviews/", reason: "trailing slash: no route takes `/v1/items/value1/reviews/`, Starlette redirects it to `/v1/items/value1/reviews`; atlas drops the `/` and matches" }
+  - { request: "GET /subapi/sub/", reason: "trailing slash: no route of the mounted application takes `/sub/`, and its router redirects it to `/subapi/sub`; atlas drops the `/` and matches" }

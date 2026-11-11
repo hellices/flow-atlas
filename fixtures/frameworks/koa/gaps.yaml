@@ -19,19 +19,13 @@ missing:
   - { route: "GET /files/{**}", reason: "path-to-regexp 8's wildcard `*path` is read as literal text" }
   - { route: "GET /downloads/{}", reason: "path-to-regexp 8's parameter with a quoted name (`:\"file-name\"`) is read as literal text" }
   - { route: "GET /archive/{**}", reason: "path-to-regexp 8's wildcard with a quoted name (`*\"rest-path\"`) is read as literal text" }
-  - { route: "GET /api/users", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
-  - { route: "GET /api/users/{}", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
-  - { route: "GET /api/posts", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
-  - { route: "GET /api/posts/{}", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
-  - { route: "POST /api/posts/{}/likes", reason: "a router nested with `router.use(path, nested.routes())` in a router with a `prefix` is read without the mount path and the prefix, and nothing says so" }
-  - { route: "GET /api/v{}/status", reason: "a router's `prefix` constructor option is not read: its routes are read at the path written, and nothing says so" }
-  - { route: "GET /api/v{}/legacy", reason: "a prefix set with `router.prefix()`, and the prefix of the router it is nested in with `use`, are not read (its `/` read as the root's), and nothing says so" }
-  - { route: "GET /api/v{}/legacy/items", reason: "a prefix set with `router.prefix()`, and the prefix of the router it is nested in with `use`, are not read, and nothing says so" }
+  - { route: "GET /api/v{}/status", reason: "a parameter that shares its segment with text (`v:version`, in the router's prefix) is read as literal text" }
+  - { route: "GET /api/v{}/legacy", reason: "a parameter that shares its segment with text (`v:version`, in the prefix of the router it is nested in) is read as literal text" }
+  - { route: "GET /api/v{}/legacy/items", reason: "a parameter that shares its segment with text (`v:version`, in the prefix of the router it is nested in) is read as literal text" }
 extra:
-  - { route: "GET /{}", reason: "a nested router's route read without its mount path and its parent's prefix (`/api/users`, `/api/posts`)" }
-  - { route: "POST /{}/likes", reason: "a nested router's route read without its mount path and its parent's prefix (`/api/posts`)" }
-  - { route: "GET /status", reason: "a route read without its router's prefix (`/api/v:version`)" }
-  - { route: "GET /items", reason: "a route read without its router's prefixes (`/api/v:version/legacy`)" }
+  - { route: "GET /api/v:version/status", reason: "the parameter within the prefix's segment read as literal text" }
+  - { route: "GET /api/v:version/legacy", reason: "the parameter within the prefix's segment read as literal text" }
+  - { route: "GET /api/v:version/legacy/items", reason: "the parameter within the prefix's segment read as literal text" }
   - { route: "GET /profile{/:id}", reason: "the optional group read as literal text" }
   - { route: "GET /files/*path", reason: "the wildcard read as literal text" }
   - { route: "GET /downloads/:\"file-name\"", reason: "the quoted parameter read as literal text" }
@@ -39,7 +33,3 @@ extra:
 dispatch:
   - { request: "GET /reports/latest", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
   - { request: "GET /reports/latest/", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
-  - { request: "GET /dashboard", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
-  - { request: "GET /dashboard/", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
-  - { request: "GET /users", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }
-  - { request: "GET /users/", reason: "prefix (see `extra`): atlas also matches the extra `GET /{}`, the nested `users` router's `/:id` read without its mount path and prefix, which @koa/router serves at `/api/users/:id` only" }

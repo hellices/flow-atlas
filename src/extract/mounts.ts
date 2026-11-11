@@ -3,21 +3,38 @@ import { joinRoute } from "../paths.js";
 import { declarationOf, resolveModule, unwrap } from "./binding.js";
 
 /**
- * Where Express routers are served. A router (`Router()` from `express`, as `express.Router()`, a named import or a
- * destructured require) registers routes relative to the path it is mounted at with `use`, so its routes are read only
- * where every mount of it is known: a literal path in a `use` call that names the router, held in the same file or
- * required or imported from a relative module, or a mount the configuration declares. A router mounted anywhere atlas
- * cannot read is not placed at the root.
+ * Where the routers of Express, @koa/router, Hono and Fastify are served. Each registers routes relative to the path it
+ * is mounted at, so a router's routes are read only where every mount of it is known: a literal path, in a call that
+ * names the router, held in the same file or required or imported from a relative module, or a mount the configuration
+ * declares. A router mounted anywhere atlas cannot read is not placed at the root. An application serves at the root
+ * where nothing mounts it.
  *
- * Routers are told apart by where they are created, not their names: a router is `<file>@<offset of its Router()>`, and
- * a name that a closer scope binds to something else is not that router. `use` returns the router it is called on, so
- * a chain `Router().use(a).use("/b", b)` is that router, with each `use` a mount on it.
+ * - Express: `Router()` from `express` (as `express.Router()`, a named import or a destructured require) is mounted with
+ *   `use(path, router)`; an application (`express()`) mounted the same way is a sub-application, served under that path
+ *   (expressjs.com/en/api.html#app.mountpath).
+ * - @koa/router: a router (`new Router()` from `@koa/router` or `koa-router`) is mounted with `use(path?, r.routes())`
+ *   on another router or a Koa application, and serves its routes under its own `prefix` (the constructor's option, or
+ *   `prefix()`), which also comes before what is mounted on it (`_mountNestedRouter`, `register`). A prefix set more than
+ *   once is applied differently by different versions (stacked before 15.1, replaced since), so it is not read.
+ * - Hono: `new Hono()` from `hono`; `basePath(path)` gives the same routes another base path, and `route(path, app)`
+ *   serves the routes of `app` under `path` joined to the base path of the instance it is called on (hono-base.js).
+ * - Fastify: an instance (`Fastify()` from `fastify`) or a plugin, a function `register` hands an instance as its first
+ *   parameter, which serves its routes under the `prefix` option of every `register` call that takes it in, joined to
+ *   where the instance it is registered on is served (fastify.dev/docs/latest/Reference/Plugins, plugin-override.js).
+ *   A plugin registered on the first parameter of a function no `register` call takes in is placed at the root, as the
+ *   routes on that parameter are read when the configuration names it among the receivers.
+ *
+ * Routers are told apart by where they are created, not their names: a router is `<file>@<offset of its creation>`, and
+ * a name that a closer scope binds to something else is not that router. `use`, `route` and `register` return the
+ * instance they are called on, so a chain `Router().use(a).use("/b", b)` is that router, with each call a mount on it.
  */
 export interface Mounts {
   /** The router the name used at `id` in `file` refers to, defined there or imported; undefined when it is none. */
   routerOf(file: string, id: ts.Identifier): string | undefined;
-  /** The paths a router is served under, or undefined when one of its mounts is not read. */
+  /** The paths a router is served under, or undefined when they are not read. */
   prefixes(router: string): string[] | undefined;
+  /** Why the paths of a router are not read, where `prefixes` gives none: "is mounted where ...". */
+  why(router: string): string | undefined;
   /**
    * Where `file` mounts `express.static`, which serves the files of a directory: the line and the paths it is mounted
    * at, undefined where a mount is not read.
@@ -25,9 +42,19 @@ export interface Mounts {
   statics(file: string): Array<{ line: number; paths: string[] | undefined }>;
 }
 
+type Kind = "express-router" | "express-app" | "koa-router" | "koa-app" | "hono" | "fastify" | "plugin";
+/** Kinds served at the root where nothing mounts them. */
+const APPLICATIONS = new Set<Kind>(["express-app", "koa-app", "hono", "fastify"]);
+/** A literal, or why a value is not read. */
+type Value = string | { why: string };
+
 const literal = (e: ts.Expression | undefined): string | undefined => {
   const u = e && unwrap(e);
   return u && (ts.isStringLiteral(u) || ts.isNoSubstitutionTemplateLiteral(u)) ? u.text : undefined;
+};
+const short = (n: ts.Node): string => {
+  const text = n.getText().replace(/\s+/g, " ");
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 };
 
 /** The module a `require("<spec>")` call names, or undefined for anything else. */
@@ -63,96 +90,109 @@ function importOf(decl: ts.Node | undefined): { spec: string; name: string } | u
   return undefined;
 }
 
-/** The receiver a `use` call is made on: `x.use(...)` and `x["use"](...)`, which is the same call. */
-function useReceiver(node: ts.Node): ts.Expression | undefined {
-  if (!ts.isCallExpression(node)) return undefined;
-  const callee = node.expression;
-  if (ts.isPropertyAccessExpression(callee) && callee.name.text === "use") return callee.expression;
-  if (ts.isElementAccessExpression(callee) && literal(callee.argumentExpression) === "use") return callee.expression;
+/** What a callee names of a package: `x` imported or required from it, or `m.x` of the whole module. */
+function packageName(callee: ts.Expression): { spec: string; name: string } | undefined {
+  const u = unwrap(callee);
+  if (ts.isIdentifier(u)) return importOf(declarationOf(u));
+  const whole = required(u);
+  if (whole !== undefined) return { spec: whole, name: "default" };
+  if (!ts.isPropertyAccessExpression(u)) return undefined;
+  const target = unwrap(u.expression);
+  const module = required(target);
+  if (module !== undefined) return { spec: module, name: u.name.text };
+  const from = ts.isIdentifier(target) ? importOf(declarationOf(target)) : undefined;
+  return from && (from.name === "default" || from.name === "*") ? { spec: from.spec, name: u.name.text } : undefined;
+}
+
+/** The `prefix` an @koa/router constructor's options give: "" with none, unread where not spelled out. */
+function koaPrefix(options: ts.Expression | undefined): Value {
+  const u = options && unwrap(options);
+  if (!u) return "";
+  if (!ts.isObjectLiteralExpression(u) || u.properties.some(ts.isSpreadAssignment)) return { why: `has options the code does not spell out (${short(u)})` };
+  const p = u.properties.find((x) => x.name && (ts.isIdentifier(x.name) || ts.isStringLiteral(x.name)) && x.name.text === "prefix");
+  if (!p) return "";
+  const value = ts.isPropertyAssignment(p) ? literal(p.initializer) : undefined;
+  return value ?? { why: `has a prefix the code does not spell out (${short(p)})` };
+}
+
+/** What an expression creates: an Express, @koa/router, Koa, Hono or Fastify router or application, with its own prefix. */
+function creation(e: ts.Expression): { kind: Kind; own: Value } | undefined {
+  const u = unwrap(e);
+  if (!ts.isCallExpression(u) && !ts.isNewExpression(u)) return undefined;
+  const from = packageName(u.expression);
+  if (!from) return undefined;
+  const { spec, name } = from;
+  const made = ts.isNewExpression(u);
+  if (spec === "express") return name === "Router" ? { kind: "express-router", own: "" } : name === "default" && !made ? { kind: "express-app", own: "" } : undefined;
+  if (spec === "@koa/router" || spec === "koa-router") return name === "default" || name === "Router" ? { kind: "koa-router", own: koaPrefix(u.arguments?.[0]) } : undefined;
+  if (spec === "koa") return made && (name === "default" || name === "Koa") ? { kind: "koa-app", own: "" } : undefined;
+  if ((spec === "hono" || spec.startsWith("hono/")) && made && name === "Hono") return { kind: "hono", own: "" };
+  if (spec === "fastify" && !made && ["default", "fastify", "Fastify"].includes(name)) return { kind: "fastify", own: "" };
   return undefined;
 }
 
-/** The `Router()` an expression is: the creation itself, or a chain of `use` calls made on it. */
-function chainRoot(e: ts.Expression): ts.Expression | undefined {
-  let u = unwrap(e);
-  for (let r = useReceiver(u); r; r = useReceiver(u)) u = unwrap(r);
-  return createsRouter(u) ? u : undefined;
-}
-
-/** Whether an expression creates an Express router: `Router()` or `new Router()` where `Router` comes from `express`. */
-function createsRouter(e: ts.Expression | undefined): boolean {
-  const u = e && unwrap(e);
-  if (!u || !(ts.isCallExpression(u) || ts.isNewExpression(u))) return false;
-  const callee = unwrap(u.expression);
-  if (ts.isIdentifier(callee)) {
-    const from = importOf(declarationOf(callee));
-    return from?.spec === "express" && from.name === "Router";
-  }
-  if (ts.isPropertyAccessExpression(callee) && callee.name.text === "Router") {
-    const target = unwrap(callee.expression);
-    if (required(target) === "express") return true;
-    const from = ts.isIdentifier(target) ? importOf(declarationOf(target)) : undefined;
-    return from?.spec === "express" && (from.name === "default" || from.name === "*");
-  }
-  return false;
+/** A method call: its name, receiver and arguments; `x["use"](...)` is the same call as `x.use(...)`. */
+function methodCall(node: ts.Node): { name: string; receiver: ts.Expression; args: readonly ts.Expression[] } | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+  const callee = unwrap(node.expression);
+  if (ts.isPropertyAccessExpression(callee)) return { name: callee.name.text, receiver: callee.expression, args: node.arguments };
+  const name = ts.isElementAccessExpression(callee) ? literal(callee.argumentExpression) : undefined;
+  return name !== undefined && ts.isElementAccessExpression(callee) ? { name, receiver: callee.expression, args: node.arguments } : undefined;
 }
 
 /** Whether an expression calls express's static middleware: `express.static(dir)`, or `static` imported from express. */
 function servesStatic(e: ts.Expression): boolean {
   const u = unwrap(e);
   if (!ts.isCallExpression(u)) return false;
-  const callee = unwrap(u.expression);
-  if (ts.isIdentifier(callee)) {
-    const from = importOf(declarationOf(callee));
-    return from?.spec === "express" && from.name === "static";
-  }
-  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "static") return false;
-  const target = unwrap(callee.expression);
-  if (required(target) === "express") return true;
-  const from = ts.isIdentifier(target) ? importOf(declarationOf(target)) : undefined;
-  return from?.spec === "express" && (from.name === "default" || from.name === "*");
+  const from = packageName(u.expression);
+  return from?.spec === "express" && from.name === "static";
 }
 
-/** Whether a name is bound to an Express application: `express()` with `express` imported or required from "express". */
-function isExpressApp(id: ts.Identifier): boolean {
-  const decl = declarationOf(id);
-  const init = decl && ts.isVariableDeclaration(decl) && decl.initializer ? unwrap(decl.initializer) : undefined;
-  if (!init || !ts.isCallExpression(init)) return false;
-  const callee = unwrap(init.expression);
-  if (required(callee) === "express") return true;
-  const from = ts.isIdentifier(callee) ? importOf(declarationOf(callee)) : undefined;
-  return from?.spec === "express" && from.name === "default";
+/** The router a Koa `use` argument hands over: `r` of `r.routes()` or `r.middleware()`. */
+function koaRoutes(e: ts.Expression): ts.Expression | undefined {
+  const call = methodCall(unwrap(e));
+  return call && !call.args.length && (call.name === "routes" || call.name === "middleware") ? call.receiver : undefined;
 }
 
-/** The key of the router an expression is, or undefined when it is none. */
-const routerIn = (file: string, e: ts.Expression): string | undefined => {
-  const root = chainRoot(e);
-  return root ? `${file}@${root.getStart()}` : undefined;
-};
+interface Mount {
+  verb: "use" | "route" | "register";
+  receiver: ts.Expression;
+  /** The path or prefix: undefined where the code gives no literal one, why where that is worth saying. */
+  path: Value | undefined;
+  target: ts.Expression;
+  /** Koa's `use(r.routes())`: the target is the router whose routes are handed over. */
+  routes?: true;
+}
 
 interface FileFacts {
   sf: ts.SourceFile;
-  /** What the module exports, by exported name: a name or a router of the file, or a name another module exports. */
-  exports: Map<string, ts.Expression | { spec: string; name: string }>;
+  /** What the module exports, by exported name: a node of the file, or a name another module exports. */
+  exports: Map<string, ts.Node | { spec: string; name: string }>;
   /** Modules re-exported whole (`export * from "./routes"`). */
   stars: string[];
-  /** The router mounted: a name, a module's export taken from it (`routes.router`), or a router created in place. */
-  uses: Array<{ receiver: ts.Expression; path: string | undefined; target: ts.Expression }>;
+  /** The calls that mount a router, an application or a plugin, with the path they give. */
+  mounts: Mount[];
+  /** `prefix(path)` calls, which set an @koa/router router's prefix. */
+  prefixes: Array<{ receiver: ts.Expression; value: Value }>;
   /** Where `express.static` is mounted. */
   statics: Array<{ receiver: ts.Expression; path: string | undefined; line: number }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, exports: new Map(), stars: [], uses: [], statics: [] };
-  const exported = (n: ts.Node): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-  /** A name, or a router created in place (`export default Router().use("/api", api)`). */
-  const exportable = (e: ts.Expression): boolean => ts.isIdentifier(e) || chainRoot(e) !== undefined;
+  const facts: FileFacts = { sf, exports: new Map(), stars: [], mounts: [], prefixes: [], statics: [] };
+  const modifier = (n: ts.Node, kind: ts.SyntaxKind): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === kind);
+  const exported = (n: ts.Node): boolean => modifier(n, ts.SyntaxKind.ExportKeyword);
   const visit = (node: ts.Node): void => {
     if (ts.isVariableStatement(node) && exported(node)) {
       for (const d of node.declarationList.declarations) if (ts.isIdentifier(d.name)) facts.exports.set(d.name.text, d.name);
     }
-    if (ts.isExportAssignment(node) && exportable(unwrap(node.expression))) facts.exports.set("default", unwrap(node.expression));
+    // `export function plugin(fastify)`, `export default async function (fastify)`.
+    if (ts.isFunctionDeclaration(node) && exported(node)) {
+      if (modifier(node, ts.SyntaxKind.DefaultKeyword)) facts.exports.set("default", node);
+      else if (node.name) facts.exports.set(node.name.text, node);
+    }
+    if (ts.isExportAssignment(node) && !node.isExportEquals) facts.exports.set("default", unwrap(node.expression));
     if (ts.isExportDeclaration(node) && !node.exportClause && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) facts.stars.push(node.moduleSpecifier.text);
     if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
       for (const el of node.exportClause.elements) {
@@ -165,8 +205,8 @@ function factsOf(text: string, file: string): FileFacts {
       const left = node.left.getText(sf);
       const right = unwrap(node.right);
       const named = /^(?:module\.)?exports\.(\w+)$/.exec(left);
-      if (exportable(right) && left === "module.exports") facts.exports.set("default", right);
-      if (ts.isIdentifier(right) && named) facts.exports.set(named[1]!, right);
+      if (left === "module.exports" && !ts.isObjectLiteralExpression(right)) facts.exports.set("default", right);
+      if (named) facts.exports.set(named[1]!, right);
       // `module.exports = { router, api: apiRouter }` exports each name a property holds.
       if (left === "module.exports" && ts.isObjectLiteralExpression(right)) {
         for (const p of right.properties) {
@@ -177,24 +217,42 @@ function factsOf(text: string, file: string): FileFacts {
         }
       }
     }
-    // `app.use(...)` on a name, or on a router created in place (`Router().use(...)`).
-    const use = useReceiver(node);
-    if (ts.isCallExpression(node) && use && (ts.isIdentifier(unwrap(use)) || chainRoot(use))) {
-      const args = node.arguments;
+    const call = methodCall(node);
+    if (call?.name === "use") {
+      const { args, receiver } = call;
       const first = args[0] && unwrap(args[0]);
       const path = literal(first);
       // `use(fn, ...)` mounts at the receiver's own path; an inline function first shows that overload for certain.
       const pathless = first && (ts.isArrowFunction(first) || ts.isFunctionExpression(first));
       for (const arg of args) {
         const target = unwrap(arg);
+        const at = path ?? (pathless || target === first ? "/" : undefined);
         if (servesStatic(target)) {
           const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
-          facts.statics.push({ receiver: unwrap(use), path: path ?? (pathless || target === first ? "/" : undefined), line });
+          facts.statics.push({ receiver: unwrap(receiver), path: at, line });
           continue;
         }
-        if (!ts.isIdentifier(target) && !(ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) && !chainRoot(target)) continue;
-        facts.uses.push({ receiver: unwrap(use), path: path ?? (pathless || target === first ? "/" : undefined), target });
+        const koa = koaRoutes(target);
+        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true });
+        else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target });
       }
+    }
+    // Hono's `route(path, app)`; Express's `route(path)` takes one argument and mounts nothing.
+    if (call?.name === "route" && call.args.length === 2) facts.mounts.push({ verb: "route", receiver: unwrap(call.receiver), path: literal(call.args[0]), target: unwrap(call.args[1]!) });
+    // Fastify's `register(plugin, { prefix })`: no options, or none named prefix, adds none.
+    if (call?.name === "register" && call.args.length >= 1 && call.args.length <= 2) {
+      const options = call.args[1] && unwrap(call.args[1]);
+      let path: Value = "";
+      if (options && (!ts.isObjectLiteralExpression(options) || options.properties.some(ts.isSpreadAssignment))) path = { why: `is registered with options the code does not spell out (${short(options)})` };
+      else if (options) {
+        const p = options.properties.find((x) => x.name && (ts.isIdentifier(x.name) || ts.isStringLiteral(x.name)) && x.name.text === "prefix");
+        const value = p && ts.isPropertyAssignment(p) ? literal(p.initializer) : p ? undefined : "";
+        path = value ?? { why: `is registered with a prefix the code does not spell out (${short(p!)})` };
+      }
+      facts.mounts.push({ verb: "register", receiver: unwrap(call.receiver), path, target: unwrap(call.args[0]!) });
+    }
+    if (call?.name === "prefix" && call.args.length === 1) {
+      facts.prefixes.push({ receiver: unwrap(call.receiver), value: literal(call.args[0]) ?? { why: `has a prefix the code does not spell out (${short(call.args[0]!)})` } });
     }
     ts.forEachChild(node, visit);
   };
@@ -202,11 +260,15 @@ function factsOf(text: string, file: string): FileFacts {
   return facts;
 }
 
-export function expressMounts(texts: Map<string, string>, declared: Record<string, string> = {}): Mounts {
+/**
+ * The routers of the script files read: `texts` by file; `declared`, the path a router file is served under where the
+ * code does not say it (`mounts`); `receivers`, the names whose routes are read at the root when no router is traced.
+ */
+export function expressMounts(texts: Map<string, string>, declared: Record<string, string> = {}, receivers: string[] = []): Mounts {
   const facts = new Map([...texts].map(([file, text]) => [file, factsOf(text, file)]));
   const resolve = (from: string, spec: string) => resolveModule(from, spec, (f) => facts.has(f));
 
-  type At<T> = (file: string, e: ts.Expression, seen: Set<string>) => T | undefined;
+  type At<T> = (file: string, e: ts.Node, seen: Set<string>) => T | undefined;
   /** What `at` finds for the name a module exports, following re-exports through relative modules. */
   const exported = <T>(file: string, name: string, seen: Set<string>, at: At<T>): T | undefined => {
     const key = `${file}#${name}`;
@@ -223,7 +285,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
       }
       return undefined;
     }
-    if ("spec" in e) {
+    if (!("kind" in e)) {
       const target = resolve(file, e.spec);
       return target ? exported(target, e.name, new Set([...seen, key]), at) : undefined;
     }
@@ -236,17 +298,10 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const target = resolve(file, from.spec);
     return target ? exported(target, from.name, seen, at) : undefined;
   };
-
-  /** What `at` finds for the name a `const` alias holds (`const api = router`). */
-  const aliased = <T>(file: string, id: ts.Identifier, seen: Set<string>, at: At<T>): T | undefined => {
-    const decl = declarationOf(id);
-    const init = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : undefined;
-    const key = `${file}@${id.getStart()}`;
-    return init && ts.isIdentifier(init) && !seen.has(key) ? at(file, init, new Set([...seen, key])) : undefined;
-  };
-  /** A router a module exports, taken from the whole module: `import * as routes` or `const routes = require(...)`. */
-  const memberRouter = (file: string, access: ts.PropertyAccessExpression): string | undefined => {
-    const decl = declarationOf(access.expression as ts.Identifier);
+  /** What `at` finds for a module's export taken from the whole module: `import * as routes` or `const routes = require(...)`. */
+  const member = <T>(file: string, access: ts.PropertyAccessExpression, at: At<T>): T | undefined => {
+    if (!ts.isIdentifier(access.expression)) return undefined;
+    const decl = declarationOf(access.expression);
     const spec =
       decl && ts.isNamespaceImport(decl)
         ? (decl.parent.parent.moduleSpecifier as ts.StringLiteral).text
@@ -254,59 +309,210 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
           ? required(decl.initializer)
           : undefined;
     const target = spec === undefined ? undefined : resolve(file, spec);
-    return target ? exported(target, access.name.text, new Set(), routerAt) : undefined;
+    return target ? exported(target, access.name.text, new Set(), at) : undefined;
   };
-  /** The router a name holds (`const api = Router().use(x)`), or the one an expression creates in place. */
-  const routerAt = (file: string, e: ts.Expression, seen = new Set<string>()): string | undefined => {
-    if (!ts.isIdentifier(e)) return routerIn(file, e);
+
+  /** The routers, applications and plugins found, by key, with what they are and the prefix they set themselves. */
+  const stores = new Map<string, { kind: Kind; own: Value }>();
+  /** Hono's `basePath(path)`: the routes of the instance it is called on, under another base path. */
+  const based = new Map<string, { parent: string; path: Value }>();
+  /** The functions `register` takes in as Fastify plugins. */
+  const plugins = new Set<string>();
+  const kindOf = (handle: string): Kind | undefined => stores.get(handle)?.kind ?? (based.has(handle) ? kindOf(based.get(handle)!.parent) : undefined);
+
+  /** The router, application or plugin an expression is: created in place, held in a name, or imported. */
+  const handleAt: At<string> = (file, node, seen) => {
+    if (ts.isFunctionDeclaration(node)) return undefined;
+    const e = unwrap(node as ts.Expression);
+    const call = methodCall(e);
+    if (call?.name === "basePath" && call.args.length === 1) {
+      const parent = handleAt(file, call.receiver, seen);
+      if (!parent || kindOf(parent) !== "hono") return undefined;
+      const key = `${file}@${e.getStart()}:${e.getEnd()}`;
+      based.set(key, { parent, path: literal(call.args[0]) ?? { why: `has a base path the code does not spell out (${short(call.args[0]!)})` } });
+      return key;
+    }
+    // A call that returns the instance it is called on.
+    if (call && ["use", "route", "register", "prefix"].includes(call.name)) {
+      const handle = handleAt(file, call.receiver, seen);
+      const kind = handle && kindOf(handle);
+      if (!kind) return undefined;
+      if (call.name === "use") return kind === "plugin" || kind === "fastify" ? undefined : handle;
+      if (call.name === "route") return kind === "hono" && call.args.length === 2 ? handle : undefined;
+      if (call.name === "register") return kind === "fastify" || kind === "plugin" ? handle : undefined;
+      return kind === "koa-router" ? handle : undefined;
+    }
+    const made = creation(e);
+    if (made) {
+      const key = `${file}@${e.getStart()}`;
+      stores.set(key, made);
+      return key;
+    }
+    if (ts.isPropertyAccessExpression(e)) return member(file, e, handleAt);
+    if (!ts.isIdentifier(e)) return undefined;
     const decl = declarationOf(e);
     if (!decl) return undefined;
-    const own = ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.initializer ? routerIn(file, decl.initializer) : undefined;
-    return own ?? imported(file, e, seen, routerAt) ?? aliased(file, e, seen, routerAt);
+    const key = `${file}@${e.getStart()}`;
+    if (seen.has(key)) return undefined;
+    const inner = new Set([...seen, key]);
+    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.initializer) {
+      const init = unwrap(decl.initializer);
+      // `const api = router` names the same router; a `let` may be given another later.
+      if (!ts.isIdentifier(init) || decl.parent.flags & ts.NodeFlags.Const) {
+        const own = handleAt(file, init, inner);
+        if (own) return own;
+      }
+    }
+    if (ts.isParameter(decl) && ts.isFunctionLike(decl.parent) && decl.parent.parameters[0] === decl) {
+      const fn = `${file}@${decl.parent.getStart()}`;
+      if (plugins.has(fn)) return fn;
+    }
+    return imported(file, e, inner, handleAt);
   };
-  // An application created here, or one a relative module exports (`export const app = express()`).
-  const appAt = (file: string, e: ts.Expression, seen = new Set<string>()): true | undefined =>
-    !ts.isIdentifier(e) ? undefined : isExpressApp(e) ? true : (imported(file, e, seen, appAt) ?? aliased(file, e, seen, appAt));
 
-  // Each mount, keyed by the router it serves; the parent is the router it is mounted on, or none for an application.
-  const mounts = new Map<string, Array<{ parent: string | undefined; path: string | undefined }>>();
-  for (const [file, f] of facts) {
-    for (const use of f.uses) {
-      const child = ts.isPropertyAccessExpression(use.target) ? memberRouter(file, use.target) : routerAt(file, use.target);
-      if (!child) continue;
-      // Mounted on a router, or on an Express application; `use` on anything else is no mount atlas can place.
-      const parent = routerAt(file, use.receiver);
-      if (!parent && !appAt(file, use.receiver)) continue;
-      (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path: use.path });
+  /** The function an expression is, as `register` takes it in: in place, held in a name, required or imported. */
+  const functionAt: At<string> = (file, node, seen) => {
+    if (ts.isFunctionDeclaration(node)) return node.body ? `${file}@${node.getStart()}` : undefined;
+    const e = unwrap(node as ts.Expression);
+    if (ts.isArrowFunction(e) || ts.isFunctionExpression(e)) return `${file}@${e.getStart()}`;
+    const spec = required(e);
+    if (spec !== undefined) {
+      const target = resolve(file, spec);
+      return target ? exported(target, "default", seen, functionAt) : undefined;
+    }
+    if (ts.isPropertyAccessExpression(e)) return member(file, e, functionAt);
+    if (!ts.isIdentifier(e)) return undefined;
+    const key = `${file}@${e.getStart()}`;
+    if (seen.has(key)) return undefined;
+    const inner = new Set([...seen, key]);
+    const decl = declarationOf(e);
+    if (decl && ts.isFunctionDeclaration(decl)) return functionAt(file, decl, inner);
+    if (decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const) {
+      const own = functionAt(file, decl.initializer, inner);
+      if (own) return own;
+    }
+    return imported(file, e, inner, functionAt);
+  };
+
+  /** Where the first parameter of a function no `register` takes in is the receiver of a call. */
+  const untracedPlugin = (receiver: ts.Expression): boolean => {
+    if (!ts.isIdentifier(receiver) || !receivers.includes(receiver.text)) return false;
+    const decl = declarationOf(receiver);
+    return !!decl && ts.isParameter(decl) && ts.isFunctionLike(decl.parent) && decl.parent.parameters[0] === decl;
+  };
+
+  // The plugins first: a plugin's parameter is an instance only once a `register` takes the plugin in, which may be
+  // known only through another plugin.
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [file, f] of facts) {
+      for (const m of f.mounts) {
+        if (m.verb !== "register") continue;
+        const parent = handleAt(file, m.receiver, new Set());
+        const kind = parent ? kindOf(parent) : undefined;
+        if (kind !== "fastify" && kind !== "plugin" && !(parent === undefined && untracedPlugin(m.receiver))) continue;
+        const fn = functionAt(file, m.target, new Set());
+        if (fn && !plugins.has(fn)) {
+          plugins.add(fn);
+          stores.set(fn, { kind: "plugin", own: "" });
+          grew = true;
+        }
+      }
     }
   }
-  const prefixes = (key: string, seen: Set<string>): string[] | undefined => {
-    const file = key.slice(0, key.lastIndexOf("@"));
-    if (declared[file] !== undefined) return [joinRoute(declared[file])];
-    const all = mounts.get(key);
-    if (!all?.length || seen.has(key)) return undefined;
+
+  const ROOT = "";
+  // Each mount, keyed by what it serves; the parent is the instance it is mounted on, ROOT for the root.
+  const mounts = new Map<string, Array<{ parent: string; path: Value | undefined }>>();
+  const mount = (child: string, parent: string, path: Value | undefined) => (mounts.get(child) ?? mounts.set(child, []).get(child)!).push({ parent, path });
+  /** The instance a handle registers its routes in: Hono's `basePath` shares the routes of the one it is called on. */
+  const storeOf = (handle: string): string => (based.has(handle) ? storeOf(based.get(handle)!.parent) : handle);
+  for (const [file, f] of facts) {
+    for (const m of f.mounts) {
+      const parent = handleAt(file, m.receiver, new Set());
+      const above = parent ? kindOf(parent) : undefined;
+      if (m.verb === "register") {
+        const fn = functionAt(file, m.target, new Set());
+        if (fn && plugins.has(fn) && (above === "fastify" || above === "plugin")) mount(fn, parent!, m.path);
+        else if (fn && plugins.has(fn) && parent === undefined && untracedPlugin(m.receiver)) mount(fn, ROOT, m.path);
+        continue;
+      }
+      const child = handleAt(file, m.target, new Set());
+      const kind = child ? kindOf(child) : undefined;
+      if (!parent || !child || !kind) continue;
+      const express = (k: Kind | undefined) => k === "express-app" || k === "express-router";
+      const koa = (k: Kind | undefined) => k === "koa-app" || k === "koa-router";
+      // Each framework mounts its own kind: an Express router or application with `use`, an @koa/router router's
+      // `routes()` with `use`, a Hono application with `route`.
+      const fits =
+        (m.verb === "use" && express(above) && express(kind) && !m.routes) ||
+        (m.verb === "use" && koa(above) && kind === "koa-router" && m.routes) ||
+        (m.verb === "route" && above === "hono" && kind === "hono");
+      if (fits) mount(storeOf(child), parent, m.path);
+    }
+  }
+  // An @koa/router router's prefix: the constructor's option or a `prefix()` call, read where it is set once.
+  const koaPrefixes = new Map<string, Value[]>();
+  for (const [file, f] of facts) {
+    for (const p of f.prefixes) {
+      const handle = handleAt(file, p.receiver, new Set());
+      if (handle && kindOf(handle) === "koa-router") (koaPrefixes.get(handle) ?? koaPrefixes.set(handle, []).get(handle)!).push(p.value);
+    }
+  }
+  const ownOf = (store: string): Value => {
+    const own = stores.get(store)?.own ?? "";
+    const set = [...(own === "" ? [] : [own]), ...(koaPrefixes.get(store) ?? [])];
+    if (set.length > 1) return { why: "has its prefix set more than once, which @koa/router applies differently by version (stacked before 15.1, replaced since)" };
+    return set[0] ?? "";
+  };
+
+  const MOUNTED = "is mounted where the code gives no literal path";
+  type Served = { paths: string[] } | { why: string };
+  const served = (handle: string, seen: Set<string>): Served => {
+    const base = based.get(handle);
+    if (base) {
+      if (typeof base.path !== "string") return { why: base.path.why };
+      const above = served(base.parent, seen);
+      return "why" in above ? above : { paths: [...new Set(above.paths.map((p) => joinRoute(p, base.path as string)))] };
+    }
+    const file = handle.slice(0, handle.lastIndexOf("@"));
+    if (declared[file] !== undefined) return { paths: [joinRoute(declared[file])] };
+    const own = ownOf(handle);
+    if (typeof own !== "string") return own;
+    const all = mounts.get(handle);
+    if (!all?.length) return APPLICATIONS.has(stores.get(handle)?.kind as Kind) ? { paths: [joinRoute(own)] } : { why: MOUNTED };
+    if (seen.has(handle)) return { why: MOUNTED };
     const out: string[] = [];
     for (const m of all) {
-      if (m.path === undefined) return undefined;
-      const above = m.parent ? prefixes(m.parent, new Set([...seen, key])) : ["/"];
-      if (!above) return undefined;
-      for (const p of above) out.push(joinRoute(p, m.path));
+      if (m.path === undefined) return { why: MOUNTED };
+      if (typeof m.path !== "string") return { why: m.path.why };
+      const above = m.parent === ROOT ? { paths: ["/"] } : served(m.parent, new Set([...seen, handle]));
+      if ("why" in above) return { why: MOUNTED };
+      for (const p of above.paths) out.push(joinRoute(p, m.path, own));
     }
-    return [...new Set(out)];
+    return { paths: [...new Set(out)] };
+  };
+  const prefixes = (handle: string): string[] | undefined => {
+    const s = served(handle, new Set());
+    return "paths" in s ? s.paths : undefined;
   };
   const statics = (file: string): Array<{ line: number; paths: string[] | undefined }> => {
     const out: Array<{ line: number; paths: string[] | undefined }> = [];
     for (const s of facts.get(file)?.statics ?? []) {
-      const router = routerAt(file, s.receiver);
-      if (!router && !appAt(file, s.receiver)) continue;
-      const above = router ? prefixes(router, new Set()) : ["/"];
+      const handle = handleAt(file, s.receiver, new Set());
+      if (!handle) continue;
+      const above = prefixes(handle);
       out.push({ line: s.line, paths: s.path === undefined || !above ? undefined : [...new Set(above.map((p) => joinRoute(p, s.path!)))] });
     }
     return out;
   };
   return {
-    routerOf: (file, id) => (facts.has(file) ? routerAt(file, id) : undefined),
-    prefixes: (router) => prefixes(router, new Set()),
+    routerOf: (file, id) => (facts.has(file) ? handleAt(file, id, new Set()) : undefined),
+    prefixes,
+    why: (handle) => {
+      const s = served(handle, new Set());
+      return "why" in s ? s.why : undefined;
+    },
     statics,
   };
 }

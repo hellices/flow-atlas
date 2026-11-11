@@ -5,28 +5,10 @@ missing:
   - { route: "GET /actuator", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
   - { route: "GET /actuator/health", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
   - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
-  - { route: "GET /api/account/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/archive", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/archive/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/pages/t{}st.html", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `?` wildcard within a segment is read as literal text; and nothing says so" }
-  - { route: "GET /api/library/projects/{}/versions", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources/{}.png", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `*` wildcard within a segment is read as literal text; and nothing says so" }
-  - { route: "GET /api/library/{}-{}{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
+  - { route: "GET /api/library/pages/t{}st.html", reason: "the `?` wildcard within a segment is read as literal text, and nothing says so" }
+  - { route: "GET /api/library/resources/{}.png", reason: "the `*` wildcard within a segment is read as literal text, and nothing says so" }
   - { route: "POST /api/members", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
   - { route: "GET /api/members/{}", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
-  - { route: "GET /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "POST /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "DELETE /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "POST /api/persons", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "DELETE /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "PATCH /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "PUT /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "POST /api/pets", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/pets/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
   - { route: "* /error", reason: "the error page Spring Boot serves by itself (`BasicErrorController`, any method) is not a surface" }
   - { route: "GET /files/{**}", reason: "the resources a router function serves (`RouterFunctions.resources`, WebMvc.fn) are not read, and nothing says so" }
   - { route: "GET /hello-world", reason: "a router function (`RouterFunctions.route()`, WebMvc.fn) is not read, and nothing says so" }
@@ -51,26 +33,8 @@ missing:
   - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
   - { route: "GET /{**}", reason: "the static resources Spring Boot serves by itself (`classpath:/static/`, under `/**`) are not a surface" }
 extra:
-  - { route: "GET /account/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/archive", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/archive/{**}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/pages/t?st.html", reason: "the path without its `/api` prefix, and its `?` wildcard read as literal text" }
-  - { route: "GET /library/projects/{}/versions", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/resources", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/resources/*.png", reason: "the path without its `/api` prefix, and its `*` wildcard read as literal text" }
-  - { route: "GET /library/resources/{**}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/{}-{}{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /notes", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "POST /notes", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "DELETE /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "POST /persons", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "DELETE /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "PATCH /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "PUT /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "POST /pets", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /pets/{}", reason: "the path without the `/api` prefix the controller is served under" }
+  - { route: "GET /api/library/pages/t?st.html", reason: "the `?` wildcard read as literal text" }
+  - { route: "GET /api/library/resources/*.png", reason: "the `*` wildcard read as literal text" }
 dispatch:
   - { request: "POST /faq/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/faq/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "POST /help/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/help/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
@@ -78,3 +42,15 @@ dispatch:
   - { request: "PATCH /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "POST /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "PUT /ping/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "GET /api/library/archive", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `archive` fails, and takes it over `/archive/**`, which Spring dispatches to" }
+  - { request: "GET /api/library/archive/", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `archive` fails, and takes it over `/archive/**`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `resources` fails, and takes it over `/resources/{*file}`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources/", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `resources` fails, and takes it over `/resources/{*file}`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources/1.png/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/resources/*.png` does not take `1.png/` and `/resources/{*file}` does; atlas drops the `/` and matches `*.png`" }
+  - { request: "POST /api/notes/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/notes/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /api/notes/1/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/notes/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /api/persons/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/persons/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /api/persons/1/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PATCH /api/persons/1/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /api/persons/1/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /api/pets/", reason: "trailing slash: Spring MVC (6+) matches no trailing `/` a pattern does not have, so `/api/pets/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }

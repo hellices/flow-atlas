@@ -13,19 +13,7 @@ missing:
   - { route: "GET /animal", reason: "an optional last parameter (`:type?`) is read as the path with the parameter only, not also without it" }
   - { route: "GET /post/{}/{}", reason: "a parameter with a regexp (`:date{[0-9]+}`) is read as literal text" }
   - { route: "GET /{**}", reason: "the fallback `app.get(\"*\")`, a path not starting with `/`, is not read, and nothing says so" }
-  - { route: "GET /book", reason: "a group mounted with `app.route(path, group)` is read without its path (its `/` as the root's), and nothing says so" }
-  - { route: "POST /book", reason: "a group mounted with `app.route(path, group)` is read without its path (its `/` as the root's), and nothing says so" }
-  - { route: "GET /book/{}", reason: "a group mounted with `app.route(path, group)` is read without its path, and nothing says so" }
-  - { route: "GET /users", reason: "an application's `basePath()` is not read (its `/` read as the root's), and nothing says so" }
-  - { route: "POST /users", reason: "an application's `basePath()` is not read (its `/` read as the root's), and nothing says so" }
-  - { route: "GET /api/catalog", reason: "an application's `basePath()` is not read, and nothing says so" }
-  - { route: "GET /api/v1/status", reason: "a group mounted with `route()` in an application with a `basePath()` is read without either, and nothing says so" }
-  - { route: "PATCH /api/v1/settings/{}", reason: "a group mounted with `route()` in an application with a `basePath()` is read without either, and nothing says so" }
 extra:
-  - { route: "GET /{}", reason: "a group's route read without the path the group is mounted at (`/book`)" }
-  - { route: "GET /catalog", reason: "a route read without its application's `basePath()` (`/api`)" }
-  - { route: "GET /status", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
-  - { route: "PATCH /settings/{}", reason: "a group's route read without its mount path and base path (`/api/v1`)" }
   - { route: "GET /post/:date{}/:title{}", reason: "regexp parameters read as literal text (their regexps' braces compared as parameters)" }
 dispatch:
   - { request: "DELETE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
@@ -34,5 +22,6 @@ dispatch:
   - { request: "PURGE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
   - { request: "PUT /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
   - { request: "QUERY /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
-  - { request: "GET /endpoint", reason: "mount path (see `extra`): atlas also matches the extra `GET /{}`, the `/book` group's `/:id` read without its mount path, which Hono serves at `/book/:id` only" }
-  - { request: "GET /hello", reason: "mount path (see `extra`): atlas also matches the extra `GET /{}`, the `/book` group's `/:id` read without its mount path, which Hono serves at `/book/:id` only" }
+  - { request: "POST /book/", reason: "trailing slash: Hono's strict mode (the default) treats `/book/` as another path than `/book`, which no route takes for this method; atlas matches it to `/book`" }
+  - { request: "POST /users/", reason: "trailing slash: Hono's strict mode (the default) treats `/users/` as another path than `/users`, which no route takes for this method; atlas matches it to `/users`" }
+  - { request: "PATCH /api/v1/settings/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/api/v1/settings/value1/` as another path than `/api/v1/settings/value1`, which no route takes for this method; atlas matches it to `/api/v1/settings/:key`" }
