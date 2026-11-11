@@ -104,7 +104,8 @@ export function routeTemplate(path: string): string {
     .join("/");
 }
 
-const isParam = (seg: string): boolean => seg.startsWith(":") || (seg.startsWith("{") && seg.endsWith("}")) || seg === "*";
+/** A segment that is one parameter whole: `:id`, `{id}`, `{id:int}`, or a lone `*`; `{from}-{to}` is a pattern of its own. */
+const isParam = (seg: string): boolean => seg.startsWith(":") || /^\{[^{}]*\}$/.test(seg) || seg === "*";
 const isHole = (seg: string): boolean => seg.includes(HOLE);
 
 export function segments(path: string): string[] {
@@ -158,19 +159,43 @@ const unreadConvertor = (seg: string): boolean => {
   return convertor !== undefined && convertor !== "path" && !Object.hasOwn(CONVERTORS, convertor);
 };
 
+/** The name of a parameter that is a segment whole, `{id}`; undefined for a convertor's (`{id:int}`) or a catch-all. */
+const paramName = (seg: string): string | undefined => /^\{([^{}:*]+)\}$/.exec(seg)?.[1];
+
+/** The regular expressions a route's parameters must match, by name (`Surface.patterns`). */
+export type Patterns = Record<string, string> | undefined;
+
+/** A regular expression of a route, compiled once; one the runtime cannot compile settles nothing. */
+const compiled = new Map<string, RegExp | null>();
+function regexOf(source: string): RegExp | null {
+  if (!compiled.has(source)) {
+    try {
+      compiled.set(source, new RegExp(source));
+    } catch {
+      compiled.set(source, null);
+    }
+  }
+  return compiled.get(source)!;
+}
+
 /**
- * Whether a route parameter takes a call segment: a fixed one by its convertor's regex; one with interpolations, or
- * any against a convertor registered elsewhere, which is not read, may be taken.
+ * Whether a route parameter takes a call segment: a fixed one by its convertor's regex or the regexp its router tests
+ * it with; one with interpolations, or any against a convertor registered elsewhere, which is not read, may be taken.
  */
-function paramTakes(seg: string, part: string): boolean {
+function paramTakes(seg: string, part: string, patterns: Patterns): boolean {
+  if (isHole(part)) return true;
+  const own = patterns?.[paramName(seg) ?? ""];
+  if (own !== undefined) return regexOf(`^(?:${own})$`)?.test(part) ?? true;
   const convertor = convertorOf(seg);
-  if (convertor === undefined || isHole(part) || !Object.hasOwn(CONVERTORS, convertor)) return true;
+  if (convertor === undefined || !Object.hasOwn(CONVERTORS, convertor)) return true;
   return CONVERTORS[convertor]!.test(part);
 }
 
-/** Whether a route segment takes every segment an interpolation may hold. */
-const takesAny = (seg: string): boolean =>
-  isCatchAll(seg) || isStarletteRest(seg) || (isParam(seg) && (convertorOf(seg) === undefined || convertorOf(seg) === "str"));
+/** Whether a route segment takes every segment an interpolation may hold: not a parameter its router tests by a regexp. */
+const takesAny = (seg: string, patterns: Patterns): boolean =>
+  isCatchAll(seg) ||
+  isStarletteRest(seg) ||
+  (isParam(seg) && (convertorOf(seg) === undefined || convertorOf(seg) === "str") && patterns?.[paramName(seg) ?? ""] === undefined);
 
 /**
  * The path a route ending in Starlette's `{name:path}` serves with that segment left out, with a `/` after it, or
@@ -193,36 +218,49 @@ export function narrowedPath(routePath: string, call: string): string {
 }
 
 /** A route segment written as plain text: no parameter, wildcard or brace pattern; a colon inside one is text. */
-const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*]/.test(seg);
+const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*?]/.test(seg);
 
 /**
  * Whether a route matches every request a call's path stands for, not only some: where the call interpolates a
  * segment, the route must take any segment there, and a convertor that is not read settles no segment.
  */
-export function pathCovers(routePath: string, call: string): boolean {
-  if (!pathsMatch(routePath, call)) return false;
+export function pathCovers(routePath: string, call: string, patterns?: Patterns): boolean {
+  if (!pathsMatch(routePath, call, patterns)) return false;
   const c = segments(call);
   return segments(routePath).every((seg, i) => {
     const part = c[i];
     if (part === undefined) return true;
-    return isHole(part) ? takesAny(seg) : !unreadConvertor(seg);
+    return isHole(part) ? takesAny(seg, patterns) : !unreadConvertor(seg);
   });
 }
 
-/** A segment with a wildcard inside it (`*.txt`, `v*`): `*` stands for any text within the segment, `{x}` for some. */
-function segmentPattern(seg: string): RegExp {
+/**
+ * A segment that mixes text with a wildcard or parameters (`*.txt`, `t?st.html`, `{from}-{to}`): `*` stands for any
+ * text within the segment, Spring's `?` for one character, `{x}` for some text, or what the regexp its router tests it
+ * with takes. Where the regexp cannot be compiled here, the segment is not settled: undefined.
+ */
+function segmentPattern(seg: string, patterns: Patterns): RegExp | undefined {
+  let unsettled = false;
   const body = seg
-    .split(/(\{[^}]*\}|\*)/)
-    .map((p) => (p === "*" ? "[^/]*" : p.startsWith("{") ? "[^/]+" : p.replace(/[.+?^$()|[\]\\]/g, "\\$&")))
+    .split(/(\{[^{}]*\}|\*|\?)/)
+    .map((p) => {
+      if (p === "*") return "[^/]*";
+      if (p === "?") return "[^/]";
+      if (!p.startsWith("{")) return p.replace(/[.+?^$()|[\]\\{}*]/g, "\\$&");
+      const own = patterns?.[p.slice(1, -1)];
+      if (own === undefined) return "[^/]+";
+      if (!regexOf(own)) unsettled = true;
+      return `(?:${own})`;
+    })
     .join("");
-  return new RegExp(`^${body}$`);
+  return unsettled ? undefined : (regexOf(`^${body}$`) ?? undefined);
 }
 
 /**
- * A route segment `:id`/`{id}` matches anything, `{id:int}` what its convertor's regex takes; a call segment's
- * interpolations match any text, its fixed text must agree.
+ * A route segment `:id`/`{id}` matches anything, `{id:int}` what its convertor's regex takes, and a parameter in
+ * `patterns` what its regexp takes; a call segment's interpolations match any text, its fixed text must agree.
  */
-export function pathsMatch(routePath: string, call: string): boolean {
+export function pathsMatch(routePath: string, call: string, patterns?: Patterns): boolean {
   let r = segments(routePath);
   let c = segments(call);
   if (isCatchAll(r[r.length - 1])) {
@@ -237,11 +275,12 @@ export function pathsMatch(routePath: string, call: string): boolean {
   if (r.length !== c.length) return false;
   return r.every((seg, i) => {
     const part = c[i]!;
-    if (isParam(seg)) return paramTakes(seg, part);
+    if (isParam(seg)) return paramTakes(seg, part, patterns);
     if (seg === part) return true;
     if (isHole(part)) return holeMatches(part, seg);
     // A wildcard or a variable inside a segment (`*.txt`, `{name}.txt`) matches the text around it.
-    return (seg.includes("*") || /\{[^}]*\}/.test(seg)) && segmentPattern(seg).test(part);
+    if (!/[*?]|\{[^{}]*\}/.test(seg)) return false;
+    return segmentPattern(seg, patterns)?.test(part) ?? true;
   });
 }
 
@@ -250,5 +289,5 @@ export function methodsMatch(a: string, b: string): boolean {
 }
 
 export function firstLiteral(path: string): string | undefined {
-  return segments(path).find((s) => !isParam(s) && !isHole(s));
+  return segments(path).find((s) => !isParam(s) && !isHole(s) && !/\{[^{}]*\}/.test(s));
 }

@@ -186,7 +186,28 @@ are told apart by their bindings, so a shadowing name is another value. Where a 
 and `mounts` does not give it (an option object built elsewhere, a computed name that may be `prefix`, a `basePath`
 from a variable), or a router is mounted nowhere atlas reads, its routes are not read and a limit says so; a Hono
 `basePath` not spelled out takes the path `mounts` declares for its file, and a literal `basePath` called on it adds
-to that. `express.static` serves the files of a directory and passes on any path it does not hold, so
+to that.
+
+Each router reads a path in its own syntax, which atlas takes from the package the router is created from, at the
+major version the nearest package.json above the file gives it (`^5.1.0` gives one; `>=4`, a tag or a link none).
+Express 5 and @koa/router 14 and later compile it with path-to-regexp 8: `{...}` is optional, so `/about{/:section}`
+is `/about` and `/about/{section}`; `*name` ending the path is one segment or more (`/files/{name}/**`), and none or
+more in an optional group (`{/*name}` is `/{*name}`); `:"a name"` is quoted; parameters may share a segment with text
+(`/flights/{from}-{to}`, a prefix's `/api/v{version}`). Express 4 writes the path into a regular expression
+(path-to-regexp 0.1): `/:id?` is optional and a final `/*` is the rest of the path, none included (`/**`); any other
+regular expression is not read. Where no package.json gives Express's version, a path is read where both versions
+read it alike, and as Express 4 reads it where Express 5 rejects it, since only Express 4 would start. Nest 11 and later
+convert a final `*`, `(.*)` or `+` as their Express adapter does (`abcd/*` is `abcd/{*path}`, `LegacyRouteConverter`)
+and hand the path to path-to-regexp 8; earlier Nest is on Express 4, and Nest with `@nestjs/platform-fastify`
+installed is read plain. Fastify (find-my-way): `:file(^\d+).png` is `{file}.png`, `:lat-:lng` two parameters, a last
+`:id?` optional, `::` a colon, and a final `*` the rest of the path, none included (`/**`). Hono: `:date{[0-9]+}` is a
+parameter, a last `:type?` optional, a `*` segment one segment and a final `/*` the rest of the path (`/**`). The
+regexp Fastify or Hono tests a parameter with is kept with the route (`patterns`), and a request reaches the route
+only where the text it gives the parameter matches it; an interpolated value may. A path its router rejects, one
+whose form no path template holds (a wildcard before the end, a Hono regexp that may take a `/`, a segment Hono's
+RegExpRouter and TrieRouter read differently), and any syntax beyond `:name` on a receiver not traced to its router,
+of an unread version or of another router (Hono's presets, @koa/router before 14) is not read, and a limit names its
+file, line, path and why. `express.static` serves the files of a directory and passes on any path it does not hold, so
 what it serves is the directory's content: a limit names where it is mounted, and its paths are not read. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not

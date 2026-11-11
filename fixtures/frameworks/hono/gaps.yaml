@@ -10,11 +10,7 @@ missing:
   - { route: "GET /en/greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
   - { route: "POST /endpoint", reason: "a chained route's verb with no path (`.get(path, h).post(h)`, the previous path) is not read, and nothing says so" }
   - { route: "DELETE /endpoint", reason: "a chained route's verb with no path (`.get(path, h).delete(h)`, the previous path) is not read, and nothing says so" }
-  - { route: "GET /animal", reason: "an optional last parameter (`:type?`) is read as the path with the parameter only, not also without it" }
-  - { route: "GET /post/{}/{}", reason: "a parameter with a regexp (`:date{[0-9]+}`) is read as literal text" }
   - { route: "GET /{**}", reason: "the fallback `app.get(\"*\")`, a path not starting with `/`, is not read, and nothing says so" }
-extra:
-  - { route: "GET /post/:date{}/:title{}", reason: "regexp parameters read as literal text (their regexps' braces compared as parameters)" }
 dispatch:
   - { request: "DELETE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
   - { request: "PATCH /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }

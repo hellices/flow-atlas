@@ -153,6 +153,14 @@
         "implicit": {
           "description": "Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS with an Allow header, and serves the files of public/; or requested by convention from outside the code, as crawlers fetch Next.js's robots.txt and sitemaps. No rule expects a caller for it.",
           "const": true
+        },
+        "patterns": {
+          "description": "The regular expression the text of each parameter named here must match, as its router tests it: Fastify's :file(^\\d+) and Hono's :date{[0-9]+}. A parameter not named takes any text of its segment.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },

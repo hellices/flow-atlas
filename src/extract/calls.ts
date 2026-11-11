@@ -1641,10 +1641,10 @@ function byCallee(passed: Passed[]): string {
  * (`@GetMapping("/vets.html")`), so the path names a page the application serves, not a file.
  */
 export const serves =
-  (routes: Array<Pick<Surface, "path">>) =>
+  (routes: Array<Pick<Surface, "path" | "patterns">>) =>
   (path: string): boolean => {
     const extension = /\.\w+$/.exec(path)?.[0];
-    return !!extension && routes.some((s) => s.path.endsWith(extension) && pathsMatch(s.path, path));
+    return !!extension && routes.some((s) => s.path.endsWith(extension) && pathsMatch(s.path, path, s.patterns));
   };
 
 /**

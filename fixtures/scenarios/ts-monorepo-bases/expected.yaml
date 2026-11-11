@@ -21,7 +21,7 @@ surfaces:
   - core|GET /profiles
   - core|POST /uploads
   - core|POST /replies
-  - store|GET /store/internal/object-info/*
+  - store|GET /store/internal/object-info/**
   - store|POST /store/internal/v2/agent/images
   - store|POST /store/internal/v2/shares
   - store|POST /store/internal/v2/upload-tickets
@@ -31,7 +31,7 @@ chains:
   - agent->store|POST /store/internal/v2/agent/images
   - app->bff|POST /uploads + core|POST /uploads
   - app->bff|POST /messages + core|POST /replies
-  - core->store|GET /store/internal/object-info/*
+  - core->store|GET /store/internal/object-info/**
   - core->store|POST /store/internal/v2/shares
   - core->store|POST /store/internal/v2/upload-tickets
 limits:

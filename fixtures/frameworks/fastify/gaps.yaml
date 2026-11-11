@@ -8,20 +8,6 @@ missing:
   - { route: "QUERY /search", reason: "the `fastify.query` shorthand (QUERY method) is not read, and nothing says so" }
   - { route: "GET /public", reason: "the route @fastify/static registers under its `prefix` (`/public/*`, which also takes `/public/`) is not read, and nothing says so" }
   - { route: "GET /public/{**}", reason: "the route @fastify/static registers under its `prefix` is not read, and nothing says so" }
-  - { route: "GET /example", reason: "Fastify's wildcard `*` also takes the path with nothing after its `/`; atlas reads `*` as one segment" }
-  - { route: "GET /example/{**}", reason: "Fastify's wildcard `*` takes the rest of the path, slashes included; atlas reads `*` as one segment" }
-  - { route: "GET /example/{}.png", reason: "a parameter with a regexp (`:file(^\\d+)`) followed by text is read as literal text" }
-  - { route: "GET /example/lang/{}", reason: "a parameter with a regexp (`:code(^[a-z]+)`) is read as literal text" }
-  - { route: "GET /example/near/{}-{}/radius/{}", reason: "parameters that share a segment (`:lat-:lng`) are read as literal text" }
-  - { route: "GET /example/at/{}h{}m", reason: "parameters with regexps that share a segment with text (`:hour(^\\d{2})h:minute(^\\d{2})m`) are read as literal text" }
-  - { route: "GET /example/posts", reason: "an optional last parameter (`:id?`) is read as the path with the parameter only, not also without it" }
-  - { route: "POST /name:verb", reason: "`::`, Fastify's escaped colon, is read as two colons" }
-extra:
-  - { route: "GET /example/:file(^\\d+).png", reason: "a regexp parameter read as literal text" }
-  - { route: "GET /example/lang/:code(^[a-z]+)", reason: "a regexp parameter read as literal text" }
-  - { route: "GET /example/near/:lat-:lng/radius/{}", reason: "parameters within a segment read as literal text" }
-  - { route: "GET /example/at/:hour(^\\d{})h:minute(^\\d{})m", reason: "regexp parameters within a segment read as literal text (the regexps' `{2}` compared as parameters)" }
-  - { route: "POST /name::verb", reason: "the escaped colon read as two colons" }
 dispatch:
   - { request: "DELETE /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
   - { request: "GET /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
@@ -40,5 +26,20 @@ dispatch:
   - { request: "GET /example/12/", reason: "trailing slash: `/example/12/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12`" }
   - { request: "GET /example/12.png/", reason: "trailing slash: `/example/12.png/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12.png`" }
   - { request: "GET /example/posts/", reason: "trailing slash: `/example/posts/` is a path of its own, whose empty last segment find-my-way gives the optional parameter of `/example/posts/:id?`; atlas matches it as `/example/posts`" }
-  - { request: "GET /example/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/:userId` takes it; atlas also matches the wildcard `/example/*` and the misread `/example/:file(^\\d+).png`" }
-  - { request: "GET /example/posts/12", reason: "find-my-way's match order (static before parameter): `/example/posts/:id?` takes it; atlas also matches `/example/:userId/:secretToken`" }
+  - { request: "POST /name:verb/", reason: "trailing slash: Fastify treats `/name:verb/` as another path than `/name:verb` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/name::verb`" }
+  - { request: "GET /example", reason: "trailing slash: find-my-way's `/example/*` takes `/example/`, with nothing after its `/`, but not `/example`, which no route takes; atlas reads the two as one path and matches the wildcard" }
+  - { request: "GET /example/12/12/", reason: "trailing slash: `/example/12/12/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/12/12`, to `/example/:userId/:secretToken` too" }
+  - { request: "GET /example/at/12h12m/", reason: "trailing slash: `/example/at/12h12m/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/at/12h12m`, to `/example/at/:hour(^\\d{2})h:minute(^\\d{2})m` and `/example/:userId/:secretToken` too" }
+  - { request: "GET /example/lang/abc/", reason: "trailing slash: `/example/lang/abc/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/lang/abc`, to `/example/lang/:code(^[a-z]+)` and `/example/:userId/:secretToken` too" }
+  - { request: "GET /example/near/12-12/radius/12/", reason: "trailing slash: `/example/near/12-12/radius/12/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/near/12-12/radius/12`, to `/example/near/:lat-:lng/radius/:r` too" }
+  - { request: "GET /example/posts/12/", reason: "trailing slash: `/example/posts/12/` is a path of its own, which only the wildcard `/example/*` takes; atlas matches it as `/example/posts/12`, to `/example/posts/:id?` and `/example/:userId/:secretToken` too" }
+  # find-my-way tries a static part before a parameter, a parameter with a regexp before one without, and a parameter
+  # before the wildcard (lib/node.js `getNextNode`, `createParametricChild`); atlas does not rank Fastify's routes.
+  - { request: "GET /example/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/:userId` takes it; atlas also matches the wildcard `/example/*`" }
+  - { request: "GET /example/12.png", reason: "find-my-way's match order (a parameter with a regexp before one without, and before a wildcard): `/example/:file(^\\d+).png` takes it; atlas also matches `/example/:userId` and the wildcard `/example/*`" }
+  - { request: "GET /example/12/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/:userId/:secretToken` takes it; atlas also matches the wildcard `/example/*`" }
+  - { request: "GET /example/at/12h12m", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/at/:hour(^\\d{2})h:minute(^\\d{2})m` takes it; atlas also matches `/example/:userId/:secretToken` and the wildcard `/example/*`" }
+  - { request: "GET /example/lang/abc", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/lang/:code(^[a-z]+)` takes it; atlas also matches `/example/:userId/:secretToken` and the wildcard `/example/*`" }
+  - { request: "GET /example/near/12-12/radius/12", reason: "find-my-way's match order (a parameter before a wildcard): `/example/near/:lat-:lng/radius/:r` takes it; atlas also matches the wildcard `/example/*`" }
+  - { request: "GET /example/posts", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/posts`, the path `/example/posts/:id?` takes without its parameter, takes it; atlas also matches `/example/:userId` and the wildcard `/example/*`" }
+  - { request: "GET /example/posts/12", reason: "find-my-way's match order (static before parameter, a parameter before a wildcard): `/example/posts/:id?` takes it; atlas also matches `/example/:userId/:secretToken` and the wildcard `/example/*`" }

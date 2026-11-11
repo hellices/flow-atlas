@@ -37,9 +37,10 @@ missing:
   - { route: "POST /api/v1/auth/signup", reason: "a path without a leading `/` (`router.post('signup', ...)`) is not read, and nothing says so; nor are the prefixes of the groups around it (`auth`, `/api/v1`)" }
   - { route: "POST /api/v1/auth/login", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
   - { route: "GET /api/v1/account/profile", reason: "a path without a leading `/` is not read, and nothing says so; nor are the groups' prefixes" }
-  - { route: "GET /drafts", reason: "an optional last param (`:id?`) is read as the path with the param only, not also without it" }
-  - { route: "GET /docs/{}/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is read as one segment" }
-  - { route: "GET /files/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is read as one segment" }
+  - { route: "GET /drafts", reason: "an optional last param (`:id?`) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
+  - { route: "GET /drafts/{}", reason: "an optional last param (`:id?`) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
+  - { route: "GET /docs/{}/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
+  - { route: "GET /files/{**}", reason: "AdonisJS's wildcard `*` (the remaining segments, one or more) is not read on a router atlas does not trace to its framework, where path syntax beyond `:name` is not read (named in a limit)" }
   - { route: "GET /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
   - { route: "POST /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
   - { route: "PUT /webhooks", reason: "`router.any(path)` is not read, and nothing says so" }
@@ -51,9 +52,6 @@ missing:
   - { route: "TRACE /", reason: "`router.route(path, [methods])` (a custom verb) is not read, and nothing says so" }
   - { route: "GET /old-blog", reason: "`router.on(path).redirectToPath(...)` is not read, and nothing says so" }
   - { route: "GET /featured", reason: "`router.on(path).redirect(route)` is not read, and nothing says so" }
-extra:
-  - { route: "GET /docs/{}/{}", reason: "the wildcard `*` read as one segment" }
-  - { route: "GET /files/{}", reason: "the wildcard `*` read as one segment" }
 dispatch:
   # A param's matcher (`.where(param, matcher)`) refuses a value it does not take, and the router then looks further
   # or answers 404 (docs.adonisjs.com/guides/basics/routing#custom-matchers): no route takes these.
