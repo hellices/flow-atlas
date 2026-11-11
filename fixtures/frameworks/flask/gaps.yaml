@@ -1,7 +1,2 @@
 # Where atlas's reading differs from the routes Flask serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-unread: >-
-  atlas has no Flask style: the rules `@app.route`, `@blueprint.get` and the like, `add_url_rule` and class-based views
-  register, the blueprints' url prefixes and the static files route Flask adds are not read; a limit says the route
-  files gave nothing ("8 files read, nothing extracted"). `atlas inventory` offers the `fastapi` style for these files,
-  which reads only the `@app.get`/`@app.put`/`@app.delete` decorators of the application, at `<username>` as written.

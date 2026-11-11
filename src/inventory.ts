@@ -41,11 +41,27 @@ const exportedNames = (list: string): string[] =>
     .filter((spec) => spec && !/^type\s/.test(spec))
     .map((spec) => spec.split(/\s+as\s+/).pop()!.trim());
 
+/** Whether a Python file imports one of `packages`: `from flask import ...`, `import os, flask.views as v`. */
+function importsPackage(code: string, packages: string[]): boolean {
+  const named = (module: string) => packages.includes(module.split(".")[0]!);
+  for (const m of code.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import\b/gm)) if (named(m[1]!)) return true;
+  for (const m of code.matchAll(/^[ \t]*import[ \t]+([^\n#;]+)/gm)) {
+    if (m[1]!.split(",").some((item) => named(item.trim().split(/\s+/)[0] ?? ""))) return true;
+  }
+  return false;
+}
+
+/** The names a Python file binds to one of `classes` called (`app = Flask(__name__)`, `router = fastapi.APIRouter()`). */
+const boundTo = (code: string, classes: string): Set<string> =>
+  new Set([...code.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)[ \\t]*(?::[^=\\n]+)?=[ \\t]*(?:[A-Za-z_][\\w.]*\\.)?(?:${classes})[ \\t]*\\(`, "gm"))].map((m) => m[1]!));
+
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
 const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
-  { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  { style: "fastapi", re: /@(?<fastapi>\w+)\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  // Flask's and Quart's decorators, method shortcuts and `add_url_rule`, in a file that imports either.
+  { style: "flask", re: /@(?<decorated>[A-Za-z_][\w.]*)\.(?:route|get|post|put|patch|delete)\(\s*["'](\/[^"']*)|(?<![\w.])(?<called>[A-Za-z_][\w.]*)\.add_url_rule\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
@@ -306,7 +322,16 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : text;
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file) || (style === "next" && !mayUseNext(file))) continue;
-      const hits = [...code.matchAll(re)].filter((m) => !accept || accept(m));
+      // A Python file that imports Flask or Quart registers their routes; their shortcuts look like FastAPI's.
+      // A Python file registers Flask's or Quart's routes where it imports either, FastAPI's where it imports FastAPI or
+      // neither; in a file that imports both, a decorator on a name bound to the other framework's application or router
+      // is that framework's.
+      const flask = style === "flask" || style === "fastapi" ? importsPackage(code, ["flask", "quart"]) : false;
+      if (style === "flask" && !flask) continue;
+      if (style === "fastapi" && flask && !importsPackage(code, ["fastapi"])) continue;
+      const other = style === "flask" ? boundTo(code, "FastAPI|APIRouter") : style === "fastapi" && flask ? boundTo(code, "Flask|Quart|Blueprint") : undefined;
+      const receiverOf = (m: RegExpMatchArray) => m.groups?.decorated ?? m.groups?.called ?? m.groups?.fastapi ?? "";
+      const hits = [...code.matchAll(re)].filter((m) => (!accept || accept(m)) && !other?.has(receiverOf(m)));
       if (!hits.length) continue;
       const first = hits[0]!;
       const label = style === "registration" ? `registration ${first[1]}` : style;

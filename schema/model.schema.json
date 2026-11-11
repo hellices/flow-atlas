@@ -174,13 +174,31 @@
           "additionalProperties": false,
           "properties": {
             "picks": {
-              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order.",
-              "enum": ["registration", "find-my-way", "specificity"]
+              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order. werkzeug: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and variables by their weight, whatever the order, by parts.",
+              "enum": ["registration", "find-my-way", "specificity", "werkzeug"]
             },
             "rank": {
               "description": "The kind of each segment of the route's path as Nest's specificity sort ranks it (RouteSpecificitySorter): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4.",
               "type": "array",
               "items": { "enum": [0, 2, 3, 4] }
+            },
+            "parts": {
+              "description": "The parts of the route's rule as Werkzeug's StateMachineMatcher holds them, one a segment from the first (a variable that takes slashes, path, makes one part of the rest), a / at the end left out (trailing says it): a static part's text, or a part with variables: its regular expression as Werkzeug compiles it (the same for two parts Werkzeug keeps in one state; a converter whose regex is not read stands as its class) and its weight (Weighting, flattened), which orders the parts tried at one position. No weight where a converter's is not read.",
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  {
+                    "type": "object",
+                    "required": ["regex"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "regex": { "type": "string" },
+                      "weight": { "type": "array", "items": { "type": "integer" } }
+                    }
+                  }
+                ]
+              }
             },
             "order": {
               "description": "Where the route is registered, from the router a request enters down to the one that holds it: each step a sequence of registrations whose order is known (router) and the place in it (at). Of two routes, the one before is the one whose steps first differ in at within the same router; routes whose steps first differ in router are in no order atlas knows.",
@@ -201,8 +219,8 @@
               "const": true
             },
             "slashes": {
-              "description": "How the router treats a / at the end of a request's path: ignored (Express, @koa/router), strict (a path with it is another path: Fastify, Hono, Spring 6 and later), redirected (Starlette redirects a request no route takes to the path with the / added or removed where a route takes that), removed and added (Next.js redirects every request to the path without it, or with it, by trailingSlash).",
-              "enum": ["ignored", "strict", "redirected", "removed", "added"]
+              "description": "How the router treats a / at the end of a request's path: ignored (Express, @koa/router), strict (a path with it is another path: Fastify, Hono, Spring 6 and later), redirected (Starlette redirects a request no route takes to the path with the / added or removed where a route takes that), removed and added (Next.js redirects every request to the path without it, or with it, by trailingSlash), appended (Werkzeug serves the path as the route writes it, and redirects a request without the / to the path with it where a route written with one takes that, unless its matcher reaches a route that takes the request as written first: strict_slashes).",
+              "enum": ["ignored", "strict", "redirected", "removed", "added", "appended"]
             },
             "trailing": {
               "description": "The route's path as served ends with a / (slash), or is served with and without one (both). On a route that ends in a wildcard, slash says the path before the wildcard is served only with the /.",
