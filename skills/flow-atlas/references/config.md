@@ -513,23 +513,26 @@ and rules are joined as text, as `BlueprintSetupState.add_url_rule` joins them, 
 `<int:id>`, `<float:x>`, `<uuid:id>`, `<any(a, b):x>` and `<string(length=2):x>` take what their converter's regex
 takes, kept as the parameter's pattern (with `signed=True`, and an unsigned `int`'s `fixed_digits`; `min` and `max`,
 which check the value, leave the route unread); `<path:rest>` at the end is the rest of the path (`/{rest}/**`); and a
-converter the files register (`app.url_map.converters["list"] = ListConverter`, a `BaseConverter` whose body sets no
-regex with a `/`) is kept as `{names:list}`, whose values are not read. The static files route,
-`<static_url_path>/<path:filename>` (`/static/<path:filename>` unless `static_url_path` or `static_folder` say
-otherwise), of each application, and of each blueprint with a `static_folder` under its registrations, serves GET,
-HEAD and OPTIONS; it is `implicit`, with `flask static` (`quart static`) as its `convention` and the `Flask(` or
-`Blueprint(` line as its place, and `static_folder=None` turns it off. `mounts` gives the path a blueprint's file
-serves its rules under, its own `url_prefix` included, in place of its registrations. Not read, each with a limit: a
-rule, `methods`, `url_prefix` or static setting the file does not spell out, `*`/`**` options, a view whose methods
-are not read (a class with a base atlas does not trace, a function the code gives `methods`), a `subdomain` or a
-`host`, a rule Werkzeug answers with a redirect (`redirect_to`, `alias=True`) or whose `//` it keeps
-(`merge_slashes`), an application with `host_matching`, a receiver the files bind to no application or blueprint (a
-function's parameter), a blueprint registered nowhere, into itself or under more than 64 prefixes, a `path` variable
-before the end of the rule or after text in its segment, a converter whose segments or values atlas does not read, the
-OPTIONS of every rule where the files name `PROVIDE_AUTOMATIC_OPTIONS`, and Quart's WebSocket routes, which answer
-only a WebSocket handshake. Werkzeug redirects a request whose values equal the `defaults` of a rule of the same view
-registered before it to that rule (`redirect_defaults`): where stacked decorators register such a pair, a limit names
-it, as the request is matched to the later rule all the same.
+converter the files register on the `url_map` of the application that serves the rule (`app.url_map.converters["list"]
+= ListConverter`, a `BaseConverter` whose body sets no regex with a `/`) is kept as `{names:list}`, whose values are
+not read. The static files route, `<static_url_path>/<path:filename>` (`/static/<path:filename>` unless
+`static_url_path` or `static_folder` say otherwise), of each application, and of each blueprint with a `static_folder`
+under its registrations, serves GET, HEAD and OPTIONS; it is `implicit`, with `flask static` (`quart static`) as its
+`convention` and the `Flask(` or `Blueprint(` line as its place, and `static_folder=None` turns it off. `mounts` gives
+the path a blueprint's file serves its rules under, its own `url_prefix` included, in place of its registrations. Not
+read, each with a limit: a rule, `methods`, `url_prefix` or static setting the file does not spell out, `*`/`**`
+options, a view whose methods are not read (a class with a base atlas does not trace, a function the code gives
+`methods`), a `subdomain` or a `host`, a rule Werkzeug answers with a redirect (`redirect_to`, `alias=True`) or whose
+`//` it keeps (`merge_slashes`), an application with `host_matching`, a receiver the files bind to no application or
+blueprint (a function's parameter), a blueprint registered nowhere, into itself or under more than 64 prefixes, a
+`path` variable before the end of the rule or after text in its segment, a converter whose segments or values atlas
+does not read, the OPTIONS of every rule where the files name `PROVIDE_AUTOMATIC_OPTIONS`, and Quart's WebSocket
+routes, which answer only a WebSocket handshake. Each application's own `url_map.strict_slashes`, `merge_slashes` and
+converters count for its rules; one set on a `url_map` atlas does not trace to an application counts for every one,
+and a converter registered there leaves the rules that name it unread. Werkzeug redirects a request to a rule whose
+values equal the `defaults` of another rule of the same endpoint with the same arguments to that rule
+(`redirect_defaults`), in whichever order they were registered, since `Map.update` sorts an endpoint's rules with more
+defaults first: a limit names each such pair, as the request is matched to the rule it fits all the same.
 The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's

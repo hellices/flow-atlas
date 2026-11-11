@@ -100,6 +100,8 @@ interface Registration {
   definition?: number;
   /** A decorator called on a view rather than written over a definition: no receiver of it is said not traced. */
   called?: true;
+  /** The endpoint the rule is registered under (the view's name where none is given), null where it is not spelled out. */
+  endpoint: string | null;
   defaults?: string[] | null;
 }
 
@@ -126,11 +128,14 @@ interface Facts {
   registrations: Registration[];
   registers: Register[];
   classes: Map<string, ClassFacts>;
-  /** `url_map.converters[name] = Converter`: the name and the class as written, or why it is not read. */
-  converters: Array<{ name: string | undefined; cls: string; at: number }>;
-  /** `url_map.strict_slashes = value` and `url_map.merge_slashes = value`, as written. */
-  strictSlashes: Array<{ value: string; at: number }>;
-  mergeSlashes: Array<{ value: string; at: number }>;
+  /**
+   * `url_map.converters[name] = Converter`, on the application written before `.url_map`: the name (undefined where it is
+   * not spelled out, or the converters are set otherwise) and the class as written.
+   */
+  converters: Array<{ receiver: string; name: string | undefined; cls: string; at: number }>;
+  /** `url_map.strict_slashes = value` and `url_map.merge_slashes = value`, on an application, as written. */
+  strictSlashes: Array<{ receiver: string; value: string; at: number }>;
+  mergeSlashes: Array<{ receiver: string; value: string; at: number }>;
   /** Functions defined at any depth, and those whose `methods` or `provide_automatic_options` the file assigns. */
   functions: Set<string>;
   attributed: Set<string>;
@@ -346,19 +351,19 @@ function factsOf(text: string): Facts {
     // A class defined twice is not read.
     f.classes.set(m[2]!, f.classes.has(m[2]!) ? { bases: ["<redefined>"], members: new Map() } : { bases, members });
   }
-  for (const m of code.matchAll(/(?<![\w.])[A-Za-z_][\w.]*\.url_map\.converters\[\s*/g)) {
+  for (const m of code.matchAll(/(?<![\w.])([A-Za-z_][\w.]*)\.url_map\.converters\[\s*/g)) {
     const from = (m.index ?? 0) + m[0].length;
     const close = closingParen(code, from);
     const key = pythonStrings(text.slice(from, close).trim());
     const assigned = /^\]\s*=(?!=)\s*/.exec(code.slice(close));
     if (!assigned) continue;
-    f.converters.push({ name: key && key.length === text.slice(from, close).trim().length ? key.value : undefined, cls: statementValue(text, code, close + assigned[0].length), at: m.index ?? 0 });
+    f.converters.push({ receiver: m[1]!, name: key && key.length === text.slice(from, close).trim().length ? key.value : undefined, cls: statementValue(text, code, close + assigned[0].length), at: m.index ?? 0 });
   }
-  for (const m of code.matchAll(/(?<![\w.])[A-Za-z_][\w.]*\.url_map\.converters\s*(?:\.\s*(?:update|setdefault)\s*\(|=(?!=))/g)) {
-    f.converters.push({ name: undefined, cls: "", at: m.index ?? 0 });
+  for (const m of code.matchAll(/(?<![\w.])([A-Za-z_][\w.]*)\.url_map\.converters\s*(?:\.\s*(?:update|setdefault)\s*\(|=(?!=))/g)) {
+    f.converters.push({ receiver: m[1]!, name: undefined, cls: "", at: m.index ?? 0 });
   }
-  for (const m of code.matchAll(/(?<![\w.])[A-Za-z_][\w.]*\.url_map\.(strict|merge)_slashes[ \t]*=(?!=)[ \t]*/g)) {
-    (m[1] === "strict" ? f.strictSlashes : f.mergeSlashes).push({ value: statementValue(text, code, (m.index ?? 0) + m[0].length), at: m.index ?? 0 });
+  for (const m of code.matchAll(/(?<![\w.])([A-Za-z_][\w.]*)\.url_map\.(strict|merge)_slashes[ \t]*=(?!=)[ \t]*/g)) {
+    (m[2] === "strict" ? f.strictSlashes : f.mergeSlashes).push({ receiver: m[1]!, value: statementValue(text, code, (m.index ?? 0) + m[0].length), at: m.index ?? 0 });
   }
   return f;
 }
@@ -376,6 +381,7 @@ function registration(text: string, code: string, receiver: string, verb: string
     methods: undefined,
     automatic: undefined,
     strict: flag(argument(text, code, from, "strict_slashes")),
+    endpoint: null,
     merge: flag(argument(text, code, from, "merge_slashes")),
     ...(definition !== undefined ? { definition } : {}),
   };
@@ -395,6 +401,15 @@ function registration(text: string, code: string, receiver: string, verb: string
     const view = argument(text, code, from, "view_func", 2);
     if (view.given === true && typeof view.value === "object" && view.value.unread !== "None") out.view = view.value.unread;
     else if (view.given === "spread") out.view = view.text;
+  }
+  // `endpoint` given, else the view's `__name__` (`_endpoint_from_view_func`): the function's, or the name `as_view` is given.
+  const endpoint = argument(text, code, from, "endpoint", call ? 1 : undefined);
+  if (endpoint.given === true) out.endpoint = typeof endpoint.value === "string" ? endpoint.value : null;
+  else if (endpoint.given === false && definition !== undefined) out.endpoint = /^[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)/.exec(code.slice(definition))?.[1] ?? null;
+  else if (endpoint.given === false && out.view !== undefined) {
+    const as = /\.\s*as_view\s*\(\s*/.exec(out.view);
+    const named = as ? pythonStrings(out.view.slice(as.index + as[0].length)) : undefined;
+    out.endpoint = as ? (named?.value ?? null) : (/(?:^|\.)([A-Za-z_]\w*)$/.exec(out.view)?.[1] ?? null);
   }
   for (const [name, why] of [
     ["subdomain", "a subdomain"],
@@ -671,19 +686,31 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
     return bindings.reference(file, expr);
   };
 
-  // The converters the code registers, by name: the class, or null where two registrations differ; a registration
-  // whose name or value is not spelled out may stand for any converter.
-  const registered = new Map<string, string | null>();
+  /** The application a `url_map` setting at offset `at` is made on, or "?" where atlas does not trace it to one. */
+  const appOf = (file: string, expr: string, at: number): string => {
+    const key = receiver(file, expr, at);
+    return key && bindingOf(key)?.kind === "app" ? key : "?";
+  };
+  // The converters each application's `url_map` registers, by name: the class, or null where two registrations differ.
+  // A registration on an application atlas does not trace, or whose name is not spelled out, may stand for any
+  // converter of any application.
+  const registered = new Map<string, Map<string, string | null>>();
   const unreadRegistrations: string[] = [];
+  const untracedNames = new Set<string>();
   for (const [file, f] of facts) {
     for (const c of f.converters) {
-      const cls = c.name === undefined ? undefined : classes.reference(file, c.cls);
       if (c.name === undefined || !c.cls) {
         unreadRegistrations.push(line(file, c.at));
         continue;
       }
-      const key = cls ?? `?${c.cls}`;
-      registered.set(c.name, registered.has(c.name) && registered.get(c.name) !== key ? null : key);
+      const app = appOf(file, c.receiver, c.at);
+      if (app === "?") {
+        untracedNames.add(c.name);
+        continue;
+      }
+      const key = classes.reference(file, c.cls) ?? `?${c.cls}`;
+      const map = registered.get(app) ?? registered.set(app, new Map()).get(app)!;
+      map.set(c.name, map.has(c.name) && map.get(c.name) !== key ? null : key);
     }
   }
   if (unreadRegistrations.length) {
@@ -707,21 +734,38 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
     const weight = weightText === undefined ? 100 : /^\d+$/.test(weightText) ? Number(weightText) : undefined;
     return { regex: `<${key}>`, isolating, ...(weight !== undefined ? { weight } : {}) };
   };
-  const converter = (conv: string, args: string | undefined): Converter | undefined => {
-    if (registered.has(conv)) return { ...converterClass(registered.get(conv)!), regex: `<${registered.get(conv)}(${args ?? ""})>`, pattern: undefined };
+  /**
+   * The converters of the rules an application serves (`app`), or of an application atlas does not know (undefined, a
+   * blueprint `mounts` places): its `url_map`'s own, else Werkzeug's. A name registered on an application atlas does
+   * not trace, or differently by the applications a rule may be served by, is not read.
+   */
+  const converterFor = (app: string | undefined) => (conv: string, args: string | undefined): Converter | undefined => {
+    if (untracedNames.has(conv)) return { regex: "", isolating: true, why: `its converter ${conv} is registered on a url_map atlas does not trace to an application` };
+    const classes = app === undefined ? new Set([...registered.values()].filter((m) => m.has(conv)).map((m) => m.get(conv))) : new Set(registered.get(app)?.has(conv) ? [registered.get(app)!.get(conv)] : []);
+    if (classes.size > 1) return { regex: "", isolating: true, why: `its converter ${conv} is registered differently by the applications it may be served by` };
+    const [cls] = [...classes];
+    if (cls !== undefined) return { ...converterClass(cls), regex: `<${cls}(${args ?? ""})>`, pattern: undefined };
     return builtin(conv, args);
   };
 
-  // `url_map.strict_slashes`: true unless the code sets it; not read where it sets it otherwise than to True or False,
-  // or to both.
-  const slashSettings = [...facts].flatMap(([file, f]) => f.strictSlashes.map((s) => ({ ...s, file })));
-  const values = new Set(slashSettings.map((s) => s.value));
-  const mapStrict = !slashSettings.length ? true : values.size === 1 && (values.has("True") || values.has("False")) ? values.has("True") : undefined;
-  if (mapStrict === undefined) {
-    limits.add(`routes ${component}: url_map.strict_slashes is set to ${[...values].join(" and ")} (${slashSettings.map((s) => line(s.file, s.at)).join(", ")}); whether a route takes a request whose trailing / differs is not read`);
-  }
-  // `url_map.merge_slashes`: true unless the code sets it otherwise than to True.
-  const mapMerge = [...facts].every(([, f]) => f.mergeSlashes.every((s) => s.value === "True"));
+  // `url_map.strict_slashes` and `merge_slashes` of each application, a setting on one atlas does not trace counting
+  // for every one; for an application atlas does not know, every setting counts.
+  const settings = (pick: (f: Facts) => Facts["strictSlashes"]) => [...facts].flatMap(([file, f]) => pick(f).map((s) => ({ ...s, file, app: appOf(file, s.receiver, s.at) })));
+  const strictSettings = settings((f) => f.strictSlashes);
+  const mergeSettings = settings((f) => f.mergeSlashes);
+  const on = <T extends { app: string }>(all: T[], app: string | undefined) => all.filter((s) => app === undefined || s.app === app || s.app === "?");
+  /** `url_map.strict_slashes`: true unless the code sets it; not read where it sets it otherwise than to True or False, or to both. */
+  const mapStrict = (app: string | undefined): boolean | undefined => {
+    const set = on(strictSettings, app);
+    const values = new Set(set.map((s) => s.value));
+    const strict = !set.length ? true : values.size === 1 && (values.has("True") || values.has("False")) ? values.has("True") : undefined;
+    if (strict === undefined) {
+      limits.add(`routes ${component}: url_map.strict_slashes is set to ${[...values].join(" and ")} (${set.map((s) => line(s.file, s.at)).join(", ")}); whether a route takes a request whose trailing / differs is not read`);
+    }
+    return strict;
+  };
+  /** `url_map.merge_slashes`: true unless the code sets it otherwise than to True. */
+  const mapMerge = (app: string | undefined) => on(mergeSettings, app).every((s) => s.value === "True");
   // `PROVIDE_AUTOMATIC_OPTIONS` (Flask 3.1) turns off the OPTIONS each rule answers by itself.
   const optionsSetting = [...texts].find(([, text]) => text.includes("PROVIDE_AUTOMATIC_OPTIONS"));
   if (optionsSetting) limits.add(`routes ${component}: ${optionsSetting[0]} names PROVIDE_AUTOMATIC_OPTIONS; the OPTIONS Flask answers by itself beside each rule is not read`);
@@ -747,10 +791,11 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
    */
   const LIMIT = 64;
   type Unread = { why: string; about?: string };
-  const served = new Map<string, Array<string | null> | Unread>();
+  type Served = { prefix: string | null; app?: string };
+  const served = new Map<string, Served[] | Unread>();
   const walking = new Set<string>();
   // Each blueprint's once: one registered on several parents, each registered on several, is read once per name.
-  const prefixesOf = (key: string): Array<string | null> | Unread => {
+  const prefixesOf = (key: string): Served[] | Unread => {
     const known = served.get(key);
     if (known) return known;
     if (walking.has(key)) return { why: `${said(key)} is registered into itself`, about: key };
@@ -760,16 +805,16 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
     served.set(key, out);
     return out;
   };
-  const prefixes = (key: string): Array<string | null> | Unread => {
+  const prefixes = (key: string): Served[] | Unread => {
     const b = bindingOf(key);
     if (!b) return { why: `${fileOf(key)} binds ${name(key)} to more than one application or blueprint`, about: key };
-    if (b.kind === "app") return b.hosts ? { why: `${said(key)} matches rules by host (${b.hosts}), which atlas does not read`, about: key } : [null];
-    if (Object.hasOwn(declared, fileOf(key))) return [declared[fileOf(key)]!];
+    if (b.kind === "app") return b.hosts ? { why: `${said(key)} matches rules by host (${b.hosts}), which atlas does not read`, about: key } : [{ prefix: null, app: key }];
+    if (Object.hasOwn(declared, fileOf(key))) return [{ prefix: declared[fileOf(key)]! }];
     if (typeof b.prefix === "object" && b.prefix !== null) return { why: `${said(key)} has a url_prefix the file does not spell out (${b.prefix.unread})`, about: key };
     if (b.subdomain !== null) return { why: `${said(key)} has a subdomain (${typeof b.subdomain === "string" ? JSON.stringify(b.subdomain) : b.subdomain.unread}), which atlas does not read`, about: key };
     const all = registers.get(key);
     if (!all?.length) return { why: `${said(key)} is registered nowhere in the route files`, about: key };
-    const out = new Set<string | null>();
+    const out = new Map<string, Served>();
     for (const r of all) {
       const where = line(r.file, r.at);
       if (r.prefix.given === "spread" || (r.prefix.given && typeof r.prefix.value === "object" && r.prefix.value.unread !== "None")) {
@@ -781,12 +826,13 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
       const own = given ?? (b.prefix);
       const above = prefixesOf(r.parent);
       if ("why" in above) return above;
-      for (const p of above) {
-        out.add(p !== null && own !== null ? `${p.replace(/\/+$/, "")}/${own.replace(/^\/+/, "")}` : (own ?? p));
+      for (const { prefix: p, app } of above) {
+        const prefix = p !== null && own !== null ? `${p.replace(/\/+$/, "")}/${own.replace(/^\/+/, "")}` : (own ?? p);
+        out.set(JSON.stringify([prefix, app]), { prefix, ...(app !== undefined ? { app } : {}) });
         if (out.size > LIMIT) return { why: `${said(key)} is served under more than ${LIMIT} prefixes`, about: key };
       }
     }
-    return [...out];
+    return [...out.values()];
   };
 
   /** A rule under a prefix, joined as `BlueprintSetupState.add_url_rule` joins it. */
@@ -849,6 +895,8 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
   // Why the routes of an application or blueprint are not read, by cause: the one the cause is about, if any, and those
   // it leaves unread.
   const causes = new Map<string, { about?: string; keys: Set<string> }>();
+  // The rules of each endpoint of an application or blueprint, for `redirect_defaults`.
+  const endpoints = new Map<string, Array<{ file: string; r: Registration; rule: string }>>();
   for (const [file, f] of facts) {
     const at = (offset: number) => lineOf(texts.get(file)!, offset);
     const emit = (key: string, rule: string, offset: number, methods: string[], automatic: boolean, strict: boolean | undefined | null, extra: { convention?: string; implicit?: true; merge?: boolean | null } = {}) => {
@@ -858,19 +906,19 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
         cause.keys.add(key);
         return;
       }
-      for (const prefix of p) {
+      for (const { prefix, app } of p) {
         const full = join(prefix, rule);
         // Werkzeug merges `//` in a rule into `/` (`Rule.compile`) unless `merge_slashes` is off for it or its map.
-        if (full.includes("//") && (extra.merge === false || extra.merge === null || (extra.merge === undefined && !mapMerge))) {
+        if (full.includes("//") && (extra.merge === false || extra.merge === null || (extra.merge === undefined && !mapMerge(app)))) {
           limits.add(`routes ${component}: ${line(file, offset)} registers ${full}, whose // Werkzeug may keep (merge_slashes), which atlas's path form does not hold; the route is not read`);
           continue;
         }
-        const parsed = parseRule(full, converter);
+        const parsed = parseRule(full, converterFor(app));
         if ("why" in parsed) {
           limits.add(`routes ${component}: ${line(file, offset)} registers ${parsed.why}`);
           continue;
         }
-        const slashes = strict === null ? undefined : (strict ?? mapStrict);
+        const slashes = strict === null ? undefined : (strict ?? mapStrict(app));
         const dispatch: Dispatch = {
           picks: "werkzeug",
           parts: parsed.parts,
@@ -940,31 +988,31 @@ export function flaskRoutes(texts: Map<string, string>, component: string, decla
     for (const name of untraced) {
       limits.add(`routes ${component}: ${file} registers routes on ${name}, which atlas does not trace to a Flask or Quart application or Blueprint of the route files; they are not read`);
     }
-    // Werkzeug redirects a request to a rule whose values equal the defaults of a rule of the same view registered before
-    // it to that rule's path (`redirect_defaults`, `MapAdapter.get_default_redirect`): stacked decorators register the
-    // one nearest the definition first.
-    const byDefinition = new Map<number, Registration[]>();
     for (const r of f.registrations) {
-      if (r.definition === undefined || !/^(?:route|get|post|put|delete|patch)$/.test(r.verb)) continue;
-      (byDefinition.get(r.definition) ?? byDefinition.set(r.definition, []).get(r.definition)!).push(r);
+      const key = receiver(file, r.receiver, r.at);
+      if (key && r.endpoint !== null && !r.skip && !r.unread && r.rule.given === true && typeof r.rule.value === "string") {
+        const group = `${key}|${r.endpoint}`;
+        (endpoints.get(group) ?? endpoints.set(group, []).get(group)!).push({ file, r, rule: r.rule.value });
+      }
     }
-    for (const stack of byDefinition.values()) {
-      // Nearest the definition first.
-      const ordered = [...stack].sort((a, b) => b.at - a.at);
-      ordered.forEach((first, i) => {
-        if (first.defaults === undefined || first.rule.given !== true || typeof first.rule.value !== "string") return;
-        for (const later of ordered.slice(i + 1)) {
-          if (later.defaults !== undefined || later.rule.given !== true || typeof later.rule.value !== "string") continue;
-          const own = parseRule(first.rule.value, converter);
-          const other = parseRule(later.rule.value, converter);
-          if ("why" in own || "why" in other) continue;
-          const keys = first.defaults === null ? null : new Set([...own.variables, ...first.defaults]);
-          if (keys && (keys.size !== other.variables.length || !other.variables.every((v) => keys.has(v)))) continue;
-          limits.add(
-            `routes ${component}: ${line(file, later.at)} registers ${later.rule.value} after ${first.rule.value} (${line(file, first.at)}), which gives ${first.defaults === null ? "defaults the file does not spell out" : `defaults for ${first.defaults.join(", ")}`}; Werkzeug redirects a request to ${later.rule.value} whose values equal them to ${first.rule.value} (redirect_defaults), which atlas does not tell apart`,
-          );
-        }
-      });
+  }
+  // Werkzeug redirects a request a rule takes, whose values equal the `defaults` of another rule of the same endpoint
+  // with the same arguments (variables and defaults), to that rule (`redirect_defaults`, `MapAdapter.get_default_redirect`,
+  // `Rule.provides_defaults_for`): one tried before it among the endpoint's rules, which `Map.update` sorts by
+  // `build_compare_key`, more defaults first, whatever order they were registered in.
+  const variablesOf = (rule: string) => [...rule.matchAll(/<(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\(.*?\))?:)?([a-zA-Z_][a-zA-Z0-9_]*)>/g)].map((m) => m[1]!);
+  for (const rules of endpoints.values()) {
+    for (const given of rules) {
+      if (given.r.defaults === undefined) continue;
+      const keys = given.r.defaults === null ? null : new Set([...variablesOf(given.rule), ...given.r.defaults]);
+      for (const other of rules) {
+        if (other === given || other.rule === given.rule || other.r.defaults !== undefined) continue;
+        if (keys && !(keys.size === new Set(variablesOf(other.rule)).size && variablesOf(other.rule).every((v) => keys.has(v)))) continue;
+        const defaults = given.r.defaults === null ? "defaults the file does not spell out" : `defaults for ${given.r.defaults.join(", ")}`;
+        limits.add(
+          `routes ${component}: ${line(other.file, other.r.at)} registers ${other.rule}, and ${line(given.file, given.r.at)} ${given.rule} with ${defaults}, for the endpoint ${given.r.endpoint ?? ""}; Werkzeug redirects a request to ${other.rule} whose values equal those defaults, by a method ${given.rule} takes, to ${given.rule} (redirect_defaults), which atlas does not tell apart`,
+        );
+      }
     }
   }
   for (const [why, { about, keys }] of causes) {

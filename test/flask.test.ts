@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { inventory } from "../src/inventory.js";
+import { booleanKeyword, scopesOf, shadowed, targetNames } from "../src/extract/python.js";
+import { pythonCode } from "../src/extract/routes.js";
 import { matchCalls, rankedComponents, redirectedLimits } from "../src/match.js";
 import type { Call, Surface } from "../src/model.js";
 import { scan } from "../src/scan.js";
@@ -511,6 +513,36 @@ describe("Werkzeug's rules and converters", () => {
     expect(reach(files, ["GET /tags/a,b"]).reached).toEqual({ "GET /tags/a,b": ["GET /tags/{names:list}"] });
   });
 
+  it("reads a rule's converters and slash settings from the url_map of the application that serves it", () => {
+    const files = {
+      "api/app.py": lines(
+        "from flask import Flask, Blueprint",
+        "from werkzeug.routing import BaseConverter",
+        "class Slug(BaseConverter): ...",
+        "a = Flask('a', static_folder=None)",
+        "b = Flask('b', static_folder=None)",
+        "a.url_map.converters['slug'] = Slug",
+        "a.url_map.strict_slashes = False",
+        "bp = Blueprint('bp', __name__)",
+        "a.register_blueprint(bp, url_prefix='/a')",
+        "b.register_blueprint(bp, url_prefix='/b')",
+        '@bp.get("/s/<slug:x>/")',
+        "def s(x): ...",
+        "def setup(app):",
+        "    app.url_map.converters['u'] = Slug",
+        '@a.get("/u/<u:x>")',
+        "def u(x): ...",
+      ),
+    };
+    const { explicit, raw, limits } = read(files);
+    expect(explicit).toEqual(["GET /a/s/{x:slug}"]);
+    expect(raw[0]!.dispatch).toMatchObject({ slashes: "appended", trailing: "both" });
+    expect(limits).toEqual([
+      "routes api: api/app.py:11 registers /b/s/<slug:x>/ names the converter slug, which is neither Werkzeug's nor one the files read register; the route is not read",
+      "routes api: api/app.py:15 registers /u/<u:x> has <u:x>: its converter u is registered on a url_map atlas does not trace to an application; the route is not read",
+    ]);
+  });
+
   it("serves the static files route of an application and of a blueprint with a static folder, under each registration", () => {
     const files = {
       "api/app.py": lines(
@@ -544,19 +576,43 @@ describe("Werkzeug's rules and converters", () => {
     expect(limits).toEqual(["routes api: api/app.py:12 makes unread with static settings the file does not spell out (FOLDER); the static files route Flask serves for it is not read"]);
   });
 
-  it("names the rules registered before another of the same view with defaults Werkzeug redirects to", () => {
+  it("names the rules of one endpoint whose requests Werkzeug redirects to another's defaults, in whichever order they are registered", () => {
     const files = {
       "api/app.py": app(
+        "from flask import Blueprint",
+        "other = Flask('other', static_folder=None)",
+        "bp = Blueprint('bp', __name__)",
+        "app.register_blueprint(bp)",
         '@app.route("/docs/<page>")',
         '@app.route("/docs/", defaults={"page": "index"})',
         "def docs(page): ...",
         '@app.route("/", defaults={"page": "index"})',
         '@app.route("/<page>")',
         "def pages(page): ...",
+        // Two applications, two maps: no rule of one redirects to the other's.
+        '@other.route("/short", defaults={"id": "x"})',
+        '@app.route("/long/<id>")',
+        "def cross(id): ...",
+        // Other endpoints, or other arguments, are no pair.
+        '@app.get("/e", endpoint="one", defaults={"page": "1"})',
+        '@app.get("/e/<page>", endpoint="two")',
+        "def named(page): ...",
+        '@app.get("/f", defaults={"a": "1"})',
+        '@app.get("/f/<b>")',
+        "def args(a=None, b=None): ...",
+        "def listed(page): ...",
+        'app.add_url_rule("/l/", view_func=listed, defaults={"page": "1"})',
+        'app.add_url_rule("/l/<page>", view_func=listed)',
+        '@bp.route("/b/", defaults=DEFAULTS)',
+        '@bp.route("/b/<x>")',
+        "def b(x): ...",
       ),
     };
     expect(read(files).limits).toEqual([
-      'routes api: api/app.py:4 registers /docs/<page> after /docs/ (api/app.py:5), which gives defaults for page; Werkzeug redirects a request to /docs/<page> whose values equal them to /docs/ (redirect_defaults), which atlas does not tell apart',
+      "routes api: api/app.py:8 registers /docs/<page>, and api/app.py:9 /docs/ with defaults for page, for the endpoint docs; Werkzeug redirects a request to /docs/<page> whose values equal those defaults, by a method /docs/ takes, to /docs/ (redirect_defaults), which atlas does not tell apart",
+      "routes api: api/app.py:12 registers /<page>, and api/app.py:11 / with defaults for page, for the endpoint pages; Werkzeug redirects a request to /<page> whose values equal those defaults, by a method / takes, to / (redirect_defaults), which atlas does not tell apart",
+      "routes api: api/app.py:27 registers /b/<x>, and api/app.py:26 /b/ with defaults the file does not spell out, for the endpoint b; Werkzeug redirects a request to /b/<x> whose values equal those defaults, by a method /b/ takes, to /b/ (redirect_defaults), which atlas does not tell apart",
+      "routes api: api/app.py:25 registers /l/<page>, and api/app.py:24 /l/ with defaults for page, for the endpoint listed; Werkzeug redirects a request to /l/<page> whose values equal those defaults, by a method /l/ takes, to /l/ (redirect_defaults), which atlas does not tell apart",
     ]);
   });
 });
@@ -569,9 +625,9 @@ describe("where Werkzeug dispatches a request", () => {
         "def name(name): ...",
         '@app.get("/u/me")',
         "def me(): ...",
-        '@app.get("/n/<x>")',
+        '@app.get("/n/<s>")',
         "def text(x): ...",
-        '@app.get("/n/<int:x>")',
+        '@app.get("/n/<int:i>")',
         "def number(x): ...",
         '@app.get("/f/<path:rest>")',
         "def rest(rest): ...",
@@ -591,8 +647,8 @@ describe("where Werkzeug dispatches a request", () => {
       "GET /u/me": ["GET /u/me"],
       "GET /u/you": ["GET /u/{name}"],
       "DELETE /u/me": ["DELETE /u/{name}"],
-      "GET /n/1": ["GET /n/{x}"],
-      "GET /n/x": ["GET /n/{x}"],
+      "GET /n/1": ["GET /n/{i}"],
+      "GET /n/x": ["GET /n/{s}"],
       "GET /f/a": ["GET /f/{x}"],
       "GET /f/a/b": ["GET /f/{rest}/**"],
       "GET /j/1.json": ["GET /j/{x}.json"],
@@ -684,6 +740,23 @@ describe("the flask style in a scan", () => {
       "api/f.py": lines("from fastapi import FastAPI", "app = FastAPI()", '@app.get("/f")', "def f(): ..."),
     };
     expect(inventory(memory(files), []).routes.map((r) => `${r.file} ${r.style} ${r.count}`)).toEqual(["api/a.py flask 2", "api/q.py flask 1", "api/f.py fastapi 1"]);
+    // Flask imported after another module, and a file that imports both frameworks: each decorator is its receiver's.
+    const mixed = {
+      "api/later.py": lines("import os, flask", "app = flask.Flask(__name__)", '@app.route("/x")', "def x(): ..."),
+      "api/both.py": lines(
+        "from fastapi import APIRouter",
+        "from flask import Blueprint",
+        "api = APIRouter()",
+        "bp = Blueprint('bp', __name__)",
+        '@api.get("/f")',
+        "def f(): ...",
+        '@bp.get("/b")',
+        "def b(): ...",
+        '@bp.route("/c")',
+        "def c(): ...",
+      ),
+    };
+    expect(inventory(memory(mixed), []).routes.map((r) => `${r.file} ${r.style} ${r.count} ${r.example}`)).toEqual(["api/later.py flask 1 api/later.py:3", "api/both.py fastapi 1 api/both.py:5", "api/both.py flask 2 api/both.py:7"]);
   });
 
   it("writes the routes of the Flask fixture as the model's schema says", () => {
@@ -691,5 +764,42 @@ describe("the flask style in a scan", () => {
     const graph = scan(new WorktreeSource(dir), loadConfig(`${dir}/atlas.config.yaml`), { root: dir, requested: "WORKTREE" });
     expect(graph.surfaces.some((s) => s.dispatch?.picks === "werkzeug" && s.dispatch.parts?.some((p) => typeof p === "object"))).toBe(true);
     expect(validate("graph", JSON.parse(JSON.stringify(graph)))).toEqual([]);
+  });
+});
+
+describe("the Python reading the FastAPI and Flask readers share", () => {
+  it("binds every name an assignment, a for or an as targets in a function, and no attribute's or subscript's", () => {
+    expect(targetNames("x, (y, *z)")).toEqual(["x", "y", "z"]);
+    expect(targetNames("[a, b.c, d[0]]")).toEqual(["a"]);
+    expect(targetNames("x: int")).toEqual(["x"]);
+    expect(targetNames("box.app")).toEqual([]);
+    const text = lines(
+      "def f(param):",
+      "    x = y = 1",
+      "    a, (b, *c) = pair",
+      "    total += 1",
+      "    box.app = 2",
+      "    table[key] = 3",
+      "    for item.attr, (i, j) in rows: ...",
+      "    with open(p) as handle, lock as self.held: ...",
+      "    if x == y: ...",
+      "    call(kw=1)",
+      "    app = Flask(__name__)",
+      "    marker = None",
+    );
+    const code = pythonCode(text);
+    const at = text.indexOf("marker");
+    const bound = ["param", "x", "y", "a", "b", "c", "total", "i", "j", "handle"];
+    const free = ["box", "app", "table", "key", "item", "attr", "self", "held", "kw", "rows"];
+    const scopes = scopesOf(code, (assigned) => assigned.startsWith("Flask("));
+    expect(bound.filter((n) => !shadowed(scopes, n, at))).toEqual([]);
+    expect(free.filter((n) => shadowed(scopes, n, at))).toEqual([]);
+  });
+
+  it("reads a keyword given as an empty string as another value than True or False, not as one not given", () => {
+    const text = 'FastAPI(redirect_slashes="", other=True)';
+    const code = pythonCode(text);
+    const from = text.indexOf("(") + 1;
+    expect([booleanKeyword(text, code, from, "redirect_slashes"), booleanKeyword(text, code, from, "other"), booleanKeyword(text, code, from, "missing")]).toEqual([null, true, undefined]);
   });
 });

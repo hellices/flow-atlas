@@ -56,19 +56,87 @@ export function scopesOf(code: string, framework: (assigned: string) => boolean)
   const own = (scope: Scope, at: number) => !scopes.some((s) => s !== scope && s.start > scope.start && s.start <= at && at < s.end);
   for (const scope of scopes) {
     const body = code.slice(scope.start, scope.end);
-    const bind = (at: number, names: string) => {
+    const bind = (at: number, target: string) => {
       if (depth[scope.start + at] || !own(scope, scope.start + at)) return;
-      for (const n of names.match(/[A-Za-z_]\w*/g) ?? []) scope.names.add(n);
+      for (const n of targetNames(target)) scope.names.add(n);
     };
-    for (const m of body.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=(?!=)[ \t]*(.*)/gm)) {
-      if (!framework(m[2]!)) bind(m.index ?? 0, m[1]!);
+    // Every target of an assignment, chained (`a = b = 1`) or augmented (`a += 1`), binds the names it holds.
+    for (const m of body.matchAll(/^[ \t]*(?=[^\s#])/gm)) {
+      const at = scope.start + (m.index ?? 0) + m[0].length;
+      if (depth[at]) continue;
+      const assigned = assignment(code, at);
+      if (assigned && !framework(assigned.value)) for (const t of assigned.targets) bind(m.index ?? 0, t);
     }
     for (const m of body.matchAll(/^[ \t]*(?:async[ \t]+)?for[ \t]+(.+?)[ \t]+in\b/gm)) bind(m.index ?? 0, m[1]!);
     for (const m of body.matchAll(/^[ \t]*(?:(?:async[ \t]+)?with|except)\b.*/gm)) {
-      for (const as of m[0].matchAll(/\bas[ \t]+([A-Za-z_]\w*)/g)) bind(m.index ?? 0, as[1]!);
+      for (const as of m[0].matchAll(/\bas[ \t]+(\([^()]*\)|\[[^\]]*\]|[A-Za-z_][\w.]*(?:\[[^\]]*\])?)/g)) bind(m.index ?? 0, as[1]!);
     }
   }
   return scopes;
+}
+
+/**
+ * The names a target binds (an assignment's, a `for`'s, an `as`'s): a name, alone or in a tuple or list at any depth
+ * (`x`, `x, (y, *z)`), a single name annotated (`x: int`); not an attribute or a subscript (`box.app`, `d[k]`), which
+ * binds no name of the function's.
+ */
+export function targetNames(target: string): string[] {
+  const t = target.trim();
+  const annotated = /^([A-Za-z_]\w*)\s*:(?!=)/.exec(t);
+  if (annotated) return [annotated[1]!];
+  const items: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i <= t.length; i++) {
+    const c = t[i];
+    if (c === undefined || (c === "," && depth === 0)) {
+      items.push(t.slice(start, i).trim());
+      start = i + 1;
+    } else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+  }
+  return items.flatMap((item) => {
+    const bare = item.replace(/^\*\s*/, "");
+    if (/^[A-Za-z_]\w*$/.test(bare)) return [bare];
+    const wrapped = /^([([])([^]*)([)\]])$/.exec(bare);
+    return wrapped && closingParen(bare, 1) === bare.length - 1 ? targetNames(wrapped[2]!) : [];
+  });
+}
+
+/**
+ * The assignment statement at offset `at` of blanked code: its targets, each before an `=` outside brackets (an
+ * augmented one's before its operator), and the value after the last; undefined for any other statement.
+ */
+export function assignment(code: string, at: number): { targets: string[]; value: string } | undefined {
+  let depth = 0;
+  let end = at;
+  for (; end < code.length; end++) {
+    const c = code[end]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+    else if (!depth && (c === ";" || (c === "\n" && code[end - 1] !== "\\"))) break;
+  }
+  const statement = code.slice(at, end);
+  if (/^(?:def|class|if|elif|while|for|with|return|yield|lambda|assert|del|raise|import|from|global|nonlocal|async|await)\b|^@/.test(statement)) return undefined;
+  const cuts: Array<[number, number]> = [];
+  depth = 0;
+  for (let i = 0; i < statement.length; i++) {
+    const c = statement[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+    else if (c === "=" && !depth && statement[i + 1] !== "=" && !"=!<>:".includes(statement[i - 1] ?? "")) {
+      const op = /(?:\*\*|\/\/|<<|>>|[-+*/%&|^@])$/.exec(statement.slice(0, i))?.[0] ?? "";
+      cuts.push([i - op.length, i + 1]);
+      // An augmented assignment has one target.
+      if (op) break;
+    } else if (c === "=" && !depth && "<>".includes(statement[i - 1] ?? "") && "<>".includes(statement[i - 2] ?? "") && statement[i - 1] === statement[i - 2]) {
+      cuts.push([i - 2, i + 1]);
+      break;
+    }
+  }
+  if (!cuts.length) return undefined;
+  const targets = cuts.map(([from], k) => statement.slice(k ? cuts[k - 1]![1] : 0, from).trim());
+  return { targets, value: statement.slice(cuts[cuts.length - 1]![1]).trim() };
 }
 
 /**
@@ -126,11 +194,12 @@ export function keyword(text: string, code: string, from: number, name: string):
 
 /**
  * A `True` or `False` the keyword argument `name` gives: undefined where it is not given, null where it is another
- * value or a `**` argument may give it.
+ * value (a string, `""` included) or a `**` argument may give it.
  */
 export function booleanKeyword(text: string, code: string, from: number, name: string): boolean | undefined | null {
+  const given = pythonArgStarts(code, from).some((at) => new RegExp(`^${name}\\s*=(?!=)`).test(code.slice(at)));
   const value = keyword(text, code, from, name);
-  if (value === "") return undefined;
+  if (value === "" && !given) return undefined;
   if (typeof value === "string") return null;
   return value.unread === "True" ? true : value.unread === "False" ? false : null;
 }
