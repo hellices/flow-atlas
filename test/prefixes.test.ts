@@ -3,6 +3,7 @@ import { normalizeConfig } from "../src/config.js";
 import { extractRoutes, routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { excludePattern } from "../src/extract/nest.js";
 import type { Source } from "../src/source.js";
+import { fastapiDocumentation } from "./documentation.js";
 
 const memory = (files: Record<string, string>): Source => ({
   ref: "WORKTREE",
@@ -14,9 +15,8 @@ const memory = (files: Record<string, string>): Source => ({
 const routes = (files: Record<string, string>, entry: Record<string, unknown>, components = [{ name: "api", path: "api" }]) => {
   const limits: string[] = [];
   const config = normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], ...entry }] });
-  // The documentation routes FastAPI serves by itself are read in test/served.test.ts.
   const ids = extractRoutes(memory(files), config, undefined, [], limits)
-    .filter((s) => !s.convention?.startsWith("fastapi "))
+    .filter((s) => !fastapiDocumentation(s))
     .map((s) => `${s.method} ${s.path}`);
   return { ids, limits };
 };
@@ -171,7 +171,10 @@ describe("FastAPI router prefixes", () => {
   it("reads one file's routers alone, and a receiver it cannot trace at the paths written, with a limit", () => {
     const limits: string[] = [];
     const text = 'router = APIRouter(prefix="/a")\napp = FastAPI()\napp.include_router(router, prefix="/b")\n@router.get("")\ndef a(): ...\n@app.get("")\ndef b(): ...\n';
-    expect(routesFromPython("m.py", text, { component: "c", files: [] }, limits).filter((s) => !s.convention).map((s) => s.path)).toEqual(["/b/a"]);
+    const read = routesFromPython("m.py", text, { component: "c", files: [] }, limits);
+    // The application serves its own documentation at the root, not under the include's prefix.
+    expect(read.filter(fastapiDocumentation).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /openapi.json", "HEAD /openapi.json", "GET /docs", "HEAD /docs", "GET /docs/oauth2-redirect", "HEAD /docs/oauth2-redirect", "GET /redoc", "HEAD /redoc"]);
+    expect(read.filter((s) => !fastapiDocumentation(s)).map((s) => s.path)).toEqual(["/b/a"]);
     expect(limits).toEqual([]);
     expect(routesFromPython("n.py", "def f(router):\n    @router.get('/x')\n    def a(): ...\n", { component: "c", files: [] }, limits).map((s) => s.path)).toEqual(["/x"]);
     expect(limits).toEqual([

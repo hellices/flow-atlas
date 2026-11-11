@@ -203,30 +203,48 @@ function exportsName(sf: ts.SourceFile, name: string): boolean | null {
   return star ? null : false;
 }
 
+/** Whether a class has a static member of a name. */
+const hasStatic = (c: ts.ClassLikeDeclaration, name: string): boolean =>
+  c.members.some((m) => !!m.name && memberText(m.name) === name && ts.canHaveModifiers(m) && !!ts.getModifiers(m)?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword));
+const memberText = (n: ts.PropertyName): string | undefined => (ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? n.text : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(unwrap(n.expression)) ? (unwrap(n.expression) as ts.StringLiteral).text : undefined);
+
 /**
  * Whether a module's component has `getInitialProps`, as Next.js reads it from the default export: a static member of
- * its class, or a property set on it (`Page.getInitialProps = ...`). Null where its default export is not read.
+ * its class, or a property set on it (`Page.getInitialProps = ...`). The default export is the declaration written
+ * `export default`, or the class, function or `const` of the file that `export default Page` or `export { Page as
+ * default }` names; a property set on any other name is not the page's.
  */
-function initialProps(sf: ts.SourceFile): boolean | null {
+function initialProps(sf: ts.SourceFile): boolean {
   let name: string | undefined;
-  let found = false;
+  let target: ts.Node | undefined;
   for (const st of sf.statements) {
     const isDefault = ts.canHaveModifiers(st) && ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
-    if ((ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st)) && isDefault) {
-      name = st.name?.text;
-      if (ts.isClassDeclaration(st) && st.members.some((m) => m.name && ts.isIdentifier(m.name) && m.name.text === "getInitialProps" && ts.canHaveModifiers(m) && ts.getModifiers(m)?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword))) found = true;
-    }
+    if ((ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st)) && isDefault) [name, target] = [st.name?.text, st];
     if (ts.isExportAssignment(st) && !st.isExportEquals) {
       const e = unwrap(st.expression);
       if (ts.isIdentifier(e)) name = e.text;
+      else target = e;
+    }
+    if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+      const e = st.exportClause.elements.find((x) => x.name.text === "default" && !x.isTypeOnly);
+      if (e) name = (e.propertyName ?? e.name).text;
     }
   }
-  for (const st of sf.statements) {
-    if (!ts.isExpressionStatement(st) || !ts.isBinaryExpression(st.expression) || st.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
-    const left = st.expression.left;
-    if (ts.isPropertyAccessExpression(left) && left.name.text === "getInitialProps" && ts.isIdentifier(left.expression) && (name === undefined || left.expression.text === name)) found = true;
+  if (name !== undefined && !target) {
+    for (const st of sf.statements) {
+      if ((ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st)) && st.name?.text === name) target = st;
+      if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === name) target = d.initializer && unwrap(d.initializer);
+    }
   }
-  return found ? true : false;
+  if (target && ts.isClassLike(target) && hasStatic(target, "getInitialProps")) return true;
+  if (name === undefined) return false;
+  return sf.statements.some((st) => {
+    if (!ts.isExpressionStatement(st) || !ts.isBinaryExpression(st.expression) || st.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
+    const left = unwrap(st.expression.left);
+    const key = ts.isPropertyAccessExpression(left) ? left.name.text : ts.isElementAccessExpression(left) && ts.isStringLiteralLike(left.argumentExpression) ? left.argumentExpression.text : undefined;
+    const owner = ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left) ? unwrap(left.expression) : undefined;
+    return key === "getInitialProps" && !!owner && ts.isIdentifier(owner) && owner.text === name;
+  });
 }
 
 /** Whether a module's directive prologue holds a directive. */
@@ -289,12 +307,20 @@ export function nextPageMethods(
   const customApp = pagesDir !== undefined ? ["tsx", "ts", "jsx", "js"].map((e) => `${pagesDir}/_app.${e}`).find((f) => ctx.source.read(f) !== undefined) : undefined;
   const appSf = customApp ? parse(customApp) : undefined;
   const appInitial = appSf ? initialProps(appSf) : false;
-  const output = "why" in ctx.config ? null : nextSetting(ctx.config, "output");
-  const cacheComponents = "why" in ctx.config ? null : nextSetting(ctx.config, "cacheComponents") ?? nextSetting(ctx.config, "experimental", "cacheComponents") ?? nextSetting(ctx.config, "experimental", "dynamicIO") ?? nextSetting(ctx.config, "experimental", "ppr");
-  // Partial prerendering came with Next.js 14 (`experimental.ppr`), and as `cacheComponents` with 16.
-  if (cacheComponents !== undefined && cacheComponents !== false && pages.some((p) => p.app !== undefined) && !(ctx.major !== undefined && ctx.major < 14)) {
-    const why = "why" in ctx.config ? `${ctx.config.why}, so whether it turns on cacheComponents or partial prerendering is not read` : `${ctx.config.file} turns on cacheComponents or partial prerendering, or may`;
-    limits.push(`routes ${component}: ${why}; under them Next.js prerenders a shell even of a page that reads the request, so which pages it refuses methods other than GET for is not read, and each page is read as if they were off`);
+  const read = "why" in ctx.config ? undefined : ctx.config;
+  const output = read ? nextSetting(read, "output") : null;
+  // Partial prerendering came with Next.js 14 (`experimental.ppr`), and as `cacheComponents` with 16; each setting that
+  // may turn it on counts, one not spelled out too.
+  const prerendering = read ? [["cacheComponents"], ["experimental", "cacheComponents"], ["experimental", "dynamicIO"], ["experimental", "ppr"]].map((k) => nextSetting(read, ...k)) : [null];
+  const ppr = prerendering.some((v) => v !== undefined && v !== false) && !(ctx.major !== undefined && ctx.major < 14);
+  if (pages.some((p) => p.app !== undefined) && (output === null || ppr)) {
+    const what = [
+      ...(output === null ? ['builds a static export (output: "export"), where Next.js prerenders every page'] : []),
+      ...(ppr ? ["turns on cacheComponents or partial prerendering, under which it prerenders a shell even of a page that reads the request"] : []),
+    ].join(", or ");
+    const unsure = !read || output === null || prerendering.includes(null);
+    const why = !read ? `${(ctx.config as { why: string }).why}, so whether it ${what} is not read` : unsure ? `${read.file} sets a value it does not spell out, so whether it ${what} is not read` : `${read.file} ${what}`;
+    limits.push(`routes ${component}: ${why}; which pages Next.js refuses methods other than GET for is then not read, and each page is read as if it did not`);
   }
   for (const group of byPath.values()) {
     const first = group[0]!;
@@ -419,6 +445,26 @@ function segmentFiles(page: NextPage, source: Pick<Source, "read">): string[] {
 }
 
 /**
+ * The module a statement imports or re-exports at run time: none for `import type`, `export type`, or one whose every
+ * name is a type (`import { type A } from`), which TypeScript erases; a side-effect `import "./x"` loads its module.
+ */
+function runtimeSpecifier(st: ts.Statement): string | undefined {
+  if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier)) {
+    const clause = st.importClause;
+    if (clause?.isTypeOnly) return undefined;
+    const named = clause?.namedBindings && ts.isNamedImports(clause.namedBindings) ? clause.namedBindings.elements : undefined;
+    if (clause && !clause.name && named?.length && named.every((e) => e.isTypeOnly)) return undefined;
+    return st.moduleSpecifier.text;
+  }
+  if (ts.isExportDeclaration(st) && !st.isTypeOnly && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+    const named = st.exportClause && ts.isNamedExports(st.exportClause) ? st.exportClause.elements : undefined;
+    if (named?.length && named.every((e) => e.isTypeOnly)) return undefined;
+    return st.moduleSpecifier.text;
+  }
+  return undefined;
+}
+
+/**
  * The first module of the graph from `starts` that holds a Server Action, followed through the imports `constants`
  * resolves; `graph` keeps what each module holds and imports, for the next page.
  */
@@ -433,12 +479,7 @@ function actionIn(starts: string[], constants: Constants, source: Pick<Source, "
       const sf = text === undefined ? undefined : ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
       const imports: string[] = [];
       for (const st of sf?.statements ?? []) {
-        const spec =
-          ts.isImportDeclaration(st) && !st.importClause?.isTypeOnly && ts.isStringLiteral(st.moduleSpecifier)
-            ? st.moduleSpecifier.text
-            : ts.isExportDeclaration(st) && !st.isTypeOnly && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)
-              ? st.moduleSpecifier.text
-              : undefined;
+        const spec = runtimeSpecifier(st);
         const target = spec === undefined ? undefined : constants.module(file, spec);
         if (target) imports.push(target);
       }
@@ -456,56 +497,75 @@ function actionIn(starts: string[], constants: Constants, source: Pick<Source, "
 }
 
 /**
- * Whether a page reads the `searchParams` Next.js hands its default export, which only a request gives: `searchParams`
- * awaited, read a property of, or handed to `use`, from its first parameter destructured or through `props.searchParams`.
- * The name of what it reads where it does; null where it hands the props or the `searchParams` on whole, which atlas does not
- * follow; false where it does neither.
+ * Whether a page reads the `searchParams` Next.js hands its default export, which only a request gives: the value
+ * awaited, a property of it read, or handed to React's `use`, where the page takes it from its first parameter
+ * destructured (`{ searchParams }`, `{ searchParams: sp }`) or as `props.searchParams` (`props["searchParams"]`),
+ * directly or through a `const` that holds it. Taking the value alone reads nothing (it is a promise from Next.js 15
+ * on, and a proxy that tracks its own properties before). The name of what it reads where it does; null where it hands
+ * the value, the props or a rest of them on whole, which atlas does not follow; false where it does neither.
  */
 function pageSearchParams(file: string, reach: Reach | undefined): string | false | null {
   const found = reach?.exported(file, "default");
   const node = found?.node;
   const fn = node && (ts.isFunctionLike(node) ? node : ts.isBlock(node) && ts.isFunctionLike(node.parent) ? node.parent : undefined);
   if (!fn || !("body" in fn) || !fn.body) return false;
+  const body = fn.body as ts.Node;
   const param = fn.parameters[0];
   if (!param) return false;
-  const uses: ts.Identifier[] = [];
   const reads = "searchParams";
-  let whole = false;
+  let result: string | false | null = false;
+  const merge = (r: string | false | null) => {
+    if (r === reads) result = reads;
+    else if (r === null && result !== reads) result = null;
+  };
+  /** The references to a binding in the body, but where it is a property's name. */
+  const references = (binding: ts.Identifier): ts.Identifier[] => {
+    const out: ts.Identifier[] = [];
+    const visit = (n: ts.Node): void => {
+      if (ts.isIdentifier(n) && n !== binding && n.text === binding.text && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n) && declarationOf(n) === binding.parent) out.push(n);
+      ts.forEachChild(n, visit);
+    };
+    visit(body);
+    return out;
+  };
+  /** What a use of the value does with it; `seen` ends a chain of `const`s that holds itself. */
+  const used = (e: ts.Expression, seen: Set<ts.Node>): string | false | null => {
+    let at: ts.Node = e;
+    while (ts.isParenthesizedExpression(at.parent) || ts.isAsExpression(at.parent) || ts.isNonNullExpression(at.parent) || ts.isSatisfiesExpression(at.parent)) at = at.parent;
+    const p = at.parent;
+    if (ts.isAwaitExpression(p)) return reads;
+    if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === at) return reads;
+    if (ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "use" && p.arguments[0] === at) return reads;
+    if (ts.isExpressionStatement(p)) return false;
+    if (ts.isVariableDeclaration(p) && p.initializer === at && ts.isIdentifier(p.name) && p.parent.flags & ts.NodeFlags.Const && !seen.has(p)) {
+      seen.add(p);
+      let r: string | false | null = false;
+      for (const ref of references(p.name)) {
+        const u = used(ref, seen);
+        if (u === reads) return reads;
+        if (u === null) r = null;
+      }
+      return r;
+    }
+    return null;
+  };
   if (ts.isObjectBindingPattern(param.name)) {
     for (const el of param.name.elements) {
-      const key = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : ts.isIdentifier(el.name) ? el.name.text : undefined;
-      if (el.dotDotDotToken) whole = true;
-      if (key === reads && ts.isIdentifier(el.name)) uses.push(el.name);
-      else if (key === reads) return reads;
+      const key = el.propertyName ? (ts.isIdentifier(el.propertyName) || ts.isStringLiteralLike(el.propertyName) ? el.propertyName.text : undefined) : ts.isIdentifier(el.name) ? el.name.text : undefined;
+      // A rest of the props, or a name computed from anything else, may hold searchParams.
+      if (el.dotDotDotToken || key === undefined) merge(null);
+      else if (key === reads && ts.isIdentifier(el.name)) for (const ref of references(el.name)) merge(used(ref, new Set()));
+      // A nested pattern reads a property of it.
+      else if (key === reads) merge(reads);
     }
-  } else if (ts.isIdentifier(param.name)) {
-    const props = param.name;
-    let read: string | false | null = false;
-    const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n) && n !== props && n.text === props.text && declarationOf(n) === param) {
-        const p = n.parent;
-        if (ts.isPropertyAccessExpression(p) && p.expression === n) {
-          if (p.name.text === reads) read = reads;
-        } else if (!(ts.isElementAccessExpression(p) && ts.isStringLiteralLike(p.argumentExpression) && p.argumentExpression.text !== reads)) read = read || null;
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(fn.body);
-    return read;
-  } else return null;
-  let result: string | false | null = whole ? null : false;
-  for (const id of uses) {
-    const visit = (n: ts.Node): void => {
-      if (result === reads) return;
-      if (ts.isIdentifier(n) && n !== id && n.text === id.text && declarationOf(n) === id.parent) {
-        const p = n.parent;
-        if (ts.isAwaitExpression(p) || ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) result = reads;
-        else if (ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "use") result = reads;
-        else result = result || null;
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(fn.body);
+    return result;
+  }
+  if (!ts.isIdentifier(param.name)) return null;
+  for (const ref of references(param.name)) {
+    const p = ref.parent;
+    const key = ts.isPropertyAccessExpression(p) && p.expression === ref ? p.name.text : ts.isElementAccessExpression(p) && p.expression === ref ? (ts.isStringLiteralLike(p.argumentExpression) ? p.argumentExpression.text : null) : null;
+    if (key === reads) merge(used(p as ts.Expression, new Set()));
+    else if (key === null) merge(null);
   }
   return result;
 }

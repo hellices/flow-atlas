@@ -27,8 +27,8 @@ const REQUEST_TIME: Record<string, string[]> = { "next/headers": ["cookies", "he
 /**
  * The request-time API a call makes, as `cookies()` or `fetch(..., { cache: "no-store" })`, where it is one: a function
  * of `REQUEST_TIME` called by its imported name (aliased or not) or through a namespace import, and a `fetch` whose
- * options it spells out as `cache: "no-store"` or `next: { revalidate: 0 }`, which Next.js renders on each request
- * (server/lib/patch-fetch.ts).
+ * options it spells out as `cache: "no-store"` or `"no-cache"`, or `next: { revalidate: 0 }`, which Next.js renders on
+ * each request, but where the two disagree (server/lib/patch-fetch.ts).
  */
 export function requestTimeCall(call: ts.CallExpression): string | undefined {
   const callee = unwrap(call.expression);
@@ -47,10 +47,17 @@ export function requestTimeCall(call: ts.CallExpression): string | undefined {
     const options = unwrap(call.arguments[1]);
     if (!ts.isObjectLiteralExpression(options)) return undefined;
     const cache = ownProperty(options, "cache");
-    if (cache && ts.isStringLiteralLike(cache) && cache.text === "no-store") return 'fetch with cache: "no-store"';
     const next = ownProperty(options, "next");
     const revalidate = next && ts.isObjectLiteralExpression(next) ? ownProperty(next, "revalidate") : undefined;
-    if (revalidate && ts.isNumericLiteral(revalidate) && Number(revalidate.text) === 0) return "fetch with next: { revalidate: 0 }";
+    const store = !!cache && ts.isStringLiteralLike(cache) && cache.text === "no-store";
+    const zero = !!revalidate && ts.isNumericLiteral(revalidate) && Number(revalidate.text) === 0;
+    // Next.js unsets both where they disagree (`no-store` with a revalidate above 0 or false, `force-cache` with 0),
+    // and what the fetch then does depends on its cache, so neither is read.
+    const otherRevalidate = !!revalidate && ((ts.isNumericLiteral(revalidate) && Number(revalidate.text) > 0) || revalidate.kind === ts.SyntaxKind.FalseKeyword);
+    if ((store && otherRevalidate) || (zero && !!cache && ts.isStringLiteralLike(cache) && cache.text === "force-cache")) return undefined;
+    if (store) return 'fetch with cache: "no-store"';
+    if (cache && ts.isStringLiteralLike(cache) && cache.text === "no-cache") return 'fetch with cache: "no-cache"';
+    if (zero) return "fetch with next: { revalidate: 0 }";
   }
   return undefined;
 }

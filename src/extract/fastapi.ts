@@ -218,9 +218,19 @@ function documentation(text: string, code: string, from: number): DocsRoute[] | 
     ["redoc_url", "/redoc"],
   ];
   const value = new Map(settings.map(([name, fallback]) => [name, pathSetting(text, code, from, name, fallback)]));
-  const unread = [...value].filter(([, v]) => v !== null && (typeof v === "object" || (v !== "" && !v.startsWith("/"))));
-  if (unread.length) return { why: unread.map(([name, v]) => `${name} the file does not spell out as a path (${typeof v === "object" ? v!.unread : JSON.stringify(v)})`).join(" and ") };
-  const on = (name: string) => !!value.get(name);
+  const unread = (name: string) => {
+    const v = value.get(name);
+    return v !== null && v !== undefined && (typeof v === "object" || (v !== "" && !v.startsWith("/")));
+  };
+  const on = (name: string) => !!value.get(name) && !unread(name);
+  // Each setting counts only where the routes it gives are served: all of them behind openapi_url, the redirect behind
+  // docs_url too.
+  const needed = unread("openapi_url") ? ["openapi_url"] : !on("openapi_url") ? [] : ["docs_url", "redoc_url", ...(on("docs_url") || unread("docs_url") ? ["swagger_ui_oauth2_redirect_url"] : [])].filter(unread);
+  if (needed.length) {
+    return {
+      why: needed.map((name) => { const v = value.get(name) as string | { unread: string }; return `${name} the file does not spell out as a path (${typeof v === "object" ? v.unread : JSON.stringify(v)})`; }).join(" and "),
+    };
+  }
   const out: DocsRoute[] = [];
   const add = (name: string) => out.push({ path: value.get(name) as string, convention: `fastapi ${name}` });
   if (!on("openapi_url")) return out;

@@ -2,9 +2,9 @@ case: |
   A Next.js app whose pages link to each other and whose client code calls one route handler.
   Seen in a real run: 13 of the app's 15 request strings were page addresses, written as `<Link href>` or built by a
   helper for a share link, and atlas read no page as a route, so none of them matched and nothing said so; the helper's
-  parameter type `"/m" | "/r"` was read as two more requests. Now each page is a GET surface at its folder path (with the
-  HEAD Next.js answers itself), a link reaches the page it names, a literal type is no request, and inventory offers the
-  pages. A link to the home page, `/`, reaches it too, though a lone `/` elsewhere is a separator, not a request.
+  parameter type `"/m" | "/r"` was read as two more requests. Now each page is a surface at its folder path (a
+  prerendered one GET, with the HEAD Next.js answers itself), a link reaches the page it names, a literal type is no
+  request, and inventory offers the pages. A link to the home page, `/`, reaches it too, though a lone `/` elsewhere is a separator, not a request.
   The page under a dynamic segment, which Next.js renders on each request rather than prerendering, takes any method
   (`*`); a limit names the pages read as prerendered, which take GET alone.
 surfaces:

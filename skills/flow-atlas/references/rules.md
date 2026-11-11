@@ -45,8 +45,8 @@ answers with a redirect to the path with the `/` added or removed (Next.js's `tr
 requests whose headers meet its constraints. A call that no route takes as its framework dispatches is reported: a
 path with a trailing `/` on a router that tells it apart (Fastify, Hono, Spring 6 and later), or a value a parameter's
 matcher refuses (AdonisJS), is answered with 404 or 405. A route the framework serves by itself takes a call as any
-route does: a GET that no other route of a Spring Boot application takes reaches its static resources (`/**`), as
-Spring dispatches it, and is not reported, unless `spring.web.resources.add-mappings` is false.
+route does; Spring Boot's static resources are read as the files they are, so a GET for a path no file or route has is
+still reported, though Spring hands it to its resource handler, which answers 404.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.

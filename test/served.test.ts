@@ -85,7 +85,7 @@ describe("FastAPI's own documentation routes", () => {
       ],
     });
     expect(app("**settings").limits).toEqual([
-      "routes api: api/main.py:2 creates the FastAPI application app with openapi_url the file does not spell out as a path (**settings) and docs_url the file does not spell out as a path (**settings) and swagger_ui_oauth2_redirect_url the file does not spell out as a path (**settings) and redoc_url the file does not spell out as a path (**settings); the routes FastAPI serves by itself for it (its OpenAPI document, Swagger UI and ReDoc) are not read",
+      "routes api: api/main.py:2 creates the FastAPI application app with openapi_url the file does not spell out as a path (**settings); the routes FastAPI serves by itself for it (its OpenAPI document, Swagger UI and ReDoc) are not read",
     ]);
     expect(app('docs_url="docs"')).toMatchObject({
       surfaces: [],
@@ -99,6 +99,27 @@ describe("FastAPI's own documentation routes", () => {
       surfaces: ["GET /items"],
       limits: ["routes api: api/main.py:3 creates the FastAPI application app with documentation settings that differ where the file makes it twice; the routes FastAPI serves by itself for it (its OpenAPI document, Swagger UI and ReDoc) are not read"],
     });
+  });
+
+  it("asks only for the settings of the routes that are served", () => {
+    const app = (args: string) => read({ "api/main.py": lines("from fastapi import FastAPI", `app = FastAPI(${args})`) }, fastapi);
+    expect(app("openapi_url=None, docs_url=DOCS, redoc_url=REDOC")).toMatchObject({ surfaces: [], limits: [] });
+    expect(app("docs_url=None, redoc_url=None, swagger_ui_oauth2_redirect_url=REDIRECT")).toMatchObject({
+      surfaces: ["GET /openapi.json (implicit) [fastapi openapi_url]", "HEAD /openapi.json (implicit) [fastapi openapi_url]"],
+      limits: [],
+    });
+  });
+
+  it("keeps the document route where an included router of another file has the same path, as FastAPI dispatches it", () => {
+    const r = read(
+      {
+        "api/a_routes.py": lines("from fastapi import APIRouter", "router = APIRouter()", '@router.get("/docs")', "def mine(): ..."),
+        "api/main.py": lines("from fastapi import FastAPI", "from .a_routes import router", "app = FastAPI(redoc_url=None)", "app.include_router(router)"),
+      },
+      fastapi,
+    );
+    expect(r.raw.filter((s) => s.method === "GET" && s.path === "/docs")).toMatchObject([{ implicit: true, convention: "fastapi docs_url", at: { file: "api/main.py", line: 3 } }]);
+    expect(r.limits).toEqual([]);
   });
 
   it("reads them only for an application served where atlas reads it", () => {
@@ -235,7 +256,7 @@ describe("what Next.js serves by itself", () => {
     expect(next({ "next.config.mjs": "export default withPlugin({});", "app/page.tsx": prerendered })).toMatchObject({
       surfaces: home,
       limits: [
-        "routes web: web/next.config.mjs exports withPlugin({}), not an object it spells out, so whether it turns on cacheComponents or partial prerendering is not read; under them Next.js prerenders a shell even of a page that reads the request, so which pages it refuses methods other than GET for is not read, and each page is read as if they were off",
+        'routes web: web/next.config.mjs exports withPlugin({}), not an object it spells out, so whether it builds a static export (output: "export"), where Next.js prerenders every page, or turns on cacheComponents or partial prerendering, under which it prerenders a shell even of a page that reads the request is not read; which pages Next.js refuses methods other than GET for is then not read, and each page is read as if it did not',
         "routes web: web/next.config.mjs exports withPlugin({}), not an object it spells out, so the basePath Next.js serves its build's files (/_next/static) and image optimizer (/_next/image) under is not read; they are not read",
         "routes web: web/next.config.mjs exports withPlugin({}), not an object it spells out; whether Next.js redirects a request with or without a trailing / is not read, so a call is matched to its route either way",
       ],
@@ -309,6 +330,11 @@ describe("the methods a Next.js page answers", () => {
     ]) {
       expect(pages({ "app/a/page.tsx": `${head}\nexport default async function Page() { await ${call}; return null; }` })).toEqual({ surfaces: ["* /a"], limits: [] });
     }
+    expect(pages({ "app/a/page.tsx": 'export default async function Page() { await fetch("https://x", { cache: "no-cache" }); return null; }' })).toEqual({ surfaces: ["* /a"], limits: [] });
+    // Where cache and revalidate disagree, Next.js unsets both, and what the fetch does depends on its cache.
+    for (const options of ['{ cache: "no-store", next: { revalidate: 60 } }', '{ cache: "no-store", next: { revalidate: false } }', '{ cache: "force-cache", next: { revalidate: 0 } }']) {
+      expect(pages({ "app/a/page.tsx": `export default async function Page() { await fetch("https://x", ${options}); return null; }` })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
+    }
     // In a component it renders from a relative import, or in a layout above it.
     expect(pages({ "app/a/page.tsx": 'import { Nav } from "../nav";\nexport default function Page() { return <Nav />; }', "app/nav.tsx": 'import { cookies } from "next/headers";\nexport function Nav() { cookies(); return null; }' })).toMatchObject({ surfaces: ["* /a"], limits: [] });
     expect(pages({ "app/layout.tsx": 'import { headers } from "next/headers";\nexport default async function Root({ children }) { await headers(); return children; }', "app/a/page.tsx": page() })).toMatchObject({ surfaces: ["* /a"], limits: [] });
@@ -325,6 +351,11 @@ describe("the methods a Next.js page answers", () => {
     expect(pages({ "app/a/page.tsx": "export default async function Page({ searchParams }) { const { q } = await searchParams; return q; }" })).toMatchObject({ surfaces: ["* /a"], limits: [] });
     expect(pages({ "app/a/page.tsx": "export default async function Page(props) { const q = (await props.searchParams).q; return q; }" })).toMatchObject({ surfaces: ["* /a"], limits: [] });
     expect(pages({ "app/a/page.tsx": "export default async function Page({ searchParams: sp }) { return sp.q; }" })).toMatchObject({ surfaces: ["* /a"], limits: [] });
+    expect(pages({ "app/a/page.tsx": 'export default async function Page(props) { const { q } = await props["searchParams"]; return q; }' })).toEqual({ surfaces: ["* /a"], limits: [] });
+    expect(pages({ "app/a/page.tsx": "export default async function Page(props) { const sp = props.searchParams; return (await sp).q; }" })).toEqual({ surfaces: ["* /a"], limits: [] });
+    // Taking the value alone reads nothing; handing it on is not followed.
+    expect(pages({ "app/a/page.tsx": "export default function Page(props) { const unused = props.searchParams; props.searchParams; return null; }" })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
+    expect(pages({ "app/a/page.tsx": "export default function Page(props) { return <List q={props.searchParams} />; }" })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
     expect(pages({ "app/a/page.tsx": "export default async function Page({ params }) { return (await params).id; }" })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
     expect(pages({ "app/a/page.tsx": "export default function Page({ searchParams }) { return <List searchParams={searchParams} />; }" })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
   });
@@ -340,6 +371,17 @@ describe("the methods a Next.js page answers", () => {
         "pages/f.tsx": 'export { default, getServerSideProps } from "../lib/f";',
       }),
     ).toEqual({ surfaces: ["* /a", ...get("/b"), "* /c", "* /d", ...get("/e"), "* /f"].sort(), limits: [] });
+    // getInitialProps on the class or function the default export names, and on no other.
+    expect(
+      pages({
+        "pages/g.tsx": "class G extends React.Component { static getInitialProps() { return {}; } render() { return null; } }\nexport default G;",
+        "pages/h.tsx": "const H = class { static ['getInitialProps']() { return {}; } render() { return null; } };\nexport { H as default };",
+        "pages/i.tsx": "function Helper() {}\nHelper.getInitialProps = () => ({});\nexport default function () { return null; }",
+        "pages/j.tsx": "function Page() { return null; }\nfunction Other() {}\nOther.getInitialProps = () => ({});\nexport default Page;",
+      }),
+    ).toEqual({ surfaces: ["* /g", "* /h", ...get("/i"), ...get("/j")].sort(), limits: [] });
+    const classApp = "class App extends React.Component { static async getInitialProps() { return {}; } render() { return null; } }\nexport default App;";
+    expect(pages({ "pages/_app.tsx": classApp, "pages/a.tsx": page() })).toEqual({ surfaces: ["* /a"], limits: [] });
     // A custom App's getInitialProps renders every page without getStaticProps on each request.
     const app = "function App({ Component }) { return <Component />; }\nApp.getInitialProps = async () => ({});\nexport default App;";
     expect(pages({ "pages/_app.tsx": app, "pages/a.tsx": page(), "pages/b.tsx": `export function getStaticProps() { return { props: {} }; }\n${page()}` })).toMatchObject({ surfaces: ["* /a", ...get("/b")], limits: [] });
@@ -363,14 +405,25 @@ describe("the methods a Next.js page answers", () => {
     expect(pages(files)).toMatchObject({ surfaces: [...get("/a"), post].sort(), limits: [assumed("web/app/a/page.tsx")] });
     // From a layout above it; none where the page imports no action.
     expect(pages({ "app/layout.tsx": 'import { save } from "./actions";\nexport default function Root({ children }) { return children; }', "app/actions.ts": '"use server";\nexport async function save() {}', "app/a/page.tsx": page() })).toMatchObject({ surfaces: [...get("/a"), post].sort(), limits: [assumed("web/app/a/page.tsx")] });
+    // A type-only import or re-export is erased: the module it names is not loaded.
+    for (const head of ['import type { Save } from "../actions";', 'import { type Save } from "../actions";', 'export type { Save } from "../actions";', 'export { type Save } from "../actions";']) {
+      expect(pages({ "app/a/page.tsx": `${head}\nexport default function Page() { return null; }`, "app/actions.ts": '"use server";\nexport type Save = () => void;\nexport async function save() {}' })).toEqual({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
+    }
+    expect(pages({ "app/a/page.tsx": 'import { type Save, save } from "../actions";\nexport default function Page() { return null; }', "app/actions.ts": '"use server";\nexport async function save() {}' })).toEqual({ surfaces: [...get("/a"), post].sort(), limits: [assumed("web/app/a/page.tsx")] });
     expect(pages({ "app/a/page.tsx": 'import { util } from "../util";\nexport default function Page() { return null; }', "app/util.ts": "export const util = 1;" })).toMatchObject({ surfaces: get("/a"), limits: [assumed("web/app/a/page.tsx")] });
   });
 
   it("names the pages it reads as prerendered once, sorted, and reads none of it under cacheComponents", () => {
     expect(pages({ "app/page.tsx": page(), "app/b/page.tsx": page(), "app/a/page.tsx": page() }).limits).toEqual([assumed("web/app/a/page.tsx", "web/app/b/page.tsx", "web/app/page.tsx")]);
     expect(pages({ "app/page.tsx": page(), "next.config.ts": "export default { cacheComponents: true };" }).limits).toEqual([
-      "routes web: web/next.config.ts turns on cacheComponents or partial prerendering, or may; under them Next.js prerenders a shell even of a page that reads the request, so which pages it refuses methods other than GET for is not read, and each page is read as if they were off",
+      "routes web: web/next.config.ts turns on cacheComponents or partial prerendering, under which it prerenders a shell even of a page that reads the request; which pages Next.js refuses methods other than GET for is then not read, and each page is read as if it did not",
       assumed("web/app/page.tsx"),
+    ]);
+    // A setting not spelled out may turn it on, or build a static export.
+    expect(pages({ "app/page.tsx": page(), "next.config.ts": "export default { cacheComponents: flag, output: process.env.OUT };" }).limits).toEqual([
+      'routes web: web/next.config.ts sets a value it does not spell out, so whether it builds a static export (output: "export"), where Next.js prerenders every page, or turns on cacheComponents or partial prerendering, under which it prerenders a shell even of a page that reads the request is not read; which pages Next.js refuses methods other than GET for is then not read, and each page is read as if it did not',
+      assumed("web/app/page.tsx"),
+      "routes web: web/next.config.ts sets output to a value it does not spell out, so whether Next.js serves its image optimizer (/_next/image) is not read; it is not read",
     ]);
     // Before Next.js 14 there was no partial prerendering to turn on.
     const old = { "web/package.json": JSON.stringify({ dependencies: { next: "13.4.0" } }) };
@@ -392,95 +445,131 @@ describe("the methods a Next.js page answers", () => {
 
 describe("what Spring Boot serves by itself", () => {
   const spring = { styles: ["spring"] };
+  const dependency = (group: string, artifact: string) => `    <dependency><groupId>${group}</groupId><artifactId>${artifact}</artifactId></dependency>`;
   const pom = (version: string, ...starters: string[]) =>
     lines(
       "<project>",
       `  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>${version}</version></parent>`,
       "  <dependencies>",
-      ...starters.map((s) => `    <dependency><groupId>org.springframework.boot</groupId><artifactId>${s}</artifactId></dependency>`),
+      ...starters.map((s) => (s.includes(":") ? dependency(s.split(":")[0]!, s.split(":")[1]!) : dependency("org.springframework.boot", s))),
       "  </dependencies>",
       "</project>",
     );
   const controller = lines("package com.example;", "@RestController", "class Owners {", '  @GetMapping("/owners") List<Owner> list() { return null; }', "}");
   const app = (files: Record<string, string>, version = "4.1.2", ...starters: string[]) => {
     const r = read({ "api/pom.xml": pom(version, ...(starters.length ? starters : ["spring-boot-starter-webmvc"])), "api/src/main/java/com/example/Owners.java": controller, ...files }, spring);
-    return { surfaces: r.surfaces.filter((s) => !s.startsWith("GET /owners")), limits: r.limits, raw: r.raw };
+    // The controller's own route, which is not the subject here.
+    return { surfaces: r.surfaces.filter((s) => s !== "GET /owners"), limits: r.limits, raw: r.raw };
   };
-  const statics = ["GET /webjars/** (implicit) [spring-boot webjars]", "HEAD /webjars/** (implicit) [spring-boot webjars]", "GET /** (implicit) [spring-boot static resources]", "HEAD /** (implicit) [spring-boot static resources]"];
+  const resources = "api/src/main/resources";
+  const file = (path: string) => [`GET ${path} (implicit) [spring-boot static resources]`, `HEAD ${path} (implicit) [spring-boot static resources]`];
+  const webjars = (pattern = "/webjars/**") => [`GET ${pattern} (implicit) [spring-boot webjars]`, `HEAD ${pattern} (implicit) [spring-boot webjars]`];
   const error = (path = "/error") => `* ${path} (implicit) [spring-boot error]`;
   const actuator = (base = "/actuator") => [`GET ${base} (implicit) [spring-boot actuator]`, `GET ${base}/health (implicit) [spring-boot actuator health]`, `GET ${base}/health/** (implicit) [spring-boot actuator health]`];
-  const props = (text: string) => ({ "api/src/main/resources/application.properties": text });
+  const props = (text: string) => ({ [`${resources}/application.properties`]: text });
+  const statics = { [`${resources}/static/css/site.css`]: "", [`${resources}/public/a b.txt`]: "", [`${resources}/META-INF/resources/x.js`]: "", [`${resources}/templates/home.html`]: "" };
 
-  it("serves the error page, the static resources and the WebJars of a Spring MVC application, where its build brings the starter", () => {
-    const r = app({});
-    expect(r).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
+  it("serves the error page and each file of the static locations of a Spring MVC application, where its build brings the starter", () => {
+    const r = app(statics);
+    expect(r).toMatchObject({ surfaces: [error(), ...file("/x.js"), ...file("/css/site.css"), ...file("/a%20b.txt")], limits: [] });
     expect(r.raw.find((s) => s.path === "/error")).toMatchObject({ at: { file: "api/pom.xml", line: 4 }, evidence: "declared", dispatch: { slashes: "strict" } });
-    expect(app({}, "3.5.0", "spring-boot-starter-web")).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
+    expect(r.raw.find((s) => s.path === "/css/site.css")).toMatchObject({ at: { file: `${resources}/static/css/site.css`, line: 1 }, evidence: "static", dispatch: { slashes: "strict" } });
+    expect(app({}, "3.5.0", "spring-boot-starter-web")).toMatchObject({ surfaces: [error()], limits: [] });
     // WebFlux has no error page route; with both starters Spring Boot runs Spring MVC.
-    expect(app({}, "4.1.2", "spring-boot-starter-webflux")).toMatchObject({ surfaces: statics, limits: [] });
-    expect(app({}, "4.1.2", "spring-boot-starter-webflux", "spring-boot-starter-webmvc")).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
-    // Without a web starter of its own, or in a test scope, the module serves none.
+    expect(app(statics, "4.1.2", "spring-boot-starter-webflux")).toMatchObject({ surfaces: [...file("/x.js"), ...file("/css/site.css"), ...file("/a%20b.txt")], limits: [] });
+    expect(app({}, "4.1.2", "spring-boot-starter-webflux", "spring-boot-starter-webmvc")).toMatchObject({ surfaces: [error()], limits: [] });
+    // Without a web starter of its own, the module serves none.
     expect(app({ "api/pom.xml": pom("4.1.2", "spring-boot-starter-data-jpa") })).toMatchObject({ surfaces: [], limits: [] });
   });
 
-  it("reads the error path each version binds, and the patterns the settings give", () => {
-    expect(app(props("spring.web.error.path=/oops"))).toMatchObject({ surfaces: [error("/oops"), ...statics], limits: [] });
-    // Spring Boot 4 binds spring.web.error.path, 3 server.error.path; error.path in both.
-    expect(app(props("server.error.path=/oops"))).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
-    expect(app(props("server.error.path=/oops"), "3.4.0")).toMatchObject({ surfaces: [error("/oops"), ...statics], limits: [] });
-    expect(app(props("error.path=/failed"))).toMatchObject({ surfaces: [error("/failed"), ...statics], limits: [] });
-    expect(app({ "api/src/main/resources/application.yml": "spring:\n  mvc:\n    static-path-pattern: /static/**\n    webjars-path-pattern: /libs/**\n" })).toMatchObject({
+  it("serves the WebJars only where the build brings one in", () => {
+    expect(app({}, "4.1.2", "spring-boot-starter-webmvc", "org.webjars:bootstrap")).toMatchObject({ surfaces: [error(), ...webjars()], limits: [] });
+    expect(app({}, "4.1.2", "spring-boot-starter-webmvc", "org.webjars.npm:htmx.org").raw.find((s) => s.path === "/webjars/**")).toMatchObject({ at: { file: "api/pom.xml", line: 5 }, evidence: "declared" });
+    expect(app({ "api/build.gradle": "plugins { id 'org.springframework.boot' version '3.5.0' }\ndependencies {\n  implementation 'org.springframework.boot:spring-boot-starter-web'\n  runtimeOnly 'org.webjars:jquery:3.7.1'\n}\n", "api/pom.xml": "" })).toMatchObject({
+      surfaces: [error(), ...webjars()],
       limits: [],
-      surfaces: [
-        error(),
-        "GET /libs/** (implicit) [spring-boot webjars]",
-        "HEAD /libs/** (implicit) [spring-boot webjars]",
-        "GET /static/** (implicit) [spring-boot static resources]",
-        "HEAD /static/** (implicit) [spring-boot static resources]",
-      ],
     });
-    expect(app(props("spring.mvc.static-path-pattern=/assets/*.css"))).toMatchObject({
-      surfaces: [error(), ...statics.slice(0, 2)],
-      limits: ["routes api: api/src/main/resources/application.properties:1 sets spring.mvc.static-path-pattern to /assets/*.css, a pattern atlas does not read; the resources Spring Boot serves there are not read"],
+    expect(app(props("spring.mvc.webjars-path-pattern=/libs/**"), "4.1.2", "spring-boot-starter-webmvc", "org.webjars:bootstrap")).toMatchObject({ surfaces: [error(), ...webjars("/libs/**")], limits: [] });
+  });
+
+  it("reads the error path each version binds, and the locations and pattern the settings give", () => {
+    expect(app(props("spring.web.error.path=/oops"))).toMatchObject({ surfaces: [error("/oops")], limits: [] });
+    // Spring Boot 4 binds spring.web.error.path, 3 server.error.path; error.path in both, where the other is not set.
+    expect(app(props("server.error.path=/oops"))).toMatchObject({ surfaces: [error()], limits: [] });
+    expect(app(props("server.error.path=/oops"), "3.4.0")).toMatchObject({ surfaces: [error("/oops")], limits: [] });
+    expect(app(props("error.path=/failed"))).toMatchObject({ surfaces: [error("/failed")], limits: [] });
+    // A placeholder the setting in force hides is not read, and does not matter.
+    expect(app(props("server.error.path=/oops\nerror.path=${IGNORED}"), "3.4.0")).toMatchObject({
+      surfaces: [error("/oops")],
+      limits: [`routes api: ${resources}/application.properties:2 sets error.path to \${IGNORED}, resolved at run time; the routes Spring Boot serves by itself that depend on it are not read`],
+    });
+    expect(app({ ...statics, [`${resources}/application.yml`]: "spring:\n  mvc:\n    static-path-pattern: /static/**\n" })).toMatchObject({
+      surfaces: [error(), ...file("/static/x.js"), ...file("/static/css/site.css"), ...file("/static/a%20b.txt")],
+      limits: [],
+    });
+    expect(app({ ...statics, ...props("spring.web.resources.static-locations=classpath:/templates/,file:/srv/www/") })).toMatchObject({
+      surfaces: [error(), ...file("/home.html")],
+      limits: [`routes api: ${resources}/application.properties:1 sets spring.web.resources.static-locations to file:/srv/www/ among others, a location whose files atlas does not list; the static resources there are not read`],
+    });
+    expect(app({ ...statics, ...props("spring.mvc.static-path-pattern=/assets/*.css") })).toMatchObject({
+      surfaces: [error()],
+      limits: [`routes api: ${resources}/application.properties:1 sets spring.mvc.static-path-pattern to /assets/*.css, a pattern atlas does not read; the static resources Spring Boot serves there are not read`],
+    });
+    expect(app({ "api/src/main/webapp/index.jsp": "" })).toMatchObject({
+      surfaces: [error()],
+      limits: ["routes api: api/src/main/webapp/ holds files a Servlet application serves from its servlet context where it is packed as a war; they are not read"],
     });
   });
 
   it("serves no static resources where they are turned off or the code takes the web configuration over, and no error page beside the code's own", () => {
-    expect(app(props("spring.web.resources.add-mappings=false"))).toMatchObject({ surfaces: [error()], limits: [] });
-    expect(app({ "api/src/main/java/com/example/Web.java": "@Configuration\n@EnableWebMvc\nclass Web implements WebMvcConfigurer {}" })).toMatchObject({ surfaces: [error()], limits: [] });
+    expect(app({ ...statics, ...props("spring.web.resources.add-mappings=false") })).toMatchObject({ surfaces: [error()], limits: [] });
+    expect(app({ ...statics, "api/src/main/java/com/example/Web.java": "@Configuration\n@EnableWebMvc\nclass Web implements WebMvcConfigurer {}" })).toMatchObject({ surfaces: [error()], limits: [] });
     expect(app({ "api/src/main/java/com/example/Errors.java": "@Controller\nclass Errors implements ErrorController {}" })).toMatchObject({
-      surfaces: statics,
+      surfaces: [],
       limits: ["routes api: api/src/main/java/com/example/Errors.java:2 names an ErrorController of the code's, which takes the place of the one Spring Boot maps its error page with; that page is not read"],
     });
     // A class merely named like one is not one.
-    expect(app({ "api/src/main/java/com/example/Advice.java": "@ControllerAdvice\nclass GlobalErrorController {}" })).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
+    expect(app({ "api/src/main/java/com/example/Advice.java": "@ControllerAdvice\nclass GlobalErrorController {}" })).toMatchObject({ surfaces: [error()], limits: [] });
   });
 
-  it("serves the actuator's discovery page and health where the starter brings it, as its exposure and base path say", () => {
+  it("serves the actuator's discovery page and health where the starter brings it, as its exposure, base path and access say", () => {
     const starters = ["spring-boot-starter-webmvc", "spring-boot-starter-actuator"];
-    expect(app({}, "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...statics, ...actuator()], limits: [] });
-    expect(app(props("management.endpoints.web.base-path=/manage/"), "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...statics, ...actuator("/manage")], limits: [] });
-    expect(app(props("management.endpoints.web.exposure.exclude=health"), "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...statics, actuator()[0]], limits: [] });
-    expect(app(props("management.endpoints.web.discovery.enabled=false"), "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...statics, ...actuator().slice(1)], limits: [] });
-    expect(app(props("management.endpoint.health.access=none"), "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...statics, actuator()[0]], limits: [] });
-    expect(app(props("management.endpoints.web.exposure.include=health,info"), "4.1.2", ...starters)).toMatchObject({
-      surfaces: [error(), ...statics, ...actuator()],
-      limits: ["routes api: api/src/main/resources/application.properties:1 exposes the actuator endpoints info over HTTP, which exist where the classpath and the code give them; their routes are not read"],
+    const with_ = (text: string, version = "4.1.2") => app(props(text), version, ...starters);
+    expect(app({}, "4.1.2", ...starters)).toMatchObject({ surfaces: [error(), ...actuator()], limits: [] });
+    expect(with_("management.endpoints.web.base-path=/manage/")).toMatchObject({ surfaces: [error(), ...actuator("/manage")], limits: [] });
+    // Under a base path of / Spring Boot registers no discovery page.
+    expect(with_("management.endpoints.web.base-path=/")).toMatchObject({ surfaces: [error(), "GET /health (implicit) [spring-boot actuator health]", "GET /health/** (implicit) [spring-boot actuator health]"], limits: [] });
+    expect(with_("management.endpoints.web.exposure.exclude=health")).toMatchObject({ surfaces: [error(), actuator()[0]], limits: [] });
+    expect(with_("management.endpoints.web.discovery.enabled=false")).toMatchObject({ surfaces: [error(), ...actuator().slice(1)], limits: [] });
+    // A discovery switch resolved at run time leaves the discovery page out, not health.
+    expect(with_("management.endpoints.web.discovery.enabled=${DISCOVERY}")).toMatchObject({
+      surfaces: [error(), ...actuator().slice(1)],
+      limits: [`routes api: ${resources}/application.properties:1 sets management.endpoints.web.discovery.enabled to \${DISCOVERY}, resolved at run time; the routes Spring Boot serves by itself that depend on it are not read`],
     });
-    expect(app({ "api/src/main/resources/application.yml": "management:\n  endpoints:\n    web:\n      exposure:\n        include: ['*']\n" }, "4.1.2", ...starters)).toMatchObject({
-      surfaces: [error(), ...statics, ...actuator()],
-      limits: ["routes api: api/src/main/resources/application.yml:5 exposes every actuator endpoint over HTTP (*); which endpoints there are depends on the classpath and the code, so of them only the discovery page and health are read"],
+    // access came with Spring Boot 3.4; before it, only the enabled switches count.
+    expect(with_("management.endpoint.health.access=none")).toMatchObject({ surfaces: [error(), actuator()[0]], limits: [] });
+    expect(with_("management.endpoint.health.access=none", "3.4.0")).toMatchObject({ surfaces: [error(), actuator()[0]], limits: [] });
+    expect(with_("management.endpoint.health.access=none", "3.3.5")).toMatchObject({ surfaces: [error(), ...actuator()], limits: [] });
+    expect(with_("management.endpoint.health.enabled=false", "3.3.5")).toMatchObject({ surfaces: [error(), actuator()[0]], limits: [] });
+    expect(with_("management.endpoints.access.max-permitted=none")).toMatchObject({ surfaces: [error(), actuator()[0]], limits: [] });
+    expect(with_("management.endpoints.web.exposure.include=health,info")).toMatchObject({
+      surfaces: [error(), ...actuator()],
+      limits: [`routes api: ${resources}/application.properties:1 exposes the actuator endpoints info over HTTP, which exist where the classpath and the code give them; their routes are not read`],
     });
-    expect(app(props("management.server.port=8081"), "4.1.2", ...starters)).toMatchObject({
-      surfaces: [error(), ...statics],
-      limits: ["routes api: api/src/main/resources/application.properties:1 serves the actuator on its own port (management.server.port); its endpoints are not read"],
+    expect(app({ [`${resources}/application.yml`]: "management:\n  endpoints:\n    web:\n      exposure:\n        include: ['*']\n" }, "4.1.2", ...starters)).toMatchObject({
+      surfaces: [error(), ...actuator()],
+      limits: [`routes api: ${resources}/application.yml:5 exposes every actuator endpoint over HTTP (*); which endpoints there are depends on the classpath and the code, so of them only the discovery page and health are read`],
+    });
+    expect(with_("management.server.port=8081")).toMatchObject({
+      surfaces: [error()],
+      limits: [`routes api: ${resources}/application.properties:1 serves the actuator on its own port (management.server.port); its endpoints are not read`],
     });
   });
 
-  it("reads none where a prefix, a version or a setting is not read, and says so", () => {
+  it("reads none where a prefix, a version, the stack or a setting is not read, and says so", () => {
     expect(app(props("server.servlet.context-path=/api"))).toMatchObject({
       surfaces: [],
-      limits: ["routes api: api/src/main/resources/application.properties:1 sets server.servlet.context-path, which atlas does not put before routes; the routes Spring Boot serves by itself are not read"],
+      limits: [`routes api: ${resources}/application.properties:1 sets server.servlet.context-path, which atlas does not put before routes; the routes Spring Boot serves by itself are not read`],
     });
     expect(app({}, "2.7.18")).toMatchObject({
       surfaces: [],
@@ -490,21 +579,35 @@ describe("what Spring Boot serves by itself", () => {
       surfaces: [],
       limits: ["routes api: api/src/main/java/com/example/App.java:1 excludes auto-configuration that makes them; the routes Spring Boot serves by itself are not read"],
     });
-    expect(app({ "api/src/main/java/com/example/App.java": "@SpringBootApplication(exclude = EXCLUDED)\nclass App {}" }).limits).toEqual([
-      "routes api: api/src/main/java/com/example/App.java:1 excludes auto-configuration that it does not spell out; the routes Spring Boot serves by itself are not read",
-    ]);
+    expect(app({ "api/src/main/java/com/example/App.java": "@SpringBootApplication(exclude = EXCLUDED)\nclass App {}" })).toMatchObject({
+      surfaces: [],
+      limits: ["routes api: api/src/main/java/com/example/App.java:1 excludes auto-configuration that it does not spell out; the routes Spring Boot serves by itself are not read"],
+    });
+    expect(app(props("spring.autoconfigure.exclude=${EXCLUDED}"))).toMatchObject({
+      surfaces: [],
+      limits: [
+        `routes api: ${resources}/application.properties:1 sets spring.autoconfigure.exclude to \${EXCLUDED}, resolved at run time; the routes Spring Boot serves by itself that depend on it are not read`,
+        `routes api: ${resources}/application.properties:1 excludes auto-configuration that it does not spell out; the routes Spring Boot serves by itself are not read`,
+      ],
+    });
     // An exclusion of another auto-configuration leaves them.
-    expect(app({ "api/src/main/java/com/example/App.java": "@SpringBootApplication(exclude = { DataSourceAutoConfiguration.class })\nclass App {}" })).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
-    expect(app(props("spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration"))).toMatchObject({ surfaces: [error(), ...statics], limits: [] });
-    expect(app({ "api/src/main/resources/application-dev.properties": "spring.web.error.path=/dev-error" })).toMatchObject({
-      surfaces: [error(), ...statics],
-      limits: ["routes api: api/src/main/resources/application-dev.properties:1 sets spring.web.error.path for the profile dev, which is chosen at launch; it is not read"],
+    expect(app({ "api/src/main/java/com/example/App.java": "@SpringBootApplication(exclude = { DataSourceAutoConfiguration.class })\nclass App {}" })).toMatchObject({ surfaces: [error()], limits: [] });
+    expect(app(props("spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration"))).toMatchObject({ surfaces: [error()], limits: [] });
+    // A stack forced against the starters starts no web server of that kind.
+    expect(app(props("spring.main.web-application-type=servlet"), "4.1.2", "spring-boot-starter-webflux")).toMatchObject({
+      surfaces: [],
+      limits: [`routes api: ${resources}/application.properties:1 sets spring.main.web-application-type to servlet, whose starter the build does not bring in; the routes Spring Boot serves by itself are not read`],
+    });
+    expect(app(props("spring.main.web-application-type=reactive"), "4.1.2", "spring-boot-starter-webflux", "spring-boot-starter-webmvc")).toMatchObject({ surfaces: [], limits: [] });
+    expect(app({ [`${resources}/application-dev.properties`]: "spring.web.error.path=/dev-error" })).toMatchObject({
+      surfaces: [error()],
+      limits: [`routes api: ${resources}/application-dev.properties:1 sets spring.web.error.path for the profile dev, which is chosen at launch; it is not read`],
     });
     expect(app(props("spring.web.error.path=${ERRORS}"))).toMatchObject({
-      surfaces: statics,
+      surfaces: [],
       limits: [
-        "routes api: api/src/main/resources/application.properties:1 sets spring.web.error.path to ${ERRORS}, resolved at run time; the routes Spring Boot serves by itself that depend on it are not read",
-        "routes api: api/src/main/resources/application.properties:1 sets spring.web.error.path to ${ERRORS}, which is not read as a path; the error page Spring Boot serves is not read",
+        `routes api: ${resources}/application.properties:1 sets spring.web.error.path to \${ERRORS}, resolved at run time; the routes Spring Boot serves by itself that depend on it are not read`,
+        `routes api: ${resources}/application.properties:1 sets spring.web.error.path to \${ERRORS}, which is not read as a path; the error page Spring Boot serves is not read`,
       ],
     });
   });
@@ -523,13 +626,13 @@ describe("what Spring Boot serves by itself", () => {
     expect(limits).toEqual(["routes a, b: their route files are one application (api), whose routes Spring Boot serves by itself belong to none of them alone; they are not read"]);
   });
 
-  it("takes a request no route of the code takes to the static resources, and a call with a value to each route down to the most specific that takes any value", () => {
+  it("takes a request for a file to it, and leaves one for a path no file has to no route", () => {
     const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**"], styles: ["spring"] }] });
-    const files = { "api/pom.xml": pom("4.1.2", "spring-boot-starter-webmvc"), "api/src/main/java/com/example/Teams.java": lines("@RestController", "class Teams {", '  @GetMapping("/teams/{id}") T one() { return null; }', '  @GetMapping("/teams/**") T rest() { return null; }', "}") };
+    const files = { "api/pom.xml": pom("4.1.2", "spring-boot-starter-webmvc"), [`${resources}/static/app.js`]: "", "api/src/main/java/com/example/Teams.java": lines("@RestController", "class Teams {", '  @GetMapping("/teams/{id}") T one() { return null; }', '  @GetMapping("/teams/**") T rest() { return null; }', "}") };
     const surfaces = extractRoutes(memory(files), config, undefined, [], []);
     const call = (path: string): Call => ({ id: `w->api|GET ${path}@a.ts:1`, from: "w", to: "api", method: "GET", path, based: false, at: { file: "a.ts", line: 1 }, evidence: "static" });
-    const calls = ["/teams/{}", "/teams/{}/x", "/nowhere", "/{}"].map(call);
+    const calls = ["/app.js", "/nowhere", "/teams/{}"].map(call);
     const { targetsOf } = matchCalls({ surfaces, calls }, rankedComponents(config));
-    expect(calls.map((c, i) => `${c.path} -> ${(targetsOf.get(i) ?? []).map((s) => s.path).join(" ")}`)).toEqual(["/teams/{} -> /teams/{id}", "/teams/{}/x -> /teams/**", "/nowhere -> /**", "/{} -> /teams/** /error /webjars/** /**"]);
+    expect(calls.map((c, i) => `${c.path} -> ${(targetsOf.get(i) ?? []).map((s) => s.path).join(" ")}`)).toEqual(["/app.js -> /app.js", "/nowhere -> ", "/teams/{} -> /teams/{id} /teams/**"]);
   });
 });

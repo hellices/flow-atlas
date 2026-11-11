@@ -6,16 +6,20 @@ import { lineOf, matcher, type Source } from "../source.js";
 import { withoutComments } from "./calls.js";
 import { BUILD_FILE, GRADLE_RUNTIME, MAVEN_RUNTIME, openersAround, propertiesParts, relaxed, withoutXmlComments, yamlParts, type Setting } from "./springdoc.js";
 
-/** A dependency a build file declares for the application's runtime, by its artifact, and where. */
+/** A dependency a build file declares for the application's runtime, by its coordinates, and where. */
 interface Dependency {
+  group: string;
   artifact: string;
   line: number;
 }
 
+/** The groups read: Spring Boot's own, and WebJars' (`org.webjars`, `org.webjars.npm`, `org.webjars.bower`). */
+const READ_GROUP = /^(?:org\.springframework\.boot|org\.webjars(?:\.[\w-]+)*)$/;
+
 /**
- * The Spring Boot artifacts a `pom.xml` declares as the project's own dependencies (`project/dependencies`), in a scope
- * the application runs with: not in `dependencyManagement`, a profile or a plugin, nor in the `test` or `provided`
- * scopes.
+ * The Spring Boot and WebJars artifacts a `pom.xml` declares as the project's own dependencies (`project/dependencies`),
+ * in a scope the application runs with: not in `dependencyManagement`, a profile or a plugin, nor in the `test` or
+ * `provided` scopes.
  */
 function mavenBoot(text: string): Dependency[] {
   const xml = withoutXmlComments(text);
@@ -40,8 +44,8 @@ function mavenBoot(text: string): Dependency[] {
       if (name === "scope") dependency.scope = value;
     }
     if (name === "dependency" && dependency) {
-      if (stack.join("/") === "project/dependencies/dependency" && dependency.group === "org.springframework.boot" && dependency.artifact && MAVEN_RUNTIME.has(dependency.scope ?? "")) {
-        out.push({ artifact: dependency.artifact, line: lineOf(text, dependency.at!) });
+      if (stack.join("/") === "project/dependencies/dependency" && READ_GROUP.test(dependency.group ?? "") && dependency.artifact && MAVEN_RUNTIME.has(dependency.scope ?? "")) {
+        out.push({ group: dependency.group!, artifact: dependency.artifact, line: lineOf(text, dependency.at!) });
       }
       dependency = undefined;
     }
@@ -51,13 +55,13 @@ function mavenBoot(text: string): Dependency[] {
 }
 
 /**
- * The Spring Boot artifacts a Gradle build file declares in a configuration the application runs with, directly in its
- * own `dependencies` block, by their coordinates (`org.springframework.boot:spring-boot-starter-web`).
+ * The Spring Boot and WebJars artifacts a Gradle build file declares in a configuration the application runs with,
+ * directly in its own `dependencies` block, by their coordinates (`org.springframework.boot:spring-boot-starter-web`).
  */
 function gradleBoot(file: string, text: string): Dependency[] {
   const code = withoutComments(file, text);
   const out: Dependency[] = [];
-  for (const m of text.matchAll(/["']org\.springframework\.boot:(spring-boot-[\w-]+)(?::[^"']*)?["']/g)) {
+  for (const m of text.matchAll(/["'](org\.springframework\.boot|org\.webjars(?:\.[\w-]+)*):([\w.-]+)(?::[^"']*)?["']/g)) {
     const at = m.index ?? 0;
     // A string the comments blanked is not there.
     if (code.slice(at, at + m[0].length) !== m[0]) continue;
@@ -66,21 +70,24 @@ function gradleBoot(file: string, text: string): Dependency[] {
     const configuration = call !== undefined ? /([A-Za-z_]\w*)\s*$/.exec(code.slice(0, call))?.[1] : /^\s*([A-Za-z_]\w*)\s/.exec(code.slice(code.lastIndexOf("\n", at) + 1, at))?.[1];
     const blocks = openers.filter((o) => code[o] === "{").map((o) => /([A-Za-z_]\w*)\s*(?:\([^()]*\))?\s*$/.exec(code.slice(0, o))?.[1]);
     if (GRADLE_RUNTIME.has(configuration ?? "") && blocks[0] === "dependencies" && !blocks.some((b) => b === "buildscript" || b === "subprojects" || b === "allprojects")) {
-      out.push({ artifact: m[1]!, line: lineOf(text, at) });
+      out.push({ group: m[1]!, artifact: m[2]!, line: lineOf(text, at) });
     }
   }
   return out;
 }
 
 /**
- * The major version of Spring Boot a build file names: Maven's `spring-boot-starter-parent` parent,
+ * The version of Spring Boot a build file names, as its major times 100 and its minor (`304` for 3.4.1): Maven's `spring-boot-starter-parent` parent,
  * `spring-boot-dependencies` BOM or `spring-boot-maven-plugin` (a property of the same file standing for its value);
  * Gradle's `org.springframework.boot` plugin or its coordinates. Null for one it names in a way not read (another
  * placeholder, a version catalog), undefined where it names none.
  */
-function bootMajor(file: string, text: string): number | null | undefined {
+function bootVersion(file: string, text: string): number | null | undefined {
   const majors: Array<number | null> = [];
-  const major = (v: string): number | null => (v.includes("$") ? null : /^(\d+)\./.test(v.trim()) ? Number(/^(\d+)\./.exec(v.trim())![1]) : null);
+  const major = (v: string): number | null => {
+    const m = v.includes("$") ? null : /^(\d+)\.(\d+)/.exec(v.trim());
+    return m ? Number(m[1]) * 100 + Number(m[2]) : null;
+  };
   if (file.endsWith("pom.xml")) {
     const xml = withoutXmlComments(text);
     const properties = new Map<string, string>();
@@ -117,6 +124,7 @@ const READ = [
   "spring.webflux.static-path-pattern",
   "spring.webflux.webjars-path-pattern",
   "spring.web.resources.add-mappings",
+  "spring.web.resources.static-locations",
   "spring.web.error.path",
   "server.error.path",
   "error.path",
@@ -130,6 +138,7 @@ const READ = [
   "management.endpoint.health.enabled",
   "management.endpoints.access.default",
   "management.endpoints.enabled-by-default",
+  "management.endpoints.access.max-permitted",
 ];
 const canonical = new Map(READ.map((k) => [relaxed(k), k]));
 /** A setting's canonical name; a list's elements (`include[0]`) go by the list's. */
@@ -176,6 +185,9 @@ function bootSettings(source: Source, module: string, exclude: string[], limits:
   }
   return settings;
 }
+
+/** Where Spring Boot looks for static resources by default (`WebProperties.Resources.CLASSPATH_RESOURCE_LOCATIONS`), in its order. */
+const STATIC_LOCATIONS = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"];
 
 /** A path pattern a setting gives that atlas reads: literal segments and a final `/**`. */
 const resourcePattern = (pattern: string): boolean => /^(?:\/[\w.~-]+)*\/\*\*$/.test(pattern);
@@ -238,20 +250,21 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
     const text = source.read(b) ?? "";
     return (b.endsWith(".xml") ? mavenBoot(text) : gradleBoot(b, text)).map((d) => ({ ...d, file: b }));
   });
-  const has = (...artifacts: string[]) => deps.find((d) => artifacts.includes(d.artifact));
+  const has = (...artifacts: string[]) => deps.find((d) => d.group === "org.springframework.boot" && artifacts.includes(d.artifact));
   const mvc = has("spring-boot-starter-web", "spring-boot-starter-webmvc");
   const flux = has("spring-boot-starter-webflux");
   if (!mvc && !flux) return [];
   // The version from the nearest build file at or above the module that names one.
-  let major: number | null | undefined;
-  for (let dir: string | undefined = module; major === undefined && dir !== undefined; dir = dir === "" ? undefined : dirname(dir) === "." ? "" : dirname(dir)) {
+  let version: number | null | undefined;
+  for (let dir: string | undefined = module; version === undefined && dir !== undefined; dir = dir === "" ? undefined : dirname(dir) === "." ? "" : dirname(dir)) {
     for (const b of ["pom.xml", "build.gradle", "build.gradle.kts"].map((x) => (dir ? `${dir}/${x}` : x)).filter((x) => listed.has(x))) {
-      const found = bootMajor(b, source.read(b) ?? "");
-      if (found !== undefined) major = major === undefined || major === found ? found : null;
+      const found = bootVersion(b, source.read(b) ?? "");
+      if (found !== undefined) version = version === undefined || version === found ? found : null;
     }
   }
+  const major = typeof version === "number" ? Math.floor(version / 100) : version;
   const where = (mvc ?? flux)!;
-  if (major === undefined || major === null || major < 3 || major > 4) {
+  if (major === undefined || major === null || major < 3 || major > 4 || typeof version !== "number") {
     said(`${where.file}:${where.line} brings in Spring Boot's web stack, ${major === undefined || major === null ? "in a version the build files do not spell out" : `version ${major}, whose auto-configuration atlas does not read`}; the routes Spring Boot serves by itself (its error page, static resources, WebJars and actuator) are not read`);
     return [];
   }
@@ -279,9 +292,10 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
   const property = value("spring.autoconfigure.exclude");
   const annotated = text(/@(?:SpringBootApplication|EnableAutoConfiguration)\s*\([^)]*\bexclude(?:Name)?\s*=(?!\s*\{?\s*(?:\[\s*)?(?:[\w.]+(?:\.class|::class)|"[\w.]+")(?:\s*,\s*(?:[\w.]+(?:\.class|::class)|"[\w.]+"))*\s*\]?\s*\}?\s*[,)])/);
   const named = text(new RegExp(`@(?:SpringBootApplication|EnableAutoConfiguration)\\s*\\([^)]*\\bexclude(?:Name)?\\s*=[^)]*${making.source}`));
-  const excluded = (property && making.test(property.value) ? property : undefined) ?? named ?? annotated;
+  const unspelled = property && placeholder("spring.autoconfigure.exclude") ? property : undefined;
+  const excluded = (property && making.test(property.value) ? property : undefined) ?? named ?? annotated ?? unspelled;
   if (excluded) {
-    said(`${excluded.file}:${excluded.line} excludes auto-configuration that ${excluded === annotated ? "it does not spell out" : "makes them"}; the routes Spring Boot serves by itself are not read`);
+    said(`${excluded.file}:${excluded.line} excludes auto-configuration that ${excluded === annotated || excluded === unspelled ? "it does not spell out" : "makes them"}; the routes Spring Boot serves by itself are not read`);
     return [];
   }
   const type = value("spring.main.web-application-type");
@@ -291,6 +305,11 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
     return [];
   }
   if (stack === "none") return [];
+  // A stack forced against the starters has no web server of that kind to start.
+  if ((stack === "servlet" && !mvc) || (stack === "reactive" && !flux)) {
+    said(`${type!.file}:${type!.line} sets spring.main.web-application-type to ${type!.value}, whose starter the build does not bring in; the routes Spring Boot serves by itself are not read`);
+    return [];
+  }
   const prefixes = (stack === "servlet" ? ["server.servlet.context-path", "spring.mvc.servlet.path"] : ["spring.webflux.base-path"]).map(value).filter((s): s is Setting => !!s && s.value !== "" && s.value !== "/");
   if (prefixes.length) {
     said(`${prefixes.map((s) => `${s.file}:${s.line} sets ${readName(s.key)}`).join(" and ")}, which atlas does not put before routes; the routes Spring Boot serves by itself are not read`);
@@ -306,14 +325,14 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
   const strict: Dispatch = { slashes: "strict" };
   const mapped: Dispatch | undefined = slashes?.mapped ? { slashes: slashes.mapped } : undefined;
   const flag = (s: Setting | undefined) => (s === undefined ? undefined : /^true$/i.test(s.value) ? true : /^false$/i.test(s.value) ? false : null);
-  const web = (stack === "servlet" ? mvc : flux) ?? where;
+  const web = (stack === "servlet" ? mvc : flux)!;
 
   if (stack === "servlet") {
     const names = [major >= 4 ? "spring.web.error.path" : "server.error.path", "error.path"];
     const given = names.map(value).find((s) => s !== undefined);
     const own = text(/\b(?:implements|extends)\b[^{;]*?\b(?:Abstract|Basic)?ErrorController\b|\bclass\s+\w+[^{]*?:[^{]*?\b(?:Abstract|Basic)?ErrorController\b/);
     if (own) said(`${own.file}:${own.line} names an ErrorController of the code's, which takes the place of the one Spring Boot maps its error page with; that page is not read`);
-    else if (given && (names.some(placeholder) || !given.value.startsWith("/"))) said(`${given.file}:${given.line} sets ${readName(given.key)} to ${given.value}, which is not read as a path; the error page Spring Boot serves is not read`);
+    else if (given && (placeholder(readName(given.key)!) || !given.value.startsWith("/"))) said(`${given.file}:${given.line} sets ${readName(given.key)} to ${given.value}, which is not read as a path; the error page Spring Boot serves is not read`);
     else add("*", given?.value ?? "/error", "spring-boot error", declared(given, web), mapped);
   }
 
@@ -322,18 +341,43 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
   const prefix = stack === "servlet" ? "spring.mvc" : "spring.webflux";
   if (mappings === null) said(`${value("spring.web.resources.add-mappings")!.file}:${value("spring.web.resources.add-mappings")!.line} sets spring.web.resources.add-mappings to a value that is neither true nor false; the static resources and WebJars Spring Boot serves are not read`);
   else if (mappings !== false && !takenOver) {
-    for (const [name, fallback, convention] of [
-      [`${prefix}.webjars-path-pattern`, "/webjars/**", "spring-boot webjars"],
-      [`${prefix}.static-path-pattern`, "/**", "spring-boot static resources"],
-    ] as const) {
-      const s = value(name);
-      const pattern = s?.value ?? fallback;
-      if (placeholder(name)) continue;
-      if (!resourcePattern(pattern)) {
-        said(`${s!.file}:${s!.line} sets ${name} to ${pattern}, a pattern atlas does not read; the resources Spring Boot serves there are not read`);
-        continue;
+    // The WebJars, where the build brings one in: the handler takes every path under its pattern, each a WebJar's file.
+    const webjar = deps.find((d) => d.group.startsWith("org.webjars"));
+    const jars = value(`${prefix}.webjars-path-pattern`);
+    if (webjar && !placeholder(`${prefix}.webjars-path-pattern`)) {
+      const pattern = jars?.value ?? "/webjars/**";
+      if (!resourcePattern(pattern)) said(`${jars!.file}:${jars!.line} sets ${prefix}.webjars-path-pattern to ${pattern}, a pattern atlas does not read; the WebJars Spring Boot serves there are not read`);
+      else for (const method of ["GET", "HEAD"]) add(method, pattern, "spring-boot webjars", declared(jars, webjar), strict);
+    }
+    // The static resources: each file of a static location of the module, at its path under the pattern. A request
+    // for any other path finds no resource and is answered 404.
+    const pattern = value(`${prefix}.static-path-pattern`);
+    const locations = value("spring.web.resources.static-locations");
+    if (!placeholder(`${prefix}.static-path-pattern`) && !placeholder("spring.web.resources.static-locations")) {
+      if (pattern && !resourcePattern(pattern.value)) said(`${pattern.file}:${pattern.line} sets ${prefix}.static-path-pattern to ${pattern.value}, a pattern atlas does not read; the static resources Spring Boot serves there are not read`);
+      else {
+        const base = (pattern?.value ?? "/**").slice(0, -"/**".length);
+        const resources = `${module ? `${module}/` : ""}src/main/resources/`;
+        const listedLocations = locations ? locations.value.split(",").map((l) => l.trim()).filter(Boolean) : STATIC_LOCATIONS;
+        for (const location of listedLocations) {
+          const classpath = /^classpath:\/?([^*]*)$/.exec(location);
+          if (!classpath) {
+            said(`${locations!.file}:${locations!.line} sets spring.web.resources.static-locations to ${location} among others, a location whose files atlas does not list; the static resources there are not read`);
+            continue;
+          }
+          const dir = `${resources}${classpath[1]!.replace(/^\/+|\/+$/g, "")}`.replace(/\/*$/, "/");
+          for (const file of source.list()) {
+            if (!file.startsWith(dir) || skip(file) || nested.some((d) => file.startsWith(`${d}/`))) continue;
+            const path = joinRoute(base, `/${file.slice(dir.length).replace(/[\0- "#%<>?^`{}\x7F-\u{10FFFF}]/gu, encodeURIComponent)}`);
+            for (const method of ["GET", "HEAD"]) out.push({ id: surfaceId({ component, method, path }), component, method, path, at: { file, line: 1 }, evidence: "static", implicit: true, convention: "spring-boot static resources", dispatch: strict });
+          }
+        }
+        // A Servlet application also serves the servlet context's root, which a war packs from src/main/webapp.
+        const webapp = `${module ? `${module}/` : ""}src/main/webapp/`;
+        if (stack === "servlet" && source.list().some((f) => f.startsWith(webapp) && !f.startsWith(`${webapp}WEB-INF/`))) {
+          said(`${webapp} holds files a Servlet application serves from its servlet context where it is packed as a war; they are not read`);
+        }
       }
-      for (const method of ["GET", "HEAD"]) add(method, pattern, convention, declared(s, web), strict);
     }
   }
 
@@ -345,8 +389,8 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
     return out;
   }
   const base = value("management.endpoints.web.base-path");
-  const actuatorSettings = ["management.endpoints.web.base-path", "management.endpoints.web.exposure.include", "management.endpoints.web.exposure.exclude", "management.endpoints.web.discovery.enabled"];
-  if (actuatorSettings.some(placeholder)) return out;
+  // Where the endpoints are and which are exposed; a discovery switch not read leaves only the discovery page out.
+  if (["management.endpoints.web.base-path", "management.endpoints.web.exposure.include", "management.endpoints.web.exposure.exclude"].some(placeholder)) return out;
   if (base && base.value !== "" && !base.value.startsWith("/")) {
     said(`${base.file}:${base.line} sets management.endpoints.web.base-path to ${base.value}, which Spring Boot refuses; the actuator's endpoints are not read`);
     return out;
@@ -357,7 +401,9 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
   const excludeIds = list(value("management.endpoints.web.exposure.exclude"), []);
   const discovery = flag(value("management.endpoints.web.discovery.enabled"));
   const at = declared(base ?? value("management.endpoints.web.exposure.include"), actuator);
-  if (discovery === null) said(`${value("management.endpoints.web.discovery.enabled")!.file} sets management.endpoints.web.discovery.enabled to a value that is neither true nor false; the actuator's discovery page is not read`);
+  if (placeholder("management.endpoints.web.discovery.enabled")) {
+    // Named among the settings resolved at run time above.
+  } else if (discovery === null) said(`${value("management.endpoints.web.discovery.enabled")!.file} sets management.endpoints.web.discovery.enabled to a value that is neither true nor false; the actuator's discovery page is not read`);
   else if (discovery !== false && basePath !== "") add("GET", basePath, "spring-boot actuator", at, strict);
   const others = include.filter((id) => id !== "health" && !excludeIds.includes(id));
   if (others.length) {
@@ -370,12 +416,17 @@ function moduleRoutes(source: Source, component: string, module: string, listed:
   }
   const exposed = (include.includes("health") || include.includes("*")) && !excludeIds.includes("health") && !excludeIds.includes("*");
   if (!exposed) return out;
-  const access = ["management.endpoint.health.access", "management.endpoint.health.enabled", "management.endpoints.access.default", "management.endpoints.enabled-by-default"].map(value).filter((s): s is Setting => !!s);
+  // Spring Boot 3.4 brought `access` beside the `enabled` switches, which it still reads; before, `access` is no
+  // setting of it (PropertiesEndpointAccessResolver). The endpoint's own setting wins over the default for all, and
+  // `max-permitted` caps both.
+  const keys = version >= 304 ? ["management.endpoint.health.access", "management.endpoint.health.enabled", "management.endpoints.access.default", "management.endpoints.enabled-by-default"] : ["management.endpoint.health.enabled", "management.endpoints.enabled-by-default"];
+  const access = keys.map(value).filter((s): s is Setting => !!s);
+  const cap = version >= 304 ? value("management.endpoints.access.max-permitted") : undefined;
   const on = (s: Setting) => (/^(read-only|unrestricted|true)$/i.test(s.value.trim()) ? true : /^(none|false)$/i.test(s.value.trim()) ? false : null);
-  // The endpoint's own setting wins over the default for all.
-  const decided = access[0] ? on(access[0]) : true;
+  const decided = cap && on(cap) !== true ? on(cap) : access[0] ? on(access[0]) : true;
   if (decided === null) {
-    said(`${access[0]!.file}:${access[0]!.line} sets ${readName(access[0]!.key)} to ${access[0]!.value}, which is not read; the health endpoint is not read`);
+    const s = cap && on(cap) !== true ? cap : access[0]!;
+    said(`${s.file}:${s.line} sets ${readName(s.key)} to ${s.value}, which is not read; the health endpoint is not read`);
     return out;
   }
   if (!decided) return out;

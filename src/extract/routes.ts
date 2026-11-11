@@ -1935,9 +1935,23 @@ function springSources(source: Source, config: Config, files: string[], root: st
  */
 function unique(surfaces: Surface[]): Surface[] {
   const seen = new Map<string, Surface>();
+  // FastAPI adds its documentation routes as an application is made, before any route registered on it or on a router
+  // it includes, whichever file that is in: where a route of the code has the same path, FastAPI's is the one kept.
+  const documentation = (s: Surface) => !!s.convention?.startsWith("fastapi ");
+  for (const s of surfaces) {
+    const k = `${s.component}|${s.method}|${s.path}`;
+    if (documentation(s) && !seen.has(k)) seen.set(k, s);
+  }
+  const placed = new Set<string>();
   return surfaces.filter((s) => {
     const k = `${s.component}|${s.method}|${s.path}`;
     const kept = seen.get(k);
+    if (kept === s && !placed.has(k)) {
+      placed.add(k);
+      return true;
+    }
+    // A route of the code FastAPI's own takes the place of is never dispatched to: nothing of it merges in.
+    if (kept && kept !== s && documentation(kept)) return false;
     if (kept) {
       if (kept.patterns && JSON.stringify(kept.patterns) !== JSON.stringify(s.patterns)) delete kept.patterns;
       if (kept.dispatch) {
