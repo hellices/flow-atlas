@@ -13,23 +13,3 @@ missing:
 # in the order they are registered and takes the first that matches ("Route priority" in Starlette's routing guide,
 # FastAPI's "Order matters"); a path no route takes, but would with its trailing `/` added or removed, is answered by
 # the router with a 307 to that path (`redirect_slashes`, on by default), which reaches a route only as a new request.
-dispatch:
-  - { request: "GET /users/me", reason: "registration order: `/users/me` is registered before `/users/{username}` and Starlette takes the first route that matches; atlas matches both" }
-  - { request: "GET /users/me/", reason: "trailing slash: no route takes `/users/me/`, Starlette redirects it to `/users/me`; atlas drops the `/` and matches `/users/me` and `/users/{username}`" }
-  - { request: "GET /users", reason: "trailing slash: the route is `/users/`, and Starlette redirects `/users` to it; atlas reads the route without its `/`" }
-  - { request: "GET /v1/items", reason: "trailing slash: the route is `/v1/items/`, and Starlette redirects `/v1/items` to it; atlas reads the route without its `/`" }
-  - { request: "POST /admin", reason: "trailing slash: the route is `/admin/`, and Starlette redirects `/admin` to it; atlas reads the route without its `/`" }
-  - { request: "GET /files", reason: "trailing slash: `{file_path:path}` takes `/files/` but not `/files`, which Starlette redirects to `/files/`; atlas matches `/files` to the route" }
-  - { request: "GET /static", reason: "trailing slash: the static files mount takes `/static/` but not `/static`, which Starlette redirects to `/static/`; atlas matches `/static` to it" }
-  - { request: "GET /hidden/", reason: "trailing slash: no route takes `/hidden/`, Starlette redirects it to `/hidden`; atlas drops the `/` and matches" }
-  - { request: "GET /models/1/", reason: "trailing slash: no route takes `/models/1/`, Starlette redirects it to `/models/1`; atlas drops the `/` and matches" }
-  - { request: "GET /health/", reason: "trailing slash: no route takes `/health/`, Starlette redirects it to `/health`; atlas drops the `/` and matches" }
-  - { request: "GET /ping/", reason: "trailing slash: no route takes `/ping/`, Starlette redirects it to `/ping`; atlas drops the `/` and matches" }
-  - { request: "POST /ping/", reason: "trailing slash: no route takes `/ping/`, Starlette redirects it to `/ping`; atlas drops the `/` and matches" }
-  - { request: "GET /users/value1/", reason: "trailing slash: no route takes `/users/value1/`, Starlette redirects it to `/users/value1`; atlas drops the `/` and matches" }
-  - { request: "GET /v1/items/value1/", reason: "trailing slash: no route takes `/v1/items/value1/`, Starlette redirects it to `/v1/items/value1`; atlas drops the `/` and matches" }
-  - { request: "PUT /v1/items/value1/", reason: "trailing slash: no route takes `/v1/items/value1/`, Starlette redirects it to `/v1/items/value1`; atlas drops the `/` and matches" }
-  - { request: "DELETE /v1/items/value1/", reason: "trailing slash: no route takes `/v1/items/value1/`, Starlette redirects it to `/v1/items/value1`; atlas drops the `/` and matches" }
-  - { request: "GET /v1/items/value1/reviews/", reason: "trailing slash: no route takes `/v1/items/value1/reviews/`, Starlette redirects it to `/v1/items/value1/reviews`; atlas drops the `/` and matches" }
-  - { request: "POST /v1/items/value1/reviews/", reason: "trailing slash: no route takes `/v1/items/value1/reviews/`, Starlette redirects it to `/v1/items/value1/reviews`; atlas drops the `/` and matches" }
-  - { request: "GET /subapi/sub/", reason: "trailing slash: no route of the mounted application takes `/sub/`, and its router redirects it to `/subapi/sub`; atlas drops the `/` and matches" }

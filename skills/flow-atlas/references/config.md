@@ -265,8 +265,9 @@ traced, only the methods every one of them has, on the receiver itself, are read
 a path that does not start with `/` (other than Hono's and @koa/router 15's; an empty one on Hono, which it joins with a
 trailing `/`; on @koa/router, one whose joined path has an empty segment, starts with a group or a wildcard, or starts
 with no `/`, which no request has), a
-method with no path whose path an earlier statement set, a route chained on a receiver not traced, an array on a router
-that takes none, a `route` option or a redirect source not spelled out.
+method with no path whose path an earlier statement set, a route chained on a receiver not traced, a route on the
+instance a `group(path, callback)` hands its callback (Elysia's), which serves under the group's path, an array on a
+router that takes none, a `route` option or a redirect source not spelled out.
 
 Each router reads a path in its own syntax, which atlas takes from the package the router is created from, at the
 major version the nearest package.json above the file that creates the router gives it (`^5.1.0` gives one; `>=4`, a
@@ -427,8 +428,8 @@ argument of `MapFallbackToFile` and `MapFallbackToPage`. FastAPI
 decorators, and `add_api_route(path, endpoint, methods=...)` (GET where `methods` is not given or None), are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
 none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
 that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,
-unlike `{*name}`, which matches `/x` itself. atlas drops a call's trailing `/`, so a call written `/x/` is read as
-`/x`. `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
+unlike `{*name}`, which matches `/x` itself; a call's trailing `/` is kept beside its path and matched as each router
+treats it (see "Which route a request reaches"). `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
 (and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
@@ -525,6 +526,63 @@ base the script appends a segment to. Only the exact `script` and `style` elemen
 attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:attrappend` and `th:attrprepend` join
 their value to the plain one, and a joined URL relative to the page is resolved as a page-relative link is. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
+
+### Which route a request reaches
+
+A call joins the route its framework dispatches the request to, where atlas reads how that framework picks one; where
+it does not, the call joins every route its path fits, and a limit names what is not read.
+
+- Registration order. Express, @koa/router (without `exclusive`), Hono and Starlette (FastAPI) answer a request with
+  the first route registered whose method and path it fits; Nest on Express registers a controller's routes in the
+  order its methods are declared. The order is read within one router in one function body of one file (Python's
+  stacked decorators the nearest the definition first, as Python applies them), and a router mounted once (`use`, each
+  of its arguments in turn, `route`, `include_router`, `mount`) takes its place where the mount is; routes of routers
+  registered in different files, of Nest's controllers, or of a router mounted twice are in no order atlas knows, so
+  each stays a target. A route stops a request only where it takes every request the call stands for (`/users/me`
+  before `/users/:id`, not a call `/users/${id}`) in the form the call is written (where the router's rule for a
+  trailing `/` is not read, only a call without one to a route written without one), and where its last handler does
+  not take `next` and pass the request on with it (`next()`, or Express's `next(x)` with an `x` that may be falsy:
+  only a surely truthy one, as `next(new Error())`, goes to the error handlers) and, on Express, no callback of the
+  route leaves it with `next('route')`; a handler atlas does not see (imported, or a value) may pass it on, and so may
+  a Nest route whose version a header, a media type or a function gives.
+- Nest's specificity. With `routeResolutionStrategy: 'specificity'` (`NestFactory.create`'s options, written in place
+  or given to the function that calls it by each of its calls; @nestjs/core 12 and later), Nest registers every
+  controller's routes ranked segment by segment (`RouteSpecificitySorter`: a literal, then a segment of text and a
+  parameter, then a parameter, then a wildcard; a path that ends earlier comes after a literal, or last where it has a
+  wildcard), those of one rank in declaration order. Another strategy, or one not spelled out, leaves every route a
+  target.
+- Precedence. Fastify's find-my-way tries a static segment before a parameter, a parameter with a regexp before one
+  without, and a parameter before a wildcard, whatever the order; Spring ranks by specificity and Next.js by its file
+  conventions, as before.
+- Trailing `/`. Express, @koa/router and Nest on Express ignore it. Express's `Router({ strict: true })` makes a
+  route take the path as written, a router's `/` taking its mount's path with and without the `/`; an application's
+  `strict routing` is read where every `set`, `enable` or `disable` of it is at the top level of the file that creates
+  the application, before every route registered there, since the application's router takes it when first used (the
+  last one counts). @koa/router's `strict`, which also changes how it joins `/` to a prefix, is not read. Fastify (unless `ignoreTrailingSlash`, at the top of its options or in `routerOptions`), Hono (unless
+  `new Hono({ strict: false })`) and Spring 6 and later (the version the nearest pom.xml or build.gradle gives Spring
+  Boot or Spring Framework; `setUseTrailingSlashMatch` decides for mapped handlers where the code calls it) match a
+  path with a `/` only to a route that has one: find-my-way also gives the empty text after a last `/` to a parameter
+  (`/users/:id` takes `/users/`), Fastify serves a plugin's `/` at its prefix with and without the `/`
+  (`prefixTrailingSlash`), and Spring joins `@RequestMapping("/owners")` and `@GetMapping("/")` into `/owners/`.
+  Starlette serves the path as the route writes it, and redirects a request no route takes by any method to the path
+  with the `/` added or removed where a route takes that (`redirect_slashes`, read from `FastAPI(...)`, or from the
+  `APIRouter(...)` an application mounts); a call with a value may be served for some values and redirected for
+  others. Next.js redirects every request with a trailing `/` to the path without it, or with `trailingSlash: true`
+  every one whose last segment has no `.` to the path with it and a file's (`.` and word characters at its end) to the
+  path without it, leaving `/.well-known/` as written, as the object `next.config.*` exports says; a
+  configuration a function returns or a plugin wraps is not read. A wildcard written after a `/` (find-my-way's
+  `/x/*`, Nest's `x/*`, Express 4's `/x/*`) takes `/x/` but not `/x`.
+- Matchers. AdonisJS tests a parameter with the matcher a route's `.where(param, matcher)` or the file's
+  `router.where` gives (`router.matchers.number()`, `uuid()`, `slug()`, a RegExp, a string, an object's `match`); a
+  matcher not spelled out takes any value.
+- Constraints. Fastify takes a request to a route with `constraints` (a version, a host) only where its headers meet
+  them; atlas does not read a call's headers, so such a call is matched to none of those routes, and a limit says so.
+
+A call its router answers with a redirect reaches the route there only once the client follows it: it is matched to
+none, a limit names the redirect, and neither the call (FA002) nor the route (FA001) is reported. A call no route
+takes (a path with a `/` on a strict router, a value a matcher refuses) is reported by FA002, as the framework answers
+it with 404 or 405. A route an earlier one of the same router always answers for is reached by no request; FA001 says
+which route takes its requests.
 
 ### A client's base
 

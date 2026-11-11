@@ -78,6 +78,56 @@ export interface Surface {
    * `(.*)`. A parameter not named takes some text of its segment, or the whole segment.
    */
   patterns?: Record<string, string>;
+  /** How the router that serves the route dispatches a request, where atlas reads it (see `Dispatch`). */
+  dispatch?: Dispatch;
+}
+
+/**
+ * How a route's router picks it among the routes a request fits, and how it treats a trailing `/`, as its framework
+ * documents it. A field left out is a rule atlas does not read for the route; matching then keeps every route a request
+ * fits, with or without a trailing `/`.
+ */
+export interface Dispatch {
+  /**
+   * `registration`: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on
+   * Express, Starlette), by `order`. `find-my-way`: Fastify's router tries static text before a parameter, a parameter
+   * with a regexp before one without, and a parameter before a wildcard, whatever the order. `specificity`: Nest's
+   * `routeResolutionStrategy: 'specificity'` registers the more specific routes first, by `rank`, and routes of one rank
+   * in `order`.
+   */
+  picks?: "registration" | "find-my-way" | "specificity";
+  /**
+   * The kind of each segment of the route's path as Nest's specificity sort ranks it (`RouteSpecificitySorter`): a
+   * literal 0, text with a parameter 2, a parameter 3, a wildcard 4.
+   */
+  rank?: number[];
+  /**
+   * Where the route is registered, from the router a request enters down to the one that holds the route: each step a
+   * sequence of registrations whose order is known (`router`, one router in one function body of one file) and the
+   * place in it (`at`). Of two routes, the one before is the one whose steps first differ in `at` within the same
+   * `router`; routes whose steps first differ in `router` are in no order atlas knows.
+   */
+  order?: Array<{ router: string; at: number }>;
+  /** The handler takes the `next` it may pass the request on with, so a route registered after it may answer too. */
+  passes?: true;
+  /**
+   * How the router treats a `/` at the end of a request's path: `ignored` (Express, @koa/router), `strict` (a path with
+   * it is another path: Fastify, Hono, Spring 6 and later), `redirected` (Starlette redirects a request no route takes
+   * to the path with the `/` added or removed where a route takes that), `removed` and `added` (Next.js redirects every
+   * request to the path without it, or with it, by `trailingSlash`).
+   */
+  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added";
+  /**
+   * The route's path as served ends with a `/` (`slash`), or is served with and without one (`both`). On a route that
+   * ends in a wildcard, `slash` says the path before the wildcard is served only with the `/` (find-my-way's `/x/*`,
+   * Nest's `x/*`); that holds whatever `slashes` is.
+   */
+  trailing?: "slash" | "both";
+  /**
+   * The router takes a request to the route only where its headers meet a constraint (Fastify's `constraints`), or may,
+   * where the route's options are not spelled out.
+   */
+  constrained?: true;
 }
 
 export interface Call {

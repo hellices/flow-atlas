@@ -13,9 +13,12 @@ Key `FA001|<component>|<METHOD> <path>`.
 A route served by a component that some configured client calls, where no configured call site matches the
 route's method and path. Surface paths are OpenAPI templates (a Nest or Express `:id` reads `{id}`); path
 parameters (`{id}`, `*`) match any segment; interpolations in a call
-match any segment. A route that a call of unread method may reach, among routes of several methods, is not reported,
-nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than GET or
-HEAD; a `limit:` line names that call.
+match any segment. A call reaches the route its framework dispatches it to (see config.md, "Which route a request
+reaches"), so a route that an earlier one of its router always answers for is reached by none: the finding names the
+route that takes its requests. A route that a call of unread method may reach, among routes of several methods, is not
+reported, nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than
+GET or HEAD, one a call reaches only after its router's trailing-slash redirect, or one taken only with headers that
+meet its constraints (Fastify's); a `limit:` line names that call.
 
 Common causes: the provider was built ahead of its client; the client was removed or renamed; the client builds
 the path in a way the extractor cannot read (a URL returned by the server, a path assembled across functions); the
@@ -34,7 +37,12 @@ it starts from a base address, or its first segment is one the target serves.
 
 A call of unread method whose path fits routes of several methods is not reported either: it may reach any of them,
 so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it. The same holds for a call
-that leaves out the trailing `/` of its route's document path, by a method other than GET or HEAD.
+that leaves out the trailing `/` of its route's document path, by a method other than GET or HEAD, for one its router
+answers with a redirect to the path with the `/` added or removed (Next.js's `trailingSlash`, Starlette's
+`redirect_slashes`), which reaches the route there once the client follows it, and for one whose route takes only
+requests whose headers meet its constraints. A call that no route takes as its framework dispatches is reported: a
+path with a trailing `/` on a router that tells it apart (Fastify, Hono, Spring 6 and later), or a value a parameter's
+matcher refuses (AdonisJS), is answered with 404 or 405.
 
 Common causes: a route was renamed or removed while a client kept the old path; a method mismatch;
 a typo in a path segment.

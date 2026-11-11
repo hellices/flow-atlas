@@ -37,6 +37,11 @@ export interface FunctionalRoute {
   path: string;
   line: number;
   implicit?: true;
+  /**
+   * The pattern ends with a `/` (`slash`; the root `/` has no form without one, so it has none), or is a nest's with an
+   * empty pattern of its own, which takes the rest of the path the nest leaves, empty or `/` (`both`).
+   */
+  trailing?: "slash" | "both";
 }
 /** The value of a string constant the file declares, used at an offset (see `fileConstants`). */
 type Constant = (expression: string, at: number) => string | undefined;
@@ -495,6 +500,7 @@ interface Route {
   path: string;
   at: number;
   implicit?: boolean;
+  trailing?: "slash" | "both";
 }
 
 /** A method of the file: its parameters, its body's statements (an expression body as a `return`), and whether it is a `@Bean`. */
@@ -783,7 +789,8 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
           capped = true;
           return;
         }
-        routes.push({ method, path, at, ...(only && method === "HEAD" ? { implicit: true } : {}) });
+        const trailing = alt.path === "" && ctx.prefix !== "" ? "both" : path.length > 1 && path.endsWith("/") ? "slash" : undefined;
+        routes.push({ method, path, at, ...(only && method === "HEAD" ? { implicit: true } : {}), ...(trailing ? { trailing } : {}) });
       }
     }
   };
@@ -1048,7 +1055,7 @@ export function routerFunctionRoutes(file: string, text: string, spec: RouteSour
     say(t.at, `builds a router function outside a @Bean method (${t.text})`);
   }
 
-  return routes.map((r) => ({ method: r.method, path: joinRoute(r.path === "" ? "/" : r.path), line: lineOf(text, r.at), ...(r.implicit ? { implicit: true } : {}) }));
+  return routes.map((r) => ({ method: r.method, path: joinRoute(r.path === "" ? "/" : r.path), line: lineOf(text, r.at), ...(r.implicit ? { implicit: true } : {}), ...(r.trailing ? { trailing: r.trailing } : {}) }));
 }
 
 /** Each node of a tree, depth first. */
@@ -1142,7 +1149,10 @@ export function registeredMappingRoutes(file: string, text: string, constant: Co
       if (unread) return say(n.nameAt, `registers a handler method with ${unread}`);
       for (const p of paths as string[]) {
         const path = p && !p.startsWith("/") ? `/${p}` : p;
-        for (const method of verbs ?? ["*"]) out.push({ method, path: joinRoute(path), line: lineOf(text, n.nameAt) });
+        // A path written with a `/` at its end is served with it (where the version tells the two apart); one mapping
+        // listing both forms is one route served at both, as `unique` merges them.
+        const trailing = path.length > 1 && path.endsWith("/") ? { trailing: "slash" as const } : {};
+        for (const method of verbs ?? ["*"]) out.push({ method, path: joinRoute(path), line: lineOf(text, n.nameAt), ...trailing });
       }
     });
   }

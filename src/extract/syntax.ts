@@ -23,10 +23,16 @@ import type { Source } from "../source.js";
  */
 export type Syntax = { kind: "path-to-regexp" | "path-to-regexp-0.1" | "express" | "nest" | "find-my-way" | "hono" } | { kind: "plain"; why: string };
 
-/** A route path as atlas writes it, with the regular expression each parameter named in `patterns` must match. */
+/**
+ * A route path as atlas writes it, with the regular expression each parameter named in `patterns` must match, and
+ * `trailing` where the path as written ends with a `/` (`/abcd/`): one without a wildcard is served with it, and one
+ * ending in a wildcard that takes none or more segments after that `/` (`/x/*`) serves the path before the wildcard
+ * only with it (see `Dispatch.trailing`).
+ */
 export interface RoutePath {
   path: string;
   patterns?: Record<string, string>;
+  trailing?: "slash";
 }
 
 /** The paths a registration serves, or why it is not read; `rejected` where the router itself throws on the path. */
@@ -74,12 +80,18 @@ function write(v: Variant): RoutePath | { why: string } {
     }
     if (out) parts.push(out);
   }
+  // Text that ends with a `/` (`/abcd/`, or the `/x/` before find-my-way's `*`) leaves an empty last segment.
+  const slash = parts.length > 0 && v.segments.length > 1 && empty(v);
   if (v.rest) {
     const bad = v.rest.name === undefined ? undefined : name(v.rest.name);
     if (bad) return { why: bad };
     parts.push(v.rest.name === undefined ? "**" : v.rest.min === 1 ? `{${v.rest.name}}/**` : `{*${v.rest.name}}`);
   }
-  return { path: `/${parts.join("/")}`, ...(patterns.size ? { patterns: Object.fromEntries(patterns) } : {}) };
+  return {
+    path: `/${parts.join("/")}`,
+    ...(patterns.size ? { patterns: Object.fromEntries(patterns) } : {}),
+    ...(slash && (!v.rest || v.rest.min === 0) ? { trailing: "slash" as const } : {}),
+  };
 }
 
 /**
@@ -92,7 +104,10 @@ function finish(variants: Built[]): ReadPath {
     if ("why" in v) return v;
     const w = write(v);
     if ("why" in w) return w;
-    if (!written.some((x) => x.path === w.path)) written.push(w);
+    const same = written.find((x) => x.path === w.path);
+    // A path written with and without its trailing `/` is served at both: `trailing` is left out.
+    if (!same) written.push(w);
+    else if (same.trailing !== w.trailing) delete same.trailing;
   }
   const absorbed = new Set<string>();
   const out = written.map((w): RoutePath => {
@@ -102,7 +117,8 @@ function finish(variants: Built[]): ReadPath {
     if (!m || !bare) return w;
     absorbed.add(bare.path);
     const patterns = { ...bare.patterns, ...w.patterns };
-    return { path: `${m[1]}/{*${m[2]}}`, ...(Object.keys(patterns).length ? { patterns } : {}) };
+    // The path without the rest is served as the bare path is: only with a `/` where that one is (`abcd/{*path}`).
+    return { path: `${m[1]}/{*${m[2]}}`, ...(Object.keys(patterns).length ? { patterns } : {}), ...(bare.trailing ? { trailing: bare.trailing } : {}) };
   });
   return { paths: out.filter((w) => !absorbed.has(w.path)) };
 }
@@ -264,7 +280,8 @@ export function readPathToRegexp01(path: string): ReadPath {
     const seg = segs[i]!;
     if (seg === "") continue;
     if (seg === "*" && i === segs.length - 1) {
-      variants = variants.map((v) => ({ ...v, rest: { min: 0 } }));
+      // The `/` before the `*` is text of the regular expression: `/files/*` takes `/files/`, not `/files`.
+      variants = variants.map((v) => ({ segments: [...v.segments, []], rest: { min: 0 } }));
       continue;
     }
     const optional = /^:(\w+)\?$/.exec(seg);
@@ -309,14 +326,54 @@ export function readExpress(path: string): ReadPath {
  * conversion of a `*` segment before the end differs between versions, so such a path is not read.
  */
 export function readNest(route: string): ReadPath {
+  const converted = nestConverted(route);
+  return typeof converted === "string" ? readPathToRegexp(converted) : converted;
+}
+
+/** The path `LegacyRouteConverter.tryConvert` hands to path-to-regexp 8 (see `readNest`). */
+function nestConverted(route: string): string | { why: string } {
   const lead = route.startsWith("/") ? route : `/${route}`;
   const normalized = route.endsWith("/") ? lead : `${lead}/`;
-  let converted = route;
-  if (normalized.endsWith("/(.*)/")) converted = route.replace("(.*)", "{*path}");
-  else if (normalized.endsWith("/*/")) converted = route.replace("*", "{*path}");
-  else if (normalized.endsWith("/+/")) converted = route.replace("/+", "/*path");
-  else if (normalized.includes("/*/")) return { why: "Nest converts a `*` segment before the end of a path differently by version" };
-  return readPathToRegexp(converted);
+  if (normalized.endsWith("/(.*)/")) return route.replace("(.*)", "{*path}");
+  if (normalized.endsWith("/*/")) return route.replace("*", "{*path}");
+  if (normalized.endsWith("/+/")) return route.replace("/+", "/*path");
+  if (normalized.includes("/*/")) return { why: "Nest converts a `*` segment before the end of a path differently by version" };
+  return route;
+}
+
+/**
+ * The kind of each segment of a path Nest serves on Express, as its specificity sort ranks them (@nestjs/core 12,
+ * `RouteConflictDetector.tokenizePath` and `classifySegment`, `RouteSpecificitySorter.SEGMENT_KIND_RANK`): the path the
+ * adapter normalizes (`nestConverted`) parsed by path-to-regexp 8, a group's tokens kept as optional, split at each `/`
+ * of its text, empty segments left out; a segment starting with a wildcard is 4, one of text only 0, one whose only
+ * required token (or only token) is a parameter 3, any other 2. Undefined where the path is not read.
+ */
+export function nestSpecificity(route: string): number[] | undefined {
+  const converted = nestConverted(route);
+  const tokens = typeof converted === "string" ? parseP2R(converted) : undefined;
+  if (!tokens || !Array.isArray(tokens)) return undefined;
+  type Part = { token: Exclude<Token, { type: "group" }>; optional: boolean };
+  const flat = (list: Token[], optional: boolean): Part[] => list.flatMap((t) => (t.type === "group" ? flat(t.tokens, true) : [{ token: t, optional }]));
+  const segs: Part[][] = [[]];
+  for (const part of flat(tokens, false)) {
+    if (part.token.type !== "text") {
+      segs[segs.length - 1]!.push(part);
+      continue;
+    }
+    part.token.value.split("/").forEach((text, i) => {
+      if (i > 0) segs.push([]);
+      if (text) segs[segs.length - 1]!.push({ token: { type: "text", value: text }, optional: part.optional });
+    });
+  }
+  return segs
+    .filter((parts) => parts.length > 0)
+    .map((parts) => {
+      if (parts[0]!.token.type === "wildcard") return 4;
+      if (parts.every((p) => p.token.type === "text")) return 0;
+      const required = parts.filter((p) => !p.optional);
+      const [only, ...others] = required.length ? required : parts;
+      return !others.length && only!.token.type === "param" ? 3 : 2;
+    });
 }
 
 /** find-my-way's `getClosingParenthensePosition`: the `)` closing the `(` at `at`, past escaped characters. */

@@ -142,7 +142,7 @@ export function routeTemplate(path: string): string {
 }
 
 /** A segment that is one parameter whole: `:id`, `{id}`, `{id:int}`, or a lone `*`; `{from}-{to}` is a pattern of its own. */
-const isParam = (seg: string): boolean => seg.startsWith(":") || /^\{[^{}]*\}$/.test(seg) || seg === "*";
+export const isParam = (seg: string): boolean => seg.startsWith(":") || /^\{[^{}]*\}$/.test(seg) || seg === "*";
 const isHole = (seg: string): boolean => seg.includes(HOLE);
 
 export function segments(path: string): string[] {
@@ -170,14 +170,14 @@ export function holeMatches(pattern: string, text: string): boolean {
 }
 
 /** A last route segment that takes the rest of the path, none or many segments: Spring's `{*rest}` and `**`. */
-const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
+export const isCatchAll = (seg: string | undefined): boolean => seg === "**" || (!!seg && seg.startsWith("{*") && seg.endsWith("}"));
 
 /**
  * A last route segment Starlette's `path` converter takes: `.*` after the `/` written before it, so any text, none
  * included, after that `/`. A mount is compiled as its path with `/{path:path}` joined. A route with one before its end
  * is not read.
  */
-const isStarletteRest = (seg: string | undefined): boolean => !!seg && /^\{\w+:path\}$/.test(seg);
+export const isStarletteRest = (seg: string | undefined): boolean => !!seg && /^\{\w+:path\}$/.test(seg);
 
 /** The regex of each of Starlette's one-segment convertors (`starlette/convertors.py`). */
 const CONVERTORS: Record<string, RegExp> = {
@@ -197,13 +197,13 @@ const unreadConvertor = (seg: string): boolean => {
 };
 
 /** The name of a parameter that is a segment whole, `{id}`; undefined for a convertor's (`{id:int}`) or a catch-all. */
-const paramName = (seg: string): string | undefined => /^\{([^{}:*]+)\}$/.exec(seg)?.[1];
+export const paramName = (seg: string): string | undefined => /^\{([^{}:*]+)\}$/.exec(seg)?.[1];
 
 /** The regular expressions a route's parameters must match, by name (`Surface.patterns`). */
 export type Patterns = Record<string, string> | undefined;
 
 /** The regexp a parameter must match, read as an own property only: `constructor` names a parameter, not a method. */
-const patternOf = (patterns: Patterns, name: string | undefined): string | undefined =>
+export const patternOf = (patterns: Patterns, name: string | undefined): string | undefined =>
   patterns && name !== undefined && Object.hasOwn(patterns, name) ? patterns[name] : undefined;
 
 /** A regular expression of a route, compiled once; one the runtime cannot compile settles nothing. */
@@ -259,7 +259,7 @@ export function narrowedPath(routePath: string, call: string): string {
 }
 
 /** A route segment written as plain text: no parameter, wildcard or brace pattern; a colon inside one is text. */
-const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*?]/.test(seg);
+export const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*?]/.test(seg);
 
 /**
  * Whether a route matches every request a call's path stands for, not only some: where the call interpolates a
@@ -346,6 +346,17 @@ function endsMeet(seg: string, part: string): boolean {
   const call = part.split(HOLE);
   const agree = (a: string, b: string, at: "start" | "end") => (at === "start" ? a.startsWith(b) || b.startsWith(a) : a.endsWith(b) || b.endsWith(a));
   return agree(route[0]!, call[0]!, "start") && agree(route[route.length - 1]!, call[call.length - 1]!, "end");
+}
+
+/**
+ * Whether a parameter segment takes an empty segment, as find-my-way gives the empty text after a last `/` to a
+ * parameter (`/users/:id` takes `/users/`): a parameter that is the segment whole, with no regexp or one that takes
+ * empty text.
+ */
+export function takesEmpty(seg: string, patterns?: Patterns): boolean {
+  if (!isParam(seg) || seg === "*" || convertorOf(seg) !== undefined) return false;
+  const own = patternOf(patterns, paramName(seg) ?? (seg.startsWith(":") ? seg.slice(1) : undefined));
+  return own === undefined || (regexOf(`^(?:${own})$`)?.test("") ?? false);
 }
 
 export function methodsMatch(a: string, b: string): boolean {

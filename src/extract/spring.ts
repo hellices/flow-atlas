@@ -1,5 +1,5 @@
 import type { RouteSource } from "../config.js";
-import type { Surface } from "../model.js";
+import type { Dispatch, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
 import { HOLE, joinRoute, resolveReference, routeTemplate } from "../paths.js";
 import { lineOf } from "../source.js";
@@ -23,7 +23,7 @@ export type Views = Map<string, { file: string; names: string[]; redirects: Arra
  * Java or Kotlin code with the contents of every string and character literal blanked (quotes, newlines and offsets
  * kept), so annotations, braces and keywords are searched in code only. Values are read back from the unmasked text.
  */
-function maskStrings(file: string, code: string): string {
+export function maskStrings(file: string, code: string): string {
   const out = code.split("");
   let i = 0;
   while (i < code.length) {
@@ -719,6 +719,15 @@ interface TypeScope {
  * expression) is unknown: no route is registered for it, and `limits` says so.
  * `views` collects, per route, the view names its handler renders.
  */
+/**
+ * How Spring treats a trailing `/` for the routes of mapped handlers (`@RequestMapping` and the mappings registered
+ * with a `RequestMappingInfo`) and of router functions, where it is read (see `Dispatch.slashes`).
+ */
+export interface SpringSlashes {
+  mapped?: "strict" | "ignored";
+  functional?: "strict" | "ignored";
+}
+
 export function routesFromSpring(
   file: string,
   text: string,
@@ -728,7 +737,19 @@ export function routesFromSpring(
   limits?: string[],
   prefixes?: PathPrefixes,
   exchanges?: Exchanges,
+  slashes: SpringSlashes = {},
 ): Surface[] {
+  /**
+   * How a route's router treats a trailing `/`, by the rule `slashes` gives, the route served with the `/` where the
+   * pattern Spring combines from the written paths ends with one (`PathPattern.combine` joins `/owners` and `/` into
+   * `/owners/`); `both` where one mapping lists the path with and without it.
+   */
+  const dispatchOf = (rule: "strict" | "ignored" | undefined, written: string[]): Dispatch | undefined => {
+    if (!rule) return undefined;
+    const last = [...written].reverse().find((w) => w !== "");
+    const slash = rule === "strict" && last !== undefined && last.endsWith("/") && joinRoute(...written) !== "/";
+    return { slashes: rule, ...(slash ? { trailing: "slash" as const } : {}) };
+  };
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
@@ -874,10 +895,16 @@ export function routesFromSpring(
             views!.set(id, { file, names: [...new Set([...(known?.names ?? []), ...rendered])], redirects: [...(known?.redirects ?? []), ...redirects] });
           }
           const line = lineOf(text, m.at);
-          // Paths that differ only in a trailing `/` are one route here, so a mapping that lists both registers it once.
-          if (out.some((o) => o.id === id && o.at.line === line)) continue;
+          const dispatch = dispatchOf(slashes.mapped, [spec.prefix ?? "", prefix, base, path]);
+          // Paths that differ only in a trailing `/` are one route here, so a mapping that lists both registers it once,
+          // served with and without it.
+          const same = out.find((o) => o.id === id && o.at.line === line);
+          if (same) {
+            if (same.dispatch && same.dispatch.trailing !== dispatch?.trailing) same.dispatch.trailing = "both";
+            continue;
+          }
           const patterns = springPatterns(full);
-          out.push({ id, component: spec.component, method, path: full, at: { file, line }, evidence: "text", ...(patterns ? { patterns } : {}) });
+          out.push({ id, component: spec.component, method, path: full, at: { file, line }, evidence: "text", ...(patterns ? { patterns } : {}), ...(dispatch ? { dispatch } : {}) });
         }
       }
     }
@@ -911,8 +938,9 @@ export function routesFromSpring(
           for (const path of member.paths) {
             const full = springTemplate(joinRoute(spec.prefix ?? "", prefix, base, path));
             const patterns = springPatterns(full);
+            const dispatch = dispatchOf(slashes.mapped, [spec.prefix ?? "", prefix, base, path]);
             for (const method of united.length ? united : ["*"]) {
-              out.push({ id: surfaceId({ component: spec.component, method, path: full }), component: spec.component, method, path: full, at: { file: iface.file, line: member.line }, evidence: "text", ...(patterns ? { patterns } : {}) });
+              out.push({ id: surfaceId({ component: spec.component, method, path: full }), component: spec.component, method, path: full, at: { file: iface.file, line: member.line }, evidence: "text", ...(patterns ? { patterns } : {}), ...(dispatch ? { dispatch } : {}) });
             }
           }
         }
@@ -920,13 +948,15 @@ export function routesFromSpring(
     }
   }
   out.push(...securityRoutes(file, text, code, masked, spec));
-  const functional = (r: FunctionalRoute): Surface => {
+  const functional = (rule: "strict" | "ignored" | undefined) => (r: FunctionalRoute): Surface => {
     const full = springTemplate(joinRoute(spec.prefix ?? "", r.path));
     const patterns = springPatterns(full);
-    return { id: surfaceId({ component: spec.component, method: r.method, path: full }), component: spec.component, method: r.method, path: full, at: { file, line: r.line }, evidence: "text", ...(patterns ? { patterns } : {}), ...(r.implicit ? { implicit: true } : {}) };
+    const dispatch = dispatchOf(rule, []);
+    if (dispatch && rule === "strict" && r.trailing) dispatch.trailing = r.trailing;
+    return { id: surfaceId({ component: spec.component, method: r.method, path: full }), component: spec.component, method: r.method, path: full, at: { file, line: r.line }, evidence: "text", ...(patterns ? { patterns } : {}), ...(r.implicit ? { implicit: true } : {}), ...(dispatch ? { dispatch } : {}) };
   };
-  out.push(...routerFunctionRoutes(file, text, spec, constant, spans, limits).map(functional));
-  out.push(...registeredMappingRoutes(file, text, constant, spec.component, spans, limits).map(functional));
+  out.push(...routerFunctionRoutes(file, text, spec, constant, spans, limits).map(functional(slashes.functional)));
+  out.push(...registeredMappingRoutes(file, text, constant, spec.component, spans, limits).map(functional(slashes.mapped)));
   return out;
 }
 

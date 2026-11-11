@@ -55,7 +55,8 @@ describe("path-to-regexp 8 (Express 5, @koa/router 14 and later)", () => {
     expect(paths(readPathToRegexp("/files/*filepath"))).toEqual([{ path: "/files/{filepath}/**" }]);
     expect(paths(readPathToRegexp('/archive/*"rest-path"'))).toEqual([{ path: "/archive/{rest-path}/**" }]);
     expect(paths(readPathToRegexp("/static{/*path}"))).toEqual([{ path: "/static/{*path}" }]);
-    expect(paths(readPathToRegexp("/static/{*path}"))).toEqual([{ path: "/static/{*path}" }]);
+    // The `/` before the group is text: the path without the rest is served only with it, `/static/`.
+    expect(paths(readPathToRegexp("/static/{*path}"))).toEqual([{ path: "/static/{*path}", trailing: "slash" }]);
   });
 
   it("leaves out a path it rejects, or one no template holds, and says why", () => {
@@ -80,7 +81,7 @@ describe("path-to-regexp 8 (Express 5, @koa/router 14 and later)", () => {
 describe("Express 4 (path-to-regexp 0.1) and Express of a version not read", () => {
   it("reads optional segments, a final `*` and parameters sharing a segment, and no other regular expression", () => {
     expect(paths(readPathToRegexp01("/users/:id?"))).toEqual([{ path: "/users/{id}" }, { path: "/users" }]);
-    expect(paths(readPathToRegexp01("/files/*"))).toEqual([{ path: "/files/**" }]);
+    expect(paths(readPathToRegexp01("/files/*"))).toEqual([{ path: "/files/**", trailing: "slash" }]);
     expect(paths(readPathToRegexp01("/flights/:from-:to"))).toEqual([{ path: "/flights/{from}-{to}" }]);
     const why = { why: "Express 4 (path-to-regexp 0.1) writes it into a regular expression, which is not read" };
     expect(readPathToRegexp01("/ab?cd")).toEqual(why);
@@ -93,7 +94,7 @@ describe("Express 4 (path-to-regexp 0.1) and Express of a version not read", () 
 
   it("reads a path as both versions do where they agree, and as Express 4 where Express 5 rejects it", () => {
     expect(paths(readExpress("/flights/:from-:to"))).toEqual([{ path: "/flights/{from}-{to}" }]);
-    expect(paths(readExpress("/files/*"))).toEqual([{ path: "/files/**" }]);
+    expect(paths(readExpress("/files/*"))).toEqual([{ path: "/files/**", trailing: "slash" }]);
     expect(paths(readExpress("/users/:id?"))).toEqual([{ path: "/users/{id}" }, { path: "/users" }]);
     const differ = { why: "Express 4 and 5 read it differently (path-to-regexp 0.1 and 8), and no package.json above it gives one major version of express" };
     expect(readExpress("/about{/:section}")).toEqual(differ);
@@ -103,8 +104,8 @@ describe("Express 4 (path-to-regexp 0.1) and Express of a version not read", () 
 
 describe("Nest on Express", () => {
   it("converts a legacy wildcard at the end as Nest 11 and later do, then reads path-to-regexp 8", () => {
-    expect(paths(readNest("/api/cats/abcd/*"))).toEqual([{ path: "/api/cats/abcd/{*path}" }]);
-    expect(paths(readNest("/api/cats/(.*)"))).toEqual([{ path: "/api/cats/{*path}" }]);
+    expect(paths(readNest("/api/cats/abcd/*"))).toEqual([{ path: "/api/cats/abcd/{*path}", trailing: "slash" }]);
+    expect(paths(readNest("/api/cats/(.*)"))).toEqual([{ path: "/api/cats/{*path}", trailing: "slash" }]);
     expect(paths(readNest("/api/cats/+"))).toEqual([{ path: "/api/cats/{path}/**" }]);
     expect(paths(readNest("/api/cats/files/*filepath"))).toEqual([{ path: "/api/cats/files/{filepath}/**" }]);
     expect(readNest("/api/*/cats")).toEqual({ why: "Nest converts a `*` segment before the end of a path differently by version" });
@@ -136,7 +137,7 @@ describe("find-my-way (Fastify)", () => {
     expect(paths(readFindMyWay("/posts/:id?"))).toEqual([{ path: "/posts/{id}" }, { path: "/posts" }]);
     expect(paths(readFindMyWay("/:id?"))).toEqual([{ path: "/{id}" }, { path: "/" }]);
     expect(paths(readFindMyWay("/name::verb"))).toEqual([{ path: "/name:verb" }]);
-    expect(paths(readFindMyWay("/example/*"))).toEqual([{ path: "/example/**" }]);
+    expect(paths(readFindMyWay("/example/*"))).toEqual([{ path: "/example/**", trailing: "slash" }]);
   });
 
   it("leaves out what find-my-way rejects or no template holds, and says why", () => {
