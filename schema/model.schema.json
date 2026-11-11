@@ -172,13 +172,23 @@
           "type": "object",
           "minProperties": 1,
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": { "required": ["picks"], "properties": { "picks": { "const": "specificity" } } },
+              "then": { "properties": { "rank": { "type": "array", "items": { "enum": [0, 2, 3, 4] } } } }
+            },
+            {
+              "if": { "required": ["picks"], "properties": { "picks": { "const": "precedence" } } },
+              "then": { "properties": { "rank": { "type": "array", "minItems": 1, "prefixItems": [{ "type": "integer" }], "items": { "enum": [1, 2, 3, 4, 5] } } } }
+            }
+          ],
           "properties": {
             "picks": {
               "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order. werkzeug: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and variables by their weight, whatever the order, by parts. precedence: ASP.NET Core's endpoint routing takes, of the routes whose template and constraints a request meets, the one first by rank (lower first), and of those a route that names the request's method before one that takes any (EndpointComparer, HttpMethodMatcherPolicy); routes left tied are ambiguous.",
               "enum": ["registration", "find-my-way", "specificity", "werkzeug", "precedence"]
             },
             "rank": {
-              "description": "For specificity, the kind of each segment of the route's path as Nest's specificity sort ranks it (RouteSpecificitySorter): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4. For precedence, the route's Order and then the digit of each segment of its template (RoutePrecedence.ComputeInbound): a literal 1, a constrained parameter or a segment of several parts 2, a parameter 3, a constrained catch-all 4, a catch-all 5.",
+              "description": "For specificity, the kind of each segment of the route's path as Nest's specificity sort ranks it (RouteSpecificitySorter): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4. For precedence, the route's Order (any integer) and then the digit of each segment of its template (RoutePrecedence.ComputeInbound): a literal 1, a constrained parameter or a segment of several parts 2, a parameter 3, a constrained catch-all 4, a catch-all 5. Which values each takes is checked by picks.",
               "type": "array",
               "items": { "type": "integer" }
             },

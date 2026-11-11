@@ -641,8 +641,11 @@ and interpolation of those. Controllers are read where `MapControllers`, `MapCon
 `MapDefaultControllerRoute` or `MapAreaControllerRoute` maps them, under that builder's prefix: public classes, not
 nested, abstract or generic, without `[NonController]`, named `...Controller` or deriving from `Controller`,
 `ControllerBase` or a class of the files that does (whose route attributes, area and actions they inherit); their
-public methods that are not static, generic or `[NonAction]` are actions, named by `[ActionName]` or by the method
-without `Async`. `[Route]`, `[HttpGet]` and the other method attributes and `[AcceptVerbs(..., Route = ...)]` give the
+actions are the methods `DefaultApplicationModelProvider.IsAction` takes: public methods, not static, abstract, generic,
+an explicit interface implementation, `[NonAction]` (on the method or one it overrides), an override of `System.Object`'s
+`ToString`, `Equals` or `GetHashCode`, or the `Dispose()` of `IDisposable` (which `Controller` implements); property
+accessors, operators and constructors are no methods there. An action is named by `[ActionName]` (on it or a method it
+overrides) or by the method without `Async`; overloads are told apart by their parameter types. `[Route]`, `[HttpGet]` and the other method attributes and `[AcceptVerbs(..., Route = ...)]` give the
 routes as `DefaultApplicationModelProvider` builds selectors: each attribute with a template, an `Order` or a `Name` one
 route, a template starting with `/` or `~/` replacing the controller's, the others joined to each controller route,
 `[controller]`, `[action]` and `[area]` replaced (`[[` and `]]` for brackets) and a method attribute without a template

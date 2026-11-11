@@ -1149,8 +1149,10 @@ function controllers(model: Model, reader: Reader, suppressAsync: boolean): Cont
           if (m.modifiers.has("override") && ["ToString", "Equals", "GetHashCode"].includes(m.name)) continue;
           if (m.name === "Dispose" && m.params.length === 0 && (disposable || chain.some((l) => l.some((x) => x.bases.includes("IDisposable"))))) continue;
           // [NonAction] and the route attributes of the nearest declaration up the chain that has any.
+          // An override takes the inherited attributes of the methods it overrides (`GetCustomAttributes(inherit: true)`,
+          // `GetBaseDefinition`), the nearest first; a method that does not override takes its own.
           const same = (b: MethodDecl) => b.name === m.name && b.params.map((p) => p.type).join(",") === m.params.map((p) => p.type).join(",");
-          const overridden = chain.flatMap((l) => l.flatMap((x) => x.methods.filter(same)));
+          const overridden = m.modifiers.has("override") ? chain.flatMap((l) => l.flatMap((x) => x.methods.filter(same))) : [m];
           if (overridden.some((b) => b.attributes.some((a) => a.name === "NonAction"))) continue;
           const declaring = overridden.find((b) => b.attributes.some((a) => Object.hasOwn(ROUTE_ATTRIBUTES, a.name))) ?? m;
           const providers = routeProviders(ctxOf(declaring.owner), declaring.attributes);
@@ -1158,11 +1160,12 @@ function controllers(model: Model, reader: Reader, suppressAsync: boolean): Cont
             reader.limit(m.owner.file, m.at, `declares the action ${name}.${m.name}, whose ${providers}; its routes are not read`);
             continue;
           }
-          const actionName = m.attributes.find((a) => a.name === "ActionName");
+          const named = overridden.find((b) => b.attributes.some((a) => a.name === "ActionName"));
+          const actionName = named?.attributes.find((a) => a.name === "ActionName");
           let actionText = suppressAsync && m.name.endsWith("Async") ? m.name.slice(0, -"Async".length) : m.name;
-          if (actionName) {
+          if (named && actionName) {
             const a = actionName.args[0];
-            const v = a ? stringOf(ctxOf(m.owner), m.owner.file.tokens, a.start, a.end, a.start, m.owner.file) : undefined;
+            const v = a ? stringOf(ctxOf(named.owner), named.owner.file.tokens, a.start, a.end, a.start, named.owner.file) : undefined;
             if (v === undefined) {
               reader.limit(m.owner.file, m.at, `declares the action ${name}.${m.name}, whose [ActionName] atlas does not read; its routes are not read`);
               continue;

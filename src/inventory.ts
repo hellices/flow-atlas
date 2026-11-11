@@ -81,7 +81,7 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   // ASP.NET Core: minimal APIs, controller mappings and route attributes, in C# without its comments and strings.
   {
     style: "aspnetcore",
-    re: /\.Map(?:Get|Post|Put|Delete|Patch|Methods|Group|Controllers|ControllerRoute|DefaultControllerRoute|AreaControllerRoute)\s*\(|\[\s*(?:Route|Http(?:Get|Post|Put|Delete|Patch|Head|Options)|AcceptVerbs)\s*[(\],]/g,
+    re: /\.Map(?:Get|Post|Put|Delete|Patch|Methods|Group|Controllers|ControllerRoute|DefaultControllerRoute|AreaControllerRoute)\s*\(|\[\s*(?:Route|Http(?:Get|Post|Put|Delete|Patch|Head|Options)|AcceptVerbs)(?:Attribute)?\s*[(\],]/g,
     files: /\.cs$/,
   },
   { style: "registration", re: /\b([A-Za-z_]\w*)\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?["'](?:GET|POST|PUT|PATCH|DELETE)["']\s*,\s*["'`](\/[^"'`]*)/g, files: /./ },

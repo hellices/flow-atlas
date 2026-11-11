@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { aspnetcoreRoutes } from "../src/extract/aspnetcore.js";
@@ -87,6 +89,22 @@ describe("C# lexing", () => {
     expect(raw.parts!.map((p) => (typeof p === "string" ? p : p.map((x) => x.text).join(" ")))).toEqual(['{"id":', "Id", "}"]);
   });
 
+  it("lexes the punctuators of the lexical grammar, identifiers with Unicode escapes, and #if false to its own line end", () => {
+    const texts = (src: string) => lexCSharp(src).map((t) => t.text);
+    expect(texts("a >= b << c <<= d >> e")).toEqual(["a", ">=", "b", "<<", "c", "<<=", "d", ">", ">", "e"]);
+    expect(texts("var \\u0061bc = @\\u0062;")).toEqual(["var", "abc", "=", "b", ";"]);
+    // NEL (U+0085) ends a line as CR and LF do.
+    expect(texts("#if false\u0085Hidden();\u0085#endif\u0085Active();")).toEqual(["Active", "(", ")", ";"]);
+  });
+
+  it("finds a raw string's closing quotes outside its interpolation holes", () => {
+    const t = lexCSharp('$""" {"""inner"""} """; after')[0]!;
+    expect(t.parts!.map((p) => (typeof p === "string" ? p : p.map((x) => stringValue(x) ?? x.text).join(" ")))).toEqual([" ", "inner", " "]);
+    expect(lexCSharp('$""" {"""inner"""} """; after').map((x) => x.text).slice(1)).toEqual([";", "after"]);
+    const multi = lexCSharp('$"""\n    /api/{\n      Base\n    }/x\n    """')[0]!;
+    expect(multi.parts!.map((p) => (typeof p === "string" ? p : p.map((x) => x.text).join(" ")))).toEqual(["/api/", "Base", "/x"]);
+  });
+
   it("masks comments and strings at the same offsets", () => {
     const text = 'a /* [Route("x")] */ b "[HttpGet]" c\n// .MapGet(\nd';
     const masked = maskCSharp(text);
@@ -113,6 +131,13 @@ describe("C# lexing", () => {
       ].join("\n"),
     );
     expect(f.aliases.get("R")).toBe("RouteAttribute");
+    // A generic alias names its type, not a type argument; a nested delegate is no method; a function pointer is one parameter.
+    const g = readCsFile(
+      "B.cs",
+      "using X = Lib.Foo<Lib.Bar>;\nusing G = Mvc.RouteAttribute<int>;\n[G(\"x\")] public class C : X { public delegate void Callback(int x); public unsafe void P(delegate*<int, void> callback, delegate* unmanaged[Cdecl]<int, int> other) {} }",
+    );
+    expect([g.aliases.get("X"), g.types[0]!.bases, g.types[0]!.attributes.map((a) => a.name)]).toEqual(["Foo", ["Foo"], ["Route"]]);
+    expect(g.types[0]!.methods.map((m) => [m.name, m.params.map((p) => `${p.type} ${p.name}`)])).toEqual([["P", ["delegate*<int,void> callback", "delegate*unmanaged[Cdecl]<int,int> other"]]]);
     const t = f.types[0]!;
     expect([t.namespace, t.name, t.bases]).toEqual(["Shop.Api", "OrdersController", ["ControllerBase", "IDisposable"]]);
     expect(t.attributes.map((a) => a.name)).toEqual(["Route"]);
@@ -157,6 +182,8 @@ describe("ASP.NET Core route templates", () => {
     expect(["2147483648", "-2147483649", "1.0", "a", "", "--1"].map((v) => test(["int"], v))).toEqual([false, false, false, false, false, false]);
     expect(["9223372036854775807", "9223372036854775808"].map((v) => test(["long"], v))).toEqual([true, false]);
     expect(["abc", "ABC", "a1", "\u212A", "abc\n"].map((v) => test(["alpha"], v))).toEqual([true, true, false, false, true]);
+    // Alternation is .NET's as JavaScript's: either side, and no literal `|`.
+    expect(["a", "B", "a|b", "c"].map((v) => test(["regex(^(a|b)$)"], v))).toEqual([true, true, false, false]);
     expect(["ab", "abc", "abcd"].map((v) => test(["minlength(3)"], v))).toEqual([false, true, true]);
     expect(["ab", "abc", "abcdef"].map((v) => test(["length(3,5)"], v))).toEqual([false, true, false]);
     expect(["12", "123"].map((v) => test(["int", "maxlength(2)"], v))).toEqual([true, false]);
@@ -468,6 +495,15 @@ describe("controllers", () => {
     expect(limits).toEqual([]);
   });
 
+  it("takes the [ActionName] and [NonAction] an override inherits, and none a method that does not override", () => {
+    const files = {
+      ...program("app.MapDefaultControllerRoute();"),
+      "Base.cs": 'public abstract class BaseController : Controller { [ActionName("List")] public virtual void Items() {} [NonAction] public virtual void Hidden() {} [ActionName("Other")] public virtual void Shown() {} }',
+      "Shop.cs": "public class ShopController : BaseController { public override void Items() {} public override void Hidden() {} public new void Shown() {} }",
+    };
+    expect(read(files)).toMatchObject({ routes: ["* /Shop/List", "* /Shop/List/{id}", "* /Shop/Shown", "* /Shop/Shown/{id}"], limits: [] });
+  });
+
   it("reads each overload of an action as its own", () => {
     const files = {
       ...program("app.MapDefaultControllerRoute();\napp.MapControllers();"),
@@ -624,7 +660,24 @@ describe("matching as ASP.NET Core's endpoint routing picks", () => {
   });
 
   it("is offered by inventory for C# files that map routes", () => {
-    const routes = inventory(memory({ "Program.cs": '// app.MapGet("/no")\napp.MapGet("/yes", () => 1);', "C.cs": '[HttpGet("x")] void A() {}\nvar s = "[Route(\\"y\\")]";' }), []).routes;
-    expect(routes.map((r) => `${r.file} ${r.style} ${r.count} ${r.example}`)).toEqual(["Program.cs aspnetcore 1 Program.cs:2", "C.cs aspnetcore 1 C.cs:1"]);
+    const routes = inventory(
+      memory({
+        "Program.cs": '// app.MapGet("/no")\napp.MapGet("/yes", () => 1);',
+        "C.cs": '[HttpGet("x")] void A() {}\nvar s = "[Route(\\"y\\")]";',
+        "D.cs": '[RouteAttribute("d")] class D { [HttpGetAttribute] void A() {} }',
+      }),
+      [],
+    ).routes;
+    expect(routes.map((r) => `${r.file} ${r.style} ${r.count} ${r.example}`)).toEqual(["Program.cs aspnetcore 1 Program.cs:2", "C.cs aspnetcore 1 C.cs:1", "D.cs aspnetcore 2 D.cs:1"]);
+  });
+
+  it("writes each dispatch's rank as the model schema allows it, by its picks", () => {
+    const ajv = new Ajv2020({ strict: true, strictRequired: false, strictTuples: false });
+    ajv.addSchema(JSON.parse(readFileSync(new URL("../schema/model.schema.json", import.meta.url), "utf8")) as object);
+    const valid = ajv.compile({ $ref: "urn:flow-atlas:schema:v1alpha1:model#/$defs/surface" });
+    for (const s of surfaces) expect(valid(s), JSON.stringify(valid.errors)).toBe(true);
+    const surface = (dispatch: object) => ({ id: "a|GET /x", component: "a", method: "GET", path: "/x", at: { file: "a", line: 1 }, evidence: "static", dispatch });
+    expect([{ picks: "precedence", rank: [-3, 1, 5] }, { picks: "specificity", rank: [0, 4] }, { picks: "precedence", rank: [7] }].map((d) => valid(surface(d)))).toEqual([true, true, true]);
+    expect([{ picks: "specificity", rank: [1] }, { picks: "precedence", rank: [0, 6] }, { picks: "precedence", rank: [] }].map((d) => valid(surface(d)))).toEqual([false, false, false]);
   });
 });

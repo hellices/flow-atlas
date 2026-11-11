@@ -16,7 +16,9 @@ export interface Token {
   parts?: Array<string | Token[]>;
 }
 
-const PUNCTS = ["=>", "::", "?.", "??=", "??", "==", "!=", "<=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "..", "->"];
+// Longest first. `>>` and `>>=` are no tokens of the lexical grammar (C# spec §6.4.6, "right_shift"): two `>`, as the
+// close of nested type arguments is.
+const PUNCTS = ["<<=", "<<", "=>", "::", "?.", "??=", "??", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "..", "->"];
 
 const isIdStart = (c: string): boolean => /[\p{L}\p{Nl}_]/u.test(c);
 const isIdPart = (c: string): boolean => /[\p{L}\p{Nl}\p{Nd}\p{Mn}\p{Mc}\p{Pc}\p{Cf}_]/u.test(c);
@@ -31,14 +33,25 @@ function lineEnd(text: string, at: number): number {
 /** Where a `#if false` region ending at `from` (its directive's line end) stops: at the directive line that closes it. */
 function disabledEnd(t: string, from: number): number {
   let depth = 0;
-  const lines = /^[ \t]*#[ \t]*(if|elif|else|endif)\b.*$/gm;
-  lines.lastIndex = from;
-  for (let m = lines.exec(t); m; m = lines.exec(t)) {
-    if (m[1] === "if") depth++;
-    else if (depth === 0) return m.index;
-    else if (m[1] === "endif") depth--;
+  for (let i = from; i < t.length; ) {
+    // Past the line terminator, then the next line, as `lineEnd` reads lines.
+    i += t.startsWith("\r\n", i) ? 2 : 1;
+    const end = lineEnd(t, i);
+    const directive = /^[ \t]*#[ \t]*(if|elif|else|endif)\b/.exec(t.slice(i, end));
+    if (directive?.[1] === "if") depth++;
+    else if (directive && depth === 0) return i;
+    else if (directive?.[1] === "endif") depth--;
+    i = end;
   }
   return t.length;
+}
+
+/** The character a `\uXXXX` or `\UXXXXXXXX` escape at `at` stands for in an identifier, with where it ends. */
+function idEscape(t: string, at: number): { ch: string; end: number } | undefined {
+  const m = /^\\(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8}))/.exec(t.slice(at, at + 10));
+  if (!m) return undefined;
+  const cp = parseInt(m[1] ?? m[2]!, 16);
+  return cp <= 0x10ffff ? { ch: String.fromCodePoint(cp), end: at + m[0].length } : undefined;
 }
 
 /** The tokens of C# source text. Text it cannot lex as C# (an unterminated string) ends the tokens there. */
@@ -110,12 +123,14 @@ class Lexer {
       if (!str && this.failed === undefined) this.failed = start;
       return str;
     }
-    if (c === "@" && isIdStart(t[start + 1] ?? "")) {
+    // An identifier may start with a Unicode escape of a letter (C# spec §6.4.3).
+    const startsId = (at: number) => isIdStart(t[at] ?? "") || isIdStart(idEscape(t, at)?.ch ?? "");
+    if (c === "@" && startsId(start + 1)) {
       this.pos = start + 1;
       const id = this.identifier();
       return { kind: "id", text: id, start, end: this.pos };
     }
-    if (isIdStart(c)) return { kind: "id", text: this.identifier(), start, end: this.pos };
+    if (startsId(start)) return { kind: "id", text: this.identifier(), start, end: this.pos };
     if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(t[start + 1] ?? ""))) return this.number(start);
     if (c === "'") return this.character(start);
     const punct = PUNCTS.find((p) => t.startsWith(p, start)) ?? c;
@@ -123,16 +138,18 @@ class Lexer {
     return { kind: "punct", text: punct, start, end: this.pos };
   }
 
+  /** An identifier's name, its Unicode escapes read as the characters they stand for. */
   private identifier(): string {
     const t = this.text;
-    const start = this.pos;
+    let out = "";
     while (this.pos < t.length) {
-      const cp = t.codePointAt(this.pos)!;
-      const ch = String.fromCodePoint(cp);
+      const escaped = t[this.pos] === "\\" ? idEscape(t, this.pos) : undefined;
+      const ch = escaped?.ch ?? String.fromCodePoint(t.codePointAt(this.pos)!);
       if (!isIdPart(ch)) break;
-      this.pos += ch.length;
+      out += ch;
+      this.pos = escaped?.end ?? this.pos + ch.length;
     }
-    return t.slice(start, this.pos);
+    return out;
   }
 
   private number(start: number): Token {
@@ -263,58 +280,89 @@ class Lexer {
    */
   private raw(start: number, open: number, quotes: number, dollars: number): Token | undefined {
     const t = this.text;
-    const fence = '"'.repeat(quotes);
     const bodyStart = open + quotes;
-    const close = t.indexOf(fence, bodyStart);
-    if (close < 0) return undefined;
-    // The closing fence is the first run of at least `quotes` quotes; more quotes than that are an error.
-    let after = close + quotes;
-    if (t[after] === '"') return undefined;
-    const firstLineEnd = lineEnd(t, bodyStart);
-    const multiline = firstLineEnd < close;
-    let segments: Array<[number, number]>;
-    if (multiline) {
-      if (t.slice(bodyStart, firstLineEnd).trim()) return undefined;
-      const lastLineStart = Math.max(t.lastIndexOf("\n", close - 1), t.lastIndexOf("\r", close - 1)) + 1;
-      const indent = t.slice(lastLineStart, close);
-      if (indent.trim()) return undefined;
-      segments = [];
-      let lineAt = firstLineEnd + (t.startsWith("\r\n", firstLineEnd) ? 2 : 1);
-      while (lineAt < lastLineStart) {
-        const end = lineEnd(t, lineAt);
-        const line = t.slice(lineAt, end);
-        if (line.trim() && !line.startsWith(indent)) return undefined;
-        segments.push([line.trim() ? lineAt + indent.length : end, end]);
-        lineAt = end + (t.startsWith("\r\n", end) ? 2 : 1);
+    // The closing quotes are the first run of at least `quotes` outside an interpolation hole (whose code may hold a raw
+    // string of its own); a longer run is an error.
+    const holes = new Map<number, { run: number; end: number; tokens: Token[] }>();
+    let close = -1;
+    for (let i = bodyStart; i < t.length; ) {
+      const c = t[i];
+      if (dollars && c === "{") {
+        let run = 0;
+        while (t[i + run] === "{") run++;
+        if (run >= dollars) {
+          this.pos = i + run;
+          const tokens = this.hole(dollars);
+          if (!tokens) return undefined;
+          holes.set(i, { run, end: this.pos, tokens });
+          i = this.pos;
+        } else i += run;
+        continue;
       }
-    } else segments = [[bodyStart, close]];
+      if (c === '"') {
+        let run = 0;
+        while (t[i + run] === '"') run++;
+        if (run > quotes) return undefined;
+        if (run === quotes) {
+          close = i;
+          break;
+        }
+        i += run;
+        continue;
+      }
+      i++;
+    }
+    if (close < 0) return undefined;
+    let after = close + quotes;
     const parts: Array<string | Token[]> = [];
     let buf = "";
-    for (let s = 0; s < segments.length; s++) {
-      if (s > 0) buf += "\n";
-      const end = segments[s]![1];
-      let i = segments[s]![0];
-      while (i < end) {
-        if (dollars && t[i] === "{") {
-          let run = 0;
-          while (t[i + run] === "{") run++;
-          if (run >= dollars) {
-            // Braces beyond `dollars` are text before the hole.
-            buf += "{".repeat(run - dollars);
-            if (buf) parts.push(buf);
-            buf = "";
-            this.pos = i + run;
-            const hole = this.hole(dollars);
-            if (!hole) return undefined;
-            parts.push(hole);
-            i = this.pos;
-            continue;
-          }
+    /** Text from `i` to `end`, each hole as its tokens; at each line start, `indent` is left out. */
+    const read = (from: number, end: number, indent?: string): boolean => {
+      let lineStart = indent !== undefined;
+      for (let i = from; i < end; ) {
+        if (lineStart) {
+          lineStart = false;
+          const lineStop = lineEnd(t, i);
+          if (t.startsWith(indent!, i)) i += indent!.length;
+          else if (!t.slice(i, Math.min(lineStop, end)).trim()) i = Math.min(lineStop, end);
+          else return false;
+          continue;
+        }
+        const hole = holes.get(i);
+        if (hole) {
+          // Braces beyond `dollars` are text before the hole.
+          buf += "{".repeat(hole.run - dollars);
+          if (buf) parts.push(buf);
+          buf = "";
+          parts.push(hole.tokens);
+          i = hole.end;
+          continue;
+        }
+        if (indent !== undefined && /[\r\n\u0085\u2028\u2029]/.test(t[i]!)) {
+          const nl = t.startsWith("\r\n", i) ? "\r\n" : t[i]!;
+          buf += nl;
+          i += nl.length;
+          lineStart = true;
+          continue;
         }
         buf += t[i];
         i++;
       }
-    }
+      return true;
+    };
+    const firstLineEnd = lineEnd(t, bodyStart);
+    if (firstLineEnd < close) {
+      // Multi-line: the content runs from the line after the opening quotes to the line before the closing ones, each
+      // line without the closing line's whitespace.
+      if (t.slice(bodyStart, firstLineEnd).trim()) return undefined;
+      let lastLineStart = close;
+      while (lastLineStart > firstLineEnd && !/[\r\n\u0085\u2028\u2029]/.test(t[lastLineStart - 1]!)) lastLineStart--;
+      const indent = t.slice(lastLineStart, close);
+      if (indent.trim()) return undefined;
+      const contentStart = firstLineEnd + (t.startsWith("\r\n", firstLineEnd) ? 2 : 1);
+      const contentEnd = lastLineStart - (t.slice(lastLineStart - 2, lastLineStart) === "\r\n" ? 2 : 1);
+      if (contentStart <= contentEnd && !read(contentStart, contentEnd, indent)) return undefined;
+    } else read(bodyStart, close);
     if (buf || !parts.length) parts.push(buf);
     if (t.slice(after, after + 2) === "u8") after += 2;
     this.pos = after;

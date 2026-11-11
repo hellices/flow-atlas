@@ -104,7 +104,9 @@ export const skip = (f: CsFile, i: number): number => (f.pairs.has(i) ? f.pairs.
  * a comparison: only names, `,`, `.`, `?`, `::`, `*`, arrays, tuples and nested lists may stand between.
  */
 export function genericClose(f: CsFile, i: number, end = f.tokens.length): number | undefined {
-  if (!is(f.tokens[i], "<") || !isId(f.tokens[i - 1])) return undefined;
+  // A function pointer's parameter types (`delegate*<int, void>`, `delegate* unmanaged[Cdecl]<int, void>`) are a list too.
+  const pointer = (is(f.tokens[i - 1], "*") && is(f.tokens[i - 2], "delegate")) || (is(f.tokens[i - 1], "]") && f.opens.has(i - 1) && is(f.tokens[f.opens.get(i - 1)! - 1], "unmanaged"));
+  if (!is(f.tokens[i], "<") || !(isId(f.tokens[i - 1]) || pointer)) return undefined;
   let depth = 0;
   for (let j = i; j < end; j++) {
     const t = f.tokens[j]!;
@@ -212,7 +214,9 @@ function scope(f: CsFile, from: number, to: number, namespace: string, outer: Ty
       while (end < to && !is(f.tokens[end], ";")) end = skip(f, end);
       // `using Alias = A.B.C;` names `C`; `using Type name = value;` (two names before `=`) declares a variable instead.
       if (isId(f.tokens[i + 1]) && is(f.tokens[i + 2], "=")) {
-        const target = f.tokens.slice(i + 3, end).filter((x) => x.kind === "id");
+        // The type named is the last name before its type arguments: `Foo` for `using X = A.Foo<Bar>;`.
+        const generic = f.tokens.slice(i + 3, end).findIndex((x) => is(x, "<"));
+        const target = f.tokens.slice(i + 3, generic < 0 ? end : i + 3 + generic).filter((x) => x.kind === "id");
         const last = target[target.length - 1]?.text;
         if (last) f.aliases.set(f.tokens[i + 1]!.text, last);
         i = end + 1;
@@ -332,6 +336,12 @@ function members(f: CsFile, from: number, to: number, type: TypeDecl): void {
     j = next;
     const modifiers = new Set<string>();
     while (j < to && isId(f.tokens[j]) && MODIFIERS.has(f.tokens[j]!.text)) modifiers.add(f.tokens[j++]!.text);
+    // A nested delegate type (`delegate void Callback(int x);`) is no method.
+    if (is(f.tokens[j], "delegate")) {
+      while (j < to && !is(f.tokens[j], ";")) j = skip(f, j);
+      j++;
+      continue;
+    }
     const start = j;
     let done = false;
     while (j < to && !done) {
