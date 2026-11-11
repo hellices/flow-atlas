@@ -125,11 +125,16 @@ the string is in a request's place: the URL, the first argument, of the global f
 configured wrapper; a JSX `href`, `action`, `formAction` or `src`; a navigation of Next.js's router or of the window's
 Location; a branch of a conditional in one of those places. A lone `/` anywhere else is a separator, a join or a key,
 and is not read. A client-side router's navigations and route definitions are the app's own routes, which the router
-renders in the browser, and are no requests, the names imported one by one or as a namespace (`RR.Link`). React
-Router (imported from `react-router` or `react-router-dom`): the
-attributes of `Link`, `NavLink`, `Navigate` and `Route`; the arguments of `redirect`, `replace`, `useNavigate`,
-`createBrowserRouter`, `createHashRouter`, `createMemoryRouter` and `useRoutes`, through the objects, arrays and spreads
-written there; the function `useNavigate()` returns, and the `navigate` method of a router those create. TanStack Router
+renders in the browser, and are no requests, the names imported one by one or as a namespace (`RR.Link`), or from a
+module of the repository that passes the router's own on: a re-export (`export { Route } from "react-router-dom"`), a
+`const` holding it, or a `let` every value written to which is the same one, Sentry's `withSentryRouting(Route)`
+included, which renders the `Route` it is given with the props it is given (outline's `components/ProfiledRoute`). React
+Router (imported from `react-router` or `react-router-dom`, version 5's names included): the
+attributes of `Link`, `NavLink`, `Navigate`, `Route` and `Redirect`; the arguments of `redirect`, `replace`, `useNavigate`,
+`createBrowserRouter`, `createHashRouter`, `createMemoryRouter`, `useRoutes`, `matchPath`, `matchRoutes`,
+`generatePath`, `useMatch`, `useHref`, `useResolvedPath`, `useLinkClickHandler` and `useRouteMatch`, through the
+objects, arrays and spreads written there; the function `useNavigate()` returns, and the `navigate` method of a router
+those create; the `push` and `replace` of the history `useHistory()` returns, also taken apart. TanStack Router
 (imported from `@tanstack/react-router`): the attributes of `Link` and `Navigate`; the arguments of `createFileRoute`,
 `createLazyFileRoute`, `createRoute`, `redirect`, `useNavigate` and `getRouteApi`; the function `useNavigate()` returns
 and the `navigate` method of `useRouter()` or `createRouter()`; and the route tree its generator writes
@@ -155,7 +160,45 @@ the configured `prefix` straight before a path it is given (`` `/api/v1${path}` 
 from that one parameter alone) is the prefix written once more, not a request: the paths passed to it are read where
 they are written, with the prefix, and a limit names where the helper was left out. A path with a hole
 (`` `/orders/${id}` ``), another base, or text after the value is still a request. A path that already starts with the
-prefix still gets it, since a service may nest the same segment. Routes come
+prefix still gets it, since a service may nest the same segment.
+
+A string is also no request where its place shows it is text for people or is tested, not sent: a JSX `placeholder`,
+`title`, `alt` or `aria-label` (and the other ARIA attributes of text), on an element or as a component's prop of that
+name; a message given to one of Lingui's macros (`` t`/month` ``, `msg`, `defineMessage`, `plural`, `select`,
+`selectOrdinal`, imported from `@lingui/macro`, `@lingui/core/macro` or `@lingui/react/macro`, and the `t`
+`useLingui()` of `@lingui/react/macro` gives); a string tested for truth (`!x`, a condition, the left of `&&`), or one a
+test is made on (`prefix.startsWith(x)`, `includes`, `indexOf`, its `length`). Where the code states where a value
+goes, atlas follows it there, and the value is no request when every place it reaches is none of the above or a URL on
+a host other than the target's: a `const` to each of its uses; an element of an array, written in place or held in a
+`const`, to the array's `includes`, `indexOf` and `lastIndexOf`, and through `some`, `every`, `findIndex`,
+`findLastIndex`, `forEach`, `map`, `flatMap` and `for...of` to the binding each element is given to; a property of an
+object literal to where the object goes and each read of that property (through its key, or every binding of a
+destructuring that names it), where the object holds data alone (no method, accessor, `function` value or spread,
+which may read it through `this`) and only properties it writes itself are read otherwise; an argument (or a property
+of an object written as one) to the uses of the parameter in its place, in a function the file declares or one a module
+of the repository exports and the file imports, unless the code writes another value to that function; a function's
+result (a `return`, an arrow function's body) to every call of the function: a function declaration, a `const` holding
+one, a method of an object held in a `const` (`Route = { albums: () => "/albums" }`, called as `Route.albums()`), or
+one called on the spot. A `const` or a function a module exports is followed into the files of the repository that
+import it, by the name each import gives it, through modules that pass it on (up to 20) and `ns.name` of a namespace
+import; a file whose text holds the name but is code atlas does not parse (a Svelte, Vue or Astro component, MDX,
+HTML), an import of that name from a module atlas does not resolve, a module loaded with `import()` or `require()`, a
+namespace used whole, a default export, `export * as`, and the files `exclude` leaves out (which are not looked at)
+leave it as it is read. So do a `let`, a function `async` or a generator, a parameter read through `arguments` or a rest
+parameter (in an iteration's function, anywhere), an element or a function used any other way (passed on, spread,
+found with `find`, `call`ed), a key no code reads, and a binding or function no code uses. `homePath()` used only as
+`<Route path>` and `<Redirect to>` is therefore no request, and one also used as a form's `action` still is.
+`new URL(path, base)` (the global URL) resolves a root-relative path against the base's
+origin, with none of its path, so the configured `prefix` is not put before it: against the page's own address
+(`location`, its `href` or `origin`, `document.baseURI`, the global `origin`) or the request a Next.js middleware, proxy
+or route handler answers (the `url` or `nextUrl` of the first parameter of the function exported as `middleware`,
+`proxy`, the default or an HTTP method's name, or given to next-auth's `withAuth` where that is what the file
+exports), the path is read as a relative one; against a base the
+code spells out, in this file or another, at the host it names, as any absolute URL is; against any other value, whose
+host the code does not state, it is not read, and a limit names where. A URL that starts with a value (`` `${API}/orders` ``) may be absolute already and take no base; it is read as
+written. The base itself is no request, nor is a URL's
+leading constant of another file that names a host other than the target's (`DOCUMENTATION_BASE_URL =
+"https://docs.example.com"`), which the limit on other hosts names. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
 is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
@@ -315,7 +358,7 @@ Files Next.js serves with no handler of the app's are `implicit` surfaces, liste
 request holds it (what the URL Standard percent-encodes in a path, and `%`, percent-encoded: `a b.pdf` is `a%20b.pdf`),
 answering GET and HEAD; and `favicon.ico`, `robots.txt`, `manifest.json`, `manifest.webmanifest` at the root of `app/`
 and `sitemap.xml` in any segment, answering GET, HEAD and OPTIONS through the route handler Next.js makes of them. A request whose method is not read reaches such a file's GET; no rule expects a caller for one. A path ending
-in an extension of a file kept in repositories (`.png`, `.svg`, `.json`, `.txt`, `.xml`, `.css` and the like) is no call
+in an extension of a file kept in repositories (`.png`, `.svg`, `.json`, `.txt`, `.xml`, `.css`, `.log` and the like) is no call
 in any language, being a file path far more often than a request, so a request for such a file is not read. As Next.js does, a
 request is matched to the most specific route path first (a public file or a static name, then `[x]`, then
 catch-alls), and a method that route lacks matches nothing else; a request with a value in its path (`/editor/${id}`)
@@ -353,7 +396,21 @@ as Java's, Kotlin's, Dart's and Python's own exceptions are (`Exception("/x")`, 
 Kotlin of the standard library's throwing functions `error`, `TODO`, `require` and `check` (not a member of that name);
 a request written inside those parentheses (`throw ApiFailure(http.get("/x").status)`) is still read, and a limit names
 the exceptions such paths went to. Log and print calls are read as before: their names come from libraries, not the
-language. FastAPI
+language. A string written directly in the parentheses of a method of strings, in the file's language, that tests or
+cuts text, called on a receiver, is no request either: Java's, Kotlin's and the JVM's (`startsWith`, `contains`,
+`replace`, `removePrefix`, `substringBefore`...), Dart's (`endsWith`, `replaceFirst`, `replaceAll`, `contains`...; not
+`Uri.replace`, which builds a URL), Python's (`startswith`, `removeprefix`, `find`, `replace`...), C#'s (`StartsWith`,
+`Replace`...), Swift's (`hasPrefix`, `replacingOccurrences`...) and those of Go's `strings` package called on
+`strings`; type arguments (`helper<T, U>(`) and a keyword's parentheses (`if (...)`) are no call's. Nor, in Dart, a
+text property of
+Flutter's `InputDecoration` (`labelText`, `hintText`, `helperText`, `prefixText`, `suffixText`, `counterText`,
+`errorText`, `semanticCounterText`); nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
+`MapPut`, `MapDelete`, `MapPatch`, `MapMethods`, `MapGroup`, `MapFallback`, `MapHub`, `MapHealthChecks` and
+`MapBlazorHub` or of YARP's `MapForwarder` (a route pattern the application serves; the forwarder's `targetPath`, the
+path it sends its requests to, is read), the path `UseExceptionHandler` and `UseStatusCodePagesWithReExecute`
+re-execute a request at inside the application (each by position, or by its parameter's name where the argument is
+named: `pattern`, `prefix` for `MapGroup`, `path` for `MapBlazorHub`, `errorHandlingPath`, `pathFormat`), or an
+argument of `MapFallbackToFile` and `MapFallbackToPage`. FastAPI
 decorators, and `add_api_route(path, endpoint, methods=...)` (GET where `methods` is not given or None), are read from Python, with Starlette's converters (`{name:path}` is kept as written and takes any text,
 none included, after the `/` written before it, so `/x/{name:path}` matches `/x/` and `/x/a/b`; a request without
 that `/` (`/x`) gets there only by the redirect Starlette answers when no route, of any method, surely matches it,

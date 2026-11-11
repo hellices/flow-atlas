@@ -1,0 +1,13 @@
+{
+  "openapi": "3.0.1",
+  "info": { "title": "Catalog API", "version": "1.0" },
+  "paths": {
+    "/api/catalog/items/{id}/pic": {
+      "get": {
+        "operationId": "GetItemPicture",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

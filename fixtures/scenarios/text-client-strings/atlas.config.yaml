@@ -1,0 +1,18 @@
+# A NestJS server under the global prefix "api" and a Flutter app (Dart, read as text) whose API client joins each path
+# to the server's endpoint, the server URL with /api (immich's shape); an ASP.NET Core web app whose Program.cs
+# forwards product images to the catalog API, described by its committed OpenAPI document (eShop's shape).
+components:
+  - { name: server, path: server }
+  - { name: mobile, path: mobile }
+  - { name: webapp, path: webapp }
+  - { name: catalog-api, path: catalog-api }
+routes:
+  - component: server
+    files: ["server/src/controllers/**/*.ts"]
+    styles: [nest]
+    bootstrap: server/src/main.ts
+  - { component: catalog-api, openapi: catalog-api/Catalog.API.json, files: ["catalog-api/**/*.cs"] }
+calls:
+  - { from: mobile, to: server, files: ["mobile/lib/**/*.dart"], prefix: /api }
+  # Program.cs forwards /product-images/{id} to catalog-api's picture route.
+  - { from: webapp, to: catalog-api, files: ["webapp/Program.cs"] }

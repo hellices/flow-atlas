@@ -307,13 +307,9 @@
   ],
   "calls": [
     "mobile->server|* /.well-known/immich based @ mobile/lib/services/api.service.dart:141",
-    "mobile->server|* /Immich_log_{}.log based @ mobile/lib/services/immich_logger.service.dart:44",
     "mobile->server|* /api based @ mobile/lib/services/api.service.dart:120",
-    "mobile->server|* /api/api @ mobile/lib/presentation/actions/open_in_browser.action.dart:20",
-    "mobile->server|* /api/api @ mobile/lib/services/api.service.dart:120",
     "mobile->server|* /api/archive @ mobile/lib/presentation/actions/open_in_browser.action.dart:33",
     "mobile->server|* /api/favorites @ mobile/lib/presentation/actions/open_in_browser.action.dart:31",
-    "mobile->server|* /api/s @ mobile/lib/pages/library/shared_link/shared_link_edit.page.dart:140",
     "mobile->server|* /api/trash @ mobile/lib/presentation/actions/open_in_browser.action.dart:32",
     "mobile->server|* /assets based @ mobile/lib/repositories/upload.repository.dart:74",
     "mobile->server|* /assets based @ mobile/lib/services/background_upload.service.dart:408",
@@ -687,8 +683,7 @@
     "web->server|* /assets{} based @ web/src/lib/utils/file-uploader.ts:205",
     "web->server|* /download/archive{} based @ web/src/lib/utils/asset-utils.ts:56",
     "web->server|* /photos/{}{} based @ web/src/lib/utils/navigation.ts:48",
-    "web->server|GET /admin/database-backups/{} based @ web/src/lib/services/database-backups.service.ts:121",
-    "web->server|GET /api/api/v1/activate/{} @ web/src/lib/utils/license-utils.ts:27"
+    "web->server|GET /admin/database-backups/{} based @ web/src/lib/services/database-backups.service.ts:121"
   ],
   "edges": [
     "match mobile->server|* /.well-known/immich@mobile/lib/services/api.service.dart:141 -> server|GET /.well-known/immich (text)",
@@ -847,13 +842,9 @@
   "findings": [
     "FA001|server|GET /.well-known/webauthn",
     "FA001|server|GET /custom.css",
-    "FA002|mobile->server|* /Immich_log_{}.log",
     "FA002|mobile->server|* /api",
-    "FA002|mobile->server|* /api/api",
-    "FA002|mobile->server|* /api/api",
     "FA002|mobile->server|* /api/archive",
     "FA002|mobile->server|* /api/favorites",
-    "FA002|mobile->server|* /api/s",
     "FA002|mobile->server|* /api/trash",
     "FA002|mobile->server|* /assets",
     "FA002|mobile->server|* /assets",
@@ -920,8 +911,7 @@
     "FA002|web->server|* /assets{}",
     "FA002|web->server|* /download/archive{}",
     "FA002|web->server|* /photos/{}{}",
-    "FA002|web->server|GET /admin/database-backups/{}",
-    "FA002|web->server|GET /api/api/v1/activate/{}"
+    "FA002|web->server|GET /admin/database-backups/{}"
   ],
   "limits": [
     "calls mobile->server: URLs to apps.apple.com (mobile/lib/constants/constants.dart:45), play.google.com (mobile/lib/constants/constants.dart:46), github.com (mobile/lib/constants/constants.dart:47), 10.1.15.216:2283 (mobile/lib/widgets/forms/login/login_form.dart:192) are not read as requests to server; set origins.server if that is its host",
@@ -1088,6 +1078,7 @@
     "calls web->server: * /api/tags{} at web/src/lib/route.ts:127 fits routes of GET, POST and PUT; its method is not read, so it is matched to none of them",
     "calls web->server: * /api/workflows at web/src/lib/route.ts:142 fits routes of GET and POST; its method is not read, so it is matched to none of them",
     "calls web->server: * /api/workflows/{} at web/src/lib/route.ts:143 fits routes of DELETE, GET, PATCH and PUT; its method is not read, so it is matched to none of them",
+    "calls web->server: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: web/src/lib/utils/license-utils.ts:27",
     "calls web->server: URLs to docs.immich.app (web/src/lib/route.ts:172) are not read as requests to server; set origins.server if that is its host"
   ]
 }

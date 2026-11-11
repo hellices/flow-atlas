@@ -157,3 +157,44 @@ export function resolvePath(written: string, exists: (file: string) => boolean):
   const candidates = [...substituted, written, ...(explicit ? [] : [...extensions.map((e) => `${written}.${e}`), ...extensions.map((e) => (written ? `${written}/index.${e}` : `index.${e}`))])];
   return candidates.find((c) => /\.(m|c)?[jt]sx?$/.test(c) && exists(c));
 }
+
+const identifiersByFile = new WeakMap<ts.SourceFile, Map<string, ts.Identifier[]>>();
+
+/**
+ * Whether an identifier refers to a binding where it is written: not a property's or a member's name, a key a
+ * destructuring or an import takes, the name an export gives, a label, an attribute's or an intrinsic element's name,
+ * nor a name in a type.
+ */
+export function isReference(id: ts.Identifier): boolean {
+  const p = id.parent;
+  if ((ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id)) return false;
+  if ((ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p) || ts.isEnumMember(p)) && p.name === id) return false;
+  if ((ts.isBindingElement(p) || ts.isImportSpecifier(p)) && p.propertyName === id) return false;
+  // `export { local as name }` refers to `local`; `export { name } from "m"` to nothing of this file.
+  if (ts.isExportSpecifier(p)) return !p.parent.parent.moduleSpecifier && (p.propertyName ?? p.name) === id;
+  if (ts.isJsxAttribute(p) || ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
+  if ((ts.isJsxOpeningElement(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxClosingElement(p)) && p.tagName === id && /^[a-z]/.test(id.text)) return false;
+  for (let a: ts.Node = p; !ts.isSourceFile(a); a = a.parent) {
+    if (ts.isTypeNode(a) && !ts.isExpressionWithTypeArguments(a)) return false;
+    if (ts.isStatement(a)) break;
+  }
+  return true;
+}
+
+/** The identifiers of its file that refer to the binding a name declares, the name itself left out. */
+export function references(name: ts.Identifier): ts.Identifier[] {
+  const sf = name.getSourceFile();
+  let index = identifiersByFile.get(sf);
+  if (!index) {
+    const built = new Map<string, ts.Identifier[]>();
+    const visit = (n: ts.Node): void => {
+      if (ts.isIdentifier(n)) (built.get(n.text) ?? built.set(n.text, []).get(n.text)!).push(n);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    identifiersByFile.set(sf, built);
+    index = built;
+  }
+  const declaration = name.parent;
+  return (index.get(name.text) ?? []).filter((id) => id !== name && isReference(id) && declarationOf(id) === declaration);
+}

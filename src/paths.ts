@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 export const HOLE = "{}";
 
 const PATHLIKE = /^\/[A-Za-z0-9_\-.~{}:@%]*(\/[A-Za-z0-9_\-.~{}:@%]*)*\/?$/;
-const FILE_EXT = /\.(ts|tsx|js|mjs|cjs|json|ya?ml|md|png|jpe?g|svg|gif|webp|css|html|kt|kts|py|txt|xml|gradle)$/i;
+const FILE_EXT = /\.(ts|tsx|js|mjs|cjs|json|ya?ml|md|png|jpe?g|svg|gif|webp|css|html|kt|kts|py|txt|xml|gradle|log)$/i;
 
 export interface CallPath {
   path: string;

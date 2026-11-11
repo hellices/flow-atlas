@@ -1,0 +1,13 @@
+# A Koa API whose @koa/router routers are read in the express style under /api; a React app on React Router 5 whose
+# API client puts "/api" before each path (outline's shape); a React front on React Router 7 that translates with
+# Lingui and links to a documentation site whose address a shared package holds (twenty's shape).
+components:
+  - { name: server, path: server }
+  - { name: app, path: app }
+  - { name: front, path: front }
+  - { name: shared, path: shared }
+routes:
+  - { component: server, files: ["server/routes/api/**/*.ts"], styles: [express], receivers: [router], prefix: /api }
+calls:
+  - { from: app, to: server, files: ["app/**/*.ts", "app/**/*.tsx"], prefix: /api }
+  - { from: front, to: server, files: ["front/src/**/*.ts", "front/src/**/*.tsx"] }
