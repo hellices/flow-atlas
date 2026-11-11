@@ -273,6 +273,40 @@ export class Clients {
   }
 
   /**
+   * The method of a call through openapi-fetch's path-based client (`createPathBasedClient(options)`,
+   * `wrapAsPathBasedClient(client)`): `client["/users/{id}"].GET(init)` forwards to the client's `GET` with that path
+   * (openapi-fetch, PathCallForwarder). Undefined anywhere else.
+   */
+  pathBasedMethod(node: ts.Node): string | undefined {
+    const value = valuePlace(node);
+    const access = value.parent;
+    if (!ts.isElementAccessExpression(access) || access.argumentExpression !== value || access.questionDotToken) return undefined;
+    const method = access.parent;
+    if (!ts.isPropertyAccessExpression(method) || method.expression !== access || !OPENAPI_FETCH_METHODS.has(method.name.text)) return undefined;
+    const call = method.parent;
+    if (!ts.isCallExpression(call) || call.expression !== method) return undefined;
+    return this.pathBased(access.expression, 0) ? method.name.text : undefined;
+  }
+
+  /** Whether an expression is a path-based client openapi-fetch makes, followed through `const`s and imports. */
+  private pathBased(e: ts.Expression, depth: number): boolean {
+    const u = unwrap(e);
+    if (depth > DEPTH) return false;
+    if (ts.isCallExpression(u)) {
+      const callee = unwrap(u.expression);
+      if (!ts.isIdentifier(callee)) return false;
+      const name = importedFrom(callee, ["openapi-fetch"]);
+      return name === "createPathBasedClient" || name === "wrapAsPathBasedClient";
+    }
+    if (!ts.isIdentifier(u)) return false;
+    const d = this.declarationThrough(u);
+    if (!d || !ts.isVariableDeclaration(d) || !d.initializer) return false;
+    const list = d.parent;
+    if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+    return this.pathBased(d.initializer, depth + 1);
+  }
+
+  /**
    * The request a URL is the URL of, made through a client instance: the path argument of its methods (axios's, Ky's,
    * openapi-fetch's) or of the instance called; the `url` of an axios request config; the URL an RTK Query endpoint's
    * `query` returns. Undefined anywhere else.

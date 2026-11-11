@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
-import { extractCalls } from "../src/extract/calls.js";
+import { extractCalls, textCalls } from "../src/extract/calls.js";
 import type { Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -293,6 +293,84 @@ describe("what reads a method only in code", () => {
       { calls: ["* /x @2"], limits: [] },
       { calls: ["* /x @5"], limits: [] },
       { calls: ["GET /a @1"], limits: [] },
+    ]);
+  });
+});
+
+describe("the review round's cases", () => {
+  it("follows a Request into another Request and leaves one held in a let unread, and reads its URL at the root or the base", () => {
+    const code = lines(
+      'let held = new Request("/users", { method: "POST" });',
+      'fetch(held, { method: "PUT" });',
+      'fetch(new Request(new Request("/api/users"), { method: "DELETE" }));',
+      'fetch(new Request("/", { method: "POST" }));',
+      'const base = new Request("/api/");',
+      "fetch(base);",
+    );
+    expect(read({ "web/a.ts": code }, { base: "/api/", join: "resolve" })).toEqual({ calls: ["* /users @1", "DELETE /api/users @3", "GET /api @5", "POST / @4"], limits: [] });
+  });
+
+  it("reads a URLRequest sent before its method is set as `*`", () => {
+    const code = lines("func a() async throws {", '  var request = URLRequest(url: URL(string: "/users")!)', "  _ = try await session.data(for: request)", '  request.httpMethod = "POST"', "}");
+    expect(read({ "web/A.swift": code })).toEqual({ calls: ["* /users @2"], limits: [] });
+  });
+
+  it("reads a Ktor block given as an argument, and leaves one held in a value `*`", () => {
+    const code = lines(
+      "import io.ktor.client.request.request",
+      'suspend fun a() = client.request("/a", block = { method = HttpMethod.Post })',
+      'suspend fun b() = client.request("/b", { method = HttpMethod.Put })',
+      'suspend fun c() = client.request("/c", block = configure)',
+      'suspend fun d() = client.request("/d", configure)',
+    );
+    expect(read({ "web/A.kt": code })).toEqual({ calls: ["* /c @4", "* /d @5", "POST /a @2", "PUT /b @3"], limits: [] });
+  });
+
+  it("reads PostForm only on net/http or a client the file declares an http.Client", () => {
+    const code = lines(
+      "package users",
+      'import "net/http"',
+      "var client = &http.Client{}",
+      'func a() { http.PostForm(base+"/a", v); client.PostForm(base+"/b", v); http.DefaultClient.PostForm(base+"/c", v); form.PostForm(base+"/d", v) }',
+    );
+    expect(read({ "web/a.go": code })).toEqual({ calls: ["* /d @4", "POST /a @4", "POST /b @4", "POST /c @4"], limits: [] });
+    expect(read({ "web/b.go": 'package users\nfunc a() { http.PostForm(base+"/a", v) }' })).toEqual({ calls: ["* /a @2"], limits: [] });
+  });
+
+  it("reads no method for an OkHttp URL a later url(...) replaces", () => {
+    expect(read({ "web/A.kt": 'val r = Request.Builder().url("/old").url("/new").post(body).build()' })).toEqual({ calls: ["* /old @1", "POST /new @1"], limits: [] });
+  });
+
+  it("reads Python imports with a trailing comment and in parentheses", () => {
+    const code = lines("import requests as rq  # the HTTP client", "from httpx import (", "    Request as R,  # built and sent", ")", 'rq.Request("POST", f"{API}/a")', 'R("PUT", f"{API}/b")');
+    expect(read({ "web/a.py": code })).toEqual({ calls: ["POST /a @5", "PUT /b @6"], limits: [] });
+  });
+
+  it("reads the method of openapi-fetch's path-based client, followed through its imports", () => {
+    const client = lines(
+      'import createClient, { createPathBasedClient, wrapAsPathBasedClient } from "openapi-fetch";',
+      'export const client = createClient({ baseUrl: "/api/" });',
+      "export const wrapped = wrapAsPathBasedClient(client);",
+      'export const made = createPathBasedClient({ baseUrl: "/api/" });',
+    );
+    const calls = lines(
+      'import { made, wrapped } from "./client";',
+      'export const a = () => wrapped["/users/{id}"].GET({ params: { path: { id: 1 } } });',
+      'export const b = () => made["/users"].POST({ body: {} });',
+      'export const c = () => other["/items"].GET();',
+    );
+    expect(read({ "web/client.ts": client, "web/calls.ts": calls }, { prefix: "/api" })).toEqual({
+      calls: ["* /api/items @4", "GET /api/users/{id} @2", "POST /api/users @3"],
+      limits: ["calls web->api: the configured prefix /api, written as a value (web/client.ts:4), is the client's base, not a request"],
+    });
+  });
+
+  it("scans no argument in f() and none after a trailing comma", () => {
+    const scan = textCalls("A.kt", 'f(); g(a,); h("x", b)');
+    expect([...scan.frames.values()].map((f) => [f.name, f.parts.length])).toEqual([
+      ["f", 0],
+      ["g", 1],
+      ["h", 2],
     ]);
   });
 });

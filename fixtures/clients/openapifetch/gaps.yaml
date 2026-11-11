@@ -1,11 +1,9 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-missing:
-  - { call: "GET /api/v1/users/{}/items/{}", reason: "the method of a path-based client's call (`pathClient[\"/users/{userId}/items/{itemId}\"].GET(...)`, from `wrapAsPathBasedClient`) is not read: the path in brackets is read with `*`, and nothing says so" }
 extra:
   - { call: "* /api/v1/health", reason: "the keys of the `paths` interface openapi-typescript generates (src/api/v1.d.ts) are read as requests: a path in a type names no request" }
   - { call: "* /api/v1/items", reason: "a key of the generated `paths` interface read as a request" }
   - { call: "* /api/v1/items/{}", reason: "a key of the generated `paths` interface read as a request" }
   - { call: "* /api/v1/items/{}/archive", reason: "a key of the generated `paths` interface read as a request, a path the app does not call" }
   - { call: "* /api/v1/reports/{}", reason: "a key of the generated `paths` interface read as a request" }
-  - { call: "* /api/v1/users/{}/items/{}", reason: "a key of the generated `paths` interface read as a request, and the path-based client's call read with its method unread" }
+  - { call: "* /api/v1/users/{}/items/{}", reason: "a key of the generated `paths` interface read as a request" }

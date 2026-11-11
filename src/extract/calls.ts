@@ -154,23 +154,32 @@ const REQUEST = new Set(["Request"]);
 
 /**
  * The method of a `new Request(url, init)`: its init's, GET without one (Fetch standard, the Request constructor);
- * where fetch is handed it, directly or through a `const`, with an init of its own, that init's method replaces it.
+ * where it is handed, directly or through a `const`, to fetch or to another `new Request` with an init of its own, that
+ * init's method replaces it. A Request held in a `let` or `var`, which may be another by the time it is sent, is `*`.
  */
-function requestMethod(request: ts.NewExpression): string {
-  const own = fetchMethod(request.arguments?.[1]);
+function requestMethod(request: ts.NewExpression, depth = 0): string {
+  return sentMethod(request, fetchMethod(request.arguments?.[1]), depth);
+}
+
+/** The method a Request whose own method is `own` is sent with, where the code hands it on. */
+function sentMethod(request: ts.NewExpression, own: string, depth: number): string {
   const place = valuePlace(request);
   const decl = place.parent;
-  const held = ts.isVariableDeclaration(decl) && decl.initializer === place && ts.isIdentifier(decl.name) && (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) !== 0;
-  const uses = held ? references(decl.name).filter((r) => r !== decl.name && declarationOf(r) === decl).map(valuePlace) : [place];
+  const declared = ts.isVariableDeclaration(decl) && decl.initializer === place;
+  if (declared && (!ts.isIdentifier(decl.name) || (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) === 0)) return "*";
+  const uses = declared ? references(decl.name as ts.Identifier).filter((r) => r !== decl.name && declarationOf(r) === decl).map(valuePlace) : [place];
   let method: string | undefined;
   for (const use of uses) {
     const call = use.parent;
-    if (!ts.isCallExpression(call) || call.arguments[0] !== use) continue;
+    if (!(ts.isCallExpression(call) || ts.isNewExpression(call)) || call.arguments?.[0] !== use) continue;
     const callee = unwrap(call.expression);
     const m = member(callee);
-    if (!(isGlobal(callee, FETCH) || (m?.name === "fetch" && isGlobal(unwrap(m.receiver), FETCH_GLOBALS)))) continue;
-    const init = call.arguments[1] && unwrap(call.arguments[1]);
-    const sent = init === undefined ? own : ts.isObjectLiteralExpression(init) ? (initMethod(init) ?? own) : "*";
+    const wrapped = ts.isNewExpression(call) && isGlobal(callee, REQUEST);
+    if (!wrapped && !(ts.isCallExpression(call) && (isGlobal(callee, FETCH) || (m?.name === "fetch" && isGlobal(unwrap(m.receiver), FETCH_GLOBALS))))) continue;
+    const init = call.arguments?.[1] && unwrap(call.arguments[1]);
+    let sent = init === undefined ? own : ts.isObjectLiteralExpression(init) ? (initMethod(init) ?? own) : "*";
+    // `new Request(request, init)` is a Request of its own, sent where that one is.
+    if (wrapped) sent = depth < 4 ? sentMethod(call, sent, depth + 1) : "*";
     if (method !== undefined && method !== sent) return "*";
     method = sent;
   }
@@ -211,7 +220,7 @@ function rootRequest(node: ts.Node, raw: string, wrappers: CallSource["wrappers"
 
 /**
  * Whether a string is in a request's place: the URL, the first argument, of a call that requests or navigates (the
- * global fetch, a call named after an HTTP method, a configured wrapper, Next.js's navigations, the window Location's
+ * global fetch, the global Request constructor, a call named after an HTTP method, a configured wrapper, Next.js's navigations, the window Location's
  * `assign` and `replace`); a JSX `href`, `action`, `formAction` or `src`; a URL the window's Location is set to; a
  * client router's navigation that loads the document.
  */
@@ -221,6 +230,8 @@ function requestPosition(node: ts.Node, wrappers: CallSource["wrappers"] = []): 
   const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(holder)) return /^(href|action|formAction|src)$/.test(holder.name.getText());
   const place = argumentPlace(value);
+  // The global Request constructor's URL is the request a fetch of it sends.
+  if (place?.at === 0 && ts.isNewExpression(place.call) && isGlobal(place.callee, REQUEST)) return true;
   if (!place || place.at !== 0 || !ts.isCallExpression(place.call)) return false;
   if (navigates(place.callee) || wrappers.some((w) => w.name === place.call.expression.getText().replace(/\s+/g, ""))) return true;
   if (VERBS.has(place.name.toLowerCase())) return true;
@@ -1891,7 +1902,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
-      method: parsed.method ?? (navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers)),
+      method: parsed.method ?? clients.pathBasedMethod(node) ?? (navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers)),
       path: parsed.path,
       based: parsed.based,
       ...(parsed.slash ? { slash: true as const } : {}),
@@ -2214,7 +2225,8 @@ export interface Argument {
 
 /**
  * A bracket in code read as text: a call's parentheses (with the callee written before them), or other parentheses,
- * square brackets or braces. `parts` are the spans of its comma-separated parts, its arguments where it is a call.
+ * square brackets or braces. `parts` are the spans of its comma-separated parts, its arguments where it is a call: none
+ * for `f()`, and no empty one after a trailing comma.
  */
 export interface Frame {
   open: "(" | "[" | "{";
@@ -2346,7 +2358,8 @@ export function textCalls(file: string, text: string): TextCalls {
       const at = frames.map((f) => f.open).lastIndexOf(opener[c] as Frame["open"]);
       if (at >= 0) {
         const frame = frames[at]!;
-        frame.parts.push({ start: frame.from, end: i });
+        // `f()` has no argument, and a trailing comma (`f(a,)`) opens none.
+        if (text.slice(frame.from, i).trim()) frame.parts.push({ start: frame.from, end: i });
         frame.close = i;
         frames.length = at;
       }

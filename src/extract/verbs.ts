@@ -112,17 +112,17 @@ export class TextMethods {
         }
         if (name === "uri" && first) return this.springMethod(f);
         if (name === "url" && first) return this.okHttpMethod(f);
-        if (this.lang === "kotlin" && name === "request" && (slot === 0 ? label === undefined || label === "urlString" : label === "urlString") && this.imports(KTOR_REQUEST)) return this.ktorMethod(f, "GET");
+        if (this.lang === "kotlin" && name === "request" && (slot === 0 ? label === undefined || label === "urlString" : label === "urlString") && this.imports(KTOR_REQUEST)) return this.ktorMethod(f, "GET", 1);
         if (this.lang === "kotlin" && name === "submitForm" && (slot === 0 ? label === undefined || label === "url" : label === "url") && this.imports(KTOR_FORMS)) {
           const encoded = this.value(f, "encodeInQuery") ?? (this.label(f, 2) === undefined ? this.part(f, 2) : undefined);
           const method = encoded === undefined || encoded === "false" ? "POST" : encoded === "true" ? "GET" : "*";
-          return method === "*" ? "*" : this.ktorMethod(f, method);
+          return method === "*" ? "*" : this.ktorMethod(f, method, 3);
         }
         return undefined;
       }
       case "go": {
         const http = this.goName("net/http");
-        if (f.method && name === "PostForm") return first ? "POST" : STOP;
+        if (f.method && name === "PostForm" && http !== undefined && (f.receiver === http || this.goClient(f, http))) return first ? "POST" : STOP;
         if (f.method && f.receiver !== undefined && f.receiver === http && (name === "NewRequest" || name === "NewRequestWithContext")) {
           const at = name === "NewRequest" ? 0 : 1;
           return slot === at + 1 ? this.goMethod(this.part(f, at)) : STOP;
@@ -203,6 +203,8 @@ export class TextMethods {
       last = n;
     }
     if (last.name !== "build") return "*";
+    // A later `url(...)` replaces this one: the request is not sent to it.
+    if (chain.some((c) => c !== url && c.name === "url" && c.at > url.at)) return "*";
     let method = "GET";
     for (const c of chain.slice(1, -1)) {
       const name = c.name ?? "";
@@ -216,12 +218,24 @@ export class TextMethods {
   }
 
   /**
-   * Ktor's method for a request whose builder block may set it: the `method = HttpMethod.X` the trailing block states
-   * at its top, else `fallback` where the block names no `method` at all; `*` otherwise.
+   * Ktor's method for a request whose builder block may set it: the `method = HttpMethod.X` the block states at its top,
+   * else `fallback` where the block names no `method` at all; `*` otherwise. `position` is the block parameter's.
    */
-  private ktorMethod(f: Frame, fallback: string): string {
-    const after = /^\s*\{/.exec(this.text.slice((f.close ?? this.text.length) + 1));
-    const block = after ? this.scan.frames.get((f.close ?? 0) + after[0].length) : undefined;
+  private ktorMethod(f: Frame, fallback: string, position: number): string {
+    // The block is the trailing lambda, or the argument `block` (by name or in its place): an inline lambda is read,
+    // a builder held in a value may set any method.
+    const index = f.parts.findIndex((_, i) => this.label(f, i) === "block");
+    const at = index >= 0 ? index : this.label(f, position) === undefined && this.part(f, position) !== undefined ? position : -1;
+    let block: Frame | undefined;
+    if (at >= 0) {
+      const p = f.parts[at]!;
+      const value = /^\s*(?:block\s*=\s*)?\{/.exec(this.text.slice(p.start, p.end));
+      block = value ? this.scan.frames.get(p.start + value[0].length - 1) : undefined;
+      if (!block || block.close === undefined || this.text.slice(block.close + 1, p.end).trim()) return "*";
+    } else {
+      const after = /^\s*\{/.exec(this.text.slice((f.close ?? this.text.length) + 1));
+      block = after ? this.scan.frames.get((f.close ?? 0) + after[0].length) : undefined;
+    }
     if (!block) return fallback;
     const code = this.code().slice(block.at + 1, block.close ?? this.text.length);
     const sets = [...code.matchAll(/(?<![\w.$])method\s*=(?!=)\s*([^\n;]*)/g)];
@@ -246,8 +260,9 @@ export class TextMethods {
 
   /**
    * The method of a `URLRequest(url:)`: GET where it is handed on as it is, or held in a `let`; where a `var` holds it,
-   * the one `httpMethod` (or Alamofire's `method`) assignment its block makes, GET where it makes none. A request
-   * passed `inout`, assigned again or given a method more than once, or in a nested block, is `*`.
+   * the one `httpMethod` (or Alamofire's `method`) assignment its block makes before any other use of it, GET where it
+   * makes none. A request used before its method is set, passed `inout`, assigned again, given a method more than once
+   * or in a nested block, is `*`.
    */
   private urlRequestMethod(f: Frame): string {
     const code = this.code();
@@ -266,16 +281,34 @@ export class TextMethods {
     const uses = [...rest.matchAll(new RegExp(`(?<![\\w$.])(&?)${escapeRegExp(name)}(?![\\w$])(\\s*\\.\\s*(?:httpMethod|method)\\s*=(?!=)\\s*([^\\n;]*)|\\s*=(?!=))?`, "g"))];
     let method = "GET";
     let set = 0;
+    let used = false;
     for (const u of uses) {
       if (u[1] || (u[2] && u[3] === undefined)) return "*";
-      if (u[3] === undefined) continue;
-      if (++set > 1 || this.enclosingBlock(offset + u.index) !== block) return "*";
+      if (u[3] === undefined) {
+        used = true;
+        continue;
+      }
+      // A request sent before its method is set is sent with the one it had then.
+      if (used || ++set > 1 || this.enclosingBlock(offset + u.index) !== block) return "*";
       // The value as written: the code searched has its strings blanked.
       const from = offset + u.index + u[0].length - u[3].length;
       const value = this.text.slice(from, from + u[3].length).trim();
       method = literalMethod(value, true) ?? swiftMethod(value) ?? "*";
     }
     return method;
+  }
+
+  /**
+   * Whether a Go method call is made on net/http's `DefaultClient` or on a name the file declares an `http.Client`
+   * (`client := &http.Client{}`, `var client = http.Client{...}`, `client *http.Client` in a parameter or a field).
+   */
+  private goClient(f: Frame, http: string): boolean {
+    if (f.dot !== undefined && new RegExp(`(?<![\\w.])${escapeRegExp(http)}\\s*\\.\\s*DefaultClient\\s*$`).test(this.code().slice(Math.max(0, f.dot - 200), f.dot))) return true;
+    const receiver = f.receiver;
+    if (receiver === undefined) return false;
+    const name = escapeRegExp(receiver);
+    const type = `${escapeRegExp(http)}\\s*\\.\\s*Client\\b`;
+    return new RegExp(`(?<![\\w.])${name}\\s*(?::=|=)\\s*&?\\s*${type}\\s*\\{|(?<![\\w.])${name}\\s+\\*?\\s*${type}`).test(this.code());
   }
 
   /** Go's method argument: a literal, or the `MethodX` constant of net/http or resty. */
@@ -313,7 +346,7 @@ export class TextMethods {
   }
 
   private empty(f: Frame): boolean {
-    return f.parts.length <= 1 && this.part(f, 0) === undefined;
+    return f.parts.length === 0;
   }
 
   /** The call a method call is made on, where it is a call's result: `a()` for `a().b()`, also across lines. */
@@ -440,8 +473,8 @@ export class TextMethods {
           const i = /^\s*(requests|httpx)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (i) modules.set(i[2] ?? i[1]!, i[1]!);
         }
-      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx)[ \t]+import[ \t]+\(?([^\n)]+)/g))
-        for (const item of m[2]!.split(",")) {
+      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
+        for (const item of (m[2] ?? m[3]!).split(",")) {
           const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (i) names.set(i[2] ?? i[1]!, i[1]!);
         }

@@ -645,11 +645,13 @@ URL argument the literal is, the URL also built inside it (`http.get(Uri.parse("
   `method(HttpMethod.X)` before `.uri(...)`;
 - OkHttp: a `Request.Builder()` chain through `.url(...)` to `.build()` sends the method of its last `get()`, `head()`,
   `post(body)`, `put(body)`, `patch(body)`, `delete()` or `method("PATCH", body)`, and GET where it calls none; a chain
-  with another call, or one that does not reach `.build()`, is `*`;
+  with another call, one that does not reach `.build()`, or a URL a later `.url(...)` replaces, is `*`;
 - Ktor (with `io.ktor.client.request.request` or `submitForm` imported): `client.request(url) { method =
-  HttpMethod.Patch }`, GET where the block names no `method`; `submitForm`, POST, or GET with `encodeInQuery = true`;
+  HttpMethod.Patch }`, the block trailing or given as the `block` argument, GET where it names no `method`, `*` where
+  the block is a value; `submitForm`, POST, or GET with `encodeInQuery = true`;
 - Go: net/http's `NewRequest(method, url, body)` and `NewRequestWithContext(ctx, method, url, body)`, by the name the
-  file imports net/http under, and `PostForm`; resty's `Execute(method, url)`; the method a literal or the `MethodX`
+  file imports net/http under, and `PostForm` on it, on its `DefaultClient` or on a name the file declares an
+  `http.Client`; resty's `Execute(method, url)`; the method a literal or the `MethodX`
   constant of net/http or resty, by the names the file imports them under;
 - Python: `request(method, url)` and `build_request(method, url)` on any receiver (Requests, HTTPX, urllib3, aiohttp
   and http.client take the method first), and the `Request(method, url)` of Requests and HTTPX, by the names the file
@@ -659,8 +661,8 @@ URL argument the literal is, the URL also built inside it (`http.get(Uri.parse("
   Options(method: 'PATCH'))`, `*` without one, since the Dio's own options may set it;
 - Swift: Alamofire's `request(url, method: .patch)`, and `AF.request(url)`, GET; a `URLRequest(url:)` handed on as it
   is, or held in a `let`, is GET; held in a `var`, it takes the one `httpMethod` (or Alamofire's `method`) its block
-  assigns, GET where it assigns none, and `*` where it is assigned more than once, in a nested block, again as a whole
-  or passed `inout`; URLSession's `data(from:)`, `bytes(from:)` and `download(from:)` are GET;
+  assigns, GET where it assigns none, and `*` where it is used before that, assigned more than once, in a nested
+  block, again as a whole or passed `inout`; URLSession's `data(from:)`, `bytes(from:)` and `download(from:)` are GET;
 - C#: HttpClient's `GetAsync`, `GetStringAsync`, `GetStreamAsync`, `GetByteArrayAsync`, `PostAsync`, `PutAsync`,
   `PatchAsync`, `DeleteAsync` and System.Net.Http.Json's `GetFromJsonAsync`, `PostAsJsonAsync`, `PutAsJsonAsync`,
   `PatchAsJsonAsync`, `DeleteFromJsonAsync`; `new HttpRequestMessage(HttpMethod.Patch, uri)` or
@@ -668,7 +670,9 @@ URL argument the literal is, the URL also built inside it (`http.get(Uri.parse("
 
 Elsewhere an `HttpMethod.Post` written in the same statement on the line as the URL gives the method. In TypeScript and
 JavaScript, a `new Request(url, init)` handed to fetch has its init's method (GET without one), unless fetch's own init
-sets another, and a Ky instance's `query` sends QUERY.
+or another `new Request(request, init)` sets another; one held in a `let` or `var` is `*`. A Ky instance's `query`
+sends QUERY, and a call through openapi-fetch's path-based client (`createPathBasedClient`, `wrapAsPathBasedClient`:
+`client["/users/{id}"].GET(init)`) the method it is named for.
 
 ### Generated clients
 
