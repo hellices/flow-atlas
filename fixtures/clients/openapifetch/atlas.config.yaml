@@ -2,5 +2,6 @@ components:
   - { name: client, path: . }
   - { name: api, path: server }
 calls:
-  # The client's base URL (`createClient({ baseUrl: "/api/v1/" })`) is the prefix of every path the app passes to it.
+  # atlas reads the client's base URL where src/api/client.ts creates it (`createClient({ baseUrl: "/api/v1/" })`); the
+  # prefix is for what is no call on that client, the path-based client `wrapAsPathBasedClient` makes of it.
   - { from: client, to: api, files: ["src/api/**/*.ts"], prefix: /api/v1 }

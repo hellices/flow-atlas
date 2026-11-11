@@ -11,13 +11,13 @@ missing:
   - { call: "GET /catalog/items/{}", reason: "the method of a client's `get(Uri.http(host, path))` is not read, and nothing says so" }
   - { call: "PATCH /catalog/items/{}", reason: "the method of a client's `patch(Uri.http(host, path))` is not read, and nothing says so" }
   - { call: "DELETE /catalog/items/{}/reviews/{}", reason: "the method of a client's `delete(Uri.http(host, path))` is not read, and nothing says so" }
-  - { call: "POST /catalog/items/{}/reviews", reason: "a path `Uri.http` is given without its leading `/` (`'catalog/items/$id/reviews'`, as the package's README writes one) is not read, and nothing says so" }
+  - { call: "POST /catalog/items/{}/reviews", reason: "the method of a client's `post(Uri.http(host, path))` is not read (the path, given without its leading `/` as the package's README writes one, is), and nothing says so" }
 extra:
-  - { call: "* /api", reason: "the base URL the service builds (`'$origin/api'`) read as a request" }
   - { call: "* /users/{}", reason: "the requests to `'$baseUrl/users/$id'` read with their methods unread and without the base URL's path" }
   - { call: "* /users", reason: "`http.post(Uri.parse('$baseUrl/users'))` read with its method unread and without the base URL's path" }
   - { call: "* /users/{}/avatar", reason: "`http.read(Uri.parse('$baseUrl/users/$id/avatar'))` read with its method unread and without the base URL's path" }
   - { call: "* /api/users", reason: "`http.delete(Uri.parse(baseUrl + '/users/' + id))` read with its method unread and without the value after the path" }
   - { call: "* /catalog/items", reason: "a client's `get(Uri.http(...))` read with its method unread" }
   - { call: "* /catalog/items/{}", reason: "a client's `get` and `patch` of `Uri.http(...)` read with their methods unread" }
+  - { call: "* /catalog/items/{}/reviews", reason: "a client's `post(Uri.http(host, 'catalog/items/$id/reviews'))` read with its method unread" }
   - { call: "* /catalog/items/{}/reviews/{}", reason: "a client's `delete(Uri.http(...))` read with its method unread" }

@@ -20,6 +20,5 @@ extra:
   - { call: "* /sessions", reason: "`Post(\"/sessions\")` read with its method unread" }
   - { call: "* /users/{}/avatars/{}", reason: "`Get(\"/users/{id}/avatars/{file}\")` read with its method unread" }
   - { call: "* /{}/reports/{}", reason: "`/{version}/reports/{year}` read with the client's own `version` path parameter as an argument, its method unread" }
-  - { call: "* /billing/v1/billing/v1", reason: "the billing client's base path (`gatewayURL + \"/billing/v1\"` in `SetBaseURL`) is read as a request, with the configured `prefix` put before it once more" }
   - { call: "* /billing/v1/invoices/{}", reason: "`Get(\"/invoices/{invoiceId}\")` read with its method unread" }
   - { call: "* /billing/v1/invoices/{}/lines/{}/refund", reason: "`Execute(resty.MethodPost, fmt.Sprintf(...))` read with its method unread" }

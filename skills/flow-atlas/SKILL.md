@@ -164,7 +164,9 @@ through a sample of findings with a person. Only then record the baseline.
   requests and come back as FA002. React Router's and TanStack Router's navigations are known by their import and are
   not read as requests.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
-  client's base path (`calls[].prefix`, from a Dio `baseUrl` or an `axios.create({ baseURL })`), the path an Express,
+  client's base (`calls[].base` with how it joins a path, `join`, or `calls[].prefix`, from a Dio `baseUrl` or an
+  `axios.create({ baseURL })` given a value atlas does not read; and, in code read as text, `calls[].receivers`, the
+  names the client is called on), the path an Express,
   @koa/router or Hono router or a Fastify plugin is mounted at or a FastAPI router included at (`routes[].mounts`), a Nest global prefix set from a variable
   (`routes[].prefix`), a registration helper's method (`routes[].calls[].method`), the `data-*`
   attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends

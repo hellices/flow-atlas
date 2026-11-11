@@ -2,7 +2,6 @@ components:
   - { name: client, path: . }
   - { name: api, path: server }
 calls:
-  # The `api` instance's base path is /api, the `billing` instance's /billing (src/http.js).
-  - { from: client, to: api, files: ["src/users.js"], prefix: /api }
-  - { from: client, to: api, files: ["src/billing.js"], prefix: /billing }
-  - { from: client, to: api, files: ["src/status.js"] }
+  # atlas reads each instance's base URL, and the path the billing instance's interceptor puts before its URLs, where
+  # src/http.js creates them.
+  - { from: client, to: api, files: ["src/**/*.js"] }

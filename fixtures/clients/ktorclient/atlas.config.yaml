@@ -2,5 +2,6 @@ components:
   - { name: client, path: . }
   - { name: api, path: server }
 calls:
-  # The client's default request takes its base URL from the build's configuration (ApiConfig); its path is the prefix.
-  - { from: client, to: api, files: ["src/main/kotlin/**/data/*Service.kt"], prefix: /api/v1 }
+  # The client's default request takes its base URL from the build's configuration (ApiConfig, ".../api/v1/"), which
+  # Ktor's DefaultRequest resolves each request's URL against.
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/*Service.kt"], base: /api/v1/, join: resolve, receivers: [client] }

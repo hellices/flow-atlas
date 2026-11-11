@@ -8,5 +8,3 @@ extra:
   - { call: "* /api/v1/items/{}/move", reason: "`client.request(\"POST\", url)` read with its method unread" }
   - { call: "* /api/v1/items/{}/tags/{}", reason: "`client.build_request(\"PUT\", url)` read with its method unread" }
   - { call: "* /api/v2/accounts/{}/statements/{}", reason: "`client.request(\"GET\", url)` read with its method unread" }
-  - { call: "* /api/v1", reason: "the client's `base_url` (`httpx.Client(base_url=f\"{API_URL}/api/v1\")`) read as a request; the paths requested under it are the requests" }
-  - { call: "* /api/v2", reason: "the async client's `base_url` read as a request; the paths requested under it are the requests" }

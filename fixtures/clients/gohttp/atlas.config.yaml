@@ -3,5 +3,5 @@ components:
   - { name: api, path: server }
 calls:
   - { from: client, to: api, files: ["users/**/*.go"] }
-  # The billing client resolves its paths against its base URL, which ends in /api/v1/.
-  - { from: client, to: api, files: ["billing/**/*.go"], prefix: /api/v1 }
+  # The billing client resolves its paths against its base URL, which ends in /api/v1/ (BaseURL.Parse).
+  - { from: client, to: api, files: ["billing/**/*.go"], base: /api/v1/, join: resolve }

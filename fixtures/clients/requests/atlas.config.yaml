@@ -3,5 +3,5 @@ components:
   - { name: api, path: server }
 calls:
   - { from: client, to: api, files: ["app/users.py", "app/orders.py"] }
-  # The session in app/projects.py joins each path to the API's /api/v2/ base.
-  - { from: client, to: api, files: ["app/projects.py"], prefix: /api/v2 }
+  # The session in app/projects.py joins each path to the API's /api/v2/ base with urljoin.
+  - { from: client, to: api, files: ["app/projects.py"], base: /api/v2/, join: resolve, receivers: [api] }

@@ -43,6 +43,43 @@ export function callPath(text: string, root = false, served?: (path: string) => 
 }
 
 /**
+ * A path written relative to a client's base, without a leading `/` (`users/${id}`), read as `callPath` reads a
+ * root-relative one, with `relative` set; undefined for any other text. A path that starts with a value may be an
+ * absolute URL, and one whose first segment holds a `:` is one (`mailto:`, RFC 3986 section 4.2), so neither is read.
+ */
+export function relativePath(text: string, served?: (path: string) => boolean): (CallPath & { relative: true }) | undefined {
+  const s = text.trim().split("?")[0]!.split("#")[0]!;
+  if (!s || s.startsWith("/") || s.startsWith(HOLE) || s.split("/")[0]!.includes(":")) return undefined;
+  const parsed = callPath(`/${s}`, false, served);
+  return parsed && !parsed.based ? { ...parsed, relative: true } : undefined;
+}
+
+/**
+ * How a client joins a path to its base URL. `append`: the base's path, one `/`, and the path with its leading `/`
+ * dropped, as axios's `combineURLs`, Ky's `prefix` and RTK Query's `joinUrls` write it. `resolve`: as RFC 3986 (section
+ * 5.2) resolves a reference against the base, as `new URL(path, base)`, .NET's `Uri`, OkHttp's `HttpUrl.resolve`
+ * (Retrofit) and Python's `urljoin` do: a path that starts with `/` replaces the base's path, any other replaces what
+ * follows its last `/`.
+ */
+export type Join = "resolve" | "append";
+
+/** A client's base: the path of its base URL as written, a trailing `/` kept, and how a path joins it. */
+export interface Base {
+  path: string;
+  join: Join;
+}
+
+/**
+ * The path a request goes to, written `path` (relative to the base where `relative`, else from the root) on a client
+ * with `base`. Dot segments are removed either way, as parsing the URL that results does.
+ */
+export function onBase(base: Base, path: string, relative = false): string {
+  const written = relative ? path.replace(/^\/+/, "") : path;
+  if (base.join === "append") return resolveReference("/", joinRoute(base.path, written));
+  return resolveReference(base.path.startsWith("/") ? base.path : `/${base.path}`, written);
+}
+
+/**
  * The host (with its port, lower-cased, default ports dropped) an absolute `http` or `https` URL names literally;
  * undefined for any other text, and for a host that is a value written into the URL (`https://${host}/x`). A literal
  * host the URL standard rejects (`127.999.999.999`) is returned as written, lower-cased: it names no server.
