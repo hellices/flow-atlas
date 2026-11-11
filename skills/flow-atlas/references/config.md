@@ -23,10 +23,10 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi | spring | next
+    styles: [nest]            # nest | express | fastapi | spring | next | flask
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
-      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, or a FastAPI router's include prefix
+      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, or a Flask blueprint's url_prefix
     prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
     bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
@@ -495,7 +495,42 @@ mount). `None` or `""` turns one off; a value the file does not spell out as a p
 argument) leaves them all unread, with a limit. They are `implicit`, with the setting as their `convention` and the
 `FastAPI(` line as their place; where a route of the code has the same path, on the application or a router it includes
 from any file, FastAPI's answers and is the surface kept. A setting counts only where its route is served:
-`docs_url` and the others not at all where `openapi_url` is off, the redirect not where `docs_url` is. The `spring` style reads `@RequestMapping` on a class as a prefix for the
+`docs_url` and the others not at all where `openapi_url` is off, the redirect not where `docs_url` is.
+The `flask` style reads Flask, and Quart, which takes Flask's application, blueprints and views and Werkzeug's routing
+(quart/app.py, quart/routing.py), from Python, as Flask 3.1 and Werkzeug 3.1 register and match routes (the version
+the project depends on is not read; Werkzeug has matched by the rules below since 2.2, Flask's
+`PROVIDE_AUTOMATIC_OPTIONS` is 3.1's): `@app.route(rule, methods=[...])` (GET where `methods` is not given), its
+shortcuts `get`, `post`, `put`, `delete` and `patch`, and `add_url_rule(rule, endpoint, view_func)`, on an application
+(`Flask(...)`, `Quart(...)`, made at the top of a file or in an application factory) or a `Blueprint(...)`, each known
+by any name it is imported under and followed through the imports of the route files. A rule's methods are those
+given, else its view's: those a `MethodView` defines (`get`, `post` and the others, its bases' included), or the
+`methods` a `View` lists; Werkzeug adds HEAD beside GET, and Flask OPTIONS unless the methods,
+`provide_automatic_options` or the view's say otherwise (`App.add_url_rule`); both are `implicit`. A blueprint's rules
+are served under the `url_prefix` of each of its registrations (`register_blueprint`'s, else the blueprint's own), a
+nested blueprint's joined after its parent's, and a blueprint registered twice serves its rules under both; prefixes
+and rules are joined as text, as `BlueprintSetupState.add_url_rule` joins them, so `url_prefix="/admin"` and
+`@admin.route("/")` serve `/admin/`. A rule's text is read as Werkzeug parses it: `<name>` takes one segment;
+`<int:id>`, `<float:x>`, `<uuid:id>`, `<any(a, b):x>` and `<string(length=2):x>` take what their converter's regex
+takes, kept as the parameter's pattern (with `signed=True`, and an unsigned `int`'s `fixed_digits`; `min` and `max`,
+which check the value, leave the route unread); `<path:rest>` at the end is the rest of the path (`/{rest}/**`); and a
+converter the files register (`app.url_map.converters["list"] = ListConverter`, a `BaseConverter` whose body sets no
+regex with a `/`) is kept as `{names:list}`, whose values are not read. The static files route,
+`<static_url_path>/<path:filename>` (`/static/<path:filename>` unless `static_url_path` or `static_folder` say
+otherwise), of each application, and of each blueprint with a `static_folder` under its registrations, serves GET,
+HEAD and OPTIONS; it is `implicit`, with `flask static` (`quart static`) as its `convention` and the `Flask(` or
+`Blueprint(` line as its place, and `static_folder=None` turns it off. `mounts` gives the path a blueprint's file
+serves its rules under, its own `url_prefix` included, in place of its registrations. Not read, each with a limit: a
+rule, `methods`, `url_prefix` or static setting the file does not spell out, `*`/`**` options, a view whose methods
+are not read (a class with a base atlas does not trace, a function the code gives `methods`), a `subdomain` or a
+`host`, a rule Werkzeug answers with a redirect (`redirect_to`, `alias=True`) or whose `//` it keeps
+(`merge_slashes`), an application with `host_matching`, a receiver the files bind to no application or blueprint (a
+function's parameter), a blueprint registered nowhere, into itself or under more than 64 prefixes, a `path` variable
+before the end of the rule or after text in its segment, a converter whose segments or values atlas does not read, the
+OPTIONS of every rule where the files name `PROVIDE_AUTOMATIC_OPTIONS`, and Quart's WebSocket routes, which answer
+only a WebSocket handshake. Werkzeug redirects a request whose values equal the `defaults` of a rule of the same view
+registered before it to that rule (`redirect_defaults`): where stacked decorators register such a pair, a limit names
+it, as the request is matched to the later rule all the same.
+The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
 `formLogin` and `logout` serve, in the lambda or the chained form. Spring Boot 3 and 4 serve routes of their own in an
@@ -640,7 +675,11 @@ it does not, the call joins every route its path fits, and a limit names what is
   target.
 - Precedence. Fastify's find-my-way tries a static segment before a parameter, a parameter with a regexp before one
   without, and a parameter before a wildcard, whatever the order; Spring ranks by specificity and Next.js by its file
-  conventions, as before.
+  conventions, as before. Werkzeug (Flask, Quart) walks a request's segments and tries a segment's static text before
+  its variables, and the variables by their weight (`Weighting`: more pieces of static text in the segment first, the
+  longer first, then more converters, then lower converter weights: `int` and `float` 50, `string`, `any`, `uuid` and a
+  `BaseConverter` 100, `path` 200), whatever the order they were added in; two of one weight with other regexes are
+  tried in the order their rules were added, which atlas does not read, so both stay targets.
 - Trailing `/`. Express, @koa/router and Nest on Express ignore it. Express's `Router({ strict: true })` makes a
   route take the path as written, a router's `/` taking its mount's path with and without the `/`; an application's
   `strict routing` is read where every `set`, `enable` or `disable` of it is at the top level of the file that creates
@@ -651,6 +690,12 @@ it does not, the call joins every route its path fits, and a limit names what is
   path with a `/` only to a route that has one: find-my-way also gives the empty text after a last `/` to a parameter
   (`/users/:id` takes `/users/`), Fastify serves a plugin's `/` at its prefix with and without the `/`
   (`prefixTrailingSlash`), and Spring joins `@RequestMapping("/owners")` and `@GetMapping("/")` into `/owners/`.
+  Werkzeug (Flask, Quart) serves the path as the rule writes it, and answers a request without a `/` with a redirect to
+  the path with it where a rule written with one takes that (`strict_slashes`, on by default), unless a rule of that
+  same path, or one its matcher tries first (a static segment before a variable), takes the request; a request with a
+  `/` is not served by a rule written without one. A rule with `strict_slashes=False`, or every rule where
+  `url_map.strict_slashes` is `False`, takes either form; where it is set otherwise than to `True` or `False`, a call
+  is matched to its route either way.
   Starlette serves the path as the route writes it, and redirects a request no route takes by any method to the path
   with the `/` added or removed where a route takes that (`redirect_slashes`, read from `FastAPI(...)`, or from the
   `APIRouter(...)` an application mounts); a call with a value may be served for some values and redirected for

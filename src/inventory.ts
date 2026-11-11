@@ -41,11 +41,16 @@ const exportedNames = (list: string): string[] =>
     .filter((spec) => spec && !/^type\s/.test(spec))
     .map((spec) => spec.split(/\s+as\s+/).pop()!.trim());
 
+/** A Python file that imports Flask or Quart. */
+const FLASK_IMPORT = /^[ \t]*(?:from[ \t]+(?:flask|quart)(?:\.\w+)*[ \t]+import|import[ \t]+(?:flask|quart)\b)/m;
+
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
 const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
   { style: "nest", re: /@(Get|Post|Put|Patch|Delete|Sse)\(\s*(["'`][^"'`]*["'`])?\s*\)/g, files: SCRIPT },
   { style: "express", re: /\b(?:app|router|server|fastify)\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[^"'`]*)/g, files: SCRIPT },
   { style: "fastapi", re: /@\w+\.(?:get|post|put|patch|delete|api_route)\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
+  // Flask's and Quart's decorators, method shortcuts and `add_url_rule`, in a file that imports either.
+  { style: "flask", re: /@[A-Za-z_][\w.]*\.(?:route|get|post|put|patch|delete)\(\s*["'](\/[^"']*)|\.add_url_rule\(\s*["'](\/[^"']*)/g, files: /\.py$/ },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {
@@ -306,6 +311,8 @@ export function inventory(source: Source, exclude: string[]): Inventory {
     const code = /\.(java|kt|kts)$/.test(file) ? withoutComments(file, text) : text;
     for (const { style, re, files, accept } of ROUTE_STYLES) {
       if (!files.test(file) || (style === "next" && !mayUseNext(file))) continue;
+      // A Python file that imports Flask or Quart registers their routes; their shortcuts look like FastAPI's.
+      if ((style === "flask" || style === "fastapi") && (style === "flask") !== FLASK_IMPORT.test(code)) continue;
       const hits = [...code.matchAll(re)].filter((m) => !accept || accept(m));
       if (!hits.length) continue;
       const first = hits[0]!;

@@ -276,15 +276,38 @@ function nestCompare(a: number[] | undefined, b: number[] | undefined): number |
 }
 
 /**
+ * Werkzeug's order of two rules a request both fits (routing/matcher.py `StateMachineMatcher.match`): part by part, as
+ * the matcher walks its states, the static text of a part before its variables, and parts with variables by their
+ * weight (`Weighting`, sorted in `update`), the same part (one regex and weight) sharing its state. Below zero where `a`
+ * comes first, above where `b` does, zero where they share every part read or the order is not settled: two parts of
+ * one weight with other regexes are tried in the order their rules were added, which atlas does not read.
+ */
+export function werkzeugCompare(a: Dispatch["parts"], b: Dispatch["parts"]): number {
+  if (!a || !b) return 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (typeof x === "string" || typeof y === "string") {
+      if (typeof x === "string" && typeof y === "string" && x === y) continue;
+      return typeof x === "string" && typeof y === "string" ? 0 : typeof x === "string" ? -1 : 1;
+    }
+    if (x.regex === y.regex && JSON.stringify(x.weight) === JSON.stringify(y.weight)) continue;
+    return x.weight && y.weight ? compare(x.weight, y.weight) : 0;
+  }
+  return 0;
+}
+
+/**
  * Whether route `d` comes before route `c` for a request both take, where both are picked by one rule: find-my-way's
- * precedence; Nest's specificity, then its declaration order; or registration order. A route that may pass the request
- * on comes before none.
+ * precedence; Werkzeug's; Nest's specificity, then its declaration order; or registration order. A route that may pass
+ * the request on comes before none.
  */
 function first(d: Surface, c: Surface): boolean {
   const a = d.dispatch;
   const b = c.dispatch;
   if (!a?.picks || a.picks !== b?.picks) return false;
   if (a.picks === "find-my-way") return fmwCompare(d, c) < 0;
+  if (a.picks === "werkzeug") return werkzeugCompare(a.parts, b.parts) < 0;
   if (a.passes) return false;
   if (a.picks === "specificity") {
     const k = nestCompare(a.rank, b.rank);
@@ -390,6 +413,7 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
   const redirected = new Map<number, { path: string; slash: boolean; surfaces: Surface[] }>();
   const constrained = new Map<number, Surface[]>();
   const push = <T>(map: Map<number, T[]>, key: number, value: T) => (map.get(key) ?? map.set(key, []).get(key)!).push(value);
+  const appending = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "appended").map((s) => s.component));
   graph.calls.forEach((call, ci) => {
     // Next.js settles the route by the path first; the method is checked on that route only. Each request a call stands
     // for goes to the most specific path that fits it, so a call with interpolations reaches every path down to the
@@ -433,6 +457,30 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     };
     const slash = !!call.slash;
     let candidates = candidatesAt(slash);
+    // Werkzeug answers a request without a trailing `/` with a redirect to the path with it, where a route written with
+    // one takes that (`strict_slashes`), as its matcher reaches the state of the path without the `/`: unless a route of
+    // that same path takes the request, or one the matcher tries earlier does (`StateMachineMatcher.match` raises
+    // `SlashRequired`, which ends the walk). A call with values may be redirected for some and served for others.
+    if (!slash && call.path !== "/" && appending.has(call.to)) {
+      const branches = candidatesAt(true).filter((c) => c.surface.dispatch?.slashes === "appended" && c.surface.dispatch.trailing === "slash");
+      if (branches.length) {
+        const sameMethod = (a: Surface, b: Surface) => a.method === b.method || a.method === "*" || b.method === "*";
+        // Which the matcher reaches first: the redirect (true), the route (false), or not settled (undefined).
+        const redirectFirst = (b: Surface, d: Surface): boolean | undefined => {
+          if (d.dispatch?.picks !== "werkzeug") return undefined;
+          const k = werkzeugCompare(b.dispatch!.parts, d.dispatch.parts);
+          if (k) return k < 0;
+          return JSON.stringify(b.dispatch!.parts) === JSON.stringify(d.dispatch.parts) && b.dispatch!.parts ? false : undefined;
+        };
+        const redirects = branches.filter((b) => !candidates.some((d) => sameMethod(b.surface, d.surface) && covers(d.surface, call) && redirectFirst(b.surface, d.surface) === false));
+        candidates = candidates.filter((d) => !branches.some((b) => sameMethod(b.surface, d.surface) && pathCovers(b.surface.path, call.path, b.surface.patterns) && redirectFirst(b.surface, d.surface) === true));
+        if (redirects.length) {
+          const to = picked({ ...call, slash: true }, redirects);
+          redirected.set(ci, { path: call.path, slash: true, surfaces: to.map((c) => c.surface) });
+        }
+        if (!candidates.length) return;
+      }
+    }
     // A router that redirects answers a request no route of it takes as written, by any method, with a redirect to the
     // path with the `/` added or removed, where a route of it takes that path.
     const redirecting = graph.surfaces.filter((s) => s.component === call.to && REDIRECTING.has(s.dispatch?.slashes));

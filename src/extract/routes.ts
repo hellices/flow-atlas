@@ -17,6 +17,7 @@ import type { Reach } from "./reach.js";
 import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
+import { flaskRoutes } from "./flask.js";
 import { springBootRoutes } from "./springboot.js";
 import { metadataSuffix, nextBuiltins, nextConfig, nextPageMethods, nextSetting, type NextConfig, type NextPage, type PageMethods } from "./next.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
@@ -1972,6 +1973,7 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
   const out: Dispatch = {};
   if (a.picks && a.picks === b.picks) out.picks = a.picks;
   if (out.picks && a.rank && JSON.stringify(a.rank) === JSON.stringify(b.rank)) out.rank = a.rank;
+  if (out.picks && a.parts && JSON.stringify(a.parts) === JSON.stringify(b.parts)) out.parts = a.parts;
   // Two registrations at two places are both the surface, which then has no one place.
   const order = JSON.stringify(a.order) === JSON.stringify(b.order) ? a.order : undefined;
   if (out.picks && order) out.order = order;
@@ -2053,6 +2055,26 @@ export function extractRoutes(
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges, slashes));
     }
     if (routers) limits.push(...routers.limits(spec.component));
+    if ((spec.styles ?? []).includes("flask")) {
+      const read = flaskRoutes(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.component, spec.mounts);
+      for (const r of read.routes) {
+        const path = spec.prefix ? joinRoute(spec.prefix, r.path) : r.path;
+        out.push({
+          id: surfaceId({ component: spec.component, method: r.method, path }),
+          component: spec.component,
+          method: r.method,
+          path,
+          at: { file: r.file, line: r.line },
+          evidence: "text",
+          ...(r.implicit ? { implicit: true } : {}),
+          ...(r.convention ? { convention: r.convention } : {}),
+          ...(r.patterns ? { patterns: r.patterns } : {}),
+          dispatch: r.dispatch,
+        });
+      }
+      for (const s of read.spans) spans?.add(s.file, s.start, s.end);
+      limits.push(...read.limits);
+    }
     if (prefixes) limits.push(...prefixes.limits(spec.component));
     if (java) {
       const boot = booted.get(spec.component) ?? booted.set(spec.component, { files: [], slashes }).get(spec.component)!;

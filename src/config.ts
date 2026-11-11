@@ -17,9 +17,10 @@ export interface RouteSource {
   /**
    * nest: @Controller/@Get decorators. express: receiver.get("/x"). fastapi: @router.get("/x") in Python. spring:
    * @RequestMapping/@GetMapping annotations in Java or Kotlin. next: Next.js route handlers, `app/**\/route.ts` exporting
-   * GET, POST and the like, and API routes under `pages/api`.
+   * GET, POST and the like, and API routes under `pages/api`. flask: Flask's and Quart's `@app.route("/x")`,
+   * `add_url_rule` and blueprints in Python.
    */
-  styles?: Array<"nest" | "express" | "fastapi" | "spring" | "next">;
+  styles?: Array<"nest" | "express" | "fastapi" | "spring" | "next" | "flask">;
   receivers?: string[];
   /**
    * Where the routers a file declares serve their routes, when the code does not say it with literal paths: an Express

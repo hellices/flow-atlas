@@ -100,14 +100,24 @@ export interface Dispatch {
    * Express, Starlette), by `order`. `find-my-way`: Fastify's router tries static text before a parameter, a parameter
    * with a regexp before one without, and a parameter before a wildcard, whatever the order. `specificity`: Nest's
    * `routeResolutionStrategy: 'specificity'` registers the more specific routes first, by `rank`, and routes of one rank
-   * in `order`.
+   * in `order`. `werkzeug`: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and
+   * variables by their weight, whatever the order, by `parts`.
    */
-  picks?: "registration" | "find-my-way" | "specificity";
+  picks?: "registration" | "find-my-way" | "specificity" | "werkzeug";
   /**
    * The kind of each segment of the route's path as Nest's specificity sort ranks it (`RouteSpecificitySorter`): a
    * literal 0, text with a parameter 2, a parameter 3, a wildcard 4.
    */
   rank?: number[];
+  /**
+   * The parts of the route's rule as Werkzeug's `StateMachineMatcher` holds them, one a segment from the first (a
+   * variable that takes slashes, `path`, makes one part of the rest), a `/` at the end left out (`trailing` says it): a
+   * static part's text, or a part with variables: its regular expression as Werkzeug compiles it (the same for two parts
+   * Werkzeug keeps in one state; a converter whose regex is not read stands as its class) and its weight (`Weighting`,
+   * flattened: more pieces of static text first, the longer first, then more converters, then each converter's weight,
+   * lower first). No weight where a converter's is not read.
+   */
+  parts?: Array<string | { regex: string; weight?: number[] }>;
   /**
    * Where the route is registered, from the router a request enters down to the one that holds the route: each step a
    * sequence of registrations whose order is known (`router`, one router in one function body of one file) and the
@@ -121,9 +131,11 @@ export interface Dispatch {
    * How the router treats a `/` at the end of a request's path: `ignored` (Express, @koa/router), `strict` (a path with
    * it is another path: Fastify, Hono, Spring 6 and later), `redirected` (Starlette redirects a request no route takes
    * to the path with the `/` added or removed where a route takes that), `removed` and `added` (Next.js redirects every
-   * request to the path without it, or with it, by `trailingSlash`).
+   * request to the path without it, or with it, by `trailingSlash`), `appended` (Werkzeug serves the path as the route
+   * writes it, and redirects a request without the `/` to the path with it where a route written with one takes that,
+   * unless its matcher reaches a route that takes the request as written first: `strict_slashes`).
    */
-  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added";
+  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added" | "appended";
   /**
    * The route's path as served ends with a `/` (`slash`), or is served with and without one (`both`). On a route that
    * ends in a wildcard, `slash` says the path before the wildcard is served only with the `/` (find-my-way's `/x/*`,

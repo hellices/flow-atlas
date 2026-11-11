@@ -1,7 +1,7 @@
-import { posix } from "node:path";
 import { joinRoute } from "../paths.js";
 import { lineOf } from "../source.js";
-import { closingParen, pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
+import { booleanKeyword, keyword, pythonBindings, pythonImports, scopeAt, scopesOf, shadowed, valueAt, type Imports, type Scope, type Value } from "./python.js";
+import { pythonArg, pythonArgStarts, pythonCode } from "./routes.js";
 
 /**
  * Where FastAPI routers are served. A route registered on an `APIRouter` is served at the router's `prefix` joined to
@@ -46,9 +46,6 @@ export interface DocsRoute {
   convention: string;
 }
 
-/** A literal, or the expression text where the file does not spell the value out. */
-type Value = string | { unread: string };
-
 interface Binding {
   kind: "app" | "router";
   prefix: Value;
@@ -66,7 +63,7 @@ interface Facts {
   /** Names bound to `FastAPI(...)` or `APIRouter(...)`; null where the file binds a name to several different ones. */
   routers: Map<string, Binding | null>;
   /** Names imported: the module as written (dots kept) and, for `from m import x`, the name taken. */
-  imports: Map<string, { module: string; member?: string }>;
+  imports: Imports;
   /** `include_router` calls, and `mount` calls, which serve what they mount under their path as an include does. */
   includes: Array<{ receiver: string; target: string; prefix: Value; at: number; verb: "includes" | "mounts" }>;
   scopes: Scope[];
@@ -87,103 +84,6 @@ function placeOf(code: string, at: number): number {
   definition.lastIndex = at;
   const found = definition.exec(code);
   return found ? found.index * scale + (found.index - at) : at * scale;
-}
-
-/** A function: where its body lies and the names it binds there, which hide the file's own. */
-interface Scope {
-  start: number;
-  end: number;
-  names: Set<string>;
-}
-
-/**
- * The functions of a file, from its code: the names each binds are its parameters, and those its own body (not a nested
- * function's) assigns, other than to an application or router, or takes in a `for`, `with` or `except` statement.
- */
-function scopesOf(code: string): Scope[] {
-  // The bracket depth at each offset: a line inside a call's parentheses binds nothing.
-  const depth: number[] = [];
-  for (let i = 0, d = 0; i < code.length; i++) {
-    depth.push(d);
-    if ("([{".includes(code[i]!)) d++;
-    else if (")]}".includes(code[i]!)) d = Math.max(0, d - 1);
-  }
-  const scopes: Array<Scope & { indent: number }> = [];
-  for (const m of code.matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+\w+[ \t]*\(/gm)) {
-    if (depth[m.index ?? 0]) continue;
-    const open = (m.index ?? 0) + m[0].length;
-    const names = new Set(
-      pythonArgStarts(code, open)
-        .map((at) => /^\*{0,2}([A-Za-z_]\w*)/.exec(code.slice(at))?.[1])
-        .filter((n): n is string => !!n),
-    );
-    const start = code.indexOf(":", closingParen(code, open));
-    if (start < 0) continue;
-    // The body ends at the first line, outside brackets, indented no deeper than the `def`.
-    const indent = m[1]!.replace(/\t/g, "        ").length;
-    let end = code.length;
-    for (const line of code.slice(start).matchAll(/\n([ \t]*)\S/g)) {
-      const at = start + (line.index ?? 0) + 1;
-      if (!depth[at] && line[1]!.replace(/\t/g, "        ").length <= indent) {
-        end = at;
-        break;
-      }
-    }
-    scopes.push({ start: start + 1, end, names, indent });
-  }
-  const own = (scope: Scope, at: number) => !scopes.some((s) => s !== scope && s.start > scope.start && s.start <= at && at < s.end);
-  for (const scope of scopes) {
-    const body = code.slice(scope.start, scope.end);
-    const bind = (at: number, names: string) => {
-      if (depth[scope.start + at] || !own(scope, scope.start + at)) return;
-      for (const n of names.match(/[A-Za-z_]\w*/g) ?? []) scope.names.add(n);
-    };
-    for (const m of body.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=(?!=)[ \t]*(.*)/gm)) {
-      if (!/^(?:[A-Za-z_][\w.]*\.)?(?:FastAPI|APIRouter)[ \t]*\(/.test(m[2]!)) bind(m.index ?? 0, m[1]!);
-    }
-    for (const m of body.matchAll(/^[ \t]*(?:async[ \t]+)?for[ \t]+(.+?)[ \t]+in\b/gm)) bind(m.index ?? 0, m[1]!);
-    for (const m of body.matchAll(/^[ \t]*(?:(?:async[ \t]+)?with|except)\b.*/gm)) {
-      for (const as of m[0].matchAll(/\bas[ \t]+([A-Za-z_]\w*)/g)) bind(m.index ?? 0, as[1]!);
-    }
-  }
-  return scopes;
-}
-
-/** Whether a function around offset `at` binds `name`, so that it does not refer to the file's own. */
-function shadowed(scopes: Scope[], name: string, at: number): boolean {
-  return scopes.some((s) => s.start <= at && at < s.end && s.names.has(name));
-}
-
-/** A literal, or the text of an argument the file does not spell out. */
-function valueAt(text: string, code: string, at: number): Value {
-  const arg = pythonArg(text, code, at);
-  const literal = pythonStrings(arg);
-  return literal && literal.length === arg.length ? literal.value : { unread: arg.replace(/\s+/g, " ") };
-}
-
-/**
- * The value of the keyword argument `name` among the arguments starting at `from`: "" when it is not given, and not read
- * where a `**` argument may give it.
- */
-function keyword(text: string, code: string, from: number, name: string): Value {
-  const starts = pythonArgStarts(code, from);
-  for (const at of starts) {
-    const m = new RegExp(`^${name}\\s*=(?!=)\\s*`).exec(code.slice(at));
-    if (m) return valueAt(text, code, at + m[0].length);
-  }
-  const spread = starts.find((at) => code.startsWith("**", at));
-  return spread === undefined ? "" : { unread: pythonArg(text, code, spread).replace(/\s+/g, " ") };
-}
-
-/**
- * A `True` or `False` the keyword argument `name` gives: undefined where it is not given, null where it is another
- * value or a `**` argument may give it.
- */
-function booleanKeyword(text: string, code: string, from: number, name: string): boolean | undefined | null {
-  const value = keyword(text, code, from, name);
-  if (value === "") return undefined;
-  if (typeof value === "string") return null;
-  return value.unread === "True" ? true : value.unread === "False" ? false : null;
 }
 
 /**
@@ -246,15 +146,11 @@ function documentation(text: string, code: string, from: number): DocsRoute[] | 
 /** `redirect_slashes` as given: on where it is not given (Starlette's `Router` default), null where not spelled out. */
 const redirectsGiven = (given: boolean | undefined | null): boolean | null => (given === undefined ? true : given);
 
-/** The start of the innermost function a file's offset is in, or -1 at its top level. */
-function scopeAt(scopes: Scope[], at: number): number {
-  const around = scopes.filter((s) => s.start <= at && at < s.end);
-  return around.length ? Math.max(...around.map((s) => s.start)) : -1;
-}
-
 function factsOf(text: string): Facts {
   const code = pythonCode(text);
-  const facts: Facts = { routers: new Map(), imports: new Map(), includes: [], scopes: scopesOf(code), code };
+  // A name assigned an application or router in a function is the file's, as the routes registered on it are.
+  const scopes = scopesOf(code, (assigned) => /^(?:[A-Za-z_][\w.]*\.)?(?:FastAPI|APIRouter)[ \t]*\(/.test(assigned));
+  const facts: Facts = { routers: new Map(), imports: pythonImports(code), includes: [], scopes, code };
   // `app = FastAPI(...)`, `router: APIRouter = fastapi.APIRouter(prefix="/items")`, at any indentation.
   for (const m of code.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:[A-Za-z_][\w.]*\.)?(FastAPI|APIRouter)[ \t]*\(/gm)) {
     const name = m[1]!;
@@ -268,18 +164,6 @@ function factsOf(text: string): Facts {
     // An application made twice with other documentation settings (in two branches) serves routes one of them gives.
     if (same && JSON.stringify(before.docs) !== JSON.stringify(binding.docs)) before.docs = { why: "documentation settings that differ where the file makes it twice" };
     facts.routers.set(name, before === undefined ? binding : same ? before : null);
-  }
-  for (const m of code.matchAll(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|.*(?:\\\n.*)*)/gm)) {
-    for (const item of m[2]!.replace(/[()\\]/g, " ").split(",")) {
-      const named = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
-      if (named) facts.imports.set(named[2] ?? named[1]!, { module: m[1]!, member: named[1]! });
-    }
-  }
-  for (const m of code.matchAll(/^[ \t]*import[ \t]+(.*)/gm)) {
-    for (const item of m[1]!.split(",")) {
-      const named = /^\s*([A-Za-z_][\w.]*)\s+as\s+([A-Za-z_]\w*)\s*$/.exec(item);
-      if (named) facts.imports.set(named[2]!, { module: named[1]! });
-    }
   }
   for (const m of code.matchAll(/(?<![\w.])([A-Za-z_]\w*)\.include_router\(\s*/g)) {
     const from = (m.index ?? 0) + m[0].length;
@@ -314,44 +198,8 @@ function factsOf(text: string): Facts {
  */
 export function fastapiRouters(texts: Map<string, string>, declared: Record<string, string> = {}): Routers {
   const facts = new Map([...texts].filter(([f]) => f.endsWith(".py")).map(([f, t]) => [f, factsOf(t)]));
-  const files = [...facts.keys()];
 
-  /** The file of a module, as Python imports it from `from`: relative to its package, or by its dotted path. */
-  const moduleFile = (from: string, module: string): string | undefined => {
-    const dots = /^\.*/.exec(module)![0].length;
-    const rest = module.slice(dots).split(".").filter(Boolean).join("/");
-    const candidates = (path: string) => [`${path}.py`, `${path}/__init__.py`].map((p) => posix.normalize(p).replace(/^\.\//, ""));
-    if (dots) {
-      let dir = posix.dirname(from);
-      for (let i = 1; i < dots; i++) dir = posix.dirname(dir);
-      return candidates(posix.join(dir, rest)).find((c) => facts.has(c));
-    }
-    // An absolute module is found by its path's end; of several, the one nearest the importing file.
-    const found = files.filter((f) => candidates(rest).some((c) => f === c || f.endsWith(`/${c}`)));
-    const shared = (f: string) => {
-      const a = posix.dirname(from).split("/");
-      const b = f.split("/");
-      let n = 0;
-      while (n < a.length && a[n] === b[n]) n++;
-      return n;
-    };
-    const best = Math.max(...found.map(shared));
-    const nearest = found.filter((f) => shared(f) === best);
-    return nearest.length === 1 ? nearest[0] : undefined;
-  };
-  const submodule = (module: string, member: string) => (module.endsWith(".") ? `${module}${member}` : `${module}.${member}`);
-
-  /** The router or application a name refers to in a file, followed through `from m import name`. */
-  const routerAt = (file: string, name: string, seen = new Set<string>()): string | undefined => {
-    const key = `${file}#${name}`;
-    const f = facts.get(file);
-    if (!f || seen.has(key)) return undefined;
-    if (f.routers.has(name)) return key;
-    const imported = f.imports.get(name);
-    if (!imported?.member || moduleFile(file, submodule(imported.module, imported.member))) return undefined;
-    const module = moduleFile(file, imported.module);
-    return module ? routerAt(module, imported.member, new Set([...seen, key])) : undefined;
-  };
+  const { bindingAt: routerAt, reference } = pythonBindings(new Map([...facts].map(([f, x]) => [f, x.imports])), (file, name) => !!facts.get(file)?.routers.has(name));
   /** What a name refers to at offset `at` of a file: none where a function there binds it. */
   const receiver = (file: string, name: string, at?: number): string | undefined =>
     at !== undefined && shadowed(facts.get(file)?.scopes ?? [], name, at) ? undefined : routerAt(file, name);
@@ -362,10 +210,7 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
   const included = (file: string, expr: string, at?: number): string | undefined => {
     const m = /^([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?$/.exec(expr);
     if (!m || (at !== undefined && shadowed(facts.get(file)?.scopes ?? [], m[1]!, at))) return undefined;
-    if (!m[2]) return routerAt(file, m[1]!);
-    const imported = facts.get(file)?.imports.get(m[1]!);
-    const module = imported && moduleFile(file, imported.member ? submodule(imported.module, imported.member) : imported.module);
-    return module ? routerAt(module, m[2]) : undefined;
+    return reference(file, expr);
   };
 
   // Each include, keyed by the router it takes in.

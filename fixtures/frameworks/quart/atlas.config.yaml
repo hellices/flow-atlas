@@ -1,4 +1,4 @@
 components:
   - { name: app, path: . }
 routes:
-  - { component: app, files: ["app/**/*.py"] }
+  - { component: app, files: ["app/**/*.py"], styles: [flask] }
