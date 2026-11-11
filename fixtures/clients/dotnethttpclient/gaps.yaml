@@ -1,24 +1,25 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs. atlas reads C# as text: a string that starts with `/`, with no
-# method from HttpClient's own methods (`GetAsync`, `GetFromJsonAsync`, `PostAsJsonAsync`, `PutAsync`, `DeleteAsync`, ...).
+# fails while a listed difference no longer occurs. atlas reads C# as text: a string that starts with `/`, and one without
+# it that a call on `httpClient` or `client` (the call source's receivers) or `new HttpRequestMessage` takes, resolved
+# against the configured base; with no method from HttpClient's own methods (`GetAsync`, `GetFromJsonAsync`, ...).
 missing:
-  - { call: "GET /api/users/{}", reason: "a relative URI without a leading `/` (`` $\"users/{id}\" ``), which HttpClient resolves under its BaseAddress's path, is not read, and nothing says so" }
-  - { call: "GET /api/users", reason: "a relative URI without a leading `/` (`` $\"users?role=...\" ``) is not read, and nothing says so" }
-  - { call: "POST /api/users", reason: "a relative URI without a leading `/` (`PostAsJsonAsync(\"users\", user)`) is not read, and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "a relative URI without a leading `/` (`` PutAsync($\"users/{id}\", ...) ``) is not read, and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "a relative URI without a leading `/` (`` new HttpRequestMessage(HttpMethod.Patch, $\"users/{id}\") ``) is not read, and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "a relative URI without a leading `/` (`` DeleteAsync($\"users/{id}\") ``) is not read, and nothing says so" }
-  - { call: "GET /api/orders/{}/items", reason: "a concatenation that starts with a relative URI without a leading `/` (`\"orders/\" + orderId + \"/items\"`) is not read; only its last literal is, as a path of its own, and nothing says so" }
-  - { call: "GET /health", reason: "a relative URI with a leading `/` replaces the BaseAddress's path (`GetStringAsync(\"/health\")` against `.../api/`), but atlas puts the call source's `prefix` before it, and the GET of `GetStringAsync` is not read, and nothing says so" }
+  - { call: "GET /api/users/{}", reason: "the GET of HttpClient's `GetFromJsonAsync` is not read: `` $\"users/{id}\" `` is read under the BaseAddress's path with its method unread, and nothing says so" }
+  - { call: "GET /api/users", reason: "the GET of `GetFromJsonAsync` is not read: `` $\"users?role=...\" `` is read with its method unread, and nothing says so" }
+  - { call: "POST /api/users", reason: "the POST of `PostAsJsonAsync` is not read: `\"users\"` is read with its method unread, and nothing says so" }
+  - { call: "PUT /api/users/{}", reason: "the PUT of `PutAsync` is not read: `` $\"users/{id}\" `` is read with its method unread, and nothing says so" }
+  - { call: "DELETE /api/users/{}", reason: "the DELETE of `DeleteAsync` is not read: `` $\"users/{id}\" `` is read with its method unread, and nothing says so" }
+  - { call: "GET /api/orders/{}/items", reason: "a concatenation that starts with a relative URI (`\"orders/\" + orderId + \"/items\"`) is not read; only its last literal is, as a path of its own, and nothing says so" }
+  - { call: "GET /health", reason: "the GET of `GetStringAsync` is not read: `\"/health\"`, which replaces the BaseAddress's path, is read with its method unread, and nothing says so" }
   - { call: "GET /api/projects", reason: "a URI held in a `const` of the class (`GetFromJsonAsync<Project[]>(Projects)`, `Projects = \"projects\"`) is not read, and nothing says so" }
   - { call: "PATCH /api/projects/{}", reason: "a template that starts with a `const` of the class (`` PatchAsJsonAsync($\"{Projects}/{id}\", ...) ``) is not joined to it nor read, and nothing says so" }
-  - { call: "POST /api/projects/{}/archive", reason: "the class's `const` in `` $\"{Projects}/{id}/archive\" `` is not joined: read as a base before `/{}/archive`, without the `prefix` and without the POST of `PostAsync`, and nothing says so" }
+  - { call: "POST /api/projects/{}/archive", reason: "the class's `const` in `` $\"{Projects}/{id}/archive\" `` is not joined: read as a base before `/{}/archive`, without the POST of `PostAsync`, and nothing says so" }
   - { call: "POST /api/projects/{}/files", reason: "a concatenation that starts with a `const` of the class (`Projects + \"/\" + id + \"/files\"`) is not read; only its last literal is, as a path of its own, and nothing says so" }
-  - { call: "GET /api/v2/reports/{}", reason: "a relative URI without a leading `/` (`` $\"reports/{year}\" ``) on a named client from IHttpClientFactory is not read, and nothing says so" }
-  - { call: "HEAD /api/v2/reports/{}", reason: "a relative URI without a leading `/` (`` new HttpRequestMessage(HttpMethod.Head, $\"reports/{year}\") ``) is not read, and nothing says so" }
-  - { call: "POST /api/v2/reports/{}/export", reason: "a relative URI without a leading `/` (`` new HttpRequestMessage(HttpMethod.Post, $\"reports/{year}/export?format=...\") ``) is not read, and nothing says so" }
+  - { call: "GET /api/v2/reports/{}", reason: "the GET of `GetFromJsonAsync` is not read: `` $\"reports/{year}\" `` on the named client is read with its method unread, and nothing says so" }
 extra:
-  - { call: "* /api/health", reason: "`GetStringAsync(\"/health\")` read under the call source's `prefix`, which a leading `/` replaces, and without its GET" }
-  - { call: "* /api/items", reason: "the last literal of `\"orders/\" + orderId + \"/items\"` read as a path of its own" }
-  - { call: "* /api/files", reason: "the last literal of `Projects + \"/\" + id + \"/files\"` read as a path of its own" }
+  - { call: "* /api/users", reason: "`\"users\"` and `` $\"users?role=...\" `` read under the BaseAddress with the methods of `GetFromJsonAsync` and `PostAsJsonAsync` unread" }
+  - { call: "* /api/users/{}", reason: "`` $\"users/{id}\" `` read under the BaseAddress with the methods of `GetFromJsonAsync`, `PutAsync` and `DeleteAsync` unread" }
+  - { call: "* /api/v2/reports/{}", reason: "`` $\"reports/{year}\" `` read under the named client's BaseAddress with the method of `GetFromJsonAsync` unread" }
+  - { call: "* /health", reason: "`GetStringAsync(\"/health\")` read at the root its leading `/` gives it, with its GET unread" }
+  - { call: "* /items", reason: "the last literal of `\"orders/\" + orderId + \"/items\"` read as a path of its own" }
+  - { call: "* /files", reason: "the last literal of `Projects + \"/\" + id + \"/files\"` read as a path of its own" }
   - { call: "* /{}/archive", reason: "`` $\"{Projects}/{id}/archive\" `` read with the class's `const` as an unknown base, and without the POST of `PostAsync`" }

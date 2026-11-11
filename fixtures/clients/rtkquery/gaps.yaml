@@ -1,22 +1,5 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/health", reason: "the method of an endpoint whose `query` returns its URL alone (fetchBaseQuery sends GET) is not read, and nothing says so" }
-  - { call: "GET /api/posts", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`url: 'posts'`, no leading `/`) is not read, and nothing says so" }
-  - { call: "POST /api/posts", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`url: 'posts'`, no leading `/`) is not read, and nothing says so" }
-  - { call: "GET /api/posts/{}", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`` `posts/${id}` ``, no leading `/`) is not read, and nothing says so" }
-  - { call: "PUT /api/posts/{}", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`` `posts/${post.id}` ``, no leading `/`) is not read, and nothing says so" }
-  - { call: "PATCH /api/posts/{}", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`` `posts/${id}` ``, no leading `/`) is not read, and nothing says so" }
-  - { call: "DELETE /api/posts/{}", reason: "a URL relative to fetchBaseQuery's `baseUrl` (`` `posts/${id}` ``, no leading `/`) is not read, and nothing says so" }
-  - { call: "GET /api/posts/{}/comments", reason: "a URL relative to fetchBaseQuery's `baseUrl` (an infinite query's `` `posts/${queryArg}/comments?page=…` ``) is not read, and nothing says so" }
-  - { call: "GET /api/users/{}", reason: "a URL relative to the `baseUrl` of the slice `injectEndpoints` adds to (`` `users/${id}` ``) is not read, and nothing says so" }
-  - { call: "GET /api/users/search", reason: "a URL relative to the `baseUrl` of the slice `injectEndpoints` adds to (`url: 'users/search'`) is not read, and nothing says so" }
-  - { call: "POST /api/users/{}/follow", reason: "a URL relative to the `baseUrl` of the slice `injectEndpoints` adds to (`` `users/${id}/follow` ``) is not read, and nothing says so" }
-  - { call: "GET /api/v2/reports/{}/summary", reason: "a relative URL that starts with the argument (`` `${year}/summary` ``) is read as a base's path, without the configured prefix, and its method (GET) is not read, and nothing says so" }
-  - { call: "POST /api/v2/reports/{}/export", reason: "a relative URL that starts with the argument (`` `${year}/export` ``) is read as a base's path, without the configured prefix, and nothing says so" }
-extra:
-  - { call: "* /api/api", reason: "fetchBaseQuery's `baseUrl: '/api/'` is read as a request, the prefix put before it" }
-  - { call: "* /api/health", reason: "the endpoint's `query: () => '/health'` read with its method unread" }
-  - { call: "* /api/v2/reports/api/v2/reports", reason: "the reports slice's `baseUrl` is read as a request, the prefix put before it" }
-  - { call: "* /summary", reason: "`` `${year}/summary` `` read as `/summary` after a base, without the slice's base URL and its method" }
-  - { call: "POST /export", reason: "`` `${year}/export` `` read as `/export` after a base, without the slice's base URL" }
+  - { call: "GET /api/v2/reports/{}/summary", reason: "a URL that starts with the argument (`` `${year}/summary` ``) may be absolute and bypass the slice's base, or a path under it; which, the code does not say, so it is not read (a limit names it)" }
+  - { call: "POST /api/v2/reports/{}/export", reason: "a URL that starts with the argument (`` `${year}/export` ``) may be absolute or a path under the base, so it is not read (a limit names it)" }

@@ -1,16 +1,7 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/users", reason: "a URL held in a class field (`this.http.get(this.base, { params })`) is not read, and nothing says so" }
-  - { call: "POST /api/users", reason: "a URL held in a class field (`this.http.post(this.base, user)`) is not read, and nothing says so" }
-  - { call: "GET /api/users/{}", reason: "a URL that is a class field's base and the argument alone (`` `${this.base}/${id}` ``) is not read, and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "a URL that is a class field's base and the argument alone (`` `${this.base}/${id}` ``) is not read, and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "a URL that is a class field's base and the argument alone (`` `${this.base}/${id}` ``) is not read, and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "a URL that is a class field's base and the argument alone (`` `${this.base}/${id}` ``) is not read, and nothing says so" }
-  - { call: "GET /api/users/{}/avatar", reason: "the base imported from environment.ts (`environment.apiUrl + '/users/' + id`) is not resolved, and the configured prefix is not put before a path joined to a base, and nothing says so" }
-  - { call: "GET /api/v2/reports/{}", reason: "a URL that is a base injected through an `InjectionToken` and the argument alone (`` `${this.baseUrl}/${year}` ``) is not read, and nothing says so" }
-  - { call: "POST /api/v2/reports/{}/export", reason: "the base injected through an `InjectionToken` (its provider's `` `${environment.apiUrl}/v2/reports` ``) is not resolved, and nothing says so" }
+  - { call: "GET /api/users", reason: "a URL held whole in a class field (`this.http.get(this.base, { params })`) is not read, and nothing says so" }
+  - { call: "POST /api/users", reason: "a URL held whole in a class field (`this.http.post(this.base, user)`) is not read, and nothing says so" }
 extra:
-  - { call: "* /users", reason: "the class field holding the service's base (`` `${environment.apiUrl}/users` ``) is read as a request of its own, its method unread and without the environment's `/api`" }
-  - { call: "GET /users/{}/avatar", reason: "read after the unresolved base from environment.ts, so without its `/api`" }
-  - { call: "POST /{}/export", reason: "read after the unresolved injected base, so without its `/api/v2/reports`" }
+  - { call: "* /api/users", reason: "the class field holding the service's base (`` `${environment.apiUrl}/users` ``) is read as a request of its own, its method unread" }

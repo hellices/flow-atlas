@@ -10,8 +10,8 @@ missing:
   - { call: "PATCH /users/{}", reason: "the method `http.MethodPatch` given to `http.NewRequestWithContext` before the URL is not read, and nothing says so" }
   - { call: "DELETE /users/{}", reason: "the method `\"DELETE\"` given to `http.NewRequestWithContext` before the URL is not read, and `base+\"/users/\"+id` is read without the value after the path, and nothing says so" }
   - { call: "GET /v2/reports/{}", reason: "the method of `http.Get(fmt.Sprintf(\"%s/v2/reports/%d\", base, year))` is not read: the path is `Sprintf`'s argument, not `Get`'s, and nothing says so" }
-  - { call: "GET /api/v1/invoices", reason: "the SDK client's paths are relative to its `BaseURL` (`\"invoices\"`, resolved by `BaseURL.Parse`) and a path without a leading `/` is not read, nor the method (`http.MethodGet`) given to the client's `newRequest`, and nothing says so" }
-  - { call: "POST /api/v1/invoices", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices\"`) is not read, nor the method `http.MethodPost` given to `newRequest`, and nothing says so" }
+  - { call: "GET /api/v1/invoices", reason: "the SDK client's paths are relative to its `BaseURL` (`\"invoices\"`, resolved by `BaseURL.Parse`), and a path without a leading `/` is read only where a call on one of the call source's receivers takes it first, or after a method written as a string: the client's own `newRequest(ctx, http.MethodGet, \"invoices\", nil)` takes it third, after a method held in a constant, which is not read either, and nothing says so" }
+  - { call: "POST /api/v1/invoices", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices\"`), the third argument of its own `newRequest`, is not read, nor the method `http.MethodPost` given to it, and nothing says so" }
   - { call: "GET /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`fmt.Sprintf(\"invoices/%v\", id)`) is not read, nor the method given to `newRequest`, and nothing says so" }
   - { call: "PUT /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices/\"+id`) is not read, nor the method given to `newRequest`, and nothing says so" }
   - { call: "DELETE /api/v1/invoices/{}", reason: "the SDK client's path relative to its `BaseURL` (`\"invoices/\"+id`) is not read, nor the method given to `newRequest`, and nothing says so" }
@@ -23,4 +23,3 @@ extra:
   - { call: "* /sessions", reason: "`http.PostForm(base+\"/sessions\", values)` read with its method unread" }
   - { call: "* /users/{}", reason: "`fmt.Sprintf(\"%s/users/%s\", base, id)` read with its method (`http.MethodPatch`) unread" }
   - { call: "* /v2/reports/{}", reason: "`fmt.Sprintf(\"%s/v2/reports/%d\", base, year)` read with the method of `http.Get` unread" }
-  - { call: "* /api/v1/api/v1", reason: "the billing client's base path (`\"/api/v1/\"` in `NewClient`) is read as a request, with the configured `prefix` put before it once more" }

@@ -1,17 +1,6 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/users", reason: "an input without a leading slash (`api.get(\"users\")`), which Ky joins to the instance's `prefix` as its readme shows, is not read as a path, and nothing says so" }
-  - { call: "GET /api/users/{}", reason: "an input without a leading slash (`` api.get(`users/${id}`) ``) is not read as a path, and nothing says so" }
-  - { call: "POST /api/users", reason: "an input without a leading slash is not read as a path, and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "an input without a leading slash is not read as a path, and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "an input without a leading slash (`\"users/\" + id`) is not read as a path, and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "an input without a leading slash is not read as a path, and nothing says so" }
-  - { call: "POST /api/sessions", reason: "an input without a leading slash (`api(\"sessions\", { method: \"post\" })`) is not read as a path, and nothing says so" }
-  - { call: "GET /api/admin/users/{}/audit", reason: "an input without a leading slash, sent through an instance `extend` derives from another, is not read as a path, and nothing says so" }
-  - { call: "POST /api/admin/users/{}/suspend", reason: "an input without a leading slash, sent through an instance `extend` derives from another, is not read as a path, and nothing says so" }
-  - { call: "GET /search/items", reason: "a page-relative input (`search.get(\"items\")`), which Ky resolves against the instance's `baseUrl`, is not read as a path, and nothing says so" }
-  - { call: "QUERY /search/items", reason: "a page-relative input sent with Ky's `query` method is not read as a path, and nothing says so" }
-  - { call: "GET /status", reason: "an input with a leading slash, which Ky resolves against the `baseUrl`'s origin and not its path, is read under the call source's prefix, and nothing says so" }
+  - { call: "QUERY /search/items", reason: "Ky's `query` method, which sends QUERY, is not read: the path is read with `*`, and nothing says so" }
 extra:
-  - { call: "GET /search/status", reason: "`search.get(\"/status\")` read under the search instance's base path, which a `baseUrl` leaves out for a path with a leading slash" }
+  - { call: "* /search/items", reason: "`search.query(\"items\", ...)` read under the instance's `baseUrl` with its QUERY method unread" }

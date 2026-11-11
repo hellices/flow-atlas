@@ -11,13 +11,6 @@ missing:
   - { call: "GET /users/{}/avatar", reason: "the method of a RestClient request (`get()` before a `.uri(` builder) is not read, and nothing says so" }
   - { call: "GET /users/{}/settings", reason: "the method of a RestClient request (`get()` before `.uri(` and `.exchange(`) is not read, and nothing says so" }
   - { call: "GET /users/{}/posts", reason: "a path concatenated around a value (`\"/users/\" + userId + \"/posts\"`) is read as two paths, and nothing says so" }
-  - { call: "GET /projects", reason: "an HTTP interface's `@GetExchange` without a path is not read as a request at its interface's `@HttpExchange(url = \"/projects\")`, and nothing says so" }
-  - { call: "POST /projects", reason: "an HTTP interface's `@PostExchange` without a path is not read as a request at its interface's `@HttpExchange(url = \"/projects\")`, and nothing says so" }
-  - { call: "GET /projects/{}", reason: "an HTTP interface's `@GetExchange(\"/{id}\")` is not read, nor put under its interface's `@HttpExchange` path, and nothing says so" }
-  - { call: "PUT /projects/{}", reason: "an HTTP interface's `@PutExchange(\"/{id}\")` is not read, nor put under its interface's `@HttpExchange` path, and nothing says so" }
-  - { call: "PATCH /projects/{}", reason: "an HTTP interface's `@PatchExchange(url = \"/{id}\")` is not read, nor put under its interface's `@HttpExchange` path, and nothing says so" }
-  - { call: "DELETE /projects/{}", reason: "an HTTP interface's `@DeleteExchange(\"/{id}\")` is not read, nor put under its interface's `@HttpExchange` path, and nothing says so" }
-  - { call: "POST /projects/{}/members/{}", reason: "an HTTP interface method's `@HttpExchange(method = \"POST\", url = ...)` is read without its interface's `/projects` and without its method, and nothing says so" }
 extra:
   - { call: "* /users", reason: "RestClient requests to `/users` read with their method (`get()`, `post()` before `.uri(`) unread" }
   - { call: "* /users/{}", reason: "RestClient requests to `/users/{id}` read with their method (`get()`, `put()`, `patch()`, `delete()` before `.uri(`) unread" }
@@ -25,5 +18,3 @@ extra:
   - { call: "* /users/{}/avatar", reason: "a RestClient `get()` request read with its method unread" }
   - { call: "* /users/{}/settings", reason: "a RestClient `get()` request read with its method unread" }
   - { call: "* /posts", reason: "the tail of `\"/users/\" + userId + \"/posts\"` read as a request of its own" }
-  - { call: "* /projects", reason: "the interface's `@HttpExchange(url = \"/projects\")`, the base path of its methods, read as a request" }
-  - { call: "* /{}/members/{}", reason: "an `@HttpExchange` method's path read without its interface's `/projects`, its method unread" }

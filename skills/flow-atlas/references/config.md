@@ -41,7 +41,13 @@ routes:
 # Which files of one component call another. Keep these narrow: the client adapters, not the whole app.
 calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
-  - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path (Dio baseUrl, axios baseURL)
+  - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path, appended to (Dio's baseUrl); the same as base: /api/v1, join: append
+  - from: mobile
+    to: api
+    files: ["mobile/**/data/*Service.kt"]
+    base: /api/v1/            # the path of the base URL the client joins its paths to, where the code sets it in a way atlas does not read
+    join: resolve             # resolve: as a URL reference (HttpClient, Retrofit, Ktor, urljoin); append: after it with one / (axios, Ky's prefix, RTK Query)
+    receivers: [client]       # code read as text: the names the client is called on; a path without a leading / is read only as their calls' URL
   - { from: web, to: api, files: ["src/main/resources/templates/**/*.html"], dataUrls: [data-api-url] }   # data-* a script requests
   - from: spa
     to: api
@@ -149,18 +155,25 @@ method comes before it (`request("POST", "/x")`), or the function is XMLHttpRequ
 (the global `open`, or `open` on a global `window` or `document`, not a binding of that name the code declares) takes its URL first. A limit names the functions such paths went to. A `path` option is
 read as Node's `http.request` defines it, from the root: one joined to another value (`` path: `${dir}/raw` ``) is no
 request. When both branches of a conditional name the same request (`` base ? `${base}/chat` : "/chat" ``) they are
-one call, which joins a base only when both branches do. Branches whose paths differ once the configured `prefix` is
-put before a root-relative one, and a branch to a host other than the target's, are read on their own. An
+one call, which joins a base only when both branches do. Branches whose paths differ once each is joined to its
+client's base, and a branch to a host other than the target's, are read on their own. An
 absolute URL, in code of any language, is a request to the call source's target when its
 host is a loopback address (`localhost`, `127.x.x.x`, `[::1]`) or the host of the target's `origins` entry; a URL to any
 other host, a link to another site for one, is not read, and a limit names the host. A host chosen in a URL's leading
 hole (`` `${prod ? "https://other.example" : ""}/api/status` ``) is read as that conditional's branches would be: the
 URL is still a request where a branch names no other host, and the limit names the other one. A client's own helper that puts
-the configured `prefix` straight before a path it is given (`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built
-from that one parameter alone) is the prefix written once more, not a request: the paths passed to it are read where
-they are written, with the prefix, and a limit names where the helper was left out. A path with a hole
-(`` `/orders/${id}` ``), another base, or text after the value is still a request. A path that already starts with the
-prefix still gets it, since a service may nest the same segment.
+the base the call source appends to (`prefix`, or `base` with `join: append`) straight before a path it is given
+(`` `/api/v1${path}` ``, `"/api/v1" + path`, the value built from that one parameter alone) is the base written once
+more, not a request: the paths passed to it are read where they are written, with the base, and a limit names where the
+helper was left out. A function of the repository that requests a URL of other text from the root put straight before
+a parameter (`` fetch(`/api${path}`) ``, the text not ending in `/`), hands that parameter to no other call, and is
+passed a path from the root wherever the code passes it text, puts that text before each of those paths: its URL is
+read before them, not as a request of its own, and a limit names it. Where it requests that URL through a client
+whose base atlas reads (below), or hands the parameter itself to one (`` (url) => api.get(url) ``), the paths passed to
+it are that client's requests, joined to its base. A path with a hole (`` `/orders/${id}` ``), another base, or text after the value is
+still a request. A path that already starts with the base still gets it, since a service may nest the same segment; the
+base itself, written as a value (`baseUrl: "/api/v1/"`, `this.baseUrl = options.baseUrl || "/api"`, `` `${API}/api/v1` ``),
+is no request, and a limit names where.
 
 A string is also no request where its place shows it is text for people or is tested, not sent: a JSX `placeholder`,
 `title`, `alt` or `aria-label` (and the other ARIA attributes of text), on an element or as a component's prop of that
@@ -513,6 +526,106 @@ attribute Thymeleaf replaces (`href` next to `th:href`) is not requested; `th:at
 their value to the plain one, and a joined URL relative to the page is resolved as a page-relative link is. Text outside attributes, commented-out markup and absolute URLs, which name other sites,
 are skipped.
 
+### A client's base
+
+Most HTTP clients take a base URL and join each path they are given to it; how, each library documents. atlas reads
+the base where the code states it, for the calls made through that client, and the call source's `base` (with `join`)
+or `prefix` where it does not: a base held in a value (`process.env.API_URL`, a build's
+`BuildConfig`), or a client atlas does not follow. A client's base option is its base, no request of its own.
+
+- `join: resolve` is RFC 3986's resolution of a reference (section 5.2), as the URL Standard, .NET's `Uri` (HttpClient's
+  `BaseAddress`), OkHttp's `HttpUrl.resolve` (Retrofit's `baseUrl`, whose documentation shows it), Ktor's
+  `DefaultRequest`, Go's `URL.Parse` and Python's `urljoin` do it: a path that starts with `/` replaces the base's
+  path, any other replaces what follows its last `/`, so `/api/v1/` and `users` are `/api/v1/users`, `/api/v1` and
+  `users` are `/api/users`, and `/health` is `/health` under both.
+- `join: append` puts the path after the base's path with one `/`, its own leading `/` dropped, as axios's
+  `combineURLs`, Ky's `prefix`, RTK Query's `joinUrls`, httpx's `base_url`, resty's `SetBaseURL` and Refit do. `prefix`
+  is this join, the form earlier configurations wrote; a path with its leading `/` gets it as before.
+
+Clients differ on a `.` or `..` segment after the join: the URL Standard, .NET's `Uri`, OkHttp, `urljoin` and httpx
+remove it, resty's `url.Parse` and Ktor's `DefaultRequest` send it as written; so a path with one, joined to the
+configured base, is left unread with a limit, and one joined to a base read from code (whose libraries send it through
+the URL Standard) has it removed. A URL with a host, or one that starts
+with a value (`${base}/orders`), keeps its own path. A path without a leading `/` is read only where the place it is
+written in makes it relative to a client's base, and only where that base is known; where it is not, a limit names
+the place and says to set `base` and `join`.
+
+In TypeScript and JavaScript, atlas follows a call's receiver, through `const`s and imports, to the call that creates
+the client, a library's factory imported under any name, and reads the options there:
+
+- axios, `axios.create({ baseURL })` (append, `combineURLs`); the requests are the URL its methods take first (`get`,
+  `post` and the others), the instance called with a URL, and the `url` of a request config (`api({ url })`,
+  `api.request({ url })`). A request's own `baseURL` takes the instance's place; options held in a value, or with a
+  spread, may set one, so they leave the base unread. A request interceptor (`api.interceptors.request.use(fn)`) that
+  sets the config's `url` to text before the URL it holds (`` config.url = `/v2${config.url}` ``, a statement of its own
+  in the function's body) puts that text before each URL of the instance, an absolute one too (`combineURLs` then
+  appends `/v2https://...` to the base); one that writes `url` or `baseURL`
+  otherwise, hands the config on, returns anything but the config it is given (or writes that parameter), takes
+  options, or is not a function of the file, and a
+  change of `api.defaults` whole or of its `baseURL`, leave the instance's requests unread with a limit, as do uses of
+  the instance in files atlas cannot all list. Such a rewrite of a config's own URL, there or as the `url` of an object
+  that spreads the config, is no request.
+- Ky (`ky.create`, `ky.extend`, `instance.extend`, with options or a function of the parent's options, whose
+  `` `${options.prefix}/admin` `` is read with the parent's prefix), at the major version the nearest package.json
+  above the file that creates it gives: from Ky 2, `prefix` is appended (its readme: "the leading slash of the input
+  will essentially be ignored") and `baseUrl` resolves the input as a URL; a relative prefix with a `baseUrl` is not
+  read; `prefixUrl`, which Ky 2 refuses whatever its value, leaves the requests unread. Before Ky 2, `prefixUrl` is
+  appended, and an input with a leading `/`, which Ky refuses then under a `prefixUrl` set on the instance or the
+  request, is no request. `prefix` and `prefixUrl` go before an absolute input too (`resolveInput`, Ky 1's
+  constructor), which is then a path on the client's own host; an empty one is none, over the parent's too. `prefix`
+  and `baseUrl` are kept apart through `extend` and a request's options, and combined only for the request. A
+  `beforeRequest` or `beforeRetry` hook that may return a request (anything but a block with no `return` of a value)
+  and an `init` hook, on the instance or in a request's own options, may change any URL: those requests are left
+  unread with a limit.
+- openapi-fetch, `createClient({ baseUrl })`, and a request's own `baseUrl` (`client.GET("/health", { baseUrl: "/" })`);
+  the path, a document's, is written after the base, an absolute one too. A middleware whose `onRequest` may return
+  another request than the one it is given, or writes over its `request` parameter, leaves the client's requests
+  unread.
+- RTK Query, `createApi({ baseQuery: fetchBaseQuery({ baseUrl }) })` and `api.injectEndpoints(...)` on it: each
+  endpoint's `query` returns its URL, alone or as an object's `url`, appended with `joinUrls`, with the object's
+  `method`, GET where it states none (fetchBaseQuery's). Another `baseQuery` leaves the endpoints unread.
+
+Through such a client, whether its base is read or not, a URL that starts with a value (`` `${year}/summary` ``) may
+be absolute, and bypass the base, or a path the base takes; it is not read, and a limit names it. A base the client's options set where atlas does not
+read it (a value, a spread or a computed key after it, options held in a value) is taken from the call source's
+`base` or `prefix`; without one, a path from the root is still read where the base resolves it (Ky's `baseUrl`), and
+none other, and a limit says where. A client none of whose options state a base reads its paths with the call source's
+base, as before. A URL held in a `const` is read through the client its uses request it with (`const url = "/users";
+api.get(url)`), followed across the files that import it for a path from the root; where its uses request it through
+different clients, or through a client and otherwise, a limit names it. A file's path (`/status.json`) is read where
+a route of the target serves it under the client's base. A request to the configured base's own path (`fetch("/api")`)
+is a request; the base is no request only where it is a value of its own.
+
+In an Angular app, a URL that starts with a value Angular fixes is read with that value
+([Configuring application environments](https://angular.dev/tools/cli/environments),
+[Defining dependency providers](https://angular.dev/guide/di/dependency-injection-providers)):
+
+- a property of the `environment` object an `environments/environment*.ts` file exports
+  (`` `${environment.apiUrl}/users` ``), where each file a `fileReplacements` entry of angular.json (paths from its
+  directory) or of an Nx project.json (paths from the workspace's root) puts in its place gives the same literal value,
+  and no code writes the property or the object; where they differ, the URLs are left unread with a limit that names
+  the files;
+- an `InjectionToken`'s value, through `inject(TOKEN)` or a constructor parameter `@Inject(TOKEN)`: what every provider
+  the repository writes gives it (`{ provide: TOKEN, useValue: "/api" }`, or `useFactory` returning a value with no
+  `deps`), where they agree, else the token's own `factory`; providers that differ, one not read, or none, leave the
+  URLs unread with a limit. What a provider gives a token is no request of its own;
+- a `readonly` or `private` field initialized with one of these, or such a constructor parameter, that no code of the
+  class writes (`` `${this.baseUrl}/${year}` ``).
+
+In code read as text, a path without a leading `/` is read relative to the call source's `base` (or `prefix`) where it
+is a whole string argument (not `"users/" + id`) of: Retrofit's `@GET("users/{id}")` and the other verb annotations,
+`@HTTP(path = ...)`; .NET's `new HttpRequestMessage(method, "users")`; a call on one of the call source's `receivers`,
+taken first or after a method written as a string (`client.get("users/$id")`, `api.request("POST", "projects")`). A
+path Dart's `Uri.http(host, path)` or `Uri.https` takes, written with its leading `/` or not, starts at that host's
+root, as the package documents; a host written there as a literal is checked as an absolute URL's is. Two type-level
+prefixes are read: Refit's `[PathPrefix("/projects")]`, joined before each verb attribute's route of its interface with
+one `/` (Refit, `PathPrefixAttribute`), and, in Java and Kotlin, an `@HttpExchange` interface's `url` before each of
+its methods' `@GetExchange` and the others, with the method each names, else the interface's. A `[PathPrefix]` on an
+interface that extends another or that another of the file extends, written with more than its path, an
+`@HttpExchange` interface that extends another and has no type-level mapping of its own (Spring takes it from the
+interfaces it extends), or an exchange not spelled out, leaves those requests unread with a limit; an interface with
+its own mapping that extends another is read for its own methods, and a limit says those it inherits are not.
+
 ### Generated clients
 
 A client @hey-api/openapi-ts generates (`sdk.gen.ts`, each file headed `// This file is auto-generated by
@@ -529,6 +642,21 @@ a `limit:` says so. Other generators are not recognized, and atlas does not tie 
 the requests inside them: their files are read as any code is. Listing such a client counts each of its requests as a
 call, used or not, so no route it covers comes back as FA001; leaving it out leaves out the requests only it makes, so
 their routes come back as FA001 though the app calls them.
+
+A function of a @hey-api/openapi-ts SDK (`(options?.client ?? client).get({ url: "/health", ...options })`) or of a file
+orval generates (headed `Generated by orval`, `customInstance({ url: "/health", method: "GET" }, options)`) hands its
+options to the client, and a caller may set the base there (`getHealth({ baseUrl: location.origin })`). hey-api's
+client merges the options over its configuration and writes the path after `baseUrl` (`getUrl`); orval's mutator is
+the project's own, and is followed only where it spreads its second parameter, with nothing after it that sets
+`baseURL`, into a request through an axios instance (orval's custom axios guide: `AXIOS_INSTANCE({ ...config,
+...options })`). There, the request is read once for each base its callers give: none (the configured base, as
+before), the page's origin (`location.origin`: the path from the root), or a literal or constant (appended; another
+host is checked as an absolute URL's is). Options a function of the code hands on (`(options) => getHealth(options)`)
+are followed to that function's callers. A caller that sets the base to a value atlas does not read, or after a
+spread, or, for hey-api, to a base ending in `/` (which the path's own `/` follows), leaves the request unread with a
+limit; other options held in a value, and a use that is no call (the function handed on), are taken to give none, as
+the generated function's request is read without its client's own configuration. The base a caller gives is no request
+of its own.
 
 Routers differ in which of several matching routes serves a request. Spring picks the most specific (a pattern without
 a catch-all first, and of two catch-alls the longer; then the lower score, one per variable and a hundred per wildcard,

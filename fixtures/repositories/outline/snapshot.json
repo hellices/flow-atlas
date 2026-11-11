@@ -229,7 +229,6 @@
     "server|PUT /oauth/register/{clientId}"
   ],
   "calls": [
-    "app->server|* /api/api @ app/utils/ApiClient.ts:95",
     "app->server|* /api/api/fileOperations.redirect @ app/models/FileOperation.ts:54",
     "app->server|* /api/api/installation.create @ app/scenes/Login/components/WorkspaceSetup.tsx:26",
     "app->server|* /api/archive @ app/utils/routeHelpers.ts:45",
@@ -792,7 +791,6 @@
     "FA001|server|POST /oauth/revoke",
     "FA001|server|POST /oauth/token",
     "FA001|server|PUT /oauth/register/{clientId}",
-    "FA002|app->server|* /api/api",
     "FA002|app->server|* /api/api/fileOperations.redirect",
     "FA002|app->server|* /api/api/installation.create",
     "FA002|app->server|* /api/archive",
@@ -834,6 +832,7 @@
   "limits": [
     "calls app->server: * /mcp at app/scenes/Settings/AI.tsx:50 fits routes of DELETE, GET and POST; its method is not read, so it is matched to none of them",
     "calls app->server: URLs to www.googletagmanager.com (app/components/Analytics.tsx:78), www.w3.org (app/components/DocumentCard.tsx:141), github.com (app/components/Sidebar/components/Version.tsx:34), mail.google.com (app/hooks/useEmailInboxLinks.ts:31), www.youtube.com (app/scenes/Developer/components/ExampleData.ts:2195), www.getoutline.com (app/scenes/Developer/components/ExampleData.ts:2433), docs.getoutline.com (app/scenes/Document/components/PresentationMode.tsx:365) are not read as requests to server; set origins.server if that is its host",
+    "calls app->server: the configured prefix /api, written as a value (app/utils/ApiClient.ts:95), is the client's base, not a request",
     "routes server: plugins/azure/server/auth/azure.ts:223 registers a path the file does not spell out (config.id); its routes are not read",
     "routes server: plugins/azure/server/auth/azure.ts:227 registers a path the file does not spell out (`${config.id}.callback`); its routes are not read",
     "routes server: plugins/discord/server/auth/discord.ts:236 registers a path the file does not spell out (config.id); its routes are not read",

@@ -2,6 +2,7 @@ components:
   - { name: client, path: . }
   - { name: api, path: server }
 calls:
-  # Each Retrofit service's base URL comes from the build's configuration (ApiConfig); its path is the prefix.
-  - { from: client, to: api, files: ["src/main/kotlin/**/data/UserApi.kt"], prefix: /api/v1 }
-  - { from: client, to: api, files: ["src/main/kotlin/**/data/AnalyticsApi.kt"], prefix: /analytics/v2 }
+  # Each Retrofit service's base URL comes from the build's configuration (ApiConfig); Retrofit resolves each method's
+  # relative URL against it (Retrofit.Builder.baseUrl).
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/UserApi.kt"], base: /api/v1/, join: resolve }
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/AnalyticsApi.kt"], base: /analytics/v2/, join: resolve }

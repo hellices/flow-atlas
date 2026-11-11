@@ -1,14 +1,18 @@
 import ts from "typescript";
-import type { CallSource, Config } from "../config.js";
+import { baseOf, type CallSource, type Config } from "../config.js";
 import type { Call, Coverage, Draft, Place, Surface } from "../model.js";
-import { callPath, HOLE, hostOf, isLoopback, joinRoute, pathsMatch, resolveReference, type CallPath } from "../paths.js";
+import { callPath, HOLE, hostOf, isLoopback, joinRoute, onBase, pathsMatch, relativePath, resolveReference, type Base, type CallPath } from "../paths.js";
 import { lineOf, matcher, select, type Source } from "../source.js";
+import { AngularValues } from "./angular.js";
+import { Clients, GENERATED_CLIENT, generatorOf, parseBase, type ClientRequest } from "./clients.js";
+import { httpExchanges } from "./spring.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, importedFrom, isReference, references, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
 import { Importers } from "./importers.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
+import { packageRanges } from "./syntax.js";
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -1160,7 +1164,7 @@ function unrequestedValue(node: ts.Node, follow: Follow, depth: number, path: Pa
 /**
  * Whether the place a value is used in is no request: a route registration's path, a comparison, a text test or the
  * text it is made on, a test for truth, a client router's own route, a Next.js middleware's matcher, the base a URL
- * is resolved against, an attribute of text for people, or a message to translate.
+ * is resolved against, a client's base option, an attribute of text for people, or a message to translate.
  */
 function unrequestedPlace(value: ts.Node, follow: Follow): boolean {
   return (
@@ -1172,6 +1176,7 @@ function unrequestedPlace(value: ts.Node, follow: Follow): boolean {
     message(value) ||
     middlewareMatcher(value, value.getSourceFile().fileName) ||
     urlBase(value) ||
+    !!clientsOf.get(repositories.get(value.getSourceFile())!)?.baseOption(value) ||
     (clientRoute(value) === "route" && hostOf(follow.raw) === undefined)
   );
 }
@@ -1411,7 +1416,171 @@ function constFor(id: ts.Identifier): ts.VariableDeclaration | undefined {
  * names. The offsets join it to the strings a handler runs (`Reach.from`); the host decides whether the URL is a
  * request to the configured target (`extractCalls`). Neither is part of the graph.
  */
-export type ReadCall = Draft<Call> & { span?: [number, number]; host?: string };
+export type ReadCall = Draft<Call> & { span?: [number, number]; host?: string; relative?: true; base?: Base };
+
+/**
+ * A path as a URL's place reads it: `relative` where it is written without a leading `/` against a client's base, the
+ * base its client states, the method its library sends and the host its base names.
+ */
+type Requested = CallPath & { relative?: true; base?: Base; method?: string; host?: string; hostSet?: boolean };
+
+/**
+ * The request through a client a URL held in a `const` is, where the const's uses (in its file, and, `across`, in the
+ * files that import it) are all URLs of requests through clients that agree; "mixed" where some are and they do not agree, or
+ * others are not; undefined where none is, or the uses are not all read.
+ */
+function heldThrough(node: ts.Node, clients: Clients, across: boolean): ClientRequest | "mixed" | undefined {
+  const value = valuePlace(node);
+  const decl = value.parent;
+  if (!ts.isVariableDeclaration(decl) || decl.initializer !== value || !constDeclaration(decl)) return undefined;
+  const uses = across ? usesOf(decl.name, decl) : references(decl.name);
+  if (!uses?.length) return undefined;
+  // A use that requests it otherwise (`fetch(url)`) is another request; a use that is none (a log) is no matter.
+  const requests = uses.map((u) => clients.requestOf(u) ?? (requestPosition(u) ? "elsewhere" : undefined)).filter((r) => r !== undefined);
+  const through = requests.filter((r): r is ClientRequest => r !== "elsewhere");
+  if (!through.length) return undefined;
+  const same = (a: ClientRequest, b: ClientRequest) => JSON.stringify({ ...a, name: "" }) === JSON.stringify({ ...b, name: "" });
+  return through.length === requests.length && through.every((r) => same(r, through[0]!)) ? through[0] : "mixed";
+}
+
+/** The parameter a value is the `url` of (`config.url`), where it is one. */
+function urlOfParameter(e: ts.Expression): ts.ParameterDeclaration | undefined {
+  const m = member(unwrap(e));
+  const receiver = m?.name === "url" ? unwrap(m.receiver) : undefined;
+  const d = receiver && ts.isIdentifier(receiver) ? declarationOf(receiver) : undefined;
+  return d && ts.isParameter(d) ? d : undefined;
+}
+
+/**
+ * Whether a URL is the rewrite an interceptor makes of the URL of the config it is given: text before that config's own
+ * URL (`` `/v2${config.url}` ``, `"/v2" + config.url`), set as the config's `url` (`config.url = ...`), or as the `url`
+ * of an object that spreads the config (`{ ...config, url: ... }`). The requests it rewrites are read where they are
+ * made.
+ */
+function rewritesOwnUrl(node: ts.Node): boolean {
+  const value = valuePlace(node);
+  let own: ts.ParameterDeclaration | undefined;
+  if (ts.isTemplateExpression(value) && value.head.text && value.templateSpans.length === 1 && !value.templateSpans[0]!.literal.text) own = urlOfParameter(value.templateSpans[0]!.expression);
+  else if (isPlus(value) && !isPlus(value.parent)) {
+    const parts = operands(value).map(unwrap);
+    if (parts.length === 2 && ts.isStringLiteralLike(parts[0]!)) own = urlOfParameter(parts[1]!);
+  }
+  if (!own) return false;
+  const write = value.parent;
+  if (ts.isBinaryExpression(write) && write.right === value && write.operatorToken.kind === ts.SyntaxKind.EqualsToken) return urlOfParameter(write.left) === own;
+  if (!ts.isPropertyAssignment(write) || write.initializer !== value || writtenKey(write) !== "url") return false;
+  return write.parent.properties.some((p) => ts.isSpreadAssignment(p) && ts.isIdentifier(unwrap(p.expression)) && declarationOf(unwrap(p.expression) as ts.Identifier) === own);
+}
+
+/** Whether a path is the path of a base, a trailing `/` aside; the root is the base of everything, and no path's. */
+function sameBase(path: string, base: string): boolean {
+  const b = joinRoute(base);
+  return b !== "/" && joinRoute(path) === b;
+}
+
+/** What a helper puts before the path it is given: its text, and the URL it requests with it, which may be a client's. */
+interface Helper {
+  lead: string;
+  url: ts.Node;
+}
+
+/**
+ * What a function puts straight before the path it is given at a parameter, where it requests a URL built so and hands
+ * the parameter to no other call: `` fetch(`/api${path}`) `` puts `/api` before each path passed as `path`, and
+ * `api.get(path)`, a request through a client instance whose base atlas reads, puts nothing but hands each path to
+ * that client. Undefined for a function that does otherwise, a rest parameter, one read through `arguments` or
+ * written to.
+ */
+function helperPrefix(fn: Callable, index: number): Helper | undefined {
+  if (helpers.has(fn) && helpers.get(fn)!.has(index)) return helpers.get(fn)!.get(index);
+  const found = helperPrefixOf(fn, index);
+  (helpers.get(fn) ?? helpers.set(fn, new Map()).get(fn)!).set(index, found);
+  return found;
+}
+
+const helpers = new WeakMap<Callable, Map<number, Helper | undefined>>();
+
+/** The client instances read for each repository's files (see `Clients`). */
+const clientsOf = new WeakMap<Constants, Clients>();
+
+function helperPrefixOf(fn: Callable, index: number): Helper | undefined {
+  const p = fn.parameters[index];
+  if (!p || p.dotDotDotToken || !ts.isIdentifier(p.name) || readsArguments(fn) || reassigned(p.name)) return undefined;
+  const clients = clientsOf.get(repositories.get(fn.getSourceFile())!);
+  let found: Helper | undefined;
+  for (const ref of references(p.name)) {
+    const place = valuePlace(ref);
+    const url = ts.isTemplateSpan(place.parent) ? place.parent.parent : isPlus(place.parent) ? place.parent : undefined;
+    const lead = url && helperLead(url, place);
+    const client = lead === undefined ? clients?.requestOf(place) : undefined;
+    if (lead !== undefined || client) {
+      const at = lead !== undefined ? url! : place;
+      if (!(requestPosition(at) || clients?.requestOf(at)) || found !== undefined) return undefined;
+      found = { lead: lead ?? "", url: at };
+    } else if (argumentPlace(place) || ts.isSpreadElement(place.parent)) return undefined;
+  }
+  // `/users/${id}` takes a segment, not a path: the text before a path ends in no `/`, and what the function is given
+  // there is a path, wherever the code passes it text.
+  if (!found || found.lead.endsWith("/")) return undefined;
+  const relative = !!clients?.requestOf(found.url)?.relative;
+  return passesPaths(fn, index, !found.lead && relative) ? found : undefined;
+}
+
+/**
+ * Whether the calls of a function, where the code names it (`usesOf`), pass it text at a position, and every text
+ * passed there is a path from the root (or, with `relative`, a path a client joins to its base): a string, or a
+ * template or `+` that starts with one.
+ */
+function passesPaths(fn: Callable, index: number, relative: boolean): boolean {
+  const name = ts.isFunctionDeclaration(fn) ? fn.name : ts.isVariableDeclaration(valuePlace(fn).parent) ? (valuePlace(fn).parent as ts.VariableDeclaration).name : undefined;
+  if (!name || !ts.isIdentifier(name)) return false;
+  const uses = usesOf(name, name.parent);
+  let text = false;
+  for (const use of uses ?? []) {
+    const call = outermost(use).parent;
+    if (!ts.isCallExpression(call) || outermost(call.expression) !== outermost(use)) continue;
+    const arg = call.arguments[index] && unwrap(call.arguments[index]);
+    if (!arg) continue;
+    const lead = ts.isStringLiteralLike(arg) ? arg.text : ts.isTemplateExpression(arg) ? arg.head.text : isPlus(arg) && ts.isStringLiteralLike(unwrap(operands(arg)[0]!)) ? (unwrap(operands(arg)[0]!) as ts.StringLiteral).text : undefined;
+    if (lead === undefined) continue;
+    const rooted = lead.startsWith("/") && !lead.startsWith("//");
+    if (!rooted && !(relative && lead && relativePath(lead.replace(/\/+$/, "") || lead))) return false;
+    text = true;
+  }
+  return text;
+}
+
+/** The text a URL puts straight before a value, `` `/api${value}` `` or `"/api" + value`, where it is a path from the root. */
+function helperLead(url: ts.Node, value: ts.Node): string | undefined {
+  let lead: string | undefined;
+  if (ts.isTemplateExpression(url) && url.templateSpans.length === 1 && url.templateSpans[0]!.expression === unwrap(value as ts.Expression) && !url.templateSpans[0]!.literal.text) lead = url.head.text;
+  else if (isPlus(url) && !isPlus(url.parent)) {
+    const parts = operands(url).map(unwrap);
+    if (parts.length === 2 && ts.isStringLiteralLike(parts[0]!) && parts[1] === unwrap(value as ts.Expression)) lead = parts[0].text;
+  }
+  return lead !== undefined && callPath(lead) && !callPath(lead)!.based ? lead : undefined;
+}
+
+/** The text a helper's URL puts before its path parameter, where the URL is such a helper's (`helperPrefix`). */
+function helperUrl(node: ts.Node): string | undefined {
+  const value = ts.isTemplateExpression(node) && node.templateSpans.length === 1 ? node.templateSpans[0]!.expression : isPlus(node) ? operands(node)[1] : undefined;
+  const id = value && unwrap(value);
+  if (!id || !ts.isIdentifier(id)) return undefined;
+  const d = declarationOf(id);
+  if (!d || !ts.isParameter(d)) return undefined;
+  const fn = d.parent;
+  if (!(ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isArrowFunction(fn) || ts.isMethodDeclaration(fn))) return undefined;
+  const lead = helperLead(node, id);
+  return lead !== undefined && helperPrefix(fn, fn.parameters.indexOf(d))?.lead === lead ? lead : undefined;
+}
+
+/** What a helper the string is handed to puts before it (`helperPrefix`), where the helper is one the code names. */
+function helperBefore(node: ts.Node): Helper | undefined {
+  const place = argumentPlace(valuePlace(node));
+  if (!place || !ts.isCallExpression(place.call)) return undefined;
+  const fn = functionCalled(place.callee);
+  return fn ? helperPrefix(fn, place.at) : undefined;
+}
 
 /** A path left unread because it is handed to a function after its first argument (`laterArgument`). */
 export interface Passed {
@@ -1448,6 +1617,24 @@ export interface ReadContext {
   elsewhere?: Array<{ host: string; at: Place }>;
   /** Collects the URLs resolved against a base held in a value (`new URL(path, base)`), whose host is not read. */
   unbased?: Place[];
+  /** The base the call source's configuration gives its client (`base` and `join`, or `prefix`). */
+  base?: Base;
+  /** The client instances the code creates, with their bases (see `Clients`). */
+  clients?: Clients;
+  /** Whether any file of the repository imports a client library whose instances atlas reads; undefined: may. */
+  anyClient?: boolean;
+  /** The values Angular's environments and injection tokens give (see `AngularValues`). */
+  angular?: AngularValues;
+  /** Whether a route of the target serves a path, its file extension included (see `serves`). */
+  routes?: (path: string) => boolean;
+  /** Collects where the configured base is written as a value of its own, which is the base and no request. */
+  written?: Place[];
+  /** Collects the requests through a client left unread because how they join its base is not read, with why. */
+  unjoined?: Array<{ why: string; at: Place }>;
+  /** Collects the URLs of a helper that puts a path before the path it is given, read before its callers' paths. */
+  helpers?: Array<{ prefix: string; at: Place }>;
+  /** Collects the paths written relative to a base the call source does not give (code read as text). */
+  unbaseRelative?: Place[];
   /**
    * The strings the repository's code spells out, which follow imports to the modules of the repository (see
    * `Constants`); without them, a file is read alone.
@@ -1504,9 +1691,14 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const found: Array<{ node: ts.Node; call: ReadCall }> = [];
   // A `const` URL that other URLs start with, and that nothing else uses, is their base, not a request of its own.
   const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
+  // Leads whose value Angular fixes but atlas cannot read for certain (environments that differ, a token no provider gives).
+  const unreadLeads = new Map<ts.Node, string>();
   const urlText = (node: ts.Node, depth: number): string | undefined => {
     const lead: Lead = (expr) => {
-      if (depth > 4 || !ts.isIdentifier(expr)) return undefined;
+      if (depth > 4) return undefined;
+      const fixed = ts.isIdentifier(expr) ? undefined : angularLead(expr);
+      if (fixed !== undefined) return fixed;
+      if (!ts.isIdentifier(expr)) return undefined;
       const decl = constFor(expr);
       const value = decl?.initializer ? urlText(decl.initializer, depth + 1) : undefined;
       // An origin with no path (`https://api.example.com`) is a base too; its host decides the target.
@@ -1523,46 +1715,162 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);
     return undefined;
   };
+  /**
+   * The text a URL's leading value is where Angular fixes it (`environment.apiUrl`, `inject(TOKEN)`, a readonly field
+   * holding one): a path or an origin, as a const's lead is.
+   */
+  const angularLead = (expr: ts.Expression): string | undefined => {
+    const u = unwrap(expr);
+    const v = context.angular?.fixed(u);
+    if (!v) return undefined;
+    if ("unread" in v) {
+      unreadLeads.set(u, v.unread);
+      return undefined;
+    }
+    const origin = !callPath(v.text) && hostOf(v.text) !== undefined;
+    if (!callPath(v.text) && !origin) return undefined;
+    return origin ? v.text.replace(/\/+$/, "") : v.text;
+  };
   const lineAt = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
   const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
   repositories.set(sf, constants);
+  const clients = context.clients ?? clientsOf.get(constants) ?? new Clients(constants, importersOf.get(constants), () => undefined);
+  if (!clientsOf.has(constants)) clientsOf.set(constants, clients);
+  const base = context.base;
+  // The base a configured client appends its paths to, which a helper of the client may write once more.
+  const appended = base?.join === "append" ? base.path : undefined;
+  const at = (node: ts.Node): Place => ({ file, line: lineAt(node) });
+  const placeOf = (node: ts.Node): Place => {
+    const own = node.getSourceFile();
+    return { file: own.fileName, line: own.getLineAndCharacterOfPosition(node.getStart(own)).line + 1 };
+  };
+  const generator = generatorOf(text);
   /** The path a URL reads as where it is written, or undefined where its place says it is no request. */
-  const requested = (node: ts.Node, raw: string, report: boolean): CallPath | undefined => {
+  const requested = (node: ts.Node, raw: string, report: boolean): Requested | undefined => {
     if (registered(node) || comparedOrTested(node) || pathOffRoot(node, raw) || middlewareMatcher(node, file)) return undefined;
-    // A client router's own route, unless it names another origin (`<Link to="https://...">`), which the browser loads.
-    if (clientRoute(node) === "route" && hostOf(raw) === undefined) return undefined;
-    if (spec.prefix && prefixing(node, spec.prefix)) {
-      if (report) prefixed?.push({ file, line: lineAt(node) });
+    const leadExpr = ts.isTemplateExpression(node) && !node.head.text ? node.templateSpans[0]!.expression : isPlus(node) ? operands(node)[0] : undefined;
+    const unreadLead = leadExpr && unreadLeads.get(unwrap(leadExpr));
+    if (unreadLead) {
+      if (report) context.unjoined?.push({ why: `its leading value is not read: ${unreadLead}`, at: at(node) });
       return undefined;
     }
-    let parsed = callPath(raw, false, context.served) ?? rootRequest(node, raw, spec.wrappers);
+    // A client router's own route, unless it names another origin (`<Link to="https://...">`), which the browser loads.
+    if (clientRoute(node) === "route" && hostOf(raw) === undefined) return undefined;
+    // A client's base option is where its requests start, and an interceptor's rewrite of a request's own URL is that
+    // request's: neither is a request of its own.
+    if (clients.baseOption(node) || rewritesOwnUrl(node)) return undefined;
+    // What a provider gives an Angular InjectionToken is the token's value, read where the code injects it.
+    if (context.angular?.provided(node)) return undefined;
+    if (appended && prefixing(node, appended)) {
+      if (report) prefixed?.push(at(node));
+      return undefined;
+    }
+    const helper = helperUrl(node);
+    if (helper !== undefined && (clients.requestOf(node) || joinRoute(helper) !== joinRoute(appended ?? ""))) {
+      if (report) context.helpers?.push({ prefix: helper, at: at(node) });
+      return undefined;
+    }
+    // A path a helper of the module puts text before (`` fetch(`/api${path}`) ``) is sent with that text, through the
+    // client the helper requests it with.
+    const helped = helperBefore(node);
+    // A URL held in a `const` is requested where the const is used: through the client its uses request it with, where
+    // they agree.
+    // A path from the root is followed to the uses of its const across files; one without a leading `/`, which is read
+    // only through a client, to those of its own file (`heldThrough`).
+    const held = context.anyClient === false ? undefined : callPath(raw, true) ? heldThrough(node, clients, true) : relativePath(raw) ? heldThrough(node, clients, false) : undefined;
+    if (held === "mixed") {
+      if (report) context.unjoined?.push({ why: "a const holds the URL that requests through different clients, or through a client and elsewhere, take", at: at(node) });
+      return undefined;
+    }
+    const client = clients.requestOf(node) ?? (helped && clients.requestOf(helped.url)) ?? held;
+    const before = helped && (client || joinRoute(helped.lead) !== joinRoute(appended ?? "")) ? helped.lead : undefined;
+    const url = before ? before + raw.trimStart() : raw;
+    // A file the target serves at the path the client's base gives (`/api/status.json`).
+    const served = (relative: boolean) => (path: string) => !!context.served?.(path) || (!!client?.base && !!context.routes?.(onBase(client.base, path, relative)));
+    let parsed: Requested | undefined = callPath(url, false, served(false)) ?? rootRequest(node, url, spec.wrappers);
+    if (!parsed && client?.relative) parsed = relativePath(url, served(true));
     if (!parsed) return undefined;
-    const follow: Follow = { raw, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map(), reads: 0 };
+    const follow: Follow = { raw: url, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map(), reads: 0 };
     if (unrequestedValue(node, follow, 0)) return undefined;
-    const against = rootRelative(raw) ? resolvedAgainst(node) : undefined;
+    if (client) {
+      if (client.rejected && !parsed.based && !parsed.relative) {
+        if (report) context.unjoined?.push({ why: client.rejected, at: at(node) });
+        return undefined;
+      }
+      // A base not read leaves the path a request joins it at unknown, unless the configuration gives the base, or the
+      // path starts at the root of a base it resolves against; an interceptor or a hook not read may change any URL.
+      const unread = client.unread;
+      if (unread && (!unread.join || (!base && !parsed.based && !(unread.join === "resolve" && !parsed.relative)))) {
+        if (report) context.unjoined?.push({ why: unread.join ? `${unread.why} (set base and join)` : unread.why, at: at(node) });
+        return undefined;
+      }
+      // On a client whose base is read, a URL that starts with a value may be absolute, and take no base, or a path
+      // the base takes: which, the code does not say.
+      if ((client.base || client.unread) && client.relative && url.trimStart().startsWith(HOLE) && hostOf(url) === undefined) {
+        if (report) context.unjoined?.push({ why: `it starts with a value, an absolute URL or a path ${client.name}'s base takes`, at: at(node) });
+        return undefined;
+      }
+      if (parsed.relative && !client.base && !base) {
+        if (report) context.unjoined?.push({ why: `${client.name} states no base a path without a leading / joins (set base and join)`, at: at(node) });
+        return undefined;
+      }
+      // An absolute URL takes the text an interceptor puts before it as any URL does (axios), and a base joined before
+      // any input (Ky's prefix, openapi-fetch): it is then a path on the client's host.
+      if (parsed.based && hostOf(url) !== undefined && (client.before !== undefined || (client.absolute && client.base))) {
+        let text = url.trim();
+        if (client.before !== undefined) text = client.before + text;
+        const joined = !!client.absolute && !!client.base && !text.startsWith("/");
+        if (joined) text = `${client.base!.path.replace(/\/+$/, "")}/${text}`;
+        const path = callPath(text, false, served(false));
+        if (!path) return undefined;
+        parsed = { ...path, based: joined, hostSet: true, ...(client.host ? { host: client.host } : {}), ...(!joined && client.base ? { base: client.base } : {}) };
+      } else if (!parsed.based) {
+        if (client.before !== undefined) {
+          const rewritten = callPath(client.before + (parsed.relative ? parsed.path.slice(1) : parsed.path));
+          if (!rewritten) return undefined;
+          parsed = { ...rewritten, ...(parsed.slash ? { slash: true as const } : {}) };
+        }
+        if (client.base) parsed = { ...parsed, base: client.base };
+      }
+      if (client.method) parsed = { ...parsed, method: client.method };
+      if (client.host && !parsed.based) parsed = { ...parsed, host: client.host };
+    } else if (requestPosition(node, spec.wrappers)) {
+      // A request to the base's own path stays one.
+    } else if (base && !parsed.based && sameBase(parsed.path, base.path)) {
+      // The configured base written once more (`baseUrl: "/api/v1/"`, `this.baseUrl = options.baseUrl || "/api"`).
+      if (report) context.written?.push(at(node));
+      return undefined;
+    } else if (base && parsed.based && hostOf(url) === undefined && sameBase(parsed.path, base.path) && url.trimStart().startsWith(HOLE)) {
+      // `${API_URL}/api/v1/`: the base after the origin a value holds.
+      if (report) context.written?.push(at(node));
+      return undefined;
+    }
+    const against = rootRelative(url) ? resolvedAgainst(node) : undefined;
     if (against === "value") {
-      if (report) context.unbased?.push({ file, line: lineAt(node) });
+      if (report) context.unbased?.push(at(node));
       return undefined;
     }
     if (typeof against === "object") parsed = { ...parsed, based: true };
     const callee = laterArgument(node);
     if (callee === undefined) return parsed;
-    if (report) passed?.push({ callee, at: { file, line: lineAt(node) } });
+    if (report) passed?.push({ callee, at: at(node) });
     return undefined;
   };
-  const add = (node: ts.Node, parsed: CallPath, host: string | undefined): void => {
+  const add = (node: ts.Node, parsed: Requested, host: string | undefined): void => {
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
-      method: navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers),
+      method: parsed.method ?? (navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers)),
       path: parsed.path,
       based: parsed.based,
       ...(parsed.slash ? { slash: true as const } : {}),
-      at: { file, line: lineAt(node) },
+      ...(parsed.relative ? { relative: true as const } : {}),
+      ...(parsed.base ? { base: parsed.base } : {}),
+      at: at(node),
       evidence: "static",
       scope: scopeOf(node),
       span: [node.getStart(sf), node.getEnd()],
-      host,
+      host: parsed.hostSet ? parsed.host : (host ?? parsed.host),
     } });
   };
   // Branches of a conditional read as one call, at the conditional.
@@ -1585,11 +1893,14 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       const [a, b] = read;
       const hosts = [a?.host, b?.host];
       const one = hosts[0] === hosts[1] || hosts.every((h) => reachesTarget(h, origin));
-      const effective = (p: CallPath) => (p.based || !spec.prefix ? p.path : joinRoute(spec.prefix, p.path));
+      const effective = (p: Requested) => {
+        const on = p.base ?? base;
+        return p.based || !on ? p.path : onBase(on, p.path, p.relative);
+      };
       if (a && b && effective(a.parsed) === effective(b.parsed) && !a.parsed.slash === !b.parsed.slash && one) {
-        // The path the prefix completes, where a branch has one, so the prefix is put before it once.
-        const path = (a.parsed.based ? b.parsed : a.parsed).path;
-        add(node, { path, based: a.parsed.based && b.parsed.based, ...(a.parsed.slash ? { slash: true as const } : {}) }, hosts[0] === hosts[1] ? hosts[0] : undefined);
+        // The path the base completes, where a branch has one, so the base is joined once.
+        const chosen = a.parsed.based ? b.parsed : a.parsed;
+        add(node, { ...chosen, based: a.parsed.based && b.parsed.based }, hosts[0] === hosts[1] ? hosts[0] : undefined);
         branches.forEach((branch) => merged.add(branch));
         for (const host of [...a.other, ...b.other]) elsewhere?.push({ host, at: { file, line: lineAt(node) } });
       }
@@ -1604,7 +1915,20 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       // A host chosen in the leading hole is another server's, as in a whole conditional: the URL is a request to the
       // target only where a branch names none of those hosts, and a limit names them.
       const { host, other } = parsed ? urlHosts(node, raw, origin) : { host: undefined, other: [] };
-      if (parsed) add(node, parsed, host);
+      if (parsed) {
+        // A generated SDK function's request takes the base each of its callers gives (`getHealth({ baseUrl })`).
+        const bases = generator ? clients.generatedBases(node, generator, usesOf, pageAddress) : undefined;
+        for (const b of bases ?? [{ none: true as const }]) {
+          if ("none" in b) add(node, parsed, host);
+          else if ("origin" in b) add(node, { ...parsed, based: true, base: undefined, relative: undefined, hostSet: true, host: undefined }, undefined);
+          else if ("unread" in b) context.unjoined?.push({ why: b.unread, at: placeOf(b.at) });
+          else {
+            const on = parseBase(b.text, "append");
+            if ("unread" in on) context.unjoined?.push({ why: `a caller's base is ${on.unread}`, at: at(node) });
+            else add(node, { ...parsed, based: false, base: on.base, hostSet: true, host: on.host }, undefined);
+          }
+        }
+      }
       for (const host of other) elsewhere?.push({ host, at: { file, line: lineAt(node) } });
       // A URL built with `+` is read whole; the calls among its operands still run (`base + encode(get("/x"))`).
       if (whole) {
@@ -1851,6 +2175,10 @@ export interface Argument {
   label?: string;
   /** The exception it is given to, by the name it is called by. */
   exception?: string;
+  /** Where the call's `(` is, which tells the arguments of one call from another's. */
+  call: number;
+  /** The call is an annotation (`@GET(`) or an attribute (`[Get(`), not a call. */
+  annotation?: true;
 }
 
 /**
@@ -1865,7 +2193,7 @@ export function callArguments(file: string, text: string): Argument[] {
   const kotlin = /\.kts?$/.test(file);
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
   const out: Argument[] = [];
-  const frames: Array<{ open: string; name?: string; method?: boolean; receiver?: string; exception?: string; index: number; from: number }> = [];
+  const frames: Array<{ open: string; name?: string; method?: boolean; receiver?: string; exception?: string; annotation?: boolean; index: number; from: number; at: number }> = [];
   const opener: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
   for (let i = 0; i < text.length; ) {
     const c = text[i]!;
@@ -1874,7 +2202,7 @@ export function callArguments(file: string, text: string): Argument[] {
       const frame = frames.at(-1);
       const end = literalEnd(text, i, quote, file);
       if (frame?.name !== undefined) {
-        const label = /^\s*([A-Za-z_]\w*)\s*:(?!:)/.exec(text.slice(frame.from, i))?.[1];
+        const label = /^\s*([A-Za-z_]\w*)\s*(?::(?!:)|=(?!=))/.exec(text.slice(frame.from, i))?.[1];
         out.push({
           start: i,
           end,
@@ -1884,6 +2212,8 @@ export function callArguments(file: string, text: string): Argument[] {
           index: frame.index,
           ...(label ? { label } : {}),
           ...(frame.exception ? { exception: frame.exception } : {}),
+          call: frame.at,
+          ...(frame.annotation ? { annotation: true as const } : {}),
         });
       }
       i = end;
@@ -1904,8 +2234,11 @@ export function callArguments(file: string, text: string): Argument[] {
         method: !!method,
         receiver: method ? /(?<![\w$.])([A-Za-z_]\w*)\s*(?:\?\.|\.)\s*[A-Za-z_]\w*\s*$/.exec(before)?.[1] : undefined,
         exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined,
+        // `@GET(` in Java and Kotlin, `[Get(` in C#: the callee written after `@`, or first in an attribute's brackets.
+        annotation: /(?:@|\[\s*)(?:[A-Za-z_]\w*\s*\.\s*)*[A-Za-z_]\w*\s*$/.test(before),
         index: 0,
         from: i + 1,
+        at: i,
       });
     } else if (c === "<" && /[\w$]/.test(text[i - 1] ?? "")) {
       // A call's type arguments (`helper<T, U>(`): their commas separate no arguments.
@@ -1914,7 +2247,7 @@ export function callArguments(file: string, text: string): Argument[] {
         i = close;
         continue;
       }
-    } else if (c === "[" || c === "{") frames.push({ open: c, index: 0, from: i + 1 });
+    } else if (c === "[" || c === "{") frames.push({ open: c, index: 0, from: i + 1, at: i });
     else if (c === ",") {
       const frame = frames.at(-1);
       if (frame) {
@@ -2033,11 +2366,131 @@ function argumentAt(list: Argument[], index: number): Argument | undefined {
  * `%s` holes. `labels` collects the paths left unread because they are given to an exception (`callArguments`); a path given to a
  * text method, or to an API that takes no request (`unrequestedArgument`), is not read either.
  */
-export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean): ReadCall[] {
+/** What a reader of code read as text is told of the call source's base, and where it notes what it leaves unread. */
+export interface TextContext {
+  /** The base the call source's configuration gives its client. */
+  base?: Base;
+  /** Collects where the configured base is written as a value of its own. */
+  written?: Place[];
+  /** Collects the paths written relative to a base the configuration does not give. */
+  unbaseRelative?: Place[];
+  /** Collects the paths a type-level prefix is not read for, with why. */
+  untyped?: Array<{ why: string; at: Place }>;
+}
+
+/** Retrofit's annotations of an interface method that name its method and its URL relative to the base URL. */
+const RETROFIT_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/** Refit's attributes of an interface method that name its method and its route. */
+const REFIT_VERBS = new Set(["Get", "Post", "Put", "Patch", "Delete", "Head", "Options"]);
+
+/**
+ * Where a string written without a leading `/` is a path, in code read as text: `base` where it is relative to the
+ * client's base, `root` where it is the path of a URL whose host is given beside it. Retrofit's verb annotations
+ * (`@GET("users/{id}")`, `@HTTP(path = ...)`), the URI of .NET's `new HttpRequestMessage(method, uri)`, and the URL a
+ * call on one of the call source's `receivers` takes first (or after a method written as a string) are relative to
+ * the base; the path Dart's `Uri.http(host, path)` and `Uri.https` take is from the root of that host.
+ */
+function pathPlace(file: string, a: Argument, args: Argument[], text: string, receivers: string[] | undefined): "base" | "root" | undefined {
+  const jvm = /\.(java|kt|kts)$/.test(file);
+  if (jvm && a.annotation && RETROFIT_VERBS.has(a.name) && a.index === 0 && (a.label === undefined || a.label === "value")) return "base";
+  if (jvm && a.annotation && a.name === "HTTP" && a.label === "path") return "base";
+  if (/\.cs$/.test(file) && a.name === "HttpRequestMessage" && !a.method && (a.label === "requestUri" || (a.label === undefined && a.index === 1))) return "base";
+  if (/\.dart$/.test(file) && a.method && a.receiver === "Uri" && (a.name === "http" || a.name === "https") && a.index === 1 && a.label === undefined) return "root";
+  if (!a.method || a.receiver === undefined || !receivers?.includes(a.receiver)) return undefined;
+  const methodAt = (b: Argument | undefined) => !!b && METHODS.has(text.slice(b.start, b.end).replace(/^["'`]+|["'`]+$/g, "").toUpperCase());
+  if (a.index === 0) return methodAt(a) ? undefined : "base";
+  return a.index === 1 && methodAt(args.find((b) => b.call === a.call && b.index === 0)) ? "base" : undefined;
+}
+
+/**
+ * Whether a string is a call's argument whole, not a piece of one joined to others (`"users/" + id`): between its
+ * opening parenthesis, comma or name and the next comma or closing parenthesis there is nothing but the string.
+ */
+function wholeArgument(text: string, a: Argument): boolean {
+  const before = text.slice(Math.max(0, a.start - 80), a.start).replace(/[$@fFrRbBuU]*$/, "");
+  return /(?:[(,]|[A-Za-z_]\w*\s*(?::|=))\s*$/.test(before) && /^\s*[,)]/.test(text.slice(a.end, a.end + 80));
+}
+
+/**
+ * The interfaces Refit's `[PathPrefix("/p")]` decorates, by where their bodies lie, with the prefix (Refit,
+ * PathPrefixAttribute: joined before each method's route with one `/`), or why it is not read: an interface that
+ * extends another, or that another of the file extends, takes or gives its methods another prefix.
+ */
+function refitPrefixes(file: string, text: string, args: Argument[]): Array<{ start: number; end: number; prefix?: string; why?: string; at: number }> {
+  const out: Array<{ start: number; end: number; prefix?: string; why?: string; at: number }> = [];
+  const interfaces = [...text.matchAll(/\binterface\s+(\w+)(?:\s*<[^>{]*>)?\s*(:[^{]*)?\{/g)];
+  const bases = interfaces.flatMap((m) => (m[2] ?? "").slice(1).split(",").map((b) => b.trim().replace(/<.*$/, "")));
+  for (const a of args) {
+    if (!a.annotation || a.name !== "PathPrefix" || a.index !== 0) continue;
+    const next = interfaces.find((m) => (m.index ?? 0) > a.end);
+    if (!next) continue;
+    const at = next.index ?? 0;
+    const open = at + next[0].length - 1;
+    const end = blockEnd(file, text, open) ?? text.length;
+    // Between the attribute and the interface: its own brackets closing, other attributes, modifiers.
+    const plain = /^\s*\)\s*\](?:\s*\[[^\]]*\])*\s*(?:(?:public|internal|partial|private|protected|unsafe)\s+)*$/.test(text.slice(a.end, at));
+    const name = next[1]!;
+    const why = !plain ? `the [PathPrefix] before ${name} is written with more than its path` : next[2] ? `${name} extends another interface` : bases.includes(name) ? `another interface extends ${name}` : undefined;
+    out.push({ start: open, end, ...(why ? { why } : { prefix: text.slice(a.start + 1, a.end - 1) }), at: a.start });
+  }
+  return out;
+}
+
+/** Where the brace that opens at `open` closes, past the string literals in between; undefined where it does not. */
+function blockEnd(file: string, text: string, open: number): number | undefined {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "'") {
+      i = literalEnd(text, i, text.startsWith('"""', i) ? '"""' : c, file) - 1;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
+  }
+  return undefined;
+}
+
+/** The calls the `@HttpExchange` interfaces of a Java or Kotlin file declare: each method's path under its interface's, and its method, else the interface's. */
+function exchangeCalls(file: string, text: string, spec: CallSource, untyped?: TextContext["untyped"]): ReadCall[] {
+  if (!/\.(java|kt|kts)$/.test(file)) return [];
   const out: ReadCall[] = [];
+  for (const iface of httpExchanges(new Map([[file, text]])).values()) {
+    if (!iface) continue;
+    // Spring takes the type-level `@HttpExchange` from the interface proxied or, without one, from the interfaces it
+    // extends; and the methods it inherits are proxied under it too. Those are not read.
+    if (iface.inherits && !iface.typed) {
+      untyped?.push({ why: "an @HttpExchange interface without a type-level mapping of its own extends another", at: { file, line: iface.line } });
+      continue;
+    }
+    if (iface.inherits) untyped?.push({ why: "an @HttpExchange interface extends another, whose methods are not read under it", at: { file, line: iface.line } });
+    for (const member of iface.members) {
+      const methods = member.methods?.length ? member.methods : iface.methods;
+      if (!iface.paths || !member.paths || !methods) {
+        untyped?.push({ why: "an @HttpExchange mapping is not spelled out in the file", at: { file, line: member.line } });
+        continue;
+      }
+      for (const typePath of iface.paths)
+        for (const path of member.paths) {
+          const parsed = callPath(joinRoute(typePath, path).replace(/\{[^{}]*\}/g, HOLE));
+          if (!parsed) continue;
+          for (const method of methods.length ? methods : ["*"])
+            out.push({ from: spec.from, to: spec.to, method, path: parsed.path, based: false, at: { file, line: member.line }, evidence: "text", scope: member.name });
+        }
+    }
+  }
+  return out;
+}
+
+export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean, context: TextContext = {}): ReadCall[] {
+  const out: ReadCall[] = exchangeCalls(file, original, spec, context.untyped);
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
   const args = callArguments(file, text);
+  const csharp = /\.cs$/.test(file);
+  const prefixes = csharp ? refitPrefixes(file, text, args) : [];
+  for (const p of prefixes) if (p.why) context.untyped?.push({ why: `Refit's [PathPrefix] is not read where ${p.why}`, at: { file, line: lineOf(text, p.at) } });
   const python = /\.pyi?$/.test(file);
   const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
@@ -2061,17 +2514,44 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
     if (registered) return;
     const before = text.slice(Math.max(0, index - 200), index);
-    // The root path only as a verb call's URL.
-    const parsed = callPath(inner, false, served) ?? (VERB_BEFORE.test(before) ? callPath(inner, true, served) : undefined);
-    if (!parsed) return;
     // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
     // the exception's literal the string lies in. A string in an f-string field is in code of its own.
     const argument = field ? undefined : argumentAt(args, index);
+    // An `@HttpExchange` interface's mappings are read whole above; Refit's prefix is read before its routes.
+    if (argument?.annotation && /^(?:Http|Get|Post|Put|Patch|Delete)Exchange$/.test(argument.name) && /\.(java|kt|kts)$/.test(file)) return;
+    if (csharp && argument?.annotation && argument.name === "PathPrefix") return;
+    const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
+    if (typed?.why) return;
+    const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : inner;
+    const place = argument && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
+    // The root path only as a verb call's URL.
+    let parsed: (CallPath & { relative?: true }) | undefined =
+      place === "root" ? undefined : (callPath(path, false, served) ?? (VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
+    // The path of a URL whose host is given beside it starts at that host's root, a leading `/` written or not.
+    let host = hostOf(inner);
+    if (place === "root") {
+      const root = callPath(`/${path.trim().replace(/^\/+/, "")}`, false, served);
+      parsed = root && { ...root, based: true };
+      // `Uri.https("maps.example.com", "/x")`: the host written beside the path.
+      const authority = args.find((b) => b.call === argument!.call && b.index === 0);
+      if (authority) host = hostOf(`http://${text.slice(authority.start + 1, authority.end - 1).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, HOLE)}`);
+    } else if (!parsed && place === "base") parsed = relativePath(path, served);
+    if (!parsed) return;
     if (argument?.exception) {
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
     }
     if (argument && unrequestedArgument(file, argument)) return;
+    if (parsed.relative && !context.base) {
+      context.unbaseRelative?.push({ file, line: lineOf(text, index) });
+      return;
+    }
+    // The configured base written once more (`base_url=f"{API_URL}/api/v1"`, `SetBaseURL(gatewayURL + "/billing/v1")`),
+    // where nothing makes it a request's URL.
+    if (context.base && !place && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
+      context.written?.push({ file, line: lineOf(text, index) });
+      return;
+    }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
     const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
@@ -2083,10 +2563,11 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       path: parsed.path,
       based: parsed.based,
       ...(parsed.slash ? { slash: true as const } : {}),
+      ...(parsed.relative ? { relative: true as const } : {}),
       at: { file, line: lineOf(text, index) },
       evidence: "text",
       scope: scopeAt(index),
-      host: hostOf(inner),
+      host,
     });
   };
   read(text, 0);
@@ -2559,8 +3040,16 @@ export function callsFromTemplate(file: string, original: string, spec: CallSour
     const prefixed: Place[] = [];
     const elsewhere: Array<{ host: string; at: Place }> = [];
     const unbased: Place[] = [];
-    for (const c of callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed, elsewhere, unbased })) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
-    context.unbased?.push(...unbased.map((p) => ({ file, line: p.line + shift })));
+    const written: Place[] = [];
+    const helpers: Array<{ prefix: string; at: Place }> = [];
+    const unjoined: Array<{ why: string; at: Place }> = [];
+    const read = callsFromTypeScript(`${file}.js`, body, spec, { passed: inScript, origin: context.origin, prefixed, elsewhere, unbased, base: context.base, written, helpers, unjoined });
+    for (const c of read) out.push({ ...withoutSpan(c), at: { file, line: c.at.line + shift } });
+    const moved = (p: Place): Place => ({ file, line: p.line + shift });
+    context.unbased?.push(...unbased.map(moved));
+    context.written?.push(...written.map(moved));
+    context.helpers?.push(...helpers.map((h) => ({ prefix: h.prefix, at: moved(h.at) })));
+    context.unjoined?.push(...unjoined.map((u) => ({ why: u.why, at: moved(u.at) })));
     context.passed?.push(...inScript.map((p) => ({ ...p, at: { file, line: p.at.line + shift } })));
     context.prefixed?.push(...prefixed.map((p) => ({ file, line: p.line + shift })));
     context.elsewhere?.push(...elsewhere.map((e) => ({ host: e.host, at: { file, line: e.at.line + shift } })));
@@ -2593,13 +3082,10 @@ export const serves =
     return !!extension && routes.some((s) => s.path.endsWith(extension) && pathsMatch(s.path, path, s.patterns));
   };
 
-/**
- * The header @hey-api/openapi-ts writes at the top of every file it generates (`getHeaderLines` in its file writer).
- * Such a client holds one function per operation of the document, whether or not the app calls it.
- */
-const GENERATED_CLIENT = /^\uFEFF?\s*\/\/ This file is auto-generated by @hey-api\/openapi-ts\b/;
 
 const SCRIPT = /\.(c|m)?[tj]sx?$/;
+
+const DOT_SEGMENT = /(?:^|\/)\.{1,2}(?:\/|$)/;
 
 const parseScript = (file: string, text: string): ts.SourceFile =>
   ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -2664,6 +3150,12 @@ export function extractCalls(
   const out: ReadCall[] = [];
   const constants = new Constants(source);
   importersOf.set(constants, new Importers(source, constants, matcher(config.exclude)));
+  const clients = new Clients(constants, importersOf.get(constants), packageRanges(source));
+  clientsOf.set(constants, clients);
+  const angular = new AngularValues(source, constants);
+  // A URL held in a const is followed to its uses only where a client may take it.
+  const CLIENT_IMPORT = /\bfrom\s*["'](?:axios|ky|openapi-fetch|@reduxjs\/toolkit\/query(?:\/react)?)["']/;
+  const anyClient = source.list().some((f) => SCRIPT.test(f) && !/(?:^|\/)node_modules\//.test(f) && CLIENT_IMPORT.test(source.read(f) ?? ""));
   // The names each calling component's configured files use, outside generated clients, and those that generated
   // declarations they name use in turn; undefined where the component has no such file.
   const used = new Map<string, Set<string> | undefined>();
@@ -2708,7 +3200,14 @@ export function extractCalls(
     const unread: Place[] = [];
     const unpaged: Place[] = [];
     const routes = serves((read.surfaces ?? []).filter((s) => s.component === spec.to));
-    const served = (path: string): boolean => routes(path) || (!!spec.prefix && routes(joinRoute(spec.prefix, path)));
+    const base = baseOf(spec);
+    const served = (path: string): boolean => routes(path) || (!!base && routes(onBase(base, path)));
+    const written: Place[] = [];
+    const unjoined: Array<{ why: string; at: Place }> = [];
+    const helpers: Array<{ prefix: string; at: Place }> = [];
+    const unbaseRelative: Place[] = [];
+    const dotted: Place[] = [];
+    const untyped: Array<{ why: string; at: Place }> = [];
     // Generated client files: the functions no other file names, and the files nothing else could call.
     const uncalled = new Map<string, string[]>();
     const alone: string[] = [];
@@ -2719,10 +3218,10 @@ export function extractCalls(
       const text = source.read(file);
       if (text === undefined) continue;
       let calls = SCRIPT.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, elsewhere, unbased, constants })
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, angular, anyClient, base, written, unjoined, helpers })
         : /\.html?$/.test(file)
-          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased })
-          : callsFromText(file, text, spec, spans, labels, served);
+          ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased, base, written, unjoined, helpers })
+          : callsFromText(file, text, spec, spans, labels, served, { base, written, unbaseRelative, untyped });
       // A host is named at the leading hole that writes it, ahead of the URLs built on it.
       for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);
       if (calls.length && GENERATED_CLIENT.test(text)) {
@@ -2735,14 +3234,21 @@ export function extractCalls(
         }
       }
       for (const c of calls) {
-        const { host, ...call } = c;
+        const { host, relative, base: own, ...call } = c;
         if (host !== undefined && !reachesTarget(host, origin)) {
           if (!foreign.has(host)) foreign.set(host, `${c.at.file}:${c.at.line}`);
           continue;
         }
-        // The path a configured client puts before each root-relative path; a URL with a base of its own keeps it, and so
-        // does one resolved against a page, whose route's path is whole.
-        out.push(spec.prefix && !call.based && call.page === undefined ? { ...call, path: joinRoute(spec.prefix, call.path) } : call);
+        // The path joins the base of its client: the one the code states for it, else the configured one. A URL with a
+        // base of its own keeps its path, and so does one resolved against a page, whose route's path is whole.
+        const on = own ?? base;
+        // The libraries a configured base stands for differ on dot segments: the URL Standard, .NET's Uri, OkHttp,
+        // urljoin and httpx remove them; resty's `url.Parse` and Ktor's DefaultRequest send them as written.
+        if (!own && on && !call.based && call.page === undefined && DOT_SEGMENT.test(call.path.replace(/[?#].*$/, ""))) {
+          dotted.push(call.at);
+          continue;
+        }
+        out.push(on && !call.based && call.page === undefined ? { ...call, path: onBase(on, call.path, relative) } : call);
       }
     }
     addCoverage(coverage, `calls ${spec.from}->${spec.to}`, files.length, out.length - before);
@@ -2755,9 +3261,27 @@ export function extractCalls(
     if (labels.length) limits.push(`${edge}: paths given to an exception or to a function that throws are not read as requests: ${byCallee(labels)}`);
     if (prefixed.length) {
       const places = prefixed.map((p) => `${p.file}:${p.line}`).join(", ");
-      limits.push(`${edge}: the configured prefix ${spec.prefix} put before a function's path parameter (${places}) is not read as a request; the paths passed to that function are`);
+      limits.push(`${edge}: the configured ${spec.prefix ? "prefix" : "base"} ${spec.prefix ?? spec.base} put before a function's path parameter (${places}) is not read as a request; the paths passed to that function are`);
     }
     const places = (list: Place[]) => [...new Set(list.map((p) => `${p.file}:${p.line}`))].join(", ");
+    if (written.length) limits.push(`${edge}: the configured ${spec.prefix ? "prefix" : "base"} ${spec.prefix ?? spec.base}, written as a value (${places(written)}), is the client's base, not a request`);
+    if (helpers.length) {
+      const byPrefix = new Map<string, Place[]>();
+      for (const h of helpers) (byPrefix.get(h.prefix) ?? byPrefix.set(h.prefix, []).get(h.prefix)!).push(h.at);
+      for (const [prefix, at] of byPrefix) limits.push(`${edge}: ${prefix}, which a function puts before the path it is given (${places(at)}), is read before the paths passed to it, not as a request of its own`);
+    }
+    if (unjoined.length) {
+      const byWhy = new Map<string, Place[]>();
+      for (const u of unjoined) (byWhy.get(u.why) ?? byWhy.set(u.why, []).get(u.why)!).push(u.at);
+      for (const [why, at] of byWhy) limits.push(`${edge}: requests through a client are not read where ${why}: ${places(at)}`);
+    }
+    if (untyped.length) {
+      const byWhy = new Map<string, Place[]>();
+      for (const u of untyped) (byWhy.get(u.why) ?? byWhy.set(u.why, []).get(u.why)!).push(u.at);
+      for (const [why, at] of byWhy) limits.push(`${edge}: the requests are not read where ${why}: ${places(at)}`);
+    }
+    if (dotted.length) limits.push(`${edge}: paths with a . or .. segment joined to the configured base are not read, since clients differ on removing them: ${places(dotted)}`);
+    if (unbaseRelative.length) limits.push(`${edge}: paths without a leading / are relative to a client's base, which the call source does not give (set base and join): ${places(unbaseRelative)}`);
     if (unread.length) limits.push(`${edge}: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: ${places(unread)}`);
     if (unbased.length) limits.push(`${edge}: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: ${places(unbased)}`);
     if (unpaged.length) limits.push(`${edge}: page-relative URLs and forms with no action in a template no route atlas reads renders are not read: ${places(unpaged)}`);

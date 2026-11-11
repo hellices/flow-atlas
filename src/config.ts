@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { parse } from "yaml";
 import type { RuleId } from "./model.js";
+import type { Base, Join } from "./paths.js";
 
 export interface RouteSource {
   component: string;
@@ -62,10 +63,24 @@ export interface CallSource {
    */
   dataUrls?: string[];
   /**
-   * The path the client puts before each root-relative path, when it is set where atlas does not read it: an HTTP
-   * client's base URL such as `axios.create({ baseURL: "/api" })` or Dio's `baseUrl`.
+   * The path of the base URL the client joins the paths it is given to, where the code sets it in a way atlas does not
+   * read (`/api/v1/`, a trailing `/` kept as written), with `join`. A client whose base the code spells out
+   * (`axios.create({ baseURL: "/api" })`) is read with its own.
    */
+  base?: string;
+  /**
+   * How the client joins a path to `base`: `resolve` as a URL reference (RFC 3986: a path that starts with `/` replaces
+   * the base's path, any other what follows its last `/`), as .NET's HttpClient, Retrofit, Ktor and `urljoin` do;
+   * `append` after the base's path with one `/` between, as axios, Ky's `prefix` and RTK Query do.
+   */
+  join?: Join;
+  /** The same as `base` with `join: append`, the form earlier configurations wrote. */
   prefix?: string;
+  /**
+   * In code read as text, the names the clients that join their paths to the base are called on (`client` in
+   * `client.get("users")`): a path without a leading `/` is read only as the URL their calls take.
+   */
+  receivers?: string[];
   /**
    * The project's own wrappers around fetch, by the name they are called with (`authFetch`, `api.authFetch`), in
    * TypeScript and JavaScript: the URL first and a fetch init second. A call whose init states no method sends
@@ -185,7 +200,24 @@ function checkRoute(route: RouteSource): RouteSource {
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
+const JOINS = new Set<unknown>(["resolve", "append"]);
+
+/** The base a call source's configuration gives its client: `base` with `join`, or `prefix` appended to. */
+export function baseOf(spec: Pick<CallSource, "base" | "join" | "prefix">): Base | undefined {
+  if (spec.base !== undefined) return { path: spec.base, join: spec.join ?? "append" };
+  return spec.prefix ? { path: spec.prefix, join: "append" } : undefined;
+}
+
 function checkCalls(spec: CallSource): CallSource {
+  const edge = `calls ${spec.from}->${spec.to}`;
+  if (spec.base !== undefined) {
+    if (typeof spec.base !== "string" || !spec.base.startsWith("/")) throw new Error(`${edge}: base is the path of the client's base URL, starting with / (${JSON.stringify(spec.base)})`);
+    if (spec.prefix !== undefined) throw new Error(`${edge}: base and prefix both give the client's base; keep one`);
+    if (!JOINS.has(spec.join)) throw new Error(`${edge}: base needs join, how the client joins a path to it: resolve or append (${JSON.stringify(spec.join)})`);
+  } else if (spec.join !== undefined) throw new Error(`${edge}: join says how a path joins base, which is not given`);
+  if (spec.receivers !== undefined && !(Array.isArray(spec.receivers) && spec.receivers.every((r) => typeof r === "string" && /^[A-Za-z_$][\w$]*$/.test(r)))) {
+    throw new Error(`${edge}: receivers lists the names clients are called on (${JSON.stringify(spec.receivers)})`);
+  }
   if (spec.wrappers === undefined) return spec;
   // A list of wrappers, each with a name and one of the methods fetch sends.
   for (const w of Array.isArray(spec.wrappers) ? spec.wrappers : [spec.wrappers]) {

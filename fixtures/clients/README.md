@@ -10,8 +10,8 @@ documents (`docs:` in its `client.yaml`). Beside it:
 - `calls.json` is what the server received, written by `node scripts/frameworks.mjs <name>`: one request a line, its
   method and its path, each argument written `{}`, without the query, with the path as sent as `raw`.
 - `atlas.config.yaml` is how a user would point atlas at the code: the code's component, the component it calls
-  (`server`, which need not exist), and the call source with what a user would name in it (`prefix`, `wrappers`,
-  `origins`).
+  (`server`, which need not exist), and the call source with what a user would name in it (`base` and `join`, or
+  `prefix`, where the code holds the base in a value; `receivers`, `wrappers`, `origins`).
 - `gaps.yaml` lists where atlas's reading differs, each with the reason: `missing` requests atlas does not read,
   `extra` calls it reads that the code does not send, or `unread:` when atlas does not read the library at all.
 

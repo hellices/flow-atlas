@@ -8,12 +8,7 @@ missing:
   - { call: "POST /orders/{}/cancel", reason: "the method of the call a URL helper's result is handed to is not read, and nothing says so" }
   - { call: "DELETE /orders/{}", reason: "the method of the call a URL helper's result is handed to is not read, and nothing says so" }
   - { call: "POST /orders/import", reason: "the method a `requests.Request(\"POST\", url(...))` takes first, prepared and sent by the session, is not read, and nothing says so" }
-  - { call: "GET /api/v2/projects", reason: "a path relative to the session's base URL without a leading `/` (`api.get(\"projects\")`, joined with `urljoin`) is not read, and nothing says so" }
-  - { call: "POST /api/v2/projects", reason: "a path relative to the session's base URL without a leading `/` is not read, and nothing says so" }
-  - { call: "GET /api/v2/projects/{}", reason: "a path relative to the session's base URL without a leading `/` (`f\"projects/{project_id}\"`) is not read, and nothing says so" }
-  - { call: "PUT /api/v2/projects/{}", reason: "a path relative to the session's base URL without a leading `/` is not read, and nothing says so" }
-  - { call: "DELETE /api/v2/projects/{}", reason: "a path relative to the session's base URL without a leading `/` is not read, and nothing says so" }
-  - { call: "POST /api/v2/projects/{}/archive", reason: "a path relative to the session's base URL without a leading `/` is not read, and nothing says so" }
+  - { call: "POST /api/v2/projects/{}/archive", reason: "the method `api.request` takes as its first argument (`api.request(\"POST\", f\"projects/{project_id}/archive\")`) is not read: the path is read under the session's base with its method unread, and nothing says so" }
 extra:
   - { call: "* /users/{}", reason: "`requests.request(\"PATCH\", url)` read with its method unread" }
   - { call: "* /users", reason: "the literal `\"/users/\"` of a concatenated URL read as a request of its own" }
@@ -22,4 +17,4 @@ extra:
   - { call: "* /orders/{}", reason: "a path handed to the URL helper read with the method of the session call around it unread" }
   - { call: "* /orders/{}/cancel", reason: "a path handed to the URL helper read with the method of the session call around it unread" }
   - { call: "* /orders/import", reason: "the URL of a `requests.Request` read with the method it takes first unread" }
-  - { call: "* /api/v2", reason: "the session's base URL (`BaseUrlSession(f\"{API_URL}/api/v2/\")`) read as a request; the paths requested under it are the requests" }
+  - { call: "* /api/v2/projects/{}/archive", reason: "`api.request(\"POST\", f\"projects/{project_id}/archive\")` read with its method unread" }
