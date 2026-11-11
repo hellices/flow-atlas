@@ -6,12 +6,6 @@ missing:
   - { route: "PUT /items", reason: "the full declaration `fastify.route({ method: [...], path })` is not read, and nothing says so" }
   - { route: "GET /versioned", reason: "the full declaration `fastify.route({ method, url, constraints })` is not read, and nothing says so" }
   - { route: "QUERY /search", reason: "the `fastify.query` shorthand (QUERY method) is not read, and nothing says so" }
-  - { route: "GET /v1/user", reason: "the routes of a plugin registered with `{ prefix }` are read without the prefix, and nothing says so" }
-  - { route: "GET /v2/user", reason: "the routes of a plugin registered with `{ prefix }` are read without the prefix, and nothing says so" }
-  - { route: "DELETE /v2/user/{}", reason: "the routes of a plugin registered with `{ prefix }` are read without the prefix, and nothing says so" }
-  - { route: "GET /api", reason: "the routes of an inline plugin registered with `{ prefix }` are read without the prefix (its `/` as the root's), and nothing says so" }
-  - { route: "GET /api/admin/dashboard", reason: "the routes of a plugin registered with `{ prefix }` inside another are read without either prefix, and nothing says so" }
-  - { route: "PATCH /api/admin/settings/{}", reason: "the routes of a plugin registered with `{ prefix }` inside another are read without either prefix, and nothing says so" }
   - { route: "GET /public", reason: "the route @fastify/static registers under its `prefix` (`/public/*`, which also takes `/public/`) is not read, and nothing says so" }
   - { route: "GET /public/{**}", reason: "the route @fastify/static registers under its `prefix` is not read, and nothing says so" }
   - { route: "GET /example", reason: "Fastify's wildcard `*` also takes the path with nothing after its `/`; atlas reads `*` as one segment" }
@@ -23,10 +17,6 @@ missing:
   - { route: "GET /example/posts", reason: "an optional last parameter (`:id?`) is read as the path with the parameter only, not also without it" }
   - { route: "POST /name:verb", reason: "`::`, Fastify's escaped colon, is read as two colons" }
 extra:
-  - { route: "GET /user", reason: "a prefixed plugin's route read without its prefix (`/v1`, `/v2`)" }
-  - { route: "DELETE /user/{}", reason: "a prefixed plugin's route read without its prefix (`/v2`)" }
-  - { route: "GET /dashboard", reason: "a nested prefixed plugin's route read without its prefixes (`/api/admin`)" }
-  - { route: "PATCH /settings/{}", reason: "a nested prefixed plugin's route read without its prefixes (`/api/admin`)" }
   - { route: "GET /example/:file(^\\d+).png", reason: "a regexp parameter read as literal text" }
   - { route: "GET /example/lang/:code(^[a-z]+)", reason: "a regexp parameter read as literal text" }
   - { route: "GET /example/near/:lat-:lng/radius/{}", reason: "parameters within a segment read as literal text" }
@@ -40,6 +30,12 @@ dispatch:
   - { request: "PUT /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
   - { request: "QUERY /any/", reason: "trailing slash: Fastify treats `/any/` as another path than `/any` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/any`" }
   - { request: "GET /status/", reason: "trailing slash: Fastify treats `/status/` as another path than `/status` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/status`" }
+  - { request: "GET /v1/user/", reason: "trailing slash: Fastify treats `/v1/user/` as another path than `/v1/user` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/v1/user`" }
+  - { request: "GET /v2/user/", reason: "trailing slash: Fastify treats `/v2/user/` as another path than `/v2/user` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/v2/user`" }
+  - { request: "GET /api/admin/dashboard/", reason: "trailing slash: Fastify treats `/api/admin/dashboard/` as another path than `/api/admin/dashboard` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/api/admin/dashboard`" }
+  - { request: "PATCH /api/admin/settings/12/", reason: "trailing slash: Fastify treats `/api/admin/settings/12/` as another path than `/api/admin/settings/12` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/api/admin/settings/:key`" }
+  - { request: "DELETE /v2/user/12/", reason: "trailing slash: Fastify treats `/v2/user/12/` as another path than `/v2/user/12` (`ignoreTrailingSlash` is false by default), which no route takes; atlas matches it to `/v2/user/:id`" }
+  - { request: "DELETE /v2/user/", reason: "trailing slash: `/v2/user/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/v2/user/:id`; atlas matches it as `/v2/user`, which takes no DELETE" }
   - { request: "GET /example/", reason: "trailing slash: `/example/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId`; atlas matches it as `/example`" }
   - { request: "GET /example/12/", reason: "trailing slash: `/example/12/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12`" }
   - { request: "GET /example/12.png/", reason: "trailing slash: `/example/12.png/` is a path of its own, whose empty last segment find-my-way gives the parameter of `/example/:userId/:secretToken`; atlas matches it as `/example/12.png`" }

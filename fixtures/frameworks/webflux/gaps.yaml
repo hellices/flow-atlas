@@ -8,25 +8,8 @@ missing:
   - { route: "GET /actuator/health/{**}", reason: "the actuator endpoint Spring Boot serves by itself is not a surface" }
   - { route: "GET /webjars", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`, which takes `/webjars` too) are not a surface" }
   - { route: "GET /webjars/{**}", reason: "the WebJars Spring Boot serves by itself (under `/webjars/**`) are not a surface" }
-  - { route: "GET /api/account/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/files", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/files/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/projects/{}/versions", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources/{**}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/{}-{}{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "POST /api/notes", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "DELETE /api/notes/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/persons", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "POST /api/persons", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "PUT /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "PATCH /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "DELETE /api/persons/{}", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read, and nothing says so" }
-  - { route: "GET /api/library/resources/ima{}e.png", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `?` wildcard within a segment is read as literal text; and nothing says so" }
-  - { route: "GET /api/library/resources/{}.png", reason: "the `/api` prefix `PathMatchConfigurer.addPathPrefix` gives every `@RestController` is not read; the `*` wildcard within a segment is read as literal text; and nothing says so" }
+  - { route: "GET /api/library/resources/ima{}e.png", reason: "the `?` wildcard within a segment is read as literal text, and nothing says so" }
+  - { route: "GET /api/library/resources/{}.png", reason: "the `*` wildcard within a segment is read as literal text, and nothing says so" }
   - { route: "GET /api/members/{}", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
   - { route: "POST /api/members", reason: "a `@RestController` served at the `@HttpExchange` mappings of the interface it implements is not read, and nothing says so" }
   - { route: "GET /user/{}", reason: "a handler method registered with `RequestMappingHandlerMapping.registerMapping` is not read, and nothing says so" }
@@ -50,25 +33,8 @@ missing:
   - { route: "POST /memos", reason: "a router function of the Kotlin coroutines router DSL (`coRouter { }`, WebFlux.fn) is not read, and nothing says so" }
   - { route: "GET /memos/{}", reason: "a router function of the Kotlin coroutines router DSL (`coRouter { }`, WebFlux.fn) is not read, and nothing says so" }
 extra:
-  - { route: "GET /account/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/files", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/files/{**}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/projects/{}/versions", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/resources", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/resources/{**}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/{}-{}{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /notes", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "POST /notes", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "DELETE /notes/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /persons", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "POST /persons", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "PUT /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "PATCH /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "DELETE /persons/{}", reason: "the path without the `/api` prefix the controller is served under" }
-  - { route: "GET /library/resources/ima?e.png", reason: "the path without its `/api` prefix, and its `?` wildcard read as literal text" }
-  - { route: "GET /library/resources/*.png", reason: "the path without its `/api` prefix, and its `*` wildcard read as literal text" }
+  - { route: "GET /api/library/resources/ima?e.png", reason: "the `?` wildcard read as literal text" }
+  - { route: "GET /api/library/resources/*.png", reason: "the `*` wildcard read as literal text" }
 dispatch:
   - { request: "POST /owners/1/faq/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/faq/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "POST /owners/1/help/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/help/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
@@ -76,3 +42,15 @@ dispatch:
   - { request: "PATCH /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "POST /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
   - { request: "PUT /owners/1/ping/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/owners/1/ping/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "GET /api/library/files", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `files` fails, and takes it over `/files/{*path}`, which Spring dispatches to" }
+  - { request: "GET /api/library/files/", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `files` fails, and takes it over `/files/{*path}`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `resources` fails, and takes it over `/resources/**`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources/", reason: "a segment of parameters with regexps: atlas matches `{name:[a-z-]+}-{version:\\d\\.\\d\\.\\d}{ext:\\.[a-z]+}` as one parameter taking any segment, whose regexps `resources` fails, and takes it over `/resources/**`, which Spring dispatches to" }
+  - { request: "GET /api/library/resources/1.png/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/resources/*.png` does not take `1.png/` and `/resources/**` does; atlas drops the `/` and matches `*.png`" }
+  - { request: "GET /api/library/resources/ima1e.png/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/resources/*.png` does not take `ima1e.png/` and `/resources/**` does; atlas drops the `/` and matches `*.png`" }
+  - { request: "POST /api/notes/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/notes/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /api/notes/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/notes/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "POST /api/persons/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "DELETE /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PATCH /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }
+  - { request: "PUT /api/persons/1/", reason: "trailing slash: Spring WebFlux (6+) matches no trailing `/` a pattern does not have, so `/api/persons/1/` falls to the `/**` static resources, which serve GET and HEAD only (405)" }

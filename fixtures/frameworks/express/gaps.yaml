@@ -14,8 +14,6 @@ missing:
   - { route: "GET /users/{}", reason: "`router.route(path)` and the methods chained on it are not read, and nothing says so" }
   - { route: "PUT /users/{}", reason: "`router.route(path)` and the methods chained on it are not read, and nothing says so" }
   - { route: "DELETE /users/{}", reason: "`router.route(path)` and the methods chained on it are not read, and nothing says so" }
-  - { route: "GET /admin/dashboard", reason: "a sub-application mounted with `app.use(path, express())` is not read, and nothing says so" }
-  - { route: "DELETE /admin/cache", reason: "a sub-application mounted with `app.use(path, express())` is not read, and nothing says so" }
 extra:
   - { route: "GET /about{/:section}", reason: "the optional group read as literal text" }
   - { route: "GET /files/*filepath", reason: "the wildcard read as literal text" }

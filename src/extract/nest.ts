@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { joinRoute } from "../paths.js";
-import { declarationOf, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, resolveModule, unwrap } from "./binding.js";
 
 /** `VERSION_NEUTRAL`: a route served with no version in its path. */
 export const NEUTRAL = "";
@@ -20,6 +20,11 @@ export interface NestApp {
   versioning?: { uri: true; prefix: string; defaults: string[] | undefined | "unread" } | { uri: false } | "unread";
   /** Why no route of the application can be placed: settings that disagree. */
   unknown?: string;
+  /**
+   * The paths `RouterModule.register` puts before the routes of a controller (`file#Class`), from the modules that
+   * hold it; null where they are not read. A controller of no routed module is not there.
+   */
+  modules?: Map<string, string[] | null>;
 }
 
 const short = (node: ts.Node, sf: ts.SourceFile): string => {
@@ -214,4 +219,161 @@ export function nestPaths(app: NestApp, method: string, inner: string, versions:
   const excluded = app.exclude.some((e) => (!e.method || e.method === method) && e.path.test(inner));
   if (!excluded && app.prefix === undefined) return undefined;
   return [...new Set(segments.map((v) => (excluded ? joinRoute(v, inner) : joinRoute(app.prefix!, v, inner))))];
+}
+
+/**
+ * The paths `RouterModule.register` (from `@nestjs/core`) gives the controllers of each module, as Nest reads its routes
+ * (docs.nestjs.com/recipes/router-module; flattenRoutePaths, RouterModule.initialize): an entry with a `path` and a
+ * `module` gives that module the path, a child entry the path joined to its parent's, and a module class among the
+ * `children` its parent's path. Nest keeps one path per module, the last given, so a module given two is not read. A
+ * routed module serves the routes of the controllers its `@Module({ controllers })` lists under its path, after the
+ * version and before the controller's own path (RoutePathFactory.create). A path or a list the files do not spell out
+ * leaves the routes it reaches unread, with a limit; routes that cannot be told apart from those, all of them where the
+ * routes passed to `register` are not read, are said in `unknown`.
+ */
+export function nestModules(texts: Map<string, string>, component: string, limits: string[]): { modules: Map<string, string[] | null>; unknown?: string } {
+  const parsed = new Map<string, ts.SourceFile>();
+  const parse = (file: string): ts.SourceFile | undefined => {
+    const text = texts.get(file);
+    if (text === undefined) return undefined;
+    if (!parsed.has(file)) parsed.set(file, ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS));
+    return parsed.get(file);
+  };
+  const where = (file: string, n: ts.Node) => `${file}:${n.getSourceFile().getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
+  const decorated = (cls: ts.ClassDeclaration, name: string) =>
+    (ts.getDecorators(cls) ?? []).find((d) => ts.isCallExpression(d.expression) && ts.isIdentifier(d.expression.expression) && d.expression.expression.text === name);
+  /** The class a name refers to, `file#Name`: declared in the file, imported from a relative module, or else the one class of that name the files declare with `decorator`. */
+  const classKey = (file: string, id: ts.Identifier, decorator: string): string | undefined => {
+    const decl = declarationOf(id);
+    if (decl && ts.isClassDeclaration(decl) && decl.name) return `${file}#${decl.name.text}`;
+    const spec = decl && (ts.isImportSpecifier(decl) ? decl.parent.parent.parent.moduleSpecifier : ts.isImportClause(decl) ? decl.parent.moduleSpecifier : undefined);
+    if (!decl || !spec || !ts.isStringLiteral(spec)) return undefined;
+    const exported = ts.isImportSpecifier(decl) ? (decl.propertyName ?? decl.name).text : "default";
+    const target = resolveModule(file, spec.text, (f) => texts.has(f));
+    if (target) {
+      const sf = parse(target);
+      const cls = sf?.statements.find(
+        (st): st is ts.ClassDeclaration =>
+          ts.isClassDeclaration(st) && !!st.name && (exported === "default" ? !!ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) : st.name.text === exported),
+      );
+      if (cls) return `${target}#${cls.name!.text}`;
+    }
+    // A path alias (`@app/admin`) or a module that re-exports it: the one class of that name and kind in the files read.
+    const name = exported === "default" ? id.text : exported;
+    // A name may hold `$`, which a word boundary does not bound.
+    const pattern = new RegExp(`(?<![\\w$])class\\s+${name.replace(/\$/g, "\\$")}(?![\\w$])`);
+    const found = [...texts]
+      .filter(([f, t]) => pattern.test(t) && parse(f)!.statements.some((st) => ts.isClassDeclaration(st) && st.name?.text === name && decorated(st, decorator)))
+      .map(([f]) => f);
+    return found.length === 1 ? `${found[0]}#${name}` : undefined;
+  };
+
+  // The paths given each module, by module; null where one is not read.
+  const given = new Map<string, Array<string | null>>();
+  const give = (module: string, path: string | null) => (given.get(module) ?? given.set(module, []).get(module)!).push(path);
+  const unfound: string[] = [];
+  let unknown: string | undefined;
+  for (const [file, text] of texts) {
+    // The import names RouterModule, under any local name (`RouterModule as RM`).
+    if (!/\bRouterModule\b/.test(text) || !/\.\s*register\s*\(/.test(text)) continue;
+    const sf = parse(file)!;
+    const visit = (node: ts.Node): void => {
+      const callee = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression : undefined;
+      if (callee?.name.text === "register" && ts.isIdentifier(callee.expression) && importedFrom(callee.expression, ["@nestjs/core"]) === "RouterModule") {
+        const call = node as ts.CallExpression;
+        const arg = call.arguments[0] && unwrap(call.arguments[0]);
+        // The routes, written in place or held in a `const` of the file (`const routes: Routes = [...]`).
+        let routes = arg;
+        if (routes && ts.isIdentifier(routes)) {
+          const decl = declarationOf(routes);
+          routes = decl && ts.isVariableDeclaration(decl) && decl.initializer && decl.parent.flags & ts.NodeFlags.Const ? unwrap(decl.initializer) : routes;
+        }
+        if (!routes || !ts.isArrayLiteralExpression(routes)) {
+          unknown = `${where(file, call)} registers routes the file does not spell out (${short(arg ?? call, sf)}) with RouterModule, and which controllers they serve under which path is not read, so no route of the controllers is`;
+          return;
+        }
+        const entries = (list: ts.ArrayLiteralExpression, parent: string | null | undefined, top: boolean): void => {
+          for (const element of list.elements) {
+            const item = unwrap(element);
+            if (ts.isIdentifier(item) && !top) {
+              const key = classKey(file, item, "Module");
+              // A module among the children takes its parent's path, unread where that is.
+              if (key) give(key, parent === undefined ? "" : parent);
+              else unfound.push(`${where(file, item)} (${item.text})`);
+              continue;
+            }
+            if (!ts.isObjectLiteralExpression(item)) {
+              unknown = `${where(file, element)} gives RouterModule a route the file does not spell out (${short(element, sf)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
+              continue;
+            }
+            const own = property(item, "path");
+            const value = own === undefined ? undefined : own === null ? null : (literalOf(own) ?? null);
+            // A child's path is joined to its parent's; an entry with no path, or an empty one at the top, gives none, and
+            // its children's paths are their own.
+            const path = value === undefined || (top && value === "") ? undefined : value === null || parent === null ? null : top ? value : joinRoute(parent ?? "", value);
+            const module = property(item, "module");
+            if (module && ts.isIdentifier(unwrap(module)) && path !== undefined) {
+              const key = classKey(file, unwrap(module) as ts.Identifier, "Module");
+              if (key) give(key, path);
+              else unfound.push(`${where(file, module)} (${module.getText(sf)})`);
+            } else if (module === null || (module && !ts.isIdentifier(unwrap(module)))) {
+              unknown = `${where(file, item)} gives RouterModule a module the file does not spell out (${short(item, sf)}), and which controllers it serves under which path is not read, so no route of the controllers is`;
+            }
+            if (value === null) limits.push(`routes ${component}: ${where(file, own ?? item)} gives RouterModule a path the file does not spell out (${short(own ?? item, sf)}); the routes of the controllers it reaches are not read`);
+            const children = property(item, "children");
+            const list = children && unwrap(children);
+            if (list && ts.isArrayLiteralExpression(list)) entries(list, path === undefined ? "" : path, false);
+            else if (children !== undefined) {
+              unknown = `${where(file, item)} gives RouterModule children the file does not spell out (${short(children ?? item, sf)}), and which controllers they serve under which path is not read, so no route of the controllers is`;
+            }
+          }
+        };
+        entries(routes, undefined, true);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  for (const u of unfound) limits.push(`routes ${component}: ${u} names a module atlas does not find in the files read; the routes of its controllers are read without the path RouterModule gives it`);
+  if (unknown) {
+    limits.push(`routes ${component}: ${unknown}`);
+    return { modules: new Map(), unknown };
+  }
+  const paths = new Map<string, string | null>();
+  for (const [module, all] of given) {
+    const distinct = [...new Set(all.map((p) => (p === null ? null : joinRoute(p))))];
+    if (distinct.length > 1 && !distinct.includes(null)) limits.push(`routes ${component}: RouterModule gives ${module.slice(module.lastIndexOf("#") + 1)} more than one path (${distinct.join(", ")}), of which Nest keeps the last; the routes of its controllers are not read`);
+    paths.set(module, distinct.length === 1 ? distinct[0]! : null);
+  }
+  // The controllers of each routed module.
+  const modules = new Map<string, string[] | null>();
+  for (const [file, text] of paths.size ? texts : []) {
+    if (!/@Module\s*\(/.test(text)) continue;
+    const sf = parse(file)!;
+    for (const st of sf.statements) {
+      if (!ts.isClassDeclaration(st) || !st.name) continue;
+      const path = paths.get(`${file}#${st.name.text}`);
+      const decorator = path === undefined ? undefined : decorated(st, "Module");
+      if (path === undefined || !decorator) continue;
+      const options = (decorator.expression as ts.CallExpression).arguments[0];
+      const object = options && unwrap(options);
+      const list = object && ts.isObjectLiteralExpression(object) ? property(object, "controllers") : null;
+      const controllers = list && unwrap(list);
+      if (list === undefined) continue;
+      if (!controllers || !ts.isArrayLiteralExpression(controllers) || !controllers.elements.every((e) => ts.isIdentifier(unwrap(e)))) {
+        limits.push(`routes ${component}: ${where(file, st)} lists controllers the file does not spell out (${short(controllers ?? object ?? st, sf)}) in ${st.name.text}, which RouterModule serves under ${path ?? "a path not read"}; a controller it holds is read without that path`);
+        continue;
+      }
+      for (const e of controllers.elements) {
+        const key = classKey(file, unwrap(e) as ts.Identifier, "Controller");
+        if (!key) {
+          limits.push(`routes ${component}: ${where(file, e)} names a controller atlas does not find in the files read (${e.getText(sf)}); it is read without the path RouterModule gives ${st.name.text}`);
+          continue;
+        }
+        const before = modules.get(key);
+        modules.set(key, path === null || before === null ? null : [...new Set([...(before ?? []), path])]);
+      }
+    }
+  }
+  return { modules };
 }

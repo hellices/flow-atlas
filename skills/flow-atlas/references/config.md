@@ -26,7 +26,7 @@ routes:
     styles: [nest]            # nest | express | fastapi | spring | next
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
-      "services/orders/src/routes/collect.js": /collect   # an Express router's `use` path, or a FastAPI router's include prefix
+      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, or a FastAPI router's include prefix
     prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
     bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
@@ -170,8 +170,23 @@ its routes under each literal path it is mounted at with `use` (an inline middle
 nested and imported routers included (also from `module.exports = { router }`), `./r.js` standing for `r.ts`, on a
 router or on an `express()` application, created there or imported from a relative module; `use` returns the router,
 so a chain (`Router().use(a).use("/b", b)`, `export default Router().use("/api", api)`) is that router with each `use`
-a mount on it. Routers are told apart by their bindings, so a shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
-read and a limit says so. `express.static` serves the files of a directory and passes on any path it does not hold, so
+a mount on it. An `express()` application mounted with `use` is a sub-application, served under the mount's path; an
+application mounted nowhere serves at the root. An @koa/router router (`new Router()` from `@koa/router` or
+`koa-router`) serves its routes under its `prefix` (the constructor's option or `prefix()`), under each path it is
+nested at with `use(path, r.routes())` (no path is the root) on another router, whose prefix comes before it, or on a
+Koa application (`new Koa()`); a prefix set more than once is not read, as @koa/router stacked a second prefix before
+version 15.1 and replaces it since. A Hono application (`new Hono()`) serves the routes of another under the path
+`route(path, other)` mounts it at, joined to the base path of the instance it is called on, and `basePath(path)` puts
+a path before the routes registered through what it returns (Hono's `hono-base.js`). A Fastify plugin, a function
+`register` takes in, serves the routes it registers on its first parameter under the `prefix` of each `register` call
+(none without one), joined to where the instance it is registered on is served (Fastify's Plugins reference,
+`plugin-override.js`), from a `Fastify()` instance; a plugin registered on the first parameter of a function no
+`register` takes in, named among the receivers, is placed at the root, as that parameter's routes are read. Routers
+are told apart by their bindings, so a shadowing name is another value. Where a mount path or a prefix is not a literal
+and `mounts` does not give it (an option object built elsewhere, a computed name that may be `prefix`, a `basePath`
+from a variable), or a router is mounted nowhere atlas reads, its routes are not read and a limit says so; a Hono
+`basePath` not spelled out takes the path `mounts` declares for its file, and a literal `basePath` called on it adds
+to that. `express.static` serves the files of a directory and passes on any path it does not hold, so
 what it serves is the directory's content: a limit names where it is mounted, and its paths are not read. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
 shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
@@ -188,7 +203,9 @@ prefix included, in place of their includes; the routers included into them are 
 is served under the prefixes of the application or router it is mounted on. A decorator on a receiver the files bind
 to no application or router (a function's parameter, a router made by a factory) is read at the path written, and a
 limit says so; a name a function binds (a parameter, or a name its body assigns to anything but `FastAPI()` or
-`APIRouter()`) is the function's own, not the file's router, in decorators and includes alike. A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
+`APIRouter()`) is the function's own, not the file's router, in decorators and includes alike; a decorator on a name
+the files bind to an application or router is read whatever the name (`subapi = FastAPI()`, mounted with
+`app.mount("/subapi", subapi)`). A Nest controller's routes are served, as Nest documents (docs.nestjs.com/faq/global-prefix,
 /techniques/versioning), under the global prefix `setGlobalPrefix` sets, except those an `exclude` entry matches
 without the version (a path, or a `{ path, method: RequestMethod.X }`, compiled as path-to-regexp 8 does: `:name`,
 `*name` and `{...}`), and with URI versioning (`enableVersioning()` or `type: VersioningType.URI`) after the prefix
@@ -200,7 +217,13 @@ Calls that set different values (two applications) leave the controllers' routes
 agrees with no other. A prefix, version or versioning option
 not spelled out leaves the routes it applies to unread, with a limit; an `exclude` entry not spelled out (built with
 `.map`, a template) or of other syntax is named in a limit, and the routes it might keep out are read under the
-prefix. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of
+prefix. `RouterModule.register` (from `@nestjs/core`) puts a module's path, after the version and before the
+controller's, before the routes of the controllers its `@Module({ controllers })` lists (docs.nestjs.com/recipes/router-module):
+an entry's `path` for its `module`, a child entry's joined to its parent's, a module class among `children` its
+parent's; `RouterModule` may be imported under any name, the routes written in place or held in a `const` of the file, and modules and controllers are found
+through relative imports, else by a class of that name the files declare once. Nest keeps one path per module, so a
+module given two is left unread; a path not spelled out leaves the routes it reaches unread, and routes passed to
+`register` that are not spelled out leave every controller's, each with a limit. `prefix` states the path every route of the entry is served under: for `nest`, the global prefix, in place of
 the one the bootstrap sets (its exclusions and the version still apply); for the other styles, before each path the code
 registers. The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
 the like (declared, re-exported by name, or re-exported with `export *`), with `app/` at the component's directory or
@@ -276,7 +299,21 @@ that it mounts serves the routes read there under `/x`, as an include would; ano
 and a limit says so. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
-`formLogin` and `logout` serve, in the lambda or the chained form. A mapping path may be a string constant the file
+`formLogin` and `logout` serve, in the lambda or the chained form. A handler type's routes are served under the
+prefix `PathMatchConfigurer.addPathPrefix(prefix, predicate)` gives the types its predicate accepts, the first that
+accepts in a configurer's order (docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html).
+The prefix is a literal or a constant of the file (one with a `${...}` placeholder is resolved at run time and not
+read); the predicate is read where it is `HandlerTypePredicate.forAnnotation(A.class, ...)` (an annotation written on
+the type or present through the annotations of its annotations: those the files declare for an `@interface`, and
+those Spring (stereotype, web, validation, transaction, security), springdoc and Swagger 2, springfox, Lombok,
+Jakarta/javax Validation and Annotations and the JDK declare for their own, which most do not carry, taken by the
+qualified name the file names them by (an import, a wildcard import, a qualified use); a type that names a supertype,
+or carries an annotation not so resolved, may take one through it and is not decided), `forBasePackage("p", ...)` (the type's qualified name starting with
+`p.`) or a lambda testing `isAnnotationPresent(A.class)` (Kotlin's trailing lambda included). Any other predicate, a
+prefix not spelled out, a mapping in an interface (whose implementing class decides) and two configurers (two
+`configurePathMatch` methods, in one file or two) that disagree leave the routes of the types they may reach unread,
+with a limit. Configurers and annotation types are read in the entry's files and the component's code, the excluded
+files left out, since a `WebMvcConfigurer` need not be among the controller globs. A mapping path may be a string constant the file
 declares (`static final String PATH = "/x"`, `const val PATH = "/x"`, joined with `+` to literals and other such
 constants), since an annotation argument is a compile-time constant. A name is found as the language finds it: in the
 types around the mapping, innermost first, then a Kotlin file's top level, or `Type.PATH` for a type the file declares
