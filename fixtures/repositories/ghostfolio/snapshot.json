@@ -24,6 +24,7 @@
     "api|DELETE /api/v1/users/{id}",
     "api|DELETE /api/v1/watchlist/{dataSource}/{symbol}",
     "api|GET /.well-known/oauth-authorization-server",
+    "api|GET /.well-known/oauth-protected-resource/mcp",
     "api|GET /api/assets/{languageCode}/site.webmanifest",
     "api|GET /api/auth/google/callback",
     "api|GET /api/auth/oidc",
@@ -359,6 +360,7 @@
     "FA001|api|DELETE /api/v1/platform/{id}",
     "FA001|api|DELETE /api/v1/user/{id}",
     "FA001|api|GET /.well-known/oauth-authorization-server",
+    "FA001|api|GET /.well-known/oauth-protected-resource/mcp",
     "FA001|api|GET /api/assets/{languageCode}/site.webmanifest",
     "FA001|api|GET /api/auth/google/callback",
     "FA001|api|GET /api/auth/oidc",
@@ -404,7 +406,6 @@
   ],
   "limits": [
     "calls ui->api: URLs to ghostfol.io (libs/ui/src/lib/services/admin.service.ts:89) are not read as requests to api; set origins.api if that is its host",
-    "routes api: apps/api/src/app/endpoints/oauth/oauth-metadata.controller.ts:24 registers a path the file does not spell out (`oauth-protected-resource${MCP_ENDPOINT}`); its routes are not read",
     "routes api: apps/api/src/main.ts:86 excludes from the global prefix a path the file does not spell out (`${BULL_BOARD_ROUTE.substring(1)}{/*wildcard}`); a route it excludes is read under the prefix",
     "routes api: apps/api/src/main.ts:89 excludes from the global prefix a path the file does not spell out (...SUPPORTED_LANGUAGE_CODES.map((languageCode) => { // Exclude language-speci...); a route it excludes is read under the prefix"
   ]

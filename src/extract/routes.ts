@@ -14,6 +14,7 @@ import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
 import { declarationOf, unwrap } from "./binding.js";
+import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
 import { nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
@@ -70,23 +71,25 @@ function stringValue(node: ts.Node | undefined): string | undefined {
 }
 
 /**
- * The paths a Nest decorator gives: none written means the root; a string, a list of strings or `{ path }` are read.
- * A path the file does not spell out (a constant, an expression) is unknown, so the caller registers nothing for it.
+ * The paths a Nest decorator gives: none written means the root; a string, a list of strings or `{ path }` are read,
+ * each written in place or held in a constant the code spells out (see `Constants`), in this file or one it imports.
+ * A path not spelled out (a parameter, an expression) is unknown, so the caller registers nothing for it.
  */
-function decoratorPaths(args: readonly ts.Expression[]): string[] | undefined {
+function decoratorPaths(args: readonly ts.Expression[], constants: Constants): string[] | undefined {
   const arg = args[0];
   if (!arg) return [""];
   if (ts.isObjectLiteralExpression(arg)) {
-    const path = arg.properties.find((p) => ts.isPropertyAssignment(p) && propertyName(p) === "path") as ts.PropertyAssignment | undefined;
-    if (!path) return [""];
-    return decoratorPaths([path.initializer]);
+    // A spread may set the path.
+    const path = property(arg, "path");
+    if (path === undefined) return [""];
+    return path === null ? undefined : decoratorPaths([path], constants);
   }
-  if (ts.isArrayLiteralExpression(arg)) {
-    const paths = arg.elements.map((e) => stringValue(e));
-    return paths.length && paths.every((p) => p !== undefined) ? paths : undefined;
-  }
-  const path = stringValue(arg);
-  return path === undefined ? undefined : [path];
+  const one = constants.text(arg);
+  if (one !== undefined) return [one];
+  const list = constants.elements(arg);
+  if (!list) return undefined;
+  const paths = list.map((e) => (ts.isObjectLiteralExpression(e) ? stringValue(e) : constants.text(e)));
+  return paths.length && paths.every((p) => p !== undefined) ? paths : undefined;
 }
 
 function decorators(node: ts.Node): ts.Decorator[] {
@@ -299,6 +302,8 @@ export function routesFromTypeScript(
     offered?: Map<string, Set<string>>;
     /** The version range of a package the nearest package.json above a file names (see `packageRanges`). */
     ranges?: (file: string, pkg: string) => string | undefined;
+    /** Reads the constants Nest paths are held in, across the repository's files. */
+    constants?: Constants;
   } = {},
 ): Surface[] {
   const { reach, executed, mounts, limits, spans, root, offered, ranges } = context;
@@ -309,6 +314,7 @@ export function routesFromTypeScript(
     if (node) spans?.add(file, node.getStart(sf), node.getEnd());
   };
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
   const styles = new Set(spec.styles ?? []);
   const receivers = new Set(spec.receivers ?? EXPRESS_RECEIVERS);
   /** Routers whose routes are not read, by name, with why. */
@@ -764,13 +770,13 @@ export function routesFromTypeScript(
       for (const d of decorators(node)) {
         const call = decoratorCall(d);
         if (call?.name === "Controller") {
-          bases = decoratorPaths(call.args);
+          bases = decoratorPaths(call.args, constants);
           if (!bases) unread(call.args[0]!);
           for (const a of call.args) span(a);
           const options = call.args[0] && ts.isObjectLiteralExpression(call.args[0]) ? call.args[0] : undefined;
           // `version: '2'` or `{ version }`; a spread or an accessor may give one the file does not spell out.
           const given = options ? property(options, "version") : undefined;
-          version = given === undefined || !versioned ? undefined : given ? (versionsOf(given) ?? null) : null;
+          version = given === undefined || !versioned ? undefined : given ? (versionsOf(given, constants) ?? null) : null;
           if (version === null) unreadVersion(given ?? options!);
         }
       }
@@ -790,12 +796,12 @@ export function routesFromTypeScript(
           const own = decorators(member)
             .map(decoratorCall)
             .find((c) => c?.name === "Version");
-          const versions = !versioned ? undefined : own?.args[0] ? (versionsOf(own.args[0]) ?? null) : own ? null : version;
+          const versions = !versioned ? undefined : own?.args[0] ? (versionsOf(own.args[0], constants) ?? null) : own ? null : version;
           if (own && versions === null) unreadVersion(own.args[0] ?? member);
           for (const d of decorators(member)) {
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
-            const paths = call && method ? decoratorPaths(call.args) : undefined;
+            const paths = call && method ? decoratorPaths(call.args, constants) : undefined;
             if (call && method && !paths) unread(call.args[0]!, method, bases);
             if (!paths) continue;
             for (const a of call!.args) span(a);
@@ -1362,7 +1368,7 @@ function buildRoot(file: string, files: Set<string>): string | undefined {
  * The global prefix and versioning of a Nest component, from its `bootstrap` file when the entry names one, else from
  * the calls that set them in the route files and in the component's code (tests and the other excluded files left out).
  */
-function nestBootstrap(source: Source, config: Config, spec: RouteSource, files: string[], root: string | undefined, limits: string[]): NestApp {
+function nestBootstrap(source: Source, config: Config, spec: RouteSource, files: string[], root: string | undefined, limits: string[], constants: Constants): NestApp {
   const script = (f: string) => /\.(c|m)?[jt]sx?$/.test(f);
   const dir = root?.replace(/\/+$/, "");
   const component = dir === undefined ? [] : select(source, [dir ? `${dir}/**` : "**"], config.exclude);
@@ -1372,10 +1378,10 @@ function nestBootstrap(source: Source, config: Config, spec: RouteSource, files:
   if (spec.bootstrap !== undefined) {
     const text = source.read(spec.bootstrap);
     if (text === undefined) limits.push(`routes ${spec.component}: the bootstrap file ${spec.bootstrap} is not there${source.ref === "WORKTREE" ? "" : " at this revision"}`);
-    app = nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix);
-  } else app = nestApp(texts, spec.component, limits, spec.prefix);
+    app = nestApp(new Map(text === undefined ? [] : [[spec.bootstrap, text]]), spec.component, limits, spec.prefix, constants);
+  } else app = nestApp(texts, spec.component, limits, spec.prefix, constants);
   // The modules RouterModule routes are those of the application's code, wherever its bootstrap is.
-  const { modules, unknown } = nestModules(texts, spec.component, limits);
+  const { modules, unknown } = nestModules(texts, spec.component, limits, constants);
   return { ...app, modules, ...(unknown && !app.unknown ? { unknown } : {}) };
 }
 
@@ -1425,6 +1431,7 @@ export function extractRoutes(
   const views: Views = new Map();
   const codeFiles = new Map<string, Set<string>>();
   const ranges = packageRanges(source);
+  const constants = new Constants(source);
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
     const files = select(source, spec.files ?? [], config.exclude);
@@ -1432,7 +1439,7 @@ export function extractRoutes(
     const before = out.length;
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts, spec.receivers ?? EXPRESS_RECEIVERS) : undefined;
-    const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
+    const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits, constants) : undefined;
     const java = (spec.styles ?? []).includes("spring") ? springSources(source, config, files, roots.get(spec.component)) : undefined;
     const prefixes = java ? pathPrefixes(java) : undefined;
     const exchanges = java ? httpExchanges(java) : undefined;
@@ -1443,7 +1450,7 @@ export function extractRoutes(
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges }));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges, constants }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges));
     }

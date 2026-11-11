@@ -127,17 +127,26 @@ export function unwrap(e: ts.Expression): ts.Expression {
  */
 export function resolveModule(from: string, spec: string, exists: (file: string) => boolean): string | undefined {
   if (!spec.startsWith(".")) return undefined;
-  const parts = from.split("/").slice(0, -1);
-  for (const seg of spec.split("/")) {
+  const written = joinPath(from.split("/").slice(0, -1).join("/"), spec);
+  return written === undefined ? undefined : resolvePath(written, exists);
+}
+
+/** A relative path joined to a directory of the repository; undefined where it climbs above the repository. */
+export function joinPath(dir: string, relative: string): string | undefined {
+  const parts = dir ? dir.split("/") : [];
+  for (const seg of relative.split("/")) {
     if (seg === "." || seg === "") continue;
-    // A specifier that climbs above the repository names nothing atlas reads.
+    // A path that climbs above the repository names nothing atlas reads.
     if (seg === "..") {
       if (!parts.length) return undefined;
       parts.pop();
-    }
-    else parts.push(seg);
+    } else parts.push(seg);
   }
-  const written = parts.join("/");
+  return parts.join("/");
+}
+
+/** A module path of the repository (no extension needed) resolved to a file `exists` accepts, as `resolveModule` does. */
+export function resolvePath(written: string, exists: (file: string) => boolean): string | undefined {
   const js = /\.(m|c)?jsx?$/.exec(written);
   const base = js ? written.slice(0, -js[0].length) : written;
   const typescriptFor: Record<string, string[]> = { ".js": ["ts", "tsx"], ".jsx": ["tsx"], ".mjs": ["mts"], ".cjs": ["cts"] };

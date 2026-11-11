@@ -319,10 +319,11 @@ describe("routesFromTypeScript", () => {
       routes: ["GET /users"],
       limits: [not(3, "usersPath")],
     });
+    // A Nest decorator reads a `const` the code spells out as its path, under the controller's.
     const nestConst = { ...nest, constants: "Path$" };
     expect(unread('const listPath = "/list";\n@Controller("x")\nclass C {\n  @Get(listPath) a() {}\n}', nestConst)).toEqual({
-      routes: ["GET /list"],
-      limits: [not(4, "listPath")],
+      routes: ["GET /list", "GET /x/list"],
+      limits: [],
     });
     // A setting read with one argument, or a receiver atlas does not know, register nothing; a literal that does not
     // start with `/` (Express 4's `*`) is a path atlas does not read, and says so.
