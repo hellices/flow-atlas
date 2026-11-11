@@ -66,7 +66,8 @@ function lastProperty(o: ts.ObjectLiteralExpression, key: string): ts.Expression
     if (ts.isShorthandPropertyAssignment(p)) return p.name;
     return "unread";
   }
-  return undefined;
+  // `__proto__: value` (not a computed key) sets the object's prototype, through which the object may have any key.
+  return o.properties.some((p) => ts.isPropertyAssignment(p) && !ts.isComputedPropertyName(p.name) && nameOf(p.name) === "__proto__") ? "unread" : undefined;
 }
 
 /** The name a property key states: an identifier, a string, a number, or a computed key that is a literal. */
@@ -278,7 +279,8 @@ export class Clients {
       const join: Join | undefined = instance.library === "ky" ? undefined : "append";
       return { unread: `options held in a value (${short(options)}) may set ${instance.name}'s base`, ...(join ? { join } : {}) };
     }
-    return this.optionsBase(instance.library, o, instance.ky, `a request through ${instance.name}`);
+    // Ky merges a request's options over the instance's: a prefix it sets still resolves against the instance's baseUrl.
+    return this.optionsBase(instance.library, o, instance.ky, `a request through ${instance.name}`, instance.base);
   }
 
   /** The base an options object states for a library, where it states one. */
@@ -286,7 +288,7 @@ export class Clients {
     const read = (key: string, join: Join): Stated | undefined => {
       const v = lastProperty(o, key);
       if (v === undefined) return undefined;
-      if (v === "unread") return { unread: `${who} sets ${key} where a spread or a computed key may`, join };
+      if (v === "unread") return { unread: `${who} sets ${key} where a spread, a computed key or a prototype may`, join };
       const text = baseText(v, this.constants);
       return text === undefined ? { unread: `${who} sets ${key} to ${short(v)}`, join } : { text, join };
     };
@@ -298,12 +300,20 @@ export class Clients {
     if (major === undefined) return { unread: `no package.json above ${ky?.file} gives one major version of ky, whose prefixUrl, prefix and baseUrl differ between versions` };
     if (major < 2) return stated.includes("prefixUrl") ? read("prefixUrl", "append") : undefined;
     if (stated.includes("prefixUrl")) return { unread: `${who} sets prefixUrl, which Ky ${major} refuses` };
-    const prefix = stated.includes("prefix") ? read("prefix", "append") : parent && "text" in parent && parent.join === "append" ? parent : undefined;
-    const base = stated.includes("baseUrl") ? read("baseUrl", "resolve") : parent && "text" in parent && parent.join === "resolve" ? parent : undefined;
+    // What the options do not set, the parent's options give (an option of the parent not read, too).
+    const inherited = (join: Join): Stated | undefined => (parent && (parent.join === join || ("unread" in parent && !parent.join)) ? parent : undefined);
+    const prefix = stated.includes("prefix") ? read("prefix", "append") : inherited("append");
+    const base = stated.includes("baseUrl") ? read("baseUrl", "resolve") : inherited("resolve");
     if (prefix && "unread" in prefix) return prefix;
-    // A prefix from the root or the origin leaves only the origin of `baseUrl`; one relative to it is not read.
-    if (prefix && base) return /^(?:\/|\{\}|https?:)/i.test(prefix.text.trim()) ? prefix : { unread: `${who} sets a prefix that baseUrl resolves` };
-    return prefix ?? base;
+    if (!prefix || !base) return prefix ?? base;
+    // A prefix from the root or with an origin leaves only the origin of `baseUrl`; one relative to it is not read.
+    const rooted = /^(?:\/(?!\/)|\{\}|https?:)/i.test(prefix.text.trim());
+    if (!rooted) return { unread: `${who} sets a prefix that baseUrl resolves` };
+    if (!prefix.text.trim().startsWith("/")) return prefix;
+    // A baseUrl not read gives an origin the code does not state, as a URL's leading value does.
+    if ("unread" in base) return prefix;
+    const origin = /^https?:\/\/[^/?#]+/i.exec(base.text.trim())?.[0];
+    return origin ? { text: origin + prefix.text.trim(), join: "append" } : prefix;
   }
 
   /** The instance an expression is: a call that creates one, or a `const` holding one, through imports. */
@@ -380,11 +390,12 @@ export class Clients {
       if (body && ts.isObjectLiteralExpression(body)) object = body;
       else return { ...out, base: { unread: `${name} takes its options from a function atlas does not read` } };
     } else return { ...out, base: { unread: `${name}'s options are held in a value` } };
+    // A hook that may change the URL stays with every instance extended from this one, whatever base they set.
     const hooks = this.kyHooks(object, name);
-    if (hooks) return { ...out, base: { unread: hooks } };
+    if (hooks) out.before = { unread: hooks };
     const inherited = parent?.base;
-    // `${options.prefix}/admin`: the parent's option, where the function names it on its parameter.
-    const withParent = param ? this.parentText(object, param, inherited) : undefined;
+    // `${options.prefix}/admin`: the parent's option, where the function names it on its parameter (Ky 2's options).
+    const withParent = param && ky?.major !== undefined && ky.major >= 2 ? this.parentText(object, param, inherited) : undefined;
     if (withParent) return { ...out, base: withParent };
     const stated = this.optionsBase("ky", object, ky, name, inherited);
     if (stated && "text" in stated && ky?.major !== undefined && ky.major < 2) out.rejectsSlash = true;
@@ -430,7 +441,7 @@ export class Clients {
     if (!hooks || !ts.isObjectLiteralExpression(hooks)) return `${name}'s hooks are not read`;
     for (const p of hooks.properties) {
       const key = p.name && nameOf(p.name);
-      if (!ts.isPropertyAssignment(p) || key === undefined) return `${name}'s hooks are not read`;
+      if (!ts.isPropertyAssignment(p) || key === undefined || key === "__proto__") return `${name}'s hooks are not read`;
       if (key === "init") return `${name}'s init hook may change its options`;
       if (key !== "beforeRequest" && key !== "beforeRetry") continue;
       const list = unwrap(p.initializer);

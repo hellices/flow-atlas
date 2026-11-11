@@ -1687,11 +1687,11 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     const client = clients.requestOf(node);
     // A path a helper of the module puts text before (`` fetch(`/api${path}`) ``) is sent with that text.
     const before = helperBefore(node);
-    const written = before !== undefined && joinRoute(before) !== joinRoute(appended ?? "") ? before + raw.trimStart() : raw;
-    let parsed: Requested | undefined = callPath(written, false, context.served) ?? rootRequest(node, written, spec.wrappers);
-    if (!parsed && client?.relative) parsed = relativePath(written, context.served);
+    const url = before !== undefined && joinRoute(before) !== joinRoute(appended ?? "") ? before + raw.trimStart() : raw;
+    let parsed: Requested | undefined = callPath(url, false, context.served) ?? rootRequest(node, url, spec.wrappers);
+    if (!parsed && client?.relative) parsed = relativePath(url, context.served);
     if (!parsed) return undefined;
-    const follow: Follow = { raw: written, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map(), reads: 0 };
+    const follow: Follow = { raw: url, origin, registered: (n) => n.getSourceFile() === sf && registered(n), seen: new Map(), reads: 0 };
     if (unrequestedValue(node, follow, 0)) return undefined;
     if (client) {
       if (client.rejected && !parsed.based && !parsed.relative) {
@@ -1707,7 +1707,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       }
       // On a client whose base is read, a URL that starts with a value may be absolute, and take no base, or a path
       // the base takes: which, the code does not say.
-      if (client.base && client.relative && written.trimStart().startsWith(HOLE) && hostOf(written) === undefined) {
+      if (client.base && client.relative && url.trimStart().startsWith(HOLE) && hostOf(url) === undefined) {
         if (report) context.unjoined?.push({ why: `it starts with a value, an absolute URL or a path ${client.name}'s base takes`, at: at(node) });
         return undefined;
       }
@@ -1729,12 +1729,12 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       // The configured base written once more (`baseUrl: "/api/v1/"`, `this.baseUrl = options.baseUrl || "/api"`).
       if (report) context.written?.push(at(node));
       return undefined;
-    } else if (base && parsed.based && hostOf(written) === undefined && sameBase(parsed.path, base.path) && written.trimStart().startsWith(HOLE)) {
+    } else if (base && parsed.based && hostOf(url) === undefined && sameBase(parsed.path, base.path) && url.trimStart().startsWith(HOLE)) {
       // `${API_URL}/api/v1/`: the base after the origin a value holds.
       if (report) context.written?.push(at(node));
       return undefined;
     }
-    const against = rootRelative(written) ? resolvedAgainst(node) : undefined;
+    const against = rootRelative(url) ? resolvedAgainst(node) : undefined;
     if (against === "value") {
       if (report) context.unbased?.push(at(node));
       return undefined;
@@ -2393,8 +2393,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
     if (typed?.why) return;
     const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : inner;
-    // The root path only as a verb call's URL.
     const place = argument && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
+    // The root path only as a verb call's URL.
     let parsed: (CallPath & { relative?: true }) | undefined =
       place === "root" ? undefined : (callPath(path, false, served) ?? (VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
     // The path of a URL whose host is given beside it starts at that host's root, a leading `/` written or not.
@@ -2405,19 +2405,17 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       // `Uri.https("maps.example.com", "/x")`: the host written beside the path.
       const authority = args.find((b) => b.call === argument!.call && b.index === 0);
       if (authority) host = hostOf(`http://${text.slice(authority.start + 1, authority.end - 1).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, HOLE)}`);
-    } else if (!parsed && place === "base") {
-      parsed = relativePath(path, served);
-      if (parsed && !context.base) {
-        context.unbaseRelative?.push({ file, line: lineOf(text, index) });
-        return;
-      }
-    }
+    } else if (!parsed && place === "base") parsed = relativePath(path, served);
     if (!parsed) return;
     if (argument?.exception) {
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
     }
     if (argument && unrequestedArgument(file, argument)) return;
+    if (parsed.relative && !context.base) {
+      context.unbaseRelative?.push({ file, line: lineOf(text, index) });
+      return;
+    }
     // The configured base written once more (`base_url=f"{API_URL}/api/v1"`, `SetBaseURL(gatewayURL + "/billing/v1")`).
     if (context.base && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
       context.written?.push({ file, line: lineOf(text, index) });

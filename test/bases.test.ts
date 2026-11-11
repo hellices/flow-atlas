@@ -120,21 +120,22 @@ describe("the base a client library's instance states", () => {
   });
 
   it("finds the factory by the import that binds it, aliased or not, and the option by its name however the key is written", () => {
-    const rows: Array<[string, string[]]> = [
-      ['import Http from "axios";\nconst api = Http.create({ ["baseURL"]: "/api" });\napi.get("users");', ["GET /api/users @3"]],
+    const rows: Array<[string, string[], string[]]> = [
+      ['import Http from "axios";\nconst api = Http.create({ ["baseURL"]: "/api" });\napi.get("users");', ["GET /api/users @3"], []],
       // A spread or a computed key after it may set it.
-      ['import axios from "axios";\nconst api = axios.create({ baseURL: "/api", ...more });\napi.get("users");', []],
-      ['import axios from "axios";\nconst api = axios.create({ baseURL: "/api", [key]: "/v2" });\napi.get("users");', ["* /v2 @2"]],
+      ['import axios from "axios";\nconst api = axios.create({ baseURL: "/api", ...more });\napi.get("users");', [], ["calls web->api: requests through a client are not read where api sets baseURL where a spread, a computed key or a prototype may (set base and join): web/a.js:3"]],
+      ['import axios from "axios";\nconst api = axios.create({ __proto__: defaults });\napi.get("users");', [], ["calls web->api: requests through a client are not read where api sets baseURL where a spread, a computed key or a prototype may (set base and join): web/a.js:3"]],
+      ['import axios from "axios";\nconst api = axios.create({ baseURL: "/api", [key]: "/v2" });\napi.get("users");', ["* /v2 @2"], ["calls web->api: requests through a client are not read where api sets baseURL where a spread, a computed key or a prototype may (set base and join): web/a.js:3"]],
       // A spread before it does not.
-      ['import axios from "axios";\nconst api = axios.create({ ...more, baseURL: "/api" });\napi.get("users");', ["GET /api/users @3"]],
+      ['import axios from "axios";\nconst api = axios.create({ ...more, baseURL: "/api" });\napi.get("users");', ["GET /api/users @3"], []],
       // A local `axios`, a `let` or another package is no instance of axios; their strings are read as any string is.
-      ['const axios = make();\nconst api = axios.create({ baseURL: "/api" });\napi.get("users");', ["* /api @2"]],
-      ['import axios from "axios";\nlet api = axios.create({ baseURL: "/api" });\napi.get("users");', []],
-      ['import axios from "redaxios";\nconst api = axios.create({ baseURL: "/api" });\napi.get("users");', ["* /api @2"]],
+      ['const axios = make();\nconst api = axios.create({ baseURL: "/api" });\napi.get("users");', ["* /api @2"], []],
+      ['import axios from "axios";\nlet api = axios.create({ baseURL: "/api" });\napi.get("users");', [], []],
+      ['import axios from "redaxios";\nconst api = axios.create({ baseURL: "/api" });\napi.get("users");', ["* /api @2"], []],
       // Instances that refer to each other end unread.
-      ['import ky from "ky";\nconst a = b.extend({});\nconst b = a.extend({});\na.get("users");', []],
+      ['import ky from "ky";\nconst a = b.extend({});\nconst b = a.extend({});\na.get("users");', [], []],
     ];
-    expect(rows.map(([code]) => read({ "web/a.js": code, "package.json": '{ "dependencies": { "ky": "^2.0.0" } }' }).calls)).toEqual(rows.map(([, calls]) => calls));
+    expect(rows.map(([code]) => read({ "web/a.js": code, "package.json": '{ "dependencies": { "ky": "^2.0.0" } }' }))).toEqual(rows.map(([, calls, limits]) => ({ calls, limits })));
   });
 
   it("reads Ky's prefix as appended, its baseUrl as resolved, by the major version the package.json gives", () => {
@@ -165,18 +166,27 @@ describe("the base a client library's instance states", () => {
       calls: ["GET /api/users @3"],
       limits: ["calls web->api: requests through a client are not read where Ky 1 refuses an input that starts with / under prefixUrl: web/a.js:4"],
     });
-    expect(read({ ...ky2, "web/a.js": old }).limits).toEqual(["calls web->api: requests through a client are not read where api sets prefixUrl, which Ky 2 refuses: web/a.js:3, web/a.js:4"]);
-    expect(read({ "web/a.js": old }).limits).toEqual([
-      "calls web->api: requests through a client are not read where no package.json above web/a.js gives one major version of ky, whose prefixUrl, prefix and baseUrl differ between versions: web/a.js:3, web/a.js:4",
-    ]);
+    expect(read({ ...ky2, "web/a.js": old })).toEqual({ calls: [], limits: ["calls web->api: requests through a client are not read where api sets prefixUrl, which Ky 2 refuses: web/a.js:3, web/a.js:4"] });
+    expect(read({ "web/a.js": old })).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where no package.json above web/a.js gives one major version of ky, whose prefixUrl, prefix and baseUrl differ between versions: web/a.js:3, web/a.js:4"],
+    });
     // A hook that may return another request, or an init hook, may change any URL.
     const hooked = (hooks: string) => read({ ...ky2, "web/a.js": `import ky from "ky";\nconst api = ky.create({ prefix: "/api", hooks: ${hooks} });\napi.get("users");` });
-    expect(hooked("{ beforeRequest: [({ request }) => new Request(request)] }").limits).toEqual([
-      "calls web->api: requests through a client are not read where api's beforeRequest hook may return another request: web/a.js:3",
-    ]);
+    expect(hooked("{ beforeRequest: [({ request }) => new Request(request)] }")).toEqual({
+      calls: [],
+      limits: ["calls web->api: requests through a client are not read where api's beforeRequest hook may return another request: web/a.js:3"],
+    });
     // The prefix the hook writes is read as any string is.
-    expect(hooked("{ init: [(o) => { o.prefix = '/x'; }] }").calls).toEqual(["* /x @2"]);
-    expect(hooked("{ afterResponse: [(r) => r] }").calls).toEqual(["GET /api/users @3"]);
+    expect(hooked("{ init: [(o) => { o.prefix = '/x'; }] }")).toEqual({
+      calls: ["* /x @2"],
+      limits: ["calls web->api: requests through a client are not read where api's init hook may change its options: web/a.js:3"],
+    });
+    expect(hooked("{ afterResponse: [(r) => r] }")).toEqual({ calls: ["GET /api/users @3"], limits: [] });
+    expect(hooked("{ __proto__: base }")).toEqual({ calls: [], limits: ["calls web->api: requests through a client are not read where api's hooks are not read: web/a.js:3"] });
+    // An instance extended from one with such a hook keeps it, whatever prefix it sets.
+    const extended = read({ ...ky2, "web/a.js": 'import ky from "ky";\nconst a = ky.create({ hooks: { init: [f] } });\nconst b = a.extend({ prefix: "/api" });\nb.get("users");' });
+    expect(extended).toEqual({ calls: [], limits: ["calls web->api: requests through a client are not read where a's init hook may change its options: web/a.js:4"] });
   });
 
   it("reads openapi-fetch's baseUrl and a request's own, and no request through a middleware that may return another", () => {
@@ -244,9 +254,10 @@ describe("the configured base", () => {
 
   it("is resolved against or appended to as the call source's join says", () => {
     const code = 'client.get("/health")\nclient.get("users/$id")\nother.get("users")';
-    expect(read({ "web/A.kt": code }, { base: "/api/v1/", join: "resolve", receivers: ["client"] }).calls).toEqual(["GET /api/v1/users/{} @2", "GET /health @1"]);
-    expect(read({ "web/A.kt": code }, { base: "/api/v1", join: "append", receivers: ["client"] }).calls).toEqual(["GET /api/v1/health @1", "GET /api/v1/users/{} @2"]);
-    expect(read({ "web/A.kt": code }, { prefix: "/api/v1", receivers: ["client"] }).calls).toEqual(["GET /api/v1/health @1", "GET /api/v1/users/{} @2"]);
+    expect(read({ "web/A.kt": code }, { base: "/api/v1/", join: "resolve", receivers: ["client"] })).toEqual({ calls: ["GET /api/v1/users/{} @2", "GET /health @1"], limits: [] });
+    expect(read({ "web/A.kt": code }, { base: "/api/v1", join: "resolve", receivers: ["client"] })).toEqual({ calls: ["GET /api/users/{} @2", "GET /health @1"], limits: [] });
+    expect(read({ "web/A.kt": code }, { base: "/api/v1", join: "append", receivers: ["client"] })).toEqual({ calls: ["GET /api/v1/health @1", "GET /api/v1/users/{} @2"], limits: [] });
+    expect(read({ "web/A.kt": code }, { prefix: "/api/v1", receivers: ["client"] })).toEqual({ calls: ["GET /api/v1/health @1", "GET /api/v1/users/{} @2"], limits: [] });
   });
 });
 
@@ -275,9 +286,9 @@ describe("paths relative to a client's base, in code read as text", () => {
 
   it("reads Retrofit's annotations, .NET's HttpRequestMessage and Dart's Uri.http without receivers", () => {
     const retrofit = 'interface UserApi {\n  @GET("users/{id}")\n  suspend fun user(@Path("id") id: String): User\n  @HTTP(method = "DELETE", path = "users/{id}/sessions", hasBody = true)\n  suspend fun end(): Unit\n  @GET("/health")\n  suspend fun health(): Unit\n}';
-    expect(read({ "web/UserApi.kt": retrofit }, { base: "/api/v1/", join: "resolve" }).calls).toEqual(["* /api/v1/users/{} @2", "* /api/v1/users/{}/sessions @4", "* /health @6"]);
+    expect(read({ "web/UserApi.kt": retrofit }, { base: "/api/v1/", join: "resolve" })).toEqual({ calls: ["* /api/v1/users/{} @2", "* /api/v1/users/{}/sessions @4", "* /health @6"], limits: [] });
     const dotnet = 'var request = new HttpRequestMessage(HttpMethod.Patch, $"users/{id}");\nvar other = new HttpRequestMessage(HttpMethod.Head, requestUri: "reports");';
-    expect(read({ "web/A.cs": dotnet }, { base: "/api/", join: "resolve" }).calls).toEqual(["HEAD /api/reports @2", "PATCH /api/users/{} @1"]);
+    expect(read({ "web/A.cs": dotnet }, { base: "/api/", join: "resolve" })).toEqual({ calls: ["HEAD /api/reports @2", "PATCH /api/users/{} @1"], limits: [] });
     const dart = "final a = client.get(Uri.http(host, 'catalog/items'));\nfinal b = client.get(Uri.https(host, '/catalog/items/$id'));\nfinal c = client.get(Uri.https('maps.example.com', '/x'));";
     expect(read({ "web/a.dart": dart }, { prefix: "/api" })).toEqual({
       calls: ["* /catalog/items based @1", "* /catalog/items/{} based @2"],
@@ -334,7 +345,23 @@ describe("prefixes a type or a helper puts before its paths", () => {
       limits: ["calls web->api: /api, which a function puts before the path it is given (web/a.js:2), is read before the paths passed to it, not as a request of its own"],
     });
     // A segment after `/` is no path, and a function given other text is no helper of paths.
-    expect(read({ "web/a.js": "export const one = (id) => fetch(`/users/${id}`);\none(\"/x\");" }).calls).toEqual(["* /x @2", "GET /users/{} @1"]);
-    expect(read({ "web/a.js": code('request("projects");') }).calls).toEqual(["* /api{} @2"]);
+    expect(read({ "web/a.js": "export const one = (id) => fetch(`/users/${id}`);\none(\"/x\");" })).toEqual({ calls: ["* /x @2", "GET /users/{} @1"], limits: [] });
+    expect(read({ "web/a.js": code('request("projects");') })).toEqual({ calls: ["* /api{} @2"], limits: [] });
+  });
+});
+
+describe("Ky's options merged over the instance's", () => {
+  const ky2 = { "package.json": '{ "dependencies": { "ky": "^2.0.0" } }' };
+  it("resolves a prefix from the root against the origin of baseUrl, and leaves one relative to it unread", () => {
+    const rows: Array<[string, string[], string[]]> = [
+      ['const a = ky.create({ baseUrl: "http://localhost:9000/v1/", prefix: "/api" });\na.get("users");', ["GET /api/users @3"], []],
+      ['const a = ky.create({ baseUrl: "https://other.example/v1/" });\nconst b = a.extend({ prefix: "/api" });\nb.get("users");', [], ["calls web->api: URLs to other.example (web/a.js:4) are not read as requests to api; set origins.api if that is its host"]],
+      ['const a = ky.create({ baseUrl: "/v1/", prefix: "api" });\na.get("users");', [], ["calls web->api: requests through a client are not read where a sets a prefix that baseUrl resolves: web/a.js:3"]],
+      // A parent's prefix not read stays under a baseUrl the child sets.
+      ['const a = ky.create({ prefix: env.API });\nconst b = a.extend({ baseUrl: "/v1/" });\nb.get("users");', [], ["calls web->api: requests through a client are not read where b's base is a value atlas does not read (set base and join): web/a.js:4"]],
+      // A request's own prefix with the instance's baseUrl.
+      ['const a = ky.create({ baseUrl: "/v1/" });\na.get("users", { prefix: "/v2" });\na.get("users");', ["GET /v1/users @4", "GET /v2/users @3"], []],
+    ];
+    expect(rows.map(([code]) => read({ ...ky2, "web/a.js": `import ky from "ky";\n${code}` }))).toEqual(rows.map(([, calls, limits]) => ({ calls, limits })));
   });
 });
