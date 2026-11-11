@@ -297,8 +297,10 @@ describe("NestJS RouterModule paths", () => {
 describe("Spring path prefixes", () => {
   const spring = { styles: ["spring"] };
   const controllers = {
-    "api/src/main/java/com/example/api/Rest.java": "package com.example.api;\n@RestController\n@RequestMapping(\"/items\")\nclass Rest {\n  @GetMapping(\"/{id}\") String get() { return \"\"; }\n}",
-    "api/src/main/java/com/example/web/Page.java": "package com.example.web;\n@Controller\nclass Page {\n  @GetMapping(\"/home\") String home() { return \"home\"; }\n}",
+    "api/src/main/java/com/example/api/Rest.java":
+      "package com.example.api;\nimport org.springframework.web.bind.annotation.*;\n@RestController\n@RequestMapping(\"/items\")\nclass Rest {\n  @GetMapping(\"/{id}\") String get() { return \"\"; }\n}",
+    "api/src/main/java/com/example/web/Page.java":
+      "package com.example.web;\nimport org.springframework.stereotype.Controller;\n@Controller\nclass Page {\n  @GetMapping(\"/home\") String home() { return \"home\"; }\n}",
   };
   const config = (body: string, file = "api/src/main/java/com/example/WebConfig.java") => ({
     ...controllers,
@@ -344,14 +346,38 @@ describe("Spring path prefixes", () => {
   it("follows the meta-annotations of the annotations a type carries, and decides none it cannot follow", () => {
     const files = {
       ...config('configurer.addPathPrefix("/audited", HandlerTypePredicate.forAnnotation(Audit.class));'),
-      "api/src/main/java/com/example/Audited.java": "package com.example;\n@Audit\n@Retention(RetentionPolicy.RUNTIME)\npublic @interface Audited {}",
-      "api/src/main/java/com/example/web/Logged.java": "package com.example.web;\n@RestController\n@Audited\nclass Logged {\n  @GetMapping(\"/logged\") String logged() { return \"\"; }\n}",
-      "api/src/main/java/com/example/web/Tagged.java": "package com.example.web;\n@RestController\n@Tag(name = \"t\")\nclass Tagged {\n  @GetMapping(\"/tagged\") String tagged() { return \"\"; }\n}",
+      "api/src/main/java/com/example/Audited.java": "package com.example;\nimport java.lang.annotation.*;\n@Audit\n@Retention(RetentionPolicy.RUNTIME)\npublic @interface Audited {}",
+      "api/src/main/java/com/example/web/Logged.java": "package com.example.web;\nimport com.example.Audited;\nimport org.springframework.web.bind.annotation.RestController;\n@RestController\n@Audited\nclass Logged {\n  @GetMapping(\"/logged\") String logged() { return \"\"; }\n}",
+      "api/src/main/java/com/example/web/Tagged.java": "package com.example.web;\nimport org.springframework.web.bind.annotation.RestController;\nimport com.example.docs.Tag;\n@RestController\n@Tag(name = \"t\")\nclass Tagged {\n  @GetMapping(\"/tagged\") String tagged() { return \"\"; }\n}",
     };
     expect(routes(files, spring)).toEqual({
       ids: ["GET /audited/logged", "GET /home", "GET /items/{id}"],
       limits: [
         "routes api: api/src/main/java/com/example/WebConfig.java:5 gives a path prefix to the handler types HandlerTypePredicate.forAnnotation(Audit.class) accepts, which a supertype or a meta-annotation may decide; the routes of Tagged are not read",
+      ],
+    });
+  });
+
+  it("follows the annotations Spring, springdoc, Lombok and Jakarta declare, where the file imports them from there", () => {
+    const tagged = (imports: string) => ({
+      "api/src/main/java/com/example/WebConfig.java":
+        'package com.example;\nclass WebConfig implements WebMvcConfigurer {\n  public void configurePathMatch(PathMatchConfigurer c) {\n    c.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(RestController.class));\n  }\n}',
+      "api/src/main/java/com/example/web/Docs.java": `package com.example.web;\n${imports}\n@Controller\n@Tag(name="x")\n@RequestMapping("/a")\n@Slf4j\n@Validated\nclass Docs {\n  @GetMapping("/b") String b() { return ""; }\n}`,
+      "api/src/main/java/com/example/web/Rest.java": `package com.example.web;\nimport org.springframework.web.bind.annotation.*;\nimport io.swagger.v3.oas.annotations.tags.Tag;\n@RestController\n@Tag(name="x")\n@RequestMapping("/a")\nclass Rest {\n  @GetMapping("/c") String c() { return ""; }\n}`,
+    });
+    const known = [
+      "import org.springframework.stereotype.Controller;",
+      "import org.springframework.web.bind.annotation.*;",
+      "import io.swagger.v3.oas.annotations.tags.Tag;",
+      "import lombok.extern.slf4j.Slf4j;",
+      "import org.springframework.validation.annotation.Validated;",
+    ].join("\n");
+    expect(routes(tagged(known), spring)).toEqual({ ids: ["GET /a/b", "GET /api/a/c"], limits: [] });
+    // `Tag` from a package atlas does not know may carry @RestController.
+    expect(routes(tagged(known.replace("io.swagger.v3.oas.annotations.tags.Tag", "com.example.docs.Tag")), spring)).toEqual({
+      ids: ["GET /api/a/c"],
+      limits: [
+        "routes api: api/src/main/java/com/example/WebConfig.java:4 gives a path prefix to the handler types HandlerTypePredicate.forAnnotation(RestController.class) accepts, which a supertype or a meta-annotation may decide; the routes of Docs are not read",
       ],
     });
   });
@@ -374,7 +400,7 @@ describe("Spring path prefixes", () => {
   it("does not decide an annotation for a type that names a supertype, or for an interface", () => {
     const files = {
       ...config('configurer.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(RestController.class));'),
-      "api/src/main/java/com/example/web/Sub.java": "package com.example.web;\n@Controller\nclass Sub extends Base {\n  @GetMapping(\"/sub\") String sub() { return \"sub\"; }\n}",
+      "api/src/main/java/com/example/web/Sub.java": "package com.example.web;\nimport org.springframework.stereotype.Controller;\n@Controller\nclass Sub extends Base {\n  @GetMapping(\"/sub\") String sub() { return \"sub\"; }\n}",
       "api/src/main/java/com/example/web/Api.java": "package com.example.web;\ninterface Api {\n  @GetMapping(\"/i\") String i();\n}",
     };
     expect(routes(files, spring)).toEqual({

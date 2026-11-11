@@ -705,6 +705,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
   const pkg = /^\s*package\s+([\w.]+)/m.exec(masked)?.[1] ?? "";
+  const imports = importsOf(masked, kotlin);
   const constant = stringConstants(code, masked, kotlin);
   const unread = (at: number, args: string | undefined, what: string) =>
     limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, at)} maps ${what} the file does not spell out (${(args ?? "").trim()}); its routes are not read`);
@@ -741,6 +742,8 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
         name: t[0].split(/\s+/).pop()!,
         kind: t[0].split(/\s+/)[0]!,
         annotations: new Set([...masked.slice(header, at).matchAll(/@(?:[\w.]*\.)?(\w+)/g)].map((a) => a[1]!)),
+        written: [...masked.slice(header, at).matchAll(/@([\w.]+)/g)].map((a) => a[1]!),
+        imports,
         package: pkg,
         // A supertype past the parameters of a Kotlin primary constructor, or after `extends` or `implements`.
         inherits: /\b(?:extends|implements)\b/.test(head) || /:/.test(head.replace(/\([^()]*\)/g, "")),
@@ -1120,7 +1123,11 @@ export interface HandlerType {
   name: string;
   /** `class`, `interface`, `object` or `record`. */
   kind: string;
+  /** The simple names of the annotations written on it. */
   annotations: Set<string>;
+  /** Those annotations as written (`Tag`, `io.swagger.v3.oas.annotations.tags.Tag`), with the imports that name them. */
+  written: string[];
+  imports: Imports;
   package: string;
   /** Whether it names a supertype, whose annotations it may take. */
   inherits: boolean;
@@ -1235,7 +1242,7 @@ export function pathPrefixes(texts: Map<string, string>): PathPrefixes {
 }
 
 /** A predicate on handler types atlas decides: a test giving undefined where it cannot decide for a type, or undefined. */
-function predicateTest(predicate: string, kotlin: boolean, meta: Map<string, string[] | null>): ((t: HandlerType) => boolean | undefined) | undefined {
+function predicateTest(predicate: string, kotlin: boolean, meta: Map<string, { written: string[]; imports: Imports } | null>): ((t: HandlerType) => boolean | undefined) | undefined {
   const text = predicate.trim();
   const call = /^(?:[\w.]*\.)?(forAnnotation|forBasePackage)\s*\(([\s\S]*)\)$/.exec(text);
   if (call) {
@@ -1250,7 +1257,7 @@ function predicateTest(predicate: string, kotlin: boolean, meta: Map<string, str
     const names = args.map((a) => ANNOTATION_CLASS.exec(a)?.[1]);
     if (!names.every(Boolean)) return undefined;
     return (t) => {
-      const { names: present, complete } = metaClosure(t.annotations, meta);
+      const { names: present, complete } = metaClosure(t, meta);
       if (names.some((n) => present.has(n!))) return true;
       // Not found, a supertype, or an annotation whose own annotations are not read, may still carry one.
       return t.inherits || !complete ? undefined : false;
@@ -1266,67 +1273,146 @@ function predicateTest(predicate: string, kotlin: boolean, meta: Map<string, str
   return (t) => (t.annotations.has(name) ? true : t.inherits && name !== "Controller" && name !== "RestController" ? undefined : false);
 }
 
-/**
- * The annotations Spring and the JDK declare on the annotations a handler type commonly carries, by simple name, as
- * `AnnotationUtils.findAnnotation` follows them: `@RestController` is annotated with `@Controller` and `@ResponseBody`,
- * `@Controller` with `@Component`, `@Component` with `@Indexed`, `@RequestMapping` with `@Mapping` and `@Reflective`.
- * java.lang.annotation's and Kotlin's own meta-annotations carry none of a user's.
- */
-const KNOWN_META: Record<string, string[]> = {
-  RestController: ["Controller", "ResponseBody"],
-  Controller: ["Component"],
-  Component: ["Indexed"],
-  Indexed: [],
-  ResponseBody: [],
-  RequestMapping: ["Mapping", "Reflective"],
-  Mapping: [],
-  Reflective: [],
-  CrossOrigin: [],
-  Validated: [],
-  SessionAttributes: [],
-  Deprecated: [],
-  SuppressWarnings: [],
-  Target: [],
-  Retention: [],
-  Documented: [],
-  Inherited: [],
-  Repeatable: [],
-  MustBeDocumented: [],
-};
+/** The types a Java or Kotlin file names by import: by simple name, the packages imported whole, and its own package. */
+export interface Imports {
+  package: string;
+  single: Map<string, string>;
+  wildcard: string[];
+  kotlin: boolean;
+}
+
+function importsOf(masked: string, kotlin: boolean): Imports {
+  const single = new Map<string, string>();
+  const wildcard: string[] = [];
+  for (const m of masked.matchAll(/^\s*import\s+(?!static\b)([\w.]+?)(\.\*)?(?:\s+as\s+(\w+))?\s*;?\s*$/gm)) {
+    if (m[2]) wildcard.push(m[1]!);
+    else single.set(m[3] ?? m[1]!.slice(m[1]!.lastIndexOf(".") + 1), m[1]!);
+  }
+  return { package: /^\s*package\s+([\w.]+)/m.exec(masked)?.[1] ?? "", single, wildcard, kotlin };
+}
 
 /**
- * The annotation types the files declare (`@interface A`, Kotlin `annotation class A`), with the annotations written
- * on each; null for a name declared more than once, which atlas cannot tell apart.
+ * The annotations that Spring, springdoc/Swagger, Lombok, Jakarta and the JDK declare on annotations a handler type
+ * commonly carries, by qualified name, from their sources, as `AnnotationUtils.findAnnotation` follows them. The
+ * meta-annotations of java.lang.annotation (`@Target`, `@Retention`, `@Documented`, `@Inherited`, `@Repeatable`) are left
+ * out: they carry no annotation of a user's. Most carry none other.
  */
-function annotationTypes(texts: Map<string, string>): Map<string, string[] | null> {
-  const out = new Map<string, string[] | null>();
+const SPRING_WEB = "org.springframework.web.bind.annotation";
+const STEREOTYPE = "org.springframework.stereotype";
+const REFLECTIVE = "org.springframework.aot.hint.annotation.Reflective";
+const NONE: string[] = [];
+const KNOWN_META: Record<string, string[]> = {
+  // Spring Framework (stereotype, web, validation, transaction).
+  [`${SPRING_WEB}.RestController`]: [`${STEREOTYPE}.Controller`, `${SPRING_WEB}.ResponseBody`],
+  [`${STEREOTYPE}.Controller`]: [`${STEREOTYPE}.Component`],
+  [`${STEREOTYPE}.Service`]: [`${STEREOTYPE}.Component`],
+  [`${STEREOTYPE}.Repository`]: [`${STEREOTYPE}.Component`],
+  [`${STEREOTYPE}.Component`]: [`${STEREOTYPE}.Indexed`],
+  [`${STEREOTYPE}.Indexed`]: NONE,
+  [`${SPRING_WEB}.RequestMapping`]: [`${SPRING_WEB}.Mapping`, REFLECTIVE],
+  [`${SPRING_WEB}.Mapping`]: NONE,
+  [REFLECTIVE]: NONE,
+  [`${SPRING_WEB}.ResponseBody`]: NONE,
+  [`${SPRING_WEB}.CrossOrigin`]: NONE,
+  [`${SPRING_WEB}.ResponseStatus`]: NONE,
+  [`${SPRING_WEB}.SessionAttributes`]: NONE,
+  ["org.springframework.validation.annotation.Validated"]: NONE,
+  ["org.springframework.transaction.annotation.Transactional"]: [REFLECTIVE],
+  // Spring Security.
+  ["org.springframework.security.access.prepost.PreAuthorize"]: NONE,
+  ["org.springframework.security.access.prepost.PostAuthorize"]: NONE,
+  ["org.springframework.security.access.annotation.Secured"]: NONE,
+  // springdoc's Swagger 3 annotations, Swagger 2 and springfox.
+  ["io.swagger.v3.oas.annotations.tags.Tag"]: NONE,
+  ["io.swagger.v3.oas.annotations.tags.Tags"]: NONE,
+  ["io.swagger.v3.oas.annotations.Hidden"]: NONE,
+  ["io.swagger.v3.oas.annotations.security.SecurityRequirement"]: NONE,
+  ["io.swagger.v3.oas.annotations.security.SecurityRequirements"]: NONE,
+  ["io.swagger.v3.oas.annotations.responses.ApiResponse"]: NONE,
+  ["io.swagger.v3.oas.annotations.responses.ApiResponses"]: NONE,
+  ["io.swagger.annotations.Api"]: NONE,
+  ["io.swagger.annotations.ApiResponses"]: NONE,
+  ["springfox.documentation.annotations.ApiIgnore"]: NONE,
+  // Lombok's are kept in the source only.
+  ...Object.fromEntries(
+    ["Data", "Getter", "Setter", "RequiredArgsConstructor", "AllArgsConstructor", "NoArgsConstructor", "extern.slf4j.Slf4j", "extern.log4j.Log4j2", "extern.java.Log"].map((n) => [`lombok.${n}`, NONE]),
+  ),
+  // Jakarta Validation and Annotations, and the javax packages they were renamed from.
+  ...Object.fromEntries(
+    ["jakarta", "javax"].flatMap((root) => ["validation.Valid", "annotation.security.RolesAllowed", "annotation.security.PermitAll", "annotation.security.DenyAll"].map((n) => [`${root}.${n}`, NONE])),
+  ),
+  // The JDK's and Kotlin's, which a file uses without importing them.
+  ...Object.fromEntries(
+    ["java.lang.Deprecated", "java.lang.SuppressWarnings", "kotlin.Deprecated", "kotlin.Suppress", ...["Target", "Retention", "Documented", "Inherited", "Repeatable"].map((n) => `java.lang.annotation.${n}`)].map((n) => [n, NONE]),
+  ),
+};
+const IMPLICIT = { java: ["java.lang"], kotlin: ["kotlin", "kotlin.annotation"] };
+
+/** The annotation types the files declare (`@interface A`, Kotlin `annotation class A`), by qualified name, with the annotations written on each and the imports that name them; null for a name declared twice. */
+function annotationTypes(texts: Map<string, string>): Map<string, { written: string[]; imports: Imports } | null> {
+  const out = new Map<string, { written: string[]; imports: Imports } | null>();
   for (const [file, text] of texts) {
     if (!/@interface\b|\bannotation\s+class\b/.test(text)) continue;
     const masked = maskStrings(file, withoutComments(file, text));
+    const imports = importsOf(masked, /\.kts?$/.test(file));
     for (const m of masked.matchAll(/(?:@interface|\bannotation\s+class)\s+(\w+)/g)) {
       const at = m.index ?? 0;
-      const names = [...masked.slice(declarationStart(masked, at), at).matchAll(/@(?:[\w.]*\.)?(\w+)/g)].map((a) => a[1]!);
-      out.set(m[1]!, out.has(m[1]!) ? null : names);
+      const written = [...masked.slice(declarationStart(masked, at), at).matchAll(/@([\w.]+)/g)].map((a) => a[1]!);
+      const name = imports.package ? `${imports.package}.${m[1]}` : m[1]!;
+      out.set(name, out.has(name) ? null : { written, imports });
     }
   }
   return out;
 }
 
 /**
- * The annotations present on a type through meta-annotations, as `AnnotationUtils.findAnnotation` searches them, and
- * whether every one was followed: an annotation neither the files declare nor `KNOWN_META` names may carry any.
+ * The qualified name an annotation written in a file means, as the language finds it: written qualified, imported by
+ * name, a type of the file's package the files declare, the one known type of the packages imported whole, or one the
+ * language imports itself. Undefined where none of those names it for certain.
  */
-function metaClosure(annotations: Set<string>, declared: Map<string, string[] | null>): { names: Set<string>; complete: boolean } {
-  const names = new Set<string>();
+function resolveAnnotation(written: string, imports: Imports, declared: Map<string, unknown>): string | undefined {
+  const known = (name: string) => name in KNOWN_META || declared.has(name);
+  const dot = written.indexOf(".");
+  if (dot > 0) {
+    const head = imports.single.get(written.slice(0, dot));
+    return head ? `${head}${written.slice(dot)}` : written;
+  }
+  const imported = imports.single.get(written);
+  if (imported) return imported;
+  const own = imports.package ? `${imports.package}.${written}` : written;
+  if (declared.has(own)) return own;
+  const whole = [...new Set(imports.wildcard.map((p) => `${p}.${written}`).filter(known))];
+  if (whole.length === 1) return whole[0];
+  if (whole.length > 1) return undefined;
+  return (imports.kotlin ? IMPLICIT.kotlin : IMPLICIT.java).map((p) => `${p}.${written}`).find((n) => n in KNOWN_META);
+}
+
+/**
+ * The simple names of the annotations present on a type through meta-annotations, as `AnnotationUtils.findAnnotation`
+ * searches them, and whether every one was followed: an annotation not resolved to one the files declare or
+ * `KNOWN_META` names may carry any.
+ */
+function metaClosure(type: HandlerType, declared: Map<string, { written: string[]; imports: Imports } | null>): { names: Set<string>; complete: boolean } {
+  const names = new Set<string>(type.annotations);
   let complete = true;
-  const queue = [...annotations];
+  const seen = new Set<string>();
+  const queue = type.written.map((w) => ({ written: w, imports: type.imports }));
   while (queue.length) {
-    const a = queue.shift()!;
-    if (names.has(a)) continue;
-    names.add(a);
-    const own = declared.has(a) ? declared.get(a)! : (KNOWN_META[a] ?? null);
-    if (own === null) complete = false;
-    else queue.push(...own);
+    const { written, imports } = queue.shift()!;
+    const name = resolveAnnotation(written, imports, declared);
+    // An annotation written is present by its name, followed or not.
+    names.add(written.slice(written.lastIndexOf(".") + 1));
+    if (name === undefined) {
+      complete = false;
+      continue;
+    }
+    if (seen.has(name)) continue;
+    seen.add(name);
+    names.add(name.slice(name.lastIndexOf(".") + 1));
+    const own = declared.get(name);
+    if (own) queue.push(...own.written.map((w) => ({ written: w, imports: own.imports })));
+    else if (name in KNOWN_META) queue.push(...KNOWN_META[name]!.map((w) => ({ written: w, imports })));
+    else complete = false;
   }
   return { names, complete };
 }

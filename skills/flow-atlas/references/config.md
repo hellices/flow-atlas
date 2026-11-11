@@ -304,9 +304,11 @@ prefix `PathMatchConfigurer.addPathPrefix(prefix, predicate)` gives the types it
 accepts in a configurer's order (docs.spring.io/spring-framework/reference/web/webmvc/mvc-config/path-matching.html).
 The prefix is a literal or a constant of the file (one with a `${...}` placeholder is resolved at run time and not
 read); the predicate is read where it is `HandlerTypePredicate.forAnnotation(A.class, ...)` (an annotation written on
-the type or present through the annotations of its annotations, as Spring and the JDK declare them for their own and
-the files declare them for an `@interface`; a type that names a supertype, or carries an annotation whose own
-annotations are not read, may take one through it and is not decided), `forBasePackage("p", ...)` (the type's qualified name starting with
+the type or present through the annotations of its annotations: those the files declare for an `@interface`, and
+those Spring (stereotype, web, validation, transaction, security), springdoc and Swagger 2, springfox, Lombok,
+Jakarta/javax Validation and Annotations and the JDK declare for their own, which most do not carry, taken by the
+qualified name the file names them by (an import, a wildcard import, a qualified use); a type that names a supertype,
+or carries an annotation not so resolved, may take one through it and is not decided), `forBasePackage("p", ...)` (the type's qualified name starting with
 `p.`) or a lambda testing `isAnnotationPresent(A.class)` (Kotlin's trailing lambda included). Any other predicate, a
 prefix not spelled out, a mapping in an interface (whose implementing class decides) and two configurers (two
 `configurePathMatch` methods, in one file or two) that disagree leave the routes of the types they may reach unread,
