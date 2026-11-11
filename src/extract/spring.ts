@@ -383,6 +383,20 @@ const springTemplate = (path: string): string =>
   routeTemplate(path.replace(/\{(\*?[A-Za-z_]\w*)(?::[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}/g, "{$1}"));
 
 /**
+ * The regexps of the variables that share a segment of a template with text or other variables: Spring's
+ * `RegexPathElement` gives each `(.*)`, any text of the segment, none included. A variable's own regexp is written for
+ * Java's engine and is not kept, so it too takes any text here.
+ */
+const springPatterns = (template: string): Record<string, string> | undefined => {
+  const out = new Map<string, string>();
+  for (const seg of template.split("/")) {
+    if (/^\{[^{}]*\}$/.test(seg)) continue;
+    for (const m of seg.matchAll(/\{([^{}*]+)\}/g)) out.set(m[1]!, ".*");
+  }
+  return out.size ? Object.fromEntries(out) : undefined;
+};
+
+/**
  * Where the parameter list of the method a mapping annotates opens: past the annotations that follow the mapping
  * (`@ResponseBody`, `@ResponseStatus(HttpStatus.OK)`), whatever their order.
  */
@@ -828,7 +842,8 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
           const line = lineOf(text, m.at);
           // Paths that differ only in a trailing `/` are one route here, so a mapping that lists both registers it once.
           if (out.some((o) => o.id === id && o.at.line === line)) continue;
-          out.push({ id, component: spec.component, method, path: full, at: { file, line }, evidence: "text" });
+          const patterns = springPatterns(full);
+          out.push({ id, component: spec.component, method, path: full, at: { file, line }, evidence: "text", ...(patterns ? { patterns } : {}) });
         }
       }
     }

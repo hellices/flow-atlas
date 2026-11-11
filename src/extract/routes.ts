@@ -16,6 +16,7 @@ import type { Reach } from "./reach.js";
 import { declarationOf } from "./binding.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
+import { nestSyntax, packageRanges, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -277,9 +278,11 @@ export function routesFromTypeScript(
     nest?: NestApp;
     /** Per surface id, the `file@offset` of each address a page renders in a link or a form (see `Reach.from`). */
     offered?: Map<string, Set<string>>;
+    /** The version range of a package the nearest package.json above a file names (see `packageRanges`). */
+    ranges?: (file: string, pkg: string) => string | undefined;
   } = {},
 ): Surface[] {
-  const { reach, executed, mounts, limits, spans, root, offered } = context;
+  const { reach, executed, mounts, limits, spans, root, offered, ranges } = context;
   const nest = context.nest ?? { prefix: spec.prefix ?? "", exclude: [] };
   // A version changes the path only under URI versioning.
   const versioned = nest.versioning === "unread" || !!nest.versioning?.uri;
@@ -309,10 +312,28 @@ export function routesFromTypeScript(
     node: ts.Node,
     handler?: ts.Node,
     operationId?: string,
-    more: { implicit?: boolean; handlerFile?: string; render?: boolean; served?: boolean; offers?: boolean; alongside?: Array<{ file: string; node: ts.Node }> } = {},
+    more: {
+      implicit?: boolean;
+      handlerFile?: string;
+      render?: boolean;
+      served?: boolean;
+      offers?: boolean;
+      alongside?: Array<{ file: string; node: ts.Node }>;
+      /** The syntax of the router the path is registered on, which reads it; without one, `:name` is the only syntax. */
+      syntax?: Syntax;
+    } = {},
   ) => {
     // A Nest route's path is already the one it is served at; any other is served under the configured prefix.
-    const template = routeTemplate(more.served ? joinRoute(path) : joinRoute(spec.prefix ?? "", path));
+    const full = more.served ? joinRoute(path) : joinRoute(spec.prefix ?? "", path);
+    const read = more.syntax ? readRoutePath(full, more.syntax) : { paths: [{ path: routeTemplate(full) }] };
+    if ("why" in read) {
+      limits?.push(`routes ${spec.component}: ${file}:${at(node).line} registers ${full}, a path not read: ${read.why}`);
+      return;
+    }
+    for (const served of read.paths) push(method, served, node, handler, operationId, more);
+  };
+  const push = (method: string, served: RoutePath, node: ts.Node, handler: ts.Node | undefined, operationId: string | undefined, more: Parameters<typeof add>[5] = {}) => {
+    const template = served.path;
     const id = surfaceId({ component: spec.component, method: method.toUpperCase(), path: template });
     const lines = executed ? (executed.get(id) ?? executed.set(id, new Set()).get(id)!) : undefined;
     const offers = more.offers && offered ? (offered.get(id) ?? offered.set(id, new Set()).get(id)!) : undefined;
@@ -328,6 +349,7 @@ export function routesFromTypeScript(
       ...(operationId ? { operationId } : {}),
       ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers)))].sort() } : {}),
       ...(more.implicit ? { implicit: true } : {}),
+      ...(served.patterns ? { patterns: served.patterns } : {}),
     });
   };
 
@@ -489,7 +511,7 @@ export function routesFromTypeScript(
             for (const module of routed ?? [""]) {
               for (const base of bases) {
                 for (const path of paths) {
-                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true });
+                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true, syntax: nestSyntax((pkg) => ranges?.(spec.bootstrap ?? file, pkg)) });
                 }
               }
             }
@@ -511,11 +533,17 @@ export function routesFromTypeScript(
         if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
           span(node.arguments[0]);
           const method = name === "all" ? "*" : name;
+          // The router's package, at the version the package.json above where it is created gives it, settles the
+          // syntax of the path. Ranges that differ (a plugin under two instances) admit no one major version.
+          const pkg = router ? mounts!.packageOf(router) : undefined;
+          const origins = router ? mounts!.originsOf(router) : [];
+          const given = pkg === undefined ? [] : (origins.length ? origins : [file]).flatMap((f) => ranges?.(f, pkg) ?? []);
+          const syntax = syntaxOf(pkg, given.length ? [...new Set(given)].join(" || ") : undefined);
           if (router) {
             const prefixes = mounts!.prefixes(router);
-            if (prefixes) for (const p of prefixes) add(method, joinRoute(p, path), node, node);
+            if (prefixes) for (const p of prefixes) add(method, joinRoute(p, path), node, node, undefined, { syntax });
             else unmounted.set(receiver.text, mounts!.why(router) ?? "is mounted where the code gives no literal path");
-          } else if (receivers.has(receiver.text)) add(method, path, node, node);
+          } else if (receivers.has(receiver.text)) add(method, path, node, node, undefined, { syntax });
         }
       }
       for (const c of spec.calls ?? []) {
@@ -1079,13 +1107,20 @@ function springSources(source: Source, config: Config, files: string[], root: st
   return new Map(all.map((f) => [f, source.read(f) ?? ""]));
 }
 
-/** Surfaces with one per component, method and path, the first kept. */
+/**
+ * Surfaces with one per component, method and path, the first kept. Where the routes of one path take their parameters
+ * by different regexps (or one by none), the surface takes what any of them does: it keeps no pattern.
+ */
 function unique(surfaces: Surface[]): Surface[] {
-  const seen = new Set<string>();
+  const seen = new Map<string, Surface>();
   return surfaces.filter((s) => {
     const k = `${s.component}|${s.method}|${s.path}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
+    const kept = seen.get(k);
+    if (kept) {
+      if (kept.patterns && JSON.stringify(kept.patterns) !== JSON.stringify(s.patterns)) delete kept.patterns;
+      return false;
+    }
+    seen.set(k, s);
     return true;
   });
 }
@@ -1106,6 +1141,7 @@ export function extractRoutes(
   // View names Spring handlers render; their templates' requests are what the route leads to.
   const views: Views = new Map();
   const codeFiles = new Map<string, Set<string>>();
+  const ranges = packageRanges(source);
   // Code first, so a document merges with the routes every entry of its component registers.
   for (const spec of config.routes) {
     const files = select(source, spec.files ?? [], config.exclude);
@@ -1122,7 +1158,7 @@ export function extractRoutes(
       known.add(file);
       const text = source.read(file);
       if (text === undefined) continue;
-      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered }));
+      if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
       else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes));
     }

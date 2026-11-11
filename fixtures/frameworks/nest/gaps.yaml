@@ -1,15 +1,7 @@
 # Where atlas's reading differs from the routes Nest serves. Remove an entry when atlas reads it right; the test fails
 # while a listed difference no longer occurs.
 missing:
-  - { route: "GET /api/v1/cats/abcd", reason: "the unnamed wildcard `abcd/*`, which Nest serves as `abcd/{*path}` (the path with nothing after `abcd/`, and one segment or more), is read as one segment parameter, and nothing says so" }
-  - { route: "GET /api/v1/cats/abcd/{**}", reason: "the unnamed wildcard `abcd/*`, which Nest serves as `abcd/{*path}` (the path with nothing after `abcd/`, and one segment or more), is read as one segment parameter, and nothing says so" }
-  - { route: "GET /api/v1/cats/files/{**}", reason: "Express 5's named wildcard `*filepath` is read as literal text, and nothing says so" }
-  - { route: "GET /api/v3/dogs/trips/{}-{}", reason: "a parameter that shares its segment with text (`:from-:to`) is read as literal text, and nothing says so" }
   - { route: "QUERY /api/v1/cats/search", reason: "`@QueryMethod()` (the QUERY method) is not read, and nothing says so" }
-extra:
-  - { route: "GET /api/v1/cats/abcd/{}", reason: "the unnamed wildcard read as a parameter taking one segment" }
-  - { route: "GET /api/v1/cats/files/*filepath", reason: "the named wildcard read as literal text" }
-  - { route: "GET /api/v3/dogs/trips/:from-:to", reason: "parameters within a segment read as literal text" }
 dispatch:
   # Nest registers routes in declaration order and Express dispatches to the first that matches
   # (docs.nestjs.com/controllers#route-conflicts-and-resolution-order): `@All('legacy')`, declared before `@Get(':id')`
@@ -22,3 +14,5 @@ dispatch:
   - { request: "PATCH /api/v1/cats/legacy/", reason: "registration order: `@All('legacy')`, declared before `@Patch(':id')`, takes it; atlas matches both, not ranking the static path over the parameter where one takes any method" }
   - { request: "PUT /api/v1/cats/legacy", reason: "registration order: `@All('legacy')`, declared before `@Put(':id')`, takes it; atlas matches both, not ranking the static path over the parameter where one takes any method" }
   - { request: "PUT /api/v1/cats/legacy/", reason: "registration order: `@All('legacy')`, declared before `@Put(':id')`, takes it; atlas matches both, not ranking the static path over the parameter where one takes any method" }
+  - { request: "GET /api/v1/cats/abcd/", reason: "registration order: `@Get('abcd/*')`, which Nest serves as `abcd/{*path}`, declared before `@Get(':id')`, takes it; atlas matches both, `:id` taking `abcd` as Express does with the trailing `/`" }
+  - { request: "GET /api/v1/cats/abcd", reason: "trailing slash: path-to-regexp 8 serves `abcd/{*path}` at `/abcd/` and below, not at `/abcd`, which `@Get(':id')` takes; atlas reads paths that differ only in a trailing `/` as one, and matches both" }

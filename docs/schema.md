@@ -189,7 +189,7 @@ tree, `code` has no digest.
 
 | Element | id | Tool metadata |
 |---|---|---|
-| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller) |
+| route (surface) | `component\|METHOD /path` | `at` (file and line), `evidence`, `operationId`, `described` (where an OpenAPI document declares the operation), `describedPath` (the path key it uses), `describedVersion` (that document's version), `reaches` (the methods the handler calls), `implicit` (served by the framework with no handler written for it, such as Next.js's HEAD and OPTIONS, the files of `public/` and the metadata files of `app/`, or requested by convention from outside the code, such as its robots.txt, sitemaps and manifest; no rule expects a caller), `patterns` (the regexp each parameter named there must match, as Fastify, Hono or Spring tests it) |
 | call | `from->to\|METHOD /path@file#scope` | `at`, `evidence`, `scope` (the function that holds the call), `based`, `page` (the path a URL relative to its page was resolved against), `slash` (the path is written with a trailing `/`) |
 | edge | `kind`, `from`, `to` | `evidence`, `via` |
 | registry entry | `registry:key` | `at`, `producers`, `consumers` |
@@ -198,11 +198,22 @@ tree, `code` has no digest.
 
 Route paths are OpenAPI path templates: Nest's or Express's `:id` becomes `{id}`, Spring's `{id:\d+}` becomes `{id}`,
 Starlette's `{id:str}` becomes `{id}`. The same route has the same id whichever framework registered it, and matches an
-OpenAPI `paths` key as is. Starlette's other converters (`{id:int}`, `{id:float}`, `{id:uuid}`) are kept as written:
-each takes only the segments its regex does. Two forms
+OpenAPI `paths` key as is. Parameters that share a segment with text are written there (`/flights/{from}-{to}`), each
+taking some text of it, and a path one registration serves in several forms is a route per form (Express 5's
+`/about{/:section}` is `/about` and `/about/{section}`). The regexp Fastify (`:code(^[a-z]+)`) or Hono
+(`:code{[a-z]+}`) tests a parameter with is kept in the route's `patterns`, so the id stays the template; a request
+reaches the route only where the text it gives the parameter matches. So is what a parameter sharing its segment takes
+where that is not some text of it: Fastify's `(.*?)` and Spring's `(.*)`, none included (Spring's own regexp of such a
+variable, written for Java, is not kept, so `.*` stands for it). Starlette's other converters (`{id:int}`,
+`{id:float}`, `{id:uuid}`) are kept as written: each takes only the segments its regex does. Two forms
 are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path, which
-matches the rest of a request's path, and a wildcard within a segment (`*.txt`), which matches any text in that
-segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written `{*rest}`) match the path without them too;
+matches the rest of a request's path, and a wildcard within a segment (`*.txt`, and Spring's `t?st.html`, `?` being one
+character), which matches any text in that segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written
+`{*rest}`, Hono's final `/*`, written `**`, and path-to-regexp 8's `/x{/*rest}`, written `/x/{*rest}`) match the path
+without them too. Fastify's and Express 4's final `/*` (written `**`) and path-to-regexp 8's `/x/{*rest}` (Nest's
+`/x/*`) take `/x/`, with nothing after its `/`, but not `/x`; since paths that differ only in a trailing `/` are one
+route here, a request for `/x` is matched to them as well. `{rest}/**` (Next.js's `[...rest]`, path-to-regexp 8's
+`*rest`) takes one segment or more;
 Starlette's `{rest:path}`, also how a mount is compiled (`/static/{path:path}`), is `.*` after the `/` before it, so a
 request without that segment reaches it only by the redirect to the path with a `/` added, which Starlette's router
 answers when no route, of any method, matches the path. A path that holds either is not an OpenAPI template. `export arazzo` names such a route as a

@@ -47,14 +47,15 @@ const fixtures = existsSync(root)
 
 /**
  * The paths a surface's path stands for in the form `routes.json` is written in: a parameter is `{}` wherever it stands
- * in a segment (a lone `*` too), and `{**}` is one segment or more. atlas writes a final segment that takes none or more (`**`, Spring's
+ * in a segment (a lone `*` too), as is a wildcard within a segment (`*.png`, Spring's `t?st.html`), and `{**}` is one
+ * segment or more. atlas writes a final segment that takes none or more (`**`, Spring's
  * `{*rest}`, Starlette's `{name:path}`) as one path, which is two here: the path before it, and that path with `{**}`.
  */
 function canonicalPaths(path: string): string[] {
   const segments = path.split("/").map((seg) => {
     if (seg === "**" || /^\{\*[^{}]*\}$/.test(seg) || /^\{[^{}:]+:path\}$/.test(seg)) return "{**}";
     // A lone `*` is a segment parameter where atlas reads one (Hono's `/wild/*/card`).
-    return seg === "*" ? "{}" : seg.replace(/\{[^{}]*\}/g, "{}");
+    return seg === "*" ? "{}" : seg.replace(/\{[^{}]*\}|[*?]/g, "{}");
   });
   while (segments.length > 1 && segments[segments.length - 1] === "") segments.pop();
   const head = (list: string[]) => (list.join("/").startsWith("/") ? list.join("/") || "/" : `/${list.join("/")}`);

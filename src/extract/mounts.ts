@@ -35,6 +35,13 @@ export interface Mounts {
   prefixes(router: string): string[] | undefined;
   /** Why the paths of a router are not read, where `prefixes` gives none: "is mounted where ...". */
   why(router: string): string | undefined;
+  /** The package a router is created from (`express`, `@koa/router`, `koa-router`, `hono` or a preset, `fastify`). */
+  packageOf(router: string): string | undefined;
+  /**
+   * The files that package is resolved from: where the router is created, or for a Fastify plugin, where each
+   * `Fastify()` instance it is registered under is; none for a plugin no traced instance takes in.
+   */
+  originsOf(router: string): string[];
   /**
    * Where `file` mounts `express.static`, which serves the files of a directory: the line and the paths it is mounted
    * at, undefined where a mount is not read.
@@ -132,19 +139,22 @@ function koaPrefix(options: ts.Expression | undefined): Value {
   return prefixOption(u, (p) => ({ why: `has a prefix the code does not spell out (${short(p)})` }));
 }
 
-/** What an expression creates: an Express, @koa/router, Koa, Hono or Fastify router or application, with its own prefix. */
-function creation(e: ts.Expression): { kind: Kind; own: Value } | undefined {
+/**
+ * What an expression creates: an Express, @koa/router, Koa, Hono or Fastify router or application, with its own prefix
+ * and the package it is created from.
+ */
+function creation(e: ts.Expression): { kind: Kind; own: Value; pkg: string } | undefined {
   const u = unwrap(e);
   if (!ts.isCallExpression(u) && !ts.isNewExpression(u)) return undefined;
   const from = packageName(u.expression);
   if (!from) return undefined;
   const { spec, name } = from;
   const made = ts.isNewExpression(u);
-  if (spec === "express") return name === "Router" ? { kind: "express-router", own: "" } : name === "default" && !made ? { kind: "express-app", own: "" } : undefined;
-  if (spec === "@koa/router" || spec === "koa-router") return name === "default" || name === "Router" ? { kind: "koa-router", own: koaPrefix(u.arguments?.[0]) } : undefined;
-  if (spec === "koa") return made && (name === "default" || name === "Koa") ? { kind: "koa-app", own: "" } : undefined;
-  if ((spec === "hono" || spec.startsWith("hono/")) && made && name === "Hono") return { kind: "hono", own: "" };
-  if (spec === "fastify" && !made && ["default", "fastify", "Fastify"].includes(name)) return { kind: "fastify", own: "" };
+  if (spec === "express") return name === "Router" ? { kind: "express-router", own: "", pkg: spec } : name === "default" && !made ? { kind: "express-app", own: "", pkg: spec } : undefined;
+  if (spec === "@koa/router" || spec === "koa-router") return name === "default" || name === "Router" ? { kind: "koa-router", own: koaPrefix(u.arguments?.[0]), pkg: spec } : undefined;
+  if (spec === "koa") return made && (name === "default" || name === "Koa") ? { kind: "koa-app", own: "", pkg: spec } : undefined;
+  if ((spec === "hono" || spec.startsWith("hono/")) && made && name === "Hono") return { kind: "hono", own: "", pkg: spec };
+  if (spec === "fastify" && !made && ["default", "fastify", "Fastify"].includes(name)) return { kind: "fastify", own: "", pkg: spec };
   return undefined;
 }
 
@@ -326,7 +336,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
   };
 
   /** The routers, applications and plugins found, by key, with what they are and the prefix they set themselves. */
-  const stores = new Map<string, { kind: Kind; own: Value }>();
+  const stores = new Map<string, { kind: Kind; own: Value; pkg: string }>();
   /** Hono's `basePath(path)`: the routes of the instance it is called on, under another base path. */
   const based = new Map<string, { parent: string; path: Value }>();
   /** The functions `register` takes in as Fastify plugins. */
@@ -427,7 +437,7 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
         const fn = functionAt(file, m.target, new Set());
         if (fn && !plugins.has(fn)) {
           plugins.add(fn);
-          stores.set(fn, { kind: "plugin", own: "" });
+          stores.set(fn, { kind: "plugin", own: "", pkg: "fastify" });
           grew = true;
         }
       }
@@ -529,6 +539,22 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     why: (handle) => {
       const s = served(handle, new Set());
       return "why" in s ? s.why : undefined;
+    },
+    packageOf: (handle) => stores.get(storeOf(handle))?.pkg,
+    originsOf: (handle) => {
+      const fileOf = (h: string) => h.slice(0, h.lastIndexOf("@"));
+      const store = storeOf(handle);
+      if (stores.get(store)?.kind !== "plugin") return stores.has(store) ? [fileOf(store)] : [];
+      const out = new Set<string>();
+      const seen = new Set<string>();
+      const up = (h: string): void => {
+        if (seen.has(h)) return;
+        seen.add(h);
+        if (stores.get(h)?.kind === "fastify") out.add(fileOf(h));
+        else for (const m of mounts.get(h) ?? []) if (m.parent !== ROOT) up(storeOf(m.parent));
+      };
+      up(store);
+      return [...out];
     },
     statics,
   };

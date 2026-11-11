@@ -42,7 +42,8 @@ function nextRank(path: string): number[] {
 function springRank(path: string): number[] {
   const segs = segments(path);
   const catchAll = segs.some((s) => s === "**" || s.startsWith("{*")) ? 1 : 0;
-  const variables = segs.filter((s) => (s.startsWith("{") && !s.startsWith("{*")) || s.startsWith(":")).length;
+  // Each URI variable counts, several in one segment too (`{name}-{version}`).
+  const variables = segs.reduce((n, s) => n + (s.startsWith(":") ? 1 : (s.match(/\{(?!\*)[^{}]*\}/g)?.length ?? 0)), 0);
   // Every `*` outside a variable counts, inside a segment too (`*.txt`); a catch-all is counted above instead.
   const wildcards = segs.filter((s) => s !== "**" && !s.startsWith("{*")).reduce((n, s) => n + (s.replace(/\{[^}]*\}/g, "").match(/\*/g)?.length ?? 0), 0);
   const normalizedLength = path.replace(/\{[^}]*\}/g, "?").length;
@@ -158,7 +159,7 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // one takes every request the call and it share: `/{a}/new` meets `/editor/{id}` only in `/editor/new`.
     let paths: Set<string> | undefined;
     if (ranked.get(call.to) === "next") {
-      const fits = [...new Set(graph.surfaces.filter((s) => s.component === call.to && pathsMatch(s.path, call.path)).map((s) => s.path))];
+      const fits = [...new Set(graph.surfaces.filter((s) => s.component === call.to && pathsMatch(s.path, call.path, s.patterns)).map((s) => s.path))];
       fits.sort((a, b) => compare(nextRank(a), nextRank(b)));
       const covering = fits.findIndex((p) => pathCovers(p, call.path));
       const before = covering < 0 ? fits : fits.slice(0, covering + 1);
@@ -170,9 +171,9 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // being redirected.
     const redirected = (surface: Surface): boolean => {
       const bare = slashRedirectPath(surface.path);
-      if (bare === undefined || !pathsMatch(bare, call.path)) return false;
+      if (bare === undefined || !pathsMatch(bare, call.path, surface.patterns)) return false;
       const served = narrowedPath(bare, call.path);
-      return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served));
+      return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served, s.patterns));
     };
     // Spring serves a HEAD request with a GET mapping when no HEAD mapping fits better (`RequestMethodsRequestCondition`).
     const headByGet = ranked.get(call.to) === "spring" && call.method.toUpperCase() === "HEAD";
@@ -183,7 +184,7 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       // method; a file it serves with no handler is reached by GET as a route is.
       if (surface.implicit && surface.method !== "GET" && call.method.toUpperCase() !== surface.method) return;
       if (!methodsMatch(surface.method, call.method) && !(headByGet && surface.method === "GET")) return;
-      if (pathsMatch(surface.path, call.path) || redirected(surface)) candidates.push({ surface, index: si });
+      if (pathsMatch(surface.path, call.path, surface.patterns) || redirected(surface)) candidates.push({ surface, index: si });
     });
     const reach = reached(call, ranked.has(call.to) ? candidates : concreteFirst(call, exactFirst(call, candidates)), ranked);
     // A method that is not read would pick among routes that take different ones; which it picks is not read either.
