@@ -25,8 +25,9 @@ export type Syntax = { kind: "path-to-regexp" | "path-to-regexp-0.1" | "express"
 
 /**
  * A route path as atlas writes it, with the regular expression each parameter named in `patterns` must match, and
- * `trailing` where the path ends with a wildcard that takes none or more segments after a `/` the syntax writes before
- * it (`/x/*`): the path before the wildcard is served only with that `/` (see `Dispatch.trailing`).
+ * `trailing` where the path as written ends with a `/` (`/abcd/`): one without a wildcard is served with it, and one
+ * ending in a wildcard that takes none or more segments after that `/` (`/x/*`) serves the path before the wildcard
+ * only with it (see `Dispatch.trailing`).
  */
 export interface RoutePath {
   path: string;
@@ -325,14 +326,54 @@ export function readExpress(path: string): ReadPath {
  * conversion of a `*` segment before the end differs between versions, so such a path is not read.
  */
 export function readNest(route: string): ReadPath {
+  const converted = nestConverted(route);
+  return typeof converted === "string" ? readPathToRegexp(converted) : converted;
+}
+
+/** The path `LegacyRouteConverter.tryConvert` hands to path-to-regexp 8 (see `readNest`). */
+function nestConverted(route: string): string | { why: string } {
   const lead = route.startsWith("/") ? route : `/${route}`;
   const normalized = route.endsWith("/") ? lead : `${lead}/`;
-  let converted = route;
-  if (normalized.endsWith("/(.*)/")) converted = route.replace("(.*)", "{*path}");
-  else if (normalized.endsWith("/*/")) converted = route.replace("*", "{*path}");
-  else if (normalized.endsWith("/+/")) converted = route.replace("/+", "/*path");
-  else if (normalized.includes("/*/")) return { why: "Nest converts a `*` segment before the end of a path differently by version" };
-  return readPathToRegexp(converted);
+  if (normalized.endsWith("/(.*)/")) return route.replace("(.*)", "{*path}");
+  if (normalized.endsWith("/*/")) return route.replace("*", "{*path}");
+  if (normalized.endsWith("/+/")) return route.replace("/+", "/*path");
+  if (normalized.includes("/*/")) return { why: "Nest converts a `*` segment before the end of a path differently by version" };
+  return route;
+}
+
+/**
+ * The kind of each segment of a path Nest serves on Express, as its specificity sort ranks them (@nestjs/core 12,
+ * `RouteConflictDetector.tokenizePath` and `classifySegment`, `RouteSpecificitySorter.SEGMENT_KIND_RANK`): the path the
+ * adapter normalizes (`nestConverted`) parsed by path-to-regexp 8, a group's tokens kept as optional, split at each `/`
+ * of its text, empty segments left out; a segment starting with a wildcard is 4, one of text only 0, one whose only
+ * required token (or only token) is a parameter 3, any other 2. Undefined where the path is not read.
+ */
+export function nestSpecificity(route: string): number[] | undefined {
+  const converted = nestConverted(route);
+  const tokens = typeof converted === "string" ? parseP2R(converted) : undefined;
+  if (!tokens || !Array.isArray(tokens)) return undefined;
+  type Part = { token: Exclude<Token, { type: "group" }>; optional: boolean };
+  const flat = (list: Token[], optional: boolean): Part[] => list.flatMap((t) => (t.type === "group" ? flat(t.tokens, true) : [{ token: t, optional }]));
+  const segs: Part[][] = [[]];
+  for (const part of flat(tokens, false)) {
+    if (part.token.type !== "text") {
+      segs[segs.length - 1]!.push(part);
+      continue;
+    }
+    part.token.value.split("/").forEach((text, i) => {
+      if (i > 0) segs.push([]);
+      if (text) segs[segs.length - 1]!.push({ token: { type: "text", value: text }, optional: part.optional });
+    });
+  }
+  return segs
+    .filter((parts) => parts.length > 0)
+    .map((parts) => {
+      if (parts[0]!.token.type === "wildcard") return 4;
+      if (parts.every((p) => p.token.type === "text")) return 0;
+      const required = parts.filter((p) => !p.optional);
+      const [only, ...others] = required.length ? required : parts;
+      return !others.length && only!.token.type === "param" ? 3 : 2;
+    });
 }
 
 /** find-my-way's `getClosingParenthensePosition`: the `)` closing the `(` at `at`, past escaped characters. */

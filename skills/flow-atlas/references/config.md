@@ -534,29 +534,42 @@ it does not, the call joins every route its path fits, and a limit names what is
 
 - Registration order. Express, @koa/router (without `exclusive`), Hono and Starlette (FastAPI) answer a request with
   the first route registered whose method and path it fits; Nest on Express registers a controller's routes in the
-  order its methods are declared (unless `NestFactory.create` sets a `routeResolutionStrategy` other than
-  `declaration`, or one the files do not spell out: then every route stays a target). The order is read within one
-  router in one function body of one file, and a router mounted once (`use`, `route`, `include_router`, `mount`) takes
-  its place where the mount is; routes of routers registered in different files, of Nest's controllers, or of a router
-  mounted twice are in no order atlas knows, so each stays a target. A route stops a request only where it takes every
-  request the call stands for (`/users/me` before `/users/:id`, not a call `/users/${id}`), and where its last handler
-  does not take `next` and pass the request on with it (`next()`; Express's `next(err)` goes to error handlers) and,
-  on Express, no callback of the route leaves it with `next('route')`; a handler atlas does not see (imported, or a
-  value) may pass it on, and so may a Nest route whose version a header, a media type or a function gives.
+  order its methods are declared. The order is read within one router in one function body of one file (Python's
+  stacked decorators the nearest the definition first, as Python applies them), and a router mounted once (`use`, each
+  of its arguments in turn, `route`, `include_router`, `mount`) takes its place where the mount is; routes of routers
+  registered in different files, of Nest's controllers, or of a router mounted twice are in no order atlas knows, so
+  each stays a target. A route stops a request only where it takes every request the call stands for (`/users/me`
+  before `/users/:id`, not a call `/users/${id}`) in the form the call is written (where the router's rule for a
+  trailing `/` is not read, only a call without one to a route written without one), and where its last handler does
+  not take `next` and pass the request on with it (`next()`, or Express's `next(x)` with an `x` that may be falsy:
+  only a surely truthy one, as `next(new Error())`, goes to the error handlers) and, on Express, no callback of the
+  route leaves it with `next('route')`; a handler atlas does not see (imported, or a value) may pass it on, and so may
+  a Nest route whose version a header, a media type or a function gives.
+- Nest's specificity. With `routeResolutionStrategy: 'specificity'` (`NestFactory.create`'s options, written in place
+  or given to the function that calls it by each of its calls; @nestjs/core 12 and later), Nest registers every
+  controller's routes ranked segment by segment (`RouteSpecificitySorter`: a literal, then a segment of text and a
+  parameter, then a parameter, then a wildcard; a path that ends earlier comes after a literal, or last where it has a
+  wildcard), those of one rank in declaration order. Another strategy, or one not spelled out, leaves every route a
+  target.
 - Precedence. Fastify's find-my-way tries a static segment before a parameter, a parameter with a regexp before one
   without, and a parameter before a wildcard, whatever the order; Spring ranks by specificity and Next.js by its file
   conventions, as before.
-- Trailing `/`. Express, @koa/router and Nest on Express ignore it (unless `strict` or `strict routing` is set, which
-  is not read). Fastify (unless `ignoreTrailingSlash`, at the top of its options or in `routerOptions`), Hono (unless
+- Trailing `/`. Express, @koa/router and Nest on Express ignore it. Express's `Router({ strict: true })` makes a
+  route take the path as written, a router's `/` taking its mount's path with and without the `/`; an application's
+  `strict routing` is read where every `set`, `enable` or `disable` of it is at the top level of the file that creates
+  the application, before every route registered there, since the application's router takes it when first used (the
+  last one counts). @koa/router's `strict`, which also changes how it joins `/` to a prefix, is not read. Fastify (unless `ignoreTrailingSlash`, at the top of its options or in `routerOptions`), Hono (unless
   `new Hono({ strict: false })`) and Spring 6 and later (the version the nearest pom.xml or build.gradle gives Spring
   Boot or Spring Framework; `setUseTrailingSlashMatch` decides for mapped handlers where the code calls it) match a
   path with a `/` only to a route that has one: find-my-way also gives the empty text after a last `/` to a parameter
   (`/users/:id` takes `/users/`), Fastify serves a plugin's `/` at its prefix with and without the `/`
   (`prefixTrailingSlash`), and Spring joins `@RequestMapping("/owners")` and `@GetMapping("/")` into `/owners/`.
   Starlette serves the path as the route writes it, and redirects a request no route takes by any method to the path
-  with the `/` added or removed where a route takes that (`redirect_slashes`, read from `FastAPI(...)`). Next.js
-  redirects every request with a trailing `/` to the path without it, or with `trailingSlash: true` every one without
-  to the path with it (a file's path and `/.well-known/` aside), as the object `next.config.*` exports says; a
+  with the `/` added or removed where a route takes that (`redirect_slashes`, read from `FastAPI(...)`, or from the
+  `APIRouter(...)` an application mounts); a call with a value may be served for some values and redirected for
+  others. Next.js redirects every request with a trailing `/` to the path without it, or with `trailingSlash: true`
+  every one whose last segment has no `.` to the path with it and a file's (`.` and word characters at its end) to the
+  path without it, leaving `/.well-known/` as written, as the object `next.config.*` exports says; a
   configuration a function returns or a plugin wraps is not read. A wildcard written after a `/` (find-my-way's
   `/x/*`, Nest's `x/*`, Express 4's `/x/*`) takes `/x/` but not `/x`.
 - Matchers. AdonisJS tests a parameter with the matcher a route's `.where(param, matcher)` or the file's

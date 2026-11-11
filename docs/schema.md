@@ -222,7 +222,8 @@ tool cannot resolve. Paths that differ only in a trailing `/` are one route, who
 forms it is served at where its router tells them apart (`slash`, `both`; neither where only the form without is).
 `dispatch` holds how the route's router dispatches, as far as atlas reads it: `picks` (`registration`, the first
 route registered that a request fits, in the `order` of the route's steps from the router a request enters to the one
-holding it, each a sequence of registrations and a place in it; `find-my-way`, Fastify's precedence), `passes` (its
+holding it, each a sequence of registrations and a place in it; `find-my-way`, Fastify's precedence; `specificity`,
+Nest's sort by the `rank` of each segment, then `order`), `passes` (its
 handler may pass the request on to a later route), `slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed`
 and `added` for Next.js's `trailingSlash`) and `constrained` (Fastify takes a request to it only with headers that meet
 its constraints). Where an OpenAPI document writes the

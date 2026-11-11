@@ -311,12 +311,14 @@ interface FileFacts {
   /** Where `express.static` is mounted. */
   statics: Array<{ receiver: ts.Expression; path: string | undefined; line: number }>;
   /** Express's `set`, `enable` and `disable` of `strict routing`: whether it is turned on, null where not spelled out. */
-  strict: Array<{ receiver: ts.Expression; on: boolean | null }>;
+  strict: Array<{ receiver: ts.Expression; on: boolean | null; at: number; scope: number }>;
+  /** The calls that make an Express application create its router, which takes `strict routing` then: `use`, `route`, `param` and a method's route. */
+  registrations: Array<{ receiver: ts.Expression; at: number; scope: number }>;
 }
 
 function factsOf(text: string, file: string): FileFacts {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const facts: FileFacts = { sf, exports: new Map(), stars: [], mounts: [], prefixes: [], statics: [], strict: [] };
+  const facts: FileFacts = { sf, exports: new Map(), stars: [], mounts: [], prefixes: [], statics: [], strict: [], registrations: [] };
   const modifier = (n: ts.Node, kind: ts.SyntaxKind): boolean => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === kind);
   const exported = (n: ts.Node): boolean => modifier(n, ts.SyntaxKind.ExportKeyword);
   const visit = (node: ts.Node): void => {
@@ -361,7 +363,10 @@ function factsOf(text: string, file: string): FileFacts {
     if (call && ["set", "enable", "disable"].includes(call.name) && literal(call.args[0]) === "strict routing") {
       const value = call.name === "set" ? unwrap(call.args[1] ?? call.args[0]!) : undefined;
       const on = call.name === "enable" ? true : call.name === "disable" ? false : value?.kind === ts.SyntaxKind.TrueKeyword ? true : value?.kind === ts.SyntaxKind.FalseKeyword ? false : null;
-      facts.strict.push({ receiver: unwrap(call.receiver), on });
+      facts.strict.push({ receiver: unwrap(call.receiver), on, ...where });
+    }
+    if (call && (["use", "route", "param"].includes(call.name) || (VERBS.express!.has(call.name) && (call.name !== "get" || call.args.length > 1)))) {
+      facts.registrations.push({ receiver: unwrap(call.receiver), ...where });
     }
     if (call?.name === "use") {
       const { args, receiver } = call;
@@ -378,8 +383,10 @@ function factsOf(text: string, file: string): FileFacts {
           continue;
         }
         const koa = koaRoutes(target);
-        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true, ...(path !== undefined ? { explicit: true as const } : {}), ...where });
-        else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target, ...where });
+        // Each argument of one `use` is its own registration, in the order the arguments are written.
+        const own = { ...where, at: arg.getStart(sf) };
+        if (koa) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target: koa, routes: true, ...(path !== undefined ? { explicit: true as const } : {}), ...own });
+        else if (target !== first || path === undefined) facts.mounts.push({ verb: "use", receiver: unwrap(receiver), path: at, target, ...own });
       }
     }
     // Hono's `route(path, app)`; Express's `route(path)` takes one argument and mounts nothing.
@@ -694,13 +701,34 @@ export function expressMounts(texts: Map<string, string>, declared: Record<strin
     const made = stores.get(store);
     const slashes = (strict: boolean | null | undefined) => (strict === null ? {} : { slashes: strict ? ("strict" as const) : ("ignored" as const) });
     switch (made?.kind) {
-      case "express-router":
-        // Express's Router option `strict` (router 2, `Layer`): off by default, a trailing `/` is optional.
-        return { picks: "registration", ...(booleanOption(made.options, ["strict"]) === null || booleanOption(made.options, ["strict"]) ? {} : slashes(false)) };
+      case "express-router": {
+        // Express's Router option `strict` (router 2 `Layer`, path-to-regexp's `trailing: !strict`): off by default, a
+        // trailing `/` is optional; on, a route takes the path as written.
+        const strict = booleanOption(made.options, ["strict"]);
+        return { picks: "registration", ...slashes(strict === undefined ? false : strict) };
+      }
       case "express-app": {
-        // An application's own router takes `strict routing` from its settings (express `lazyrouter`).
-        const set = [...facts].flatMap(([file, f]) => f.strict.filter((x) => handleAt(file, x.receiver, new Set()) !== undefined && storeOf(handleAt(file, x.receiver, new Set())!) === store));
-        return { picks: "registration", ...(set.every((x) => x.on === false) ? slashes(false) : {}) };
+        // An application creates its router on the first `use`, `route`, `param` or route registered, with the
+        // `strict routing` setting it has then (express `lazyrouter`, the `router` getter of Express 5): read where
+        // every setting is at the top level of the file that creates the application, before every registration there,
+        // and none of its registrations in that file sits in a function, which may run at another time.
+        const mine = <T extends { receiver: ts.Expression }>(pick: (f: FileFacts) => T[]) =>
+          [...facts].flatMap(([file, f]) =>
+            pick(f)
+              .filter((x) => {
+                const h = handleAt(file, x.receiver, new Set());
+                return h !== undefined && storeOf(h) === store;
+              })
+              .map((x) => ({ ...x, file })),
+          );
+        const settings = mine((f) => f.strict);
+        if (!settings.length) return { picks: "registration", ...slashes(false) };
+        const home = store.slice(0, store.lastIndexOf("@"));
+        const last = settings.reduce((a, b) => (b.at > a.at ? b : a));
+        const settled =
+          settings.every((x) => x.on !== null && x.file === home && x.scope === -1) &&
+          mine((f) => f.registrations).every((r) => r.file !== home || (r.scope === -1 && r.at > last.at));
+        return { picks: "registration", ...(settled ? slashes(last.on) : {}) };
       }
       case "koa-router": {
         // @koa/router's `exclusive` runs only the last route a request matches, and `strict` makes the `/` count.

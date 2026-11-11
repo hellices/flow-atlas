@@ -23,7 +23,7 @@ export type Views = Map<string, { file: string; names: string[]; redirects: Arra
  * Java or Kotlin code with the contents of every string and character literal blanked (quotes, newlines and offsets
  * kept), so annotations, braces and keywords are searched in code only. Values are read back from the unmasked text.
  */
-function maskStrings(file: string, code: string): string {
+export function maskStrings(file: string, code: string): string {
   const out = code.split("");
   let i = 0;
   while (i < code.length) {

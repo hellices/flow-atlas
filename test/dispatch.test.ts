@@ -103,7 +103,8 @@ describe("registration order", () => {
     expect(reach(files, express, ["GET /a/me", "GET /b/me", "GET /c/me", "GET /d/me"]).reached).toEqual({
       "GET /a/me": ["GET /a/me", "GET /a/{id}"],
       // `next(err)` goes to the error handlers, not to another route.
-      "GET /b/me": ["GET /b/me"],
+      // `next(e)` with a value that may be falsy is no error to Express (router 2's `next`): it may move on.
+      "GET /b/me": ["GET /b/me", "GET /b/{id}"],
       "GET /c/me": ["GET /c/me", "GET /c/{id}"],
       "GET /d/me": ["GET /d/me", "GET /d/{id}"],
     });
@@ -251,21 +252,31 @@ describe("registration order", () => {
       "  @Get('me') me() {}",
       "}",
     );
-    const nest = (main: string) => ({
-      "api/package.json": pkg({ "@nestjs/core": "^12.0.0", "@nestjs/platform-express": "^12.0.0" }),
+    const nest = (main: string, core = "^12.0.0") => ({
+      "api/package.json": pkg({ "@nestjs/core": core, "@nestjs/platform-express": core }),
       "api/users.controller.ts": controller,
-      "api/main.ts": main,
+      "api/main.ts": lines("import { NestFactory } from '@nestjs/core';", main),
     });
-    const run = (main: string) => reach(nest(main), { styles: ["nest"] }, ["GET /users/me"]).reached["GET /users/me"];
+    const run = (main: string, core?: string) => reach(nest(main, core), { styles: ["nest"] }, ["GET /users/me"]).reached["GET /users/me"];
     expect(run("const app = await NestFactory.create(AppModule);")).toEqual(["GET /users/{id}"]);
     expect(run("const app = await NestFactory.create(AppModule, { routeResolutionStrategy: 'declaration' });")).toEqual(["GET /users/{id}"]);
-    expect(run("const app = await NestFactory.create(AppModule, { routeResolutionStrategy: 'specificity' });")).toEqual(["GET /users/me", "GET /users/{id}"]);
+    // The literal segment ranks before the parameter, whatever the declaration order.
+    expect(run("const app = await NestFactory.create(AppModule, { routeResolutionStrategy: 'specificity' });")).toEqual(["GET /users/me"]);
+    // Nest 11 has no such option: it registers in declaration order.
+    expect(run("const app = await NestFactory.create(AppModule, { routeResolutionStrategy: 'specificity' });", "^11.0.0")).toEqual(["GET /users/{id}"]);
     expect(run("const app = await NestFactory.create(AppModule, options);")).toEqual(["GET /users/me", "GET /users/{id}"]);
-    // Options a function is given are those of each call of it in the files read.
+    expect(run("const app = await NestFactory.create(AppModule, { routeResolutionStrategy: strategy });")).toEqual(["GET /users/me", "GET /users/{id}"]);
+    // A NestFactory imported under another name is Nest's; one named so but not imported from @nestjs/core is not.
+    const aliased = (main: string) => ({ ...nest(""), "api/main.ts": main });
+    const via = (main: string) => reach(aliased(main), { styles: ["nest"] }, ["GET /users/me"]).reached["GET /users/me"];
+    expect(via("import { NestFactory as Factory } from '@nestjs/core';\nconst app = await Factory.create(AppModule);")).toEqual(["GET /users/{id}"]);
+    expect(via("import { NestFactory } from './factory';\nconst app = await NestFactory.create(AppModule);")).toEqual(["GET /users/me", "GET /users/{id}"]);
+    // Options a function is given are those of each call of it in the files read, its default where one gives none.
     const factory = (calls: string) =>
       lines("export async function createApp(options = {}) {", "  return NestFactory.create(AppModule, options);", "}", calls);
     expect(run(factory("await createApp();"))).toEqual(["GET /users/{id}"]);
-    expect(run(factory("await createApp({ routeResolutionStrategy: 'specificity' });"))).toEqual(["GET /users/me", "GET /users/{id}"]);
+    expect(run(factory("await createApp(undefined);"))).toEqual(["GET /users/{id}"]);
+    expect(run(factory("await createApp({ routeResolutionStrategy: 'specificity' });"))).toEqual(["GET /users/me"]);
     expect(run(factory(""))).toEqual(["GET /users/me", "GET /users/{id}"]);
     expect(run(factory("const make = createApp;"))).toEqual(["GET /users/me", "GET /users/{id}"]);
   });
@@ -281,7 +292,7 @@ describe("registration order", () => {
         "  @Version('2') @Get('me') me() {}",
         "}",
       ),
-      "api/main.ts": lines("const app = await NestFactory.create(AppModule);", "app.enableVersioning({ type: VersioningType.HEADER, header: 'X-V' });"),
+      "api/main.ts": lines("import { NestFactory } from '@nestjs/core';", "const app = await NestFactory.create(AppModule);", "app.enableVersioning({ type: VersioningType.HEADER, header: 'X-V' });"),
     };
     expect(reach(files, { styles: ["nest"] }, ["GET /users/me"]).reached).toEqual({ "GET /users/me": ["GET /users/me", "GET /users/{id}"] });
   });
@@ -393,9 +404,9 @@ describe("find-my-way's precedence", () => {
     ]);
     const { reached, matched } = reach(files, express, ["GET /v", "GET /w", "GET /x", "GET /y"]);
     expect(reached).toEqual({ "GET /v": ["constrained: GET /v"], "GET /w": ["constrained: GET /w"], "GET /x": ["GET /x"], "GET /y": ["constrained: GET /y"] });
-    expect(matched[0]).toBe(
-      "calls web->api: GET /v at x:1 fits GET /v (api/app.js:3), which its router takes only where the request's headers meet the constraints the route's options give (or may give, where they are not spelled out); the call's headers are not read, so it is not matched to them",
-    );
+    const fits = (request: string, line: number, route: string) =>
+      `calls web->api: ${request} at x:${line} fits ${route}, which its router takes only where the request's headers meet the constraints the route's options give (or may give, where they are not spelled out); the call's headers are not read, so it is not matched to them`;
+    expect(matched).toEqual([fits("GET /v", 1, "GET /v (api/app.js:3)"), fits("GET /w", 2, "GET /w (api/app.js:4)"), fits("GET /y", 4, "GET /y (api/app.js:7)")]);
   });
 });
 
@@ -516,7 +527,8 @@ describe("Spring's trailing slash", () => {
     '  @PostMapping("/{id}") void save() {}',
     "}",
   );
-  const pom = (version: string) => `<project>\n<parent>\n<artifactId>spring-boot-starter-parent</artifactId>\n<version>${version}</version>\n</parent>\n</project>\n`;
+  const pom = (version: string, group = "org.springframework.boot") =>
+    `<project>\n<parent>\n<groupId>${group}</groupId>\n<artifactId>spring-boot-starter-parent</artifactId>\n<version>${version}</version>\n</parent>\n</project>\n`;
   const spring = { styles: ["spring"] };
 
   it("matches a / only to a pattern that has it from Spring 6 on, as the build's Spring Boot gives it", () => {
@@ -539,7 +551,7 @@ describe("Spring's trailing slash", () => {
   });
 
   it("reads the version from a property of the pom or the Gradle plugin, and says where the build names Spring with no version it reads", () => {
-    const property = "<project>\n<properties><boot.version>3.4.1</boot.version></properties>\n<dependencyManagement><dependencies><dependency>\n<artifactId>spring-boot-dependencies</artifactId>\n<version>${boot.version}</version>\n</dependency></dependencies></dependencyManagement>\n</project>\n";
+    const property = "<project>\n<properties><boot.version>3.4.1</boot.version></properties>\n<dependencyManagement><dependencies><dependency>\n<groupId>org.springframework.boot</groupId><artifactId>spring-boot-dependencies</artifactId>\n<version>${boot.version}</version>\n</dependency></dependencies></dependencyManagement>\n</project>\n";
     expect(reach({ "api/pom.xml": property, "api/Owners.java": controller }, spring, ["POST /owners/1/"]).reached).toEqual({ "POST /owners/1/": [] });
     const gradle = "plugins {\n  id 'org.springframework.boot' version '3.3.0'\n}\n";
     expect(reach({ "api/build.gradle": gradle, "api/Owners.java": controller }, spring, ["POST /owners/1/"]).reached).toEqual({ "POST /owners/1/": [] });
@@ -636,5 +648,187 @@ describe("findings for calls a router redirects or that no route takes", () => {
     expect(graph.limits.filter((l) => l.includes("redirect"))).toEqual([
       "calls client->web: GET /about/ at client/x.js:2 is answered with a redirect to /about, which GET /about serves; it reaches that route only as its client follows the redirect, so it is matched to none",
     ]);
+  });
+});
+
+describe("review of #78", () => {
+  it("places stacked Python decorators as Python applies them, the nearest the definition first", () => {
+    const files = {
+      "api/main.py": lines("from fastapi import FastAPI", "app = FastAPI()", '@app.get("/u/{name}")', '@app.get("/u/me")', "def user(): ...", '@app.get("/v/{name}")', "def v(): ...", '@app.get("/v/me")', "def me(): ..."),
+    };
+    expect(reach(files, { styles: ["fastapi"] }, ["GET /u/me", "GET /v/me"]).reached).toEqual({ "GET /u/me": ["GET /u/me"], "GET /v/me": ["GET /v/{name}"] });
+  });
+
+  it("lets a mounted APIRouter redirect by its own redirect_slashes, and an included one by its application's", () => {
+    const files = {
+      "api/main.py": lines(
+        "from fastapi import FastAPI, APIRouter",
+        "app = FastAPI()",
+        "inner = APIRouter(redirect_slashes=False)",
+        '@inner.post("/items/")',
+        "def items(): ...",
+        'app.mount("/m", inner)',
+        "other = APIRouter(redirect_slashes=False)",
+        '@other.post("/things/")',
+        "def things(): ...",
+        'app.include_router(other, prefix="/i")',
+      ),
+    };
+    expect(reach(files, { styles: ["fastapi"] }, ["POST /m/items", "POST /i/things"]).reached).toEqual({ "POST /m/items": [], "POST /i/things": ["redirect /i/things/: POST /i/things"] });
+  });
+
+  it("records the redirect a call with a value may get besides the routes that take some values as written", () => {
+    const files = { "api/main.py": lines("from fastapi import FastAPI", "app = FastAPI()", '@app.get("/items/me/")', "def me(): ...", '@app.get("/items/{id}")', "def item(id): ...") };
+    expect(reach(files, { styles: ["fastapi"] }, ["GET /items/{}/", "GET /items/me/"]).reached).toEqual({
+      "GET /items/{}/": ["GET /items/me", "redirect /items/{}: GET /items/{id}"],
+      "GET /items/me/": ["GET /items/me"],
+    });
+  });
+
+  it("takes a matcher's regexp anywhere in the text, its own anchors kept, alternatives included", () => {
+    const files = { "api/start/routes.ts": lines("import router from '@adonisjs/core/services/router'", "router.get('/a/:id', () => 'a').where('id', /^foo|bar$/)") };
+    expect(reach(files, express, ["GET /a/foobar", "GET /a/xbar", "GET /a/barx"]).reached).toEqual({ "GET /a/foobar": ["GET /a/{id}"], "GET /a/xbar": ["GET /a/{id}"], "GET /a/barx": [] });
+  });
+
+  it("reads Express's next with a falsy or unknown value as moving on, and only a surely truthy one as an error", () => {
+    const files = {
+      ...express5,
+      "api/app.js": lines(
+        'import express from "express";',
+        "const app = express();",
+        'app.get("/a/me", (req, res, next) => next(null));',
+        'app.get("/a/:id", (req, res) => res.send("a"));',
+        'app.get("/b/me", (req, res, next) => next(new Error("no")));',
+        'app.get("/b/:id", (req, res) => res.send("b"));',
+      ),
+    };
+    expect(reach(files, express, ["GET /a/me", "GET /b/me"]).reached).toEqual({ "GET /a/me": ["GET /a/me", "GET /a/{id}"], "GET /b/me": ["GET /b/me"] });
+  });
+
+  it("orders the routers one use mounts in the order of its arguments", () => {
+    const files = {
+      ...express5,
+      "api/app.js": lines(
+        'import express from "express";',
+        "const app = express();",
+        "const a = express.Router();",
+        'a.get("/x/:id", (req, res) => res.send("a"));',
+        "const b = express.Router();",
+        'b.get("/x/me", (req, res) => res.send("b"));',
+        'app.use("/", a, b);',
+      ),
+    };
+    expect(reach(files, express, ["GET /x/me"]).reached).toEqual({ "GET /x/me": ["GET /x/{id}"] });
+  });
+
+  it("reads Express's strict option and an application's strict routing where the settings are settled before its router", () => {
+    const strictRouter = {
+      ...express5,
+      "api/app.js": lines(
+        'import express from "express";',
+        "const app = express();",
+        "const r = express.Router({ strict: true });",
+        'r.get("/x/:id", (req, res) => res.send("id"));',
+        'r.get("/x/me/", (req, res) => res.send("me"));',
+        'r.get("/", (req, res) => res.send("root"));',
+        'app.use("/r", r);',
+      ),
+    };
+    expect(reach(strictRouter, express, ["GET /r/x/me/", "GET /r/x/me", "GET /r", "GET /r/"]).reached).toEqual({
+      "GET /r/x/me/": ["GET /r/x/me"],
+      "GET /r/x/me": ["GET /r/x/{id}"],
+      "GET /r": ["GET /r"],
+      "GET /r/": ["GET /r"],
+    });
+    const app = (...setup: string[]) => ({
+      ...express5,
+      "api/app.js": lines('import express from "express";', "const app = express();", ...setup),
+    });
+    const run = (...setup: string[]) => reach(app(...setup), express, ["GET /s/"]).reached["GET /s/"];
+    expect(run('app.enable("strict routing");', 'app.get("/s", (req, res) => res.send("s"));')).toEqual([]);
+    expect(run('app.enable("strict routing");', 'app.disable("strict routing");', 'app.get("/s", (req, res) => res.send("s"));')).toEqual(["GET /s"]);
+    // Set after the first route, it comes after the router it would change: not read, matched either way.
+    expect(run('app.get("/s", (req, res) => res.send("s"));', 'app.enable("strict routing");')).toEqual(["GET /s"]);
+    // An Express 4 wildcard after a `/` takes `/x/` and not `/x` under a router whose own rule is not read.
+    const four = { "api/package.json": pkg({ express: "^4.21.0" }), "api/app.js": lines('const express = require("express");', "const app = express();", "app.set(\"strict routing\", flag);", 'app.get("/w/*", (req, res) => res.send("w"));') };
+    expect(reach(four, express, ["GET /w", "GET /w/"]).reached).toEqual({ "GET /w": [], "GET /w/": ["GET /w/**"] });
+  });
+
+  it("resolves a Fastify route's only options argument held in a const", () => {
+    const files = {
+      "api/package.json": pkg({ fastify: "^5.0.0" }),
+      "api/app.js": lines('import Fastify from "fastify";', "const app = Fastify();", 'const opts = { constraints: { version: "1.0.0" }, handler: h };', 'app.get("/v", opts);'),
+    };
+    expect(reach(files, express, ["GET /v"]).reached).toEqual({ "GET /v": ["constrained: GET /v"] });
+  });
+
+  it("reads Next.js's trailingSlash: true as its redirects do: a file's path loses the /, /.well-known/ keeps what is written", () => {
+    const files = {
+      "api/app/robots.txt/route.js": "export function GET() {}",
+      "api/app/.well-known/thing/route.js": "export function GET() {}",
+      "api/next.config.js": "module.exports = { trailingSlash: true };",
+    };
+    expect(reach(files, { styles: ["next"] }, ["GET /robots.txt/", "GET /.well-known/thing", "GET /.well-known/thing/"]).reached).toEqual({
+      "GET /robots.txt/": ["redirect /robots.txt: GET /robots.txt"],
+      "GET /.well-known/thing": ["GET /.well-known/thing"],
+      "GET /.well-known/thing/": ["GET /.well-known/thing"],
+    });
+  });
+
+  it("reads Spring's setter in code only, its version from Spring's own artifacts, and a registered or exchange mapping's /", () => {
+    const pom = (group: string) => `<project>\n<parent>\n<groupId>${group}</groupId>\n<artifactId>spring-boot-starter-parent</artifactId>\n<version>3.5.0</version>\n</parent>\n</project>\n`;
+    const controller = '@RestController\nclass A {\n  @PostMapping("/a") void a() {}\n}\n';
+    const commented = { "api/Web.java": 'class Web implements WebMvcConfigurer {\n  // c.setUseTrailingSlashMatch(true);\n  String s = "setUseTrailingSlashMatch(true)";\n}\n' };
+    expect(reach({ "api/pom.xml": pom("org.springframework.boot"), "api/A.java": controller, ...commented }, { styles: ["spring"] }, ["POST /a/"]).reached).toEqual({ "POST /a/": [] });
+    // Another group's artifact of the same name names no Spring version.
+    const other = reach({ "api/pom.xml": pom("com.example"), "api/A.java": controller }, { styles: ["spring"] }, ["POST /a/"]);
+    expect(other.reached).toEqual({ "POST /a/": ["POST /a"] });
+    const registered = lines(
+      "@Configuration",
+      "class Reg {",
+      "  @Autowired",
+      "  void register(RequestMappingHandlerMapping mapping, Handler handler) throws Exception {",
+      '    mapping.registerMapping(RequestMappingInfo.paths("/health/").methods(RequestMethod.GET).build(), handler, Handler.class.getMethod("health"));',
+      '    mapping.registerMapping(RequestMappingInfo.paths("/both", "/both/").methods(RequestMethod.GET).build(), handler, Handler.class.getMethod("both"));',
+      "  }",
+      "}",
+    );
+    // The exchanges a controller serves under both forms of its mapping are one route, served at both.
+    const exchange = lines(
+      "@HttpExchange",
+      "interface Api {",
+      "  @GetExchange String e();",
+      "}",
+      "@RestController",
+      '@RequestMapping({"/x/e", "/x/e/"})',
+      "class Impl implements Api {",
+      "  public String e() { return null; }",
+      "}",
+    );
+    const spring = { "api/pom.xml": pom("org.springframework.boot"), "api/Reg.java": registered, "api/Api.java": exchange };
+    expect(reach(spring, { styles: ["spring"] }, ["GET /health", "GET /health/", "GET /both", "GET /both/", "GET /x/e", "GET /x/e/"]).reached).toEqual({
+      "GET /health": [],
+      "GET /health/": ["GET /health"],
+      "GET /both": ["GET /both"],
+      "GET /both/": ["GET /both"],
+      "GET /x/e": ["GET /x/e"],
+      "GET /x/e/": ["GET /x/e"],
+    });
+  });
+
+  it("ranks Nest's routes by specificity across controllers, and those of one rank in declaration order", () => {
+    const files = {
+      "api/package.json": pkg({ "@nestjs/core": "^12.0.0", "@nestjs/platform-express": "^12.0.0" }),
+      "api/a.controller.ts": lines("import { Controller, Get } from '@nestjs/common';", "@Controller('users')", "export class A {", "  @Get(':id') one() {}", "  @Get(':name/x') x() {}", "  @Get('*rest') all() {}", "}"),
+      "api/b.controller.ts": lines("import { Controller, Get } from '@nestjs/common';", "@Controller('users')", "export class B {", "  @Get('me') me() {}", "  @Get(':other') other() {}", "}"),
+      "api/main.ts": lines("import { NestFactory } from '@nestjs/core';", "const app = await NestFactory.create(AppModule, { routeResolutionStrategy: 'specificity' });"),
+    };
+    expect(reach(files, { styles: ["nest"] }, ["GET /users/me", "GET /users/1", "GET /users/1/x", "GET /users/1/y"]).reached).toEqual({
+      "GET /users/me": ["GET /users/me"],
+      // `:id` and `:other` rank alike, in two controllers whose order is not read.
+      "GET /users/1": ["GET /users/{id}", "GET /users/{other}"],
+      "GET /users/1/x": ["GET /users/{name}/x"],
+      "GET /users/1/y": ["GET /users/{rest}/**"],
+    });
   });
 });

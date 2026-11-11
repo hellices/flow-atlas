@@ -147,10 +147,17 @@ function slashLeftOut(call: Call, surface: Surface): boolean {
 
 type Candidate = { surface: Surface; index: number };
 
-/** Whether a Next.js path is one `trailingSlash: true` serves as written: a file's (a `.` in its last segment) or one under `/.well-known/`. */
-const fileLike = (path: string): boolean => {
+/**
+ * The form `trailingSlash: true` serves a Next.js path at (load-custom-routes.js, its two internal redirects): a file's
+ * (a last segment ending in `.` and word characters) without the `/`, any other whose last segment has no `.` with it;
+ * a path under `/.well-known/`, and one whose last segment has a `.` otherwise, as written. Undefined for either form.
+ */
+const addedForm = (path: string): boolean | undefined => {
   const segs = segments(path);
-  return segs[0] === ".well-known" || (segs[segs.length - 1] ?? "").includes(".");
+  const last = segs[segs.length - 1] ?? "";
+  if (segs[0] === ".well-known" || last.includes(HOLE)) return undefined;
+  if (/\.\w+$/.test(last)) return false;
+  return last.includes(".") ? undefined : true;
 };
 
 /**
@@ -159,7 +166,7 @@ const fileLike = (path: string): boolean => {
  * it alone is taken without the `/` only where the route's syntax writes none there (`trailing`, and Starlette's
  * `{name:path}`, which takes the text after a `/`). Otherwise `ignored` takes either form; `strict`, `redirected` and
  * `removed` the form the route is served at, find-my-way also giving the empty text after a last `/` to a parameter;
- * `added` the form with the `/`, and a file's path without it (Next.js's exceptions to `trailingSlash: true`).
+ * `added` the form `addedForm` gives.
  */
 export function takes(s: Surface, path: string, slash: boolean): boolean {
   const r = segments(s.path);
@@ -189,14 +196,13 @@ export function takes(s: Surface, path: string, slash: boolean): boolean {
 }
 
 /**
- * The form Next.js serves a path at: without the `/` (`removed`), or with it (`added`), except a file's path, which it
- * serves as written. A last segment with a value in it may name a file or not, so either form is taken there.
+ * The form Next.js serves a path at: without the `/` (`removed`), or as `addedForm` says (`added`). A last segment with
+ * a value in it may name a file or not, so either form is taken there.
  */
 function nextForm(d: Dispatch, path: string, slash: boolean): boolean {
   if (d.slashes === "removed") return !slash;
-  const lastSeg = segments(path).pop() ?? "";
-  if (lastSeg.includes(HOLE)) return true;
-  return fileLike(path) || slash;
+  const form = addedForm(path);
+  return form === undefined || form === slash;
 }
 
 /** The slash rules under which a router answers a request no route takes as written with a redirect to the other form. */
@@ -254,15 +260,49 @@ function covers(d: Surface, call: Call): boolean {
 }
 
 /**
- * Whether route `d` answers every request a call stands for that route `c` also takes, so that `c` is never reached by
- * it: both are picked by the same rule, `d` takes every value the call's interpolations may hold, and it comes first,
- * registered before `c` (and does not pass the request on) or tried first by find-my-way.
+ * Nest's `RouteSpecificitySorter.comparePathSpecificity` (@nestjs/core 12): segment by segment, the lower kind first
+ * (see `nestSpecificity`); where one path has no segment left, it counts as `end` (1), or as `missing` (5) where it has
+ * a wildcard. Undefined where either route's kinds are not read.
  */
+function nestCompare(a: number[] | undefined, b: number[] | undefined): number | undefined {
+  if (!a || !b) return undefined;
+  const endOf = (k: number[]) => (k.includes(4) ? 5 : 1);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? endOf(a);
+    const y = b[i] ?? endOf(b);
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+/**
+ * Whether route `d` comes before route `c` for a request both take, where both are picked by one rule: find-my-way's
+ * precedence; Nest's specificity, then its declaration order; or registration order. A route that may pass the request
+ * on comes before none.
+ */
+function first(d: Surface, c: Surface): boolean {
+  const a = d.dispatch;
+  const b = c.dispatch;
+  if (!a?.picks || a.picks !== b?.picks) return false;
+  if (a.picks === "find-my-way") return fmwCompare(d, c) < 0;
+  if (a.passes) return false;
+  if (a.picks === "specificity") {
+    const k = nestCompare(a.rank, b.rank);
+    if (k === undefined) return false;
+    if (k !== 0) return k < 0;
+  }
+  return before(a.order, b.order) === true;
+}
+
+/**
+ * Whether a route surely takes a call in the form it is written: where its router's rule for a trailing `/` is read,
+ * as `takes` found; where it is not, only a call without one to a route written without one, which every rule serves.
+ */
+const formSettled = (d: Surface, call: Call): boolean => d.dispatch?.slashes !== undefined || (!call.slash && !d.dispatch?.trailing);
+
+/** Whether route `d` answers every request a call stands for that route `c` also takes, so that `c` is never reached by it. */
 function beats(d: Surface, c: Surface, call: Call): boolean {
-  const picks = d.dispatch?.picks;
-  if (!picks || picks !== c.dispatch?.picks || !covers(d, call)) return false;
-  if (picks === "registration") return !d.dispatch!.passes && before(d.dispatch!.order, c.dispatch.order) === true;
-  return fmwCompare(d, c) < 0;
+  return covers(d, call) && formSettled(d, call) && first(d, c);
 }
 
 /**
@@ -282,15 +322,15 @@ function picked(call: Call, candidates: Candidate[]): Candidate[] {
 }
 
 /**
- * Routes no request reaches, by index, with the route that takes their requests: one of the same router, registered
- * before, of the same method or any, that does not pass the request on and takes every request the later one fits
- * (`/users/:id` registered before `/users/me`). Only a route of literal segments and plain parameters is weighed.
+ * Routes no request reaches, by index, with the route that takes their requests: one of the same router, of the same
+ * method or any, that comes first (`first`) and takes every request the later one fits (`/users/:id` registered before
+ * `/users/me`). Only a route of literal segments and plain parameters is weighed.
  */
 export function shadowedRoutes(surfaces: Surface[]): Map<number, Surface> {
   const out = new Map<number, Surface>();
   surfaces.forEach((s, i) => {
     const d = s.dispatch;
-    if (d?.picks !== "registration" || !d.order) return;
+    if ((d?.picks !== "registration" && d?.picks !== "specificity") || !d.order) return;
     const segs = segments(s.path);
     const plain = (seg: string) => isParam(seg) && seg !== "*" && paramName(seg) !== undefined && patternOf(s.patterns, paramName(seg)) === undefined;
     if (!segs.every((seg) => isFixed(seg) || plain(seg))) return;
@@ -300,10 +340,9 @@ export function shadowedRoutes(surfaces: Surface[]): Map<number, Surface> {
       (t) =>
         t !== s &&
         t.component === s.component &&
-        t.dispatch?.picks === "registration" &&
-        !t.dispatch.passes &&
         (t.method === s.method || t.method === "*") &&
-        before(t.dispatch.order, d.order) === true &&
+        t.dispatch?.slashes !== undefined &&
+        first(t, s) &&
         forms.every((f) => takes(t, request, f)) &&
         pathCovers(t.path, request, t.patterns),
     );
@@ -331,7 +370,8 @@ export interface Matches {
   /**
    * Calls their router answers with a redirect to the same path with the `/` at its end added or removed (Next.js's
    * `trailingSlash`, Starlette's `redirect_slashes`), keyed by the call's index, with the path redirected to and the
-   * routes that serve it: the request reaches them only as the client follows the redirect, so it is matched to none.
+   * routes that serve it: the request reaches them only as the client follows the redirect, so it is not matched to
+   * them. A call with interpolations may also reach routes directly, for the values a route takes as written.
    */
   redirected: Map<number, { path: string; slash: boolean; surfaces: Surface[] }>;
   /**
@@ -373,8 +413,9 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       const served = narrowedPath(bare, call.path);
       return !graph.surfaces.some((s) => s.component === call.to && pathCovers(s.path, served, s.patterns));
     };
+    // A wildcard's required `/` (`trailing`) holds whether or not the router's own rule for a trailing `/` is read.
     const fits = (surface: Surface, slash: boolean): boolean =>
-      surface.dispatch?.slashes ? takes(surface, call.path, slash) : pathsMatch(surface.path, call.path, surface.patterns) || redirectedTo(surface);
+      surface.dispatch?.slashes || surface.dispatch?.trailing ? takes(surface, call.path, slash) : pathsMatch(surface.path, call.path, surface.patterns) || redirectedTo(surface);
     // Spring serves a HEAD request with a GET mapping when no HEAD mapping fits better (`RequestMethodsRequestCondition`).
     const headByGet = ranked.get(call.to) === "spring" && call.method.toUpperCase() === "HEAD";
     const candidatesAt = (slash: boolean): Candidate[] => {
@@ -395,11 +436,13 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // A router that redirects answers a request no route of it takes as written, by any method, with a redirect to the
     // path with the `/` added or removed, where a route of it takes that path.
     const redirecting = graph.surfaces.filter((s) => s.component === call.to && REDIRECTING.has(s.dispatch?.slashes));
-    if (redirecting.length && call.path !== "/" && !graph.surfaces.some((s) => s.component === call.to && fits(s, slash))) {
+    // A call with interpolations may hold values a route takes as written and others none does, which are redirected.
+    const direct = redirecting.length && call.path !== "/" ? graph.surfaces.filter((s) => s.component === call.to && fits(s, slash)) : undefined;
+    if (direct && !direct.some((s) => pathCovers(s.path, call.path, s.patterns))) {
       const other = candidatesAt(!slash).filter((c) => REDIRECTING.has(c.surface.dispatch?.slashes));
       const reach = picked(call, other.filter((c) => !c.surface.dispatch?.constrained));
       if (reach.length) redirected.set(ci, { path: call.path, slash: !slash, surfaces: reach.map((c) => c.surface) });
-      return;
+      if (!direct.length) return;
     }
     // A route taken only with a header atlas does not read is not a target, nor does it keep another from being one.
     const held = candidates.filter((c) => c.surface.dispatch?.constrained);

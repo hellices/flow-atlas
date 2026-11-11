@@ -91,9 +91,16 @@ export interface Dispatch {
   /**
    * `registration`: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on
    * Express, Starlette), by `order`. `find-my-way`: Fastify's router tries static text before a parameter, a parameter
-   * with a regexp before one without, and a parameter before a wildcard, whatever the order.
+   * with a regexp before one without, and a parameter before a wildcard, whatever the order. `specificity`: Nest's
+   * `routeResolutionStrategy: 'specificity'` registers the more specific routes first, by `rank`, and routes of one rank
+   * in `order`.
    */
-  picks?: "registration" | "find-my-way";
+  picks?: "registration" | "find-my-way" | "specificity";
+  /**
+   * The kind of each segment of the route's path as Nest's specificity sort ranks it (`RouteSpecificitySorter`): a
+   * literal 0, text with a parameter 2, a parameter 3, a wildcard 4.
+   */
+  rank?: number[];
   /**
    * Where the route is registered, from the router a request enters down to the one that holds the route: each step a
    * sequence of registrations whose order is known (`router`, one router in one function body of one file) and the

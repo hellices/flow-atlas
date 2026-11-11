@@ -38,8 +38,8 @@ export interface FunctionalRoute {
   line: number;
   implicit?: true;
   /**
-   * The pattern ends with a `/` (`slash`), or is a nest's with an empty pattern of its own, which takes the rest of the
-   * path the nest leaves, empty or `/` (`both`).
+   * The pattern ends with a `/` (`slash`; the root `/` has no form without one, so it has none), or is a nest's with an
+   * empty pattern of its own, which takes the rest of the path the nest leaves, empty or `/` (`both`).
    */
   trailing?: "slash" | "both";
 }
@@ -1149,7 +1149,10 @@ export function registeredMappingRoutes(file: string, text: string, constant: Co
       if (unread) return say(n.nameAt, `registers a handler method with ${unread}`);
       for (const p of paths as string[]) {
         const path = p && !p.startsWith("/") ? `/${p}` : p;
-        for (const method of verbs ?? ["*"]) out.push({ method, path: joinRoute(path), line: lineOf(text, n.nameAt) });
+        // A path written with a `/` at its end is served with it (where the version tells the two apart); one mapping
+        // listing both forms is one route served at both, as `unique` merges them.
+        const trailing = path.length > 1 && path.endsWith("/") ? { trailing: "slash" as const } : {};
+        for (const method of verbs ?? ["*"]) out.push({ method, path: joinRoute(path), line: lineOf(text, n.nameAt), ...trailing });
       }
     });
   }

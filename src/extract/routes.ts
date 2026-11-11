@@ -7,8 +7,9 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
-import { httpExchanges, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
+import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
+import { withoutComments } from "./calls.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
@@ -17,7 +18,7 @@ import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
-import { nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
+import { nestSpecificity, nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -585,7 +586,8 @@ export function routesFromTypeScript(
       const name = u.expression.name.text;
       return ts.isPropertyAccessExpression(owner) && owner.name.text === "matchers" && adonisRouter(owner.expression) && Object.hasOwn(ADONIS_MATCHERS, name) ? ADONIS_MATCHERS[name] : undefined;
     }
-    const anywhere = (source: string) => (/^\^[^]*(?<!\\)\$$/.test(source) ? source : `[^]*?(?:${source})[^]*`);
+    // Anchors inside the expression keep their meaning in the group (`^a|b$` takes `ab` by its first alternative).
+    const anywhere = (source: string) => `[^]*?(?:${source})[^]*`;
     if (ts.isRegularExpressionLiteral(u)) {
       const m = /^\/([^]*)\/([a-z]*)$/.exec(u.text);
       return m && !m[2] ? anywhere(m[1]!) : undefined;
@@ -691,10 +693,19 @@ export function routesFromTypeScript(
     const a = args.length === 1 ? unwrap(args[0]!) : undefined;
     return !!a && ts.isStringLiteralLike(a) && (a.text === "route" || a.text === "router");
   };
-  /** An Express `next(err)`: one argument that is an error, which goes to the error handlers, not to another route. */
+  /**
+   * An Express `next(err)` whose argument is surely truthy, which goes to the error handlers, not to another route:
+   * router 2's `next` passes a falsy one (`null`, `0`, `""`, `undefined`, a value that may be any of these) on as no
+   * error. Surely truthy: a `new` expression, an object, array, function or class written in place, `true`, a non-zero
+   * number and a non-empty string other than `route` and `router`.
+   */
   const errorOnly = (args: readonly ts.Expression[]): boolean => {
     const a = args.length === 1 ? unwrap(args[0]!) : undefined;
-    return !!a && !leavesRoute(args) && a.kind !== ts.SyntaxKind.UndefinedKeyword && !(ts.isIdentifier(a) && a.text === "undefined");
+    if (!a || leavesRoute(args)) return false;
+    if (ts.isNewExpression(a) || ts.isObjectLiteralExpression(a) || ts.isArrayLiteralExpression(a) || ts.isFunctionLike(a) || ts.isClassExpression(a)) return true;
+    if (a.kind === ts.SyntaxKind.TrueKeyword) return true;
+    if (ts.isNumericLiteral(a)) return Number(a.text) !== 0;
+    return ts.isStringLiteralLike(a) && a.text !== "";
   };
   /**
    * Whether a route may pass the request on to a route registered after it. Its last handler may, where it takes the
@@ -738,18 +749,20 @@ export function routesFromTypeScript(
       const found = [...options.properties].reverse().find((p) => p.name && literalKey(p.name) === name);
       return found ? (ts.isPropertyAssignment(found) ? unwrap(found.initializer) : null) : undefined;
     };
-    if (base.slashes) {
-      out.slashes = base.slashes;
-      if (written.length > 1 && written.endsWith("/")) out.trailing = "slash";
-      else if (written === "/" && joinRoute(prefix) !== "/" && inst.pkg === "fastify") {
-        // Fastify registers `/` under a prefix at the prefix and at the prefix with a `/`, by the route's
-        // `prefixTrailingSlash` (`both` by default, lib/route.js).
-        const given = option("prefixTrailingSlash");
-        const value = given === undefined ? "both" : given && ts.isStringLiteralLike(given) ? given.text : undefined;
-        if (value === "both") out.trailing = "both";
-        else if (value === "slash") out.trailing = "slash";
-        else if (value !== "no-slash") delete out.slashes;
-      }
+    // The forms a route is written at hold whether or not the router's rule for them is read.
+    if (base.slashes) out.slashes = base.slashes;
+    if (written.length > 1 && written.endsWith("/")) out.trailing = "slash";
+    // Express strips the path a router is mounted at and serves what is left, nothing at all being `/`: a `/` under a
+    // mount takes the mount's path with and without the `/` (router 2 `trimPrefix`).
+    else if (written === "/" && joinRoute(prefix) !== "/" && inst.pkg === "express") out.trailing = "both";
+    else if (written === "/" && joinRoute(prefix) !== "/" && inst.pkg === "fastify") {
+      // Fastify registers `/` under a prefix at the prefix and at the prefix with a `/`, by the route's
+      // `prefixTrailingSlash` (`both` by default, lib/route.js).
+      const given = option("prefixTrailingSlash");
+      const value = given === undefined ? "both" : given && ts.isStringLiteralLike(given) ? given.text : undefined;
+      if (value === "both") out.trailing = "both";
+      else if (value === "slash") out.trailing = "slash";
+      else if (value !== "no-slash") delete out.slashes;
     }
     // find-my-way takes a request to a route with constraints only where its headers meet them.
     if (inst.pkg === "fastify") {
@@ -764,7 +777,7 @@ export function routesFromTypeScript(
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
     // Fastify's shorthand takes its options between the path and the handler, or as the only argument after the path.
-    const given = inst.pkg === "fastify" && !at.options ? (handlers.length > 1 ? handlers[0] : handlers.find((h) => ts.isObjectLiteralExpression(unwrap(h as ts.Expression)))) : undefined;
+    const given = inst.pkg === "fastify" && !at.options ? (handlers.length > 1 ? handlers[0] : handlers.find((h) => fastifyOptions(h as ts.Expression))) : undefined;
     const options = at.options ?? (given ? (fastifyOptions(given as ts.Expression) ?? null) : undefined);
     const routeHandlers = given ? handlers.filter((h) => h !== given) : handlers;
     const dispatch = (prefix: string) => dispatchAt(inst, path, prefix, at.order ?? place, routeHandlers, options);
@@ -1025,7 +1038,8 @@ export function routesFromTypeScript(
           if (own && versions === null) unreadVersion(own.args[0] ?? member);
           // On Express, Nest registers a controller's routes in the order its methods are declared, and the first route a
           // request fits answers ("Route conflicts and resolution order", docs.nestjs.com/controllers), unless its
-          // handler takes `@Next()`; `routeResolutionStrategy: 'specificity'` sorts them otherwise, which is not read.
+          // handler takes `@Next()`; with `routeResolutionStrategy: 'specificity'` it registers every controller's routes
+          // more specific first, those of one rank in that order (`RouteSpecificitySorter`).
           // Controllers are registered by module, in an order atlas does not read, so each is a sequence of its own.
           const syntax = nestSyntax((pkg) => ranges?.(spec.bootstrap ?? file, pkg));
           const onExpress = syntax.kind === "nest" || syntax.kind === "path-to-regexp-0.1";
@@ -1033,8 +1047,17 @@ export function routesFromTypeScript(
           // of another version on to the next route (`RouterExplorer.applyVersionFilter`).
           const filtered = typeof nest.versioning === "object" && !nest.versioning.uri;
           const passes = filtered || (ts.isMethodDeclaration(member) && member.parameters.some((p) => decorators(p).some((d) => decoratorCall(d)?.name === "Next")));
-          const ordered: Dispatch = { picks: "registration", order: [{ router: `${file}@${node.getStart(sf)}`, at: member.getStart(sf) }], ...(passes ? { passes: true as const } : {}) };
-          const dispatch: Dispatch | undefined = onExpress ? { ...(nest.order === "declaration" ? ordered : {}), slashes: "ignored" } : undefined;
+          // `routeResolutionStrategy` came with @nestjs/core 12; before it, Nest registers in declaration order whatever
+          // the options hold.
+          const core = rangeMajor(ranges?.(spec.bootstrap ?? file, "@nestjs/core") ?? "");
+          const strategy = nest.order === "specificity" && core !== undefined && core < 12 ? "declaration" : nest.order;
+          const order = [{ router: `${file}@${node.getStart(sf)}`, at: member.getStart(sf) }];
+          const ordered = (served: string): Dispatch => {
+            const rank = strategy === "specificity" ? nestSpecificity(served) : undefined;
+            if (strategy === "specificity" && !rank) return {};
+            return { picks: strategy === "specificity" ? "specificity" : "registration", ...(rank ? { rank } : {}), order, ...(passes ? { passes: true as const } : {}) };
+          };
+          const dispatch = (served: string): Dispatch | undefined => (onExpress ? { ...(strategy ? ordered(served) : {}), slashes: "ignored" } : undefined);
           for (const d of decorators(member)) {
             const call = decoratorCall(d);
             const method = call ? NEST_METHODS[call.name] : undefined;
@@ -1046,7 +1069,10 @@ export function routesFromTypeScript(
             for (const module of routed ?? [""]) {
               for (const base of bases) {
                 for (const path of paths) {
-                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) add(method!, served, member, member, operationId, { served: true, syntax, ...(dispatch ? { dispatch } : {}) });
+                  for (const served of nestPaths(nest, method!, joinRoute(module, base, path), versions) ?? []) {
+                    const given = dispatch(served);
+                    add(method!, served, member, member, operationId, { served: true, syntax, ...(given ? { dispatch: given } : {}) });
+                  }
                 }
               }
             }
@@ -1347,7 +1373,8 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     return {
       picks: "registration",
       ...(order ? { order } : {}),
-      ...(redirects === undefined ? {} : { slashes: redirects ? ("redirected" as const) : ("strict" as const), ...(slash ? { trailing: "slash" as const } : {}) }),
+      ...(redirects === undefined ? {} : { slashes: redirects ? ("redirected" as const) : ("strict" as const) }),
+      ...(slash ? { trailing: "slash" as const } : {}),
     };
   };
   // A name traced to an application or router of the files read registers routes whatever it is called (`subapi`).
@@ -1700,8 +1727,11 @@ function springVersions(file: string, text: string): Array<number | null> {
     }
     for (const block of xml.matchAll(/<(parent|dependency|plugin)>([^]*?)<\/\1>/g)) {
       const artifact = /<artifactId>\s*([^<\s]+)\s*<\/artifactId>/.exec(block[2]!)?.[1];
+      const group = /<groupId>\s*([^<\s]+)\s*<\/groupId>/.exec(block[2]!)?.[1];
       const version = /<version>\s*([^<]*?)\s*<\/version>/.exec(block[2]!)?.[1];
-      if (!artifact || version === undefined || (!BOOT.has(artifact) && !FRAMEWORK.has(artifact))) continue;
+      // Spring's own artifacts only: another group may name an artifact alike (`com.example:spring-web`).
+      const spring = artifact && (BOOT.has(artifact) ? group === "org.springframework.boot" : FRAMEWORK.has(artifact) && group === "org.springframework");
+      if (!spring || version === undefined) continue;
       // A property of the same file stands for its value; any other placeholder is not read.
       const resolved = version.replace(/^\$\{([\w.-]+)\}$/, (whole, name: string) => properties.get(name) ?? whole);
       out.push(resolved.includes("${") ? null : major(resolved, BOOT.has(artifact)));
@@ -1772,7 +1802,10 @@ function springSlashes(source: Source, files: string[], java: Map<string, string
     return undefined;
   }
   const strict = version.major >= 6;
-  const set = [...java].flatMap(([file, text]) => [...text.matchAll(/\bsetUseTrailingSlashMatch\s*\(\s*([^)]*?)\s*\)/g)].map((m) => ({ file, line: lineOf(text, m.index ?? 0), value: m[1] })));
+  // Calls in code only: comments and strings blanked, offsets kept.
+  const set = [...java].flatMap(([file, text]) =>
+    [...maskStrings(file, withoutComments(file, text)).matchAll(/\bsetUseTrailingSlashMatch\s*\(\s*([^)]*?)\s*\)/g)].map((m) => ({ file, line: lineOf(text, m.index ?? 0), value: m[1] })),
+  );
   const unread = set.filter((x) => x.value !== "true" && x.value !== "false");
   for (const x of unread) limits.push(`routes ${component}: ${x.file}:${x.line} calls setUseTrailingSlashMatch with a value the file does not spell out (${x.value}); whether a mapped route takes a trailing / it lacks is not read`);
   // The setter, where the code calls it, decides for mapped handlers whatever the version's default; two that
@@ -1825,6 +1858,7 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
   if (!b) return undefined;
   const out: Dispatch = {};
   if (a.picks && a.picks === b.picks) out.picks = a.picks;
+  if (out.picks && a.rank && JSON.stringify(a.rank) === JSON.stringify(b.rank)) out.rank = a.rank;
   // Two registrations at two places are both the surface, which then has no one place.
   const order = JSON.stringify(a.order) === JSON.stringify(b.order) ? a.order : undefined;
   if (out.picks && order) out.order = order;

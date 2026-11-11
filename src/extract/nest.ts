@@ -28,10 +28,10 @@ export interface NestApp {
   modules?: Map<string, string[] | null>;
   /**
    * The order the application registers routes in on an order-sensitive adapter (Express): `declaration`, Nest's
-   * default, where every `NestFactory.create` of the files gives no other `routeResolutionStrategy`; undefined where one
-   * gives another or one the file does not spell out, or where no `NestFactory.create` is read.
+   * default, where every `NestFactory.create` of the files gives no other `routeResolutionStrategy`; `specificity` where
+   * each gives that; undefined where they differ, one gives a value the file does not spell out, or none is read.
    */
-  order?: "declaration";
+  order?: "declaration" | "specificity";
 }
 
 /** A node's text on one line, shortened, from the file it is in. */
@@ -156,7 +156,10 @@ function optionValues(options: ts.Expression | undefined, file: string, texts: M
         if ((local || imported) && !ts.isImportSpecifier(n.parent)) {
           if (ts.isCallExpression(n.parent) && n.parent.expression === n) {
             const arg = n.parent.arguments[index];
-            out.push(arg ? unwrap(arg) : param.initializer);
+            // A parameter's default stands in for an argument left out or given as `undefined`.
+            const given = arg && unwrap(arg);
+            const omitted = !given || (ts.isIdentifier(given) && given.text === "undefined" && !declarationOf(given)) || ts.isVoidExpression(given);
+            out.push(omitted ? param.initializer : given);
           } else if (!ts.isExportSpecifier(n.parent)) out.push(null);
         }
       }
@@ -181,13 +184,15 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
   /** Each `NestFactory.create`'s `routeResolutionStrategy`: "declaration" where it gives none, null where not spelled out. */
   const strategies: Array<string | null> = [];
   for (const [file, text] of texts) {
-    if (!/\b(?:setGlobalPrefix|enableVersioning|NestFactory)\b/.test(text)) continue;
+    if (!/\b(?:setGlobalPrefix|enableVersioning)\b|@nestjs\/core/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const visit = (node: ts.Node): void => {
       const name = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
       const call = node as ts.CallExpression;
       // `NestFactory.create(module, options?)` or `(module, adapter, options?)` (nest-factory.js `create`).
-      if (name === "create" && ts.isIdentifier((call.expression as ts.PropertyAccessExpression).expression) && ((call.expression as ts.PropertyAccessExpression).expression as ts.Identifier).text === "NestFactory") {
+      // `NestFactory` imported from @nestjs/core, under any local name.
+      const factory = name === "create" ? unwrap((call.expression as ts.PropertyAccessExpression).expression) : undefined;
+      if (factory && ts.isIdentifier(factory) && importedFrom(factory, ["@nestjs/core"]) === "NestFactory") {
         const second = call.arguments[1] && unwrap(call.arguments[1]);
         const options = call.arguments.length >= 3 ? unwrap(call.arguments[2]!) : second && !ts.isNewExpression(second) ? second : undefined;
         for (const given of optionValues(options, file, texts)) strategies.push(given === null ? null : strategyOf(given));
@@ -260,7 +265,8 @@ export function nestApp(texts: Map<string, string>, component: string, limits: s
     };
     visit(sf);
   }
-  const app: NestApp = { prefix: declared ?? "", exclude: [], ...(strategies.length && strategies.every((x) => x === "declaration") ? { order: "declaration" as const } : {}) };
+  const strategy = strategies.length && strategies.every((x) => x === strategies[0]) ? strategies[0] : undefined;
+  const app: NestApp = { prefix: declared ?? "", exclude: [], ...(strategy === "declaration" || strategy === "specificity" ? { order: strategy } : {}) };
   const differ = <T extends { key: string }>(calls: T[]) => new Set(calls.map((c) => c.key)).size > 1;
   if (differ(prefixes) || differ(versionings)) {
     const calls = differ(prefixes) ? prefixes : versionings;

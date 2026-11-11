@@ -169,8 +169,13 @@
           "additionalProperties": false,
           "properties": {
             "picks": {
-              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard.",
-              "enum": ["registration", "find-my-way"]
+              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order.",
+              "enum": ["registration", "find-my-way", "specificity"]
+            },
+            "rank": {
+              "description": "The kind of each segment of the route's path as Nest's specificity sort ranks it (RouteSpecificitySorter): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4.",
+              "type": "array",
+              "items": { "enum": [0, 2, 3, 4] }
             },
             "order": {
               "description": "Where the route is registered, from the router a request enters down to the one that holds it: each step a sequence of registrations whose order is known (router) and the place in it (at). Of two routes, the one before is the one whose steps first differ in at within the same router; routes whose steps first differ in router are in no order atlas knows.",

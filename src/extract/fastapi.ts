@@ -44,7 +44,10 @@ type Value = string | { unread: string };
 interface Binding {
   kind: "app" | "router";
   prefix: Value;
-  /** An application's `redirect_slashes`: true where it is not given, null where it is not spelled out. */
+  /**
+   * The `redirect_slashes` of an application, or of a router (which holds only where it is mounted as an application,
+   * not where `include_router` copies its routes): true where it is not given, null where it is not spelled out.
+   */
   redirects?: boolean | null;
 }
 
@@ -56,6 +59,23 @@ interface Facts {
   /** `include_router` calls, and `mount` calls, which serve what they mount under their path as an include does. */
   includes: Array<{ receiver: string; target: string; prefix: Value; at: number; verb: "includes" | "mounts" }>;
   scopes: Scope[];
+  /** The file's code, strings and comments blanked (`pythonCode`). */
+  code: string;
+}
+
+/**
+ * Where a registration at offset `at` of a file's code runs among the file's statements. Python applies the decorators
+ * of one definition from the one nearest it up (`@a` over `@b` over `def f` is `a(b(f))`), when the definition runs:
+ * a decorator's place is its definition's, and among the definition's decorators, the nearer first. Any other call is
+ * placed where it is.
+ */
+function placeOf(code: string, at: number): number {
+  const scale = code.length + 1;
+  if (!/^[ \t]*@/.test(code.slice(at))) return at * scale;
+  const definition = /^[ \t]*(?:async[ \t]+)?(?:def|class)\b/gm;
+  definition.lastIndex = at;
+  const found = definition.exec(code);
+  return found ? found.index * scale + (found.index - at) : at * scale;
 }
 
 /** A function: where its body lies and the names it binds there, which hide the file's own. */
@@ -166,13 +186,15 @@ function scopeAt(scopes: Scope[], at: number): number {
 
 function factsOf(text: string): Facts {
   const code = pythonCode(text);
-  const facts: Facts = { routers: new Map(), imports: new Map(), includes: [], scopes: scopesOf(code) };
+  const facts: Facts = { routers: new Map(), imports: new Map(), includes: [], scopes: scopesOf(code), code };
   // `app = FastAPI(...)`, `router: APIRouter = fastapi.APIRouter(prefix="/items")`, at any indentation.
   for (const m of code.matchAll(/^[ \t]*([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:[A-Za-z_][\w.]*\.)?(FastAPI|APIRouter)[ \t]*\(/gm)) {
     const name = m[1]!;
     const from = (m.index ?? 0) + m[0].length;
     const binding: Binding =
-      m[2] === "FastAPI" ? { kind: "app", prefix: "", redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) } : { kind: "router", prefix: keyword(text, code, from, "prefix") };
+      m[2] === "FastAPI"
+        ? { kind: "app", prefix: "", redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) }
+        : { kind: "router", prefix: keyword(text, code, from, "prefix"), redirects: redirectsGiven(booleanKeyword(text, code, from, "redirect_slashes")) };
     const before = facts.routers.get(name);
     const same = before && before.kind === binding.kind && JSON.stringify(before.prefix) === JSON.stringify(binding.prefix) && before.redirects === binding.redirects;
     facts.routers.set(name, before === undefined || same ? binding : null);
@@ -331,15 +353,16 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
     if (all?.length !== 1 || !all[0]!.parent) return undefined;
     const inc = all[0]!;
     const above = chainOf(inc.parent!, new Set([...seen, key]));
-    return above && [...above, { router: `${inc.parent} ${inc.file}@${scopeAt(facts.get(inc.file)!.scopes, inc.at)}`, at: inc.at }];
+    return above && [...above, { router: `${inc.parent} ${inc.file}@${scopeAt(facts.get(inc.file)!.scopes, inc.at)}`, at: placeOf(facts.get(inc.file)!.code, inc.at) }];
   };
   /** The `redirect_slashes` of the application whose router a router's routes are copied into, or that it is. */
   const redirectsOf = (key: string, seen: Set<string>): boolean | null | undefined => {
     const binding = facts.get(fileOf(key))?.routers.get(name(key));
     if (!binding || seen.has(key)) return undefined;
     if (binding.kind === "app") return binding.redirects;
+    // An included router's routes are the router of what includes it; a mounted one is its own router.
     const all = includes.get(key) ?? [];
-    const values = all.map((inc) => (inc.parent ? redirectsOf(inc.parent, new Set([...seen, key])) : undefined));
+    const values = all.map((inc) => (inc.verb === "mounts" ? binding.redirects : inc.parent ? redirectsOf(inc.parent, new Set([...seen, key])) : undefined));
     return values.length && values.every((v) => v !== undefined && v === values[0]) ? values[0] : undefined;
   };
 
@@ -347,7 +370,8 @@ export function fastapiRouters(texts: Map<string, string>, declared: Record<stri
     receiver,
     order: (key, file, at) => {
       const chain = chainOf(key, new Set());
-      return chain && [...chain, { router: `${key} ${file}@${scopeAt(facts.get(file)?.scopes ?? [], at)}`, at }];
+      const f = facts.get(file);
+      return chain && f && [...chain, { router: `${key} ${file}@${scopeAt(f.scopes, at)}`, at: placeOf(f.code, at) }];
     },
     redirects: (key) => redirectsOf(key, new Set()) ?? undefined,
     traced: (file, expr, at) => included(file, expr, at) !== undefined,
