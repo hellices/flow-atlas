@@ -1,16 +1,5 @@
 # Where atlas's reading differs from the routes Hono serves. Remove an entry when atlas reads it right; the test fails
 # while a listed difference no longer occurs.
-missing:
-  - { route: "QUERY /search", reason: "`app.query` (QUERY method) is not read, and nothing says so" }
-  - { route: "PURGE /cache", reason: "`app.on(method, path)` is not read, and nothing says so" }
-  - { route: "PUT /post", reason: "`app.on([methods], path)` is not read, and nothing says so" }
-  - { route: "DELETE /post", reason: "`app.on([methods], path)` is not read, and nothing says so" }
-  - { route: "GET /greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
-  - { route: "GET /ja/greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
-  - { route: "GET /en/greet", reason: "`app.on(method, [paths])` is not read, and nothing says so" }
-  - { route: "POST /endpoint", reason: "a chained route's verb with no path (`.get(path, h).post(h)`, the previous path) is not read, and nothing says so" }
-  - { route: "DELETE /endpoint", reason: "a chained route's verb with no path (`.get(path, h).delete(h)`, the previous path) is not read, and nothing says so" }
-  - { route: "GET /{**}", reason: "the fallback `app.get(\"*\")`, a path not starting with `/`, is not read, and nothing says so" }
 dispatch:
   - { request: "DELETE /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
   - { request: "PATCH /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which no route takes for this method; atlas matches it to `/hello`" }
@@ -21,3 +10,45 @@ dispatch:
   - { request: "POST /book/", reason: "trailing slash: Hono's strict mode (the default) treats `/book/` as another path than `/book`, which no route takes for this method; atlas matches it to `/book`" }
   - { request: "POST /users/", reason: "trailing slash: Hono's strict mode (the default) treats `/users/` as another path than `/users`, which no route takes for this method; atlas matches it to `/users`" }
   - { request: "PATCH /api/v1/settings/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/api/v1/settings/value1/` as another path than `/api/v1/settings/value1`, which no route takes for this method; atlas matches it to `/api/v1/settings/:key`" }
+  # The fallback `app.get("*")` takes every GET request, but Hono runs the handlers that match in the order they are
+  # registered (hono-base.js `#dispatch`, `compose`), and it is registered last: it answers only where no route before it
+  # does. atlas does not rank Hono's routes.
+  - { request: "GET /", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /animal", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/animal/:type?`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /animal/", reason: "trailing slash: Hono's strict mode (the default) treats `/animal/` as another path than `/animal`, which only the fallback `*` takes; atlas also matches `/animal/:type?`" }
+  - { request: "GET /animal/value1", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/animal/:type?`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /animal/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/animal/value1/` as another path than `/animal/value1`, which only the fallback `*` takes; atlas also matches `/animal/:type?`" }
+  - { request: "GET /api/catalog", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/api/catalog`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /api/catalog/", reason: "trailing slash: Hono's strict mode (the default) treats `/api/catalog/` as another path than `/api/catalog`, which only the fallback `*` takes; atlas also matches `/api/catalog`" }
+  - { request: "GET /api/v1/status", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/api/v1/status`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /api/v1/status/", reason: "trailing slash: Hono's strict mode (the default) treats `/api/v1/status/` as another path than `/api/v1/status`, which only the fallback `*` takes; atlas also matches `/api/v1/status`" }
+  - { request: "GET /book", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/book`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /book/", reason: "trailing slash: Hono's strict mode (the default) treats `/book/` as another path than `/book`, which only the fallback `*` takes; atlas also matches `/book`" }
+  - { request: "GET /book/value1", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/book/:id`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /book/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/book/value1/` as another path than `/book/value1`, which only the fallback `*` takes; atlas also matches `/book/:id`" }
+  - { request: "PURGE /cache/", reason: "trailing slash: Hono's strict mode (the default) treats `/cache/` as another path than `/cache`, which no route takes for this method; atlas matches it to `/cache`" }
+  - { request: "GET /en/greet", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/en/greet`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /en/greet/", reason: "trailing slash: Hono's strict mode (the default) treats `/en/greet/` as another path than `/en/greet`, which only the fallback `*` takes; atlas also matches `/en/greet`" }
+  - { request: "GET /endpoint", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/endpoint`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "DELETE /endpoint/", reason: "trailing slash: Hono's strict mode (the default) treats `/endpoint/` as another path than `/endpoint`, which no route takes for this method; atlas matches it to `/endpoint`" }
+  - { request: "GET /endpoint/", reason: "trailing slash: Hono's strict mode (the default) treats `/endpoint/` as another path than `/endpoint`, which only the fallback `*` takes; atlas also matches `/endpoint`" }
+  - { request: "POST /endpoint/", reason: "trailing slash: Hono's strict mode (the default) treats `/endpoint/` as another path than `/endpoint`, which no route takes for this method; atlas matches it to `/endpoint`" }
+  - { request: "GET /greet", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/greet`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /greet/", reason: "trailing slash: Hono's strict mode (the default) treats `/greet/` as another path than `/greet`, which only the fallback `*` takes; atlas also matches `/greet`" }
+  - { request: "GET /hello", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/hello`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /hello/", reason: "trailing slash: Hono's strict mode (the default) treats `/hello/` as another path than `/hello`, which only the fallback `*` takes; atlas also matches `/hello`" }
+  - { request: "GET /ja/greet", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/ja/greet`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /ja/greet/", reason: "trailing slash: Hono's strict mode (the default) treats `/ja/greet/` as another path than `/ja/greet`, which only the fallback `*` takes; atlas also matches `/ja/greet`" }
+  - { request: "DELETE /post/", reason: "trailing slash: Hono's strict mode (the default) treats `/post/` as another path than `/post`, which no route takes for this method; atlas matches it to `/post`" }
+  - { request: "PUT /post/", reason: "trailing slash: Hono's strict mode (the default) treats `/post/` as another path than `/post`, which no route takes for this method; atlas matches it to `/post`" }
+  - { request: "GET /post/12/abc", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/post/:date{[0-9]+}/:title{[a-z]+}`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /post/12/abc/", reason: "trailing slash: Hono's strict mode (the default) treats `/post/12/abc/` as another path than `/post/12/abc`, which only the fallback `*` takes; atlas also matches `/post/:date{[0-9]+}/:title{[a-z]+}`" }
+  - { request: "GET /posts/value1/comment/value1", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/posts/:id/comment/:comment_id`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /posts/value1/comment/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/posts/value1/comment/value1/` as another path than `/posts/value1/comment/value1`, which only the fallback `*` takes; atlas also matches `/posts/:id/comment/:comment_id`" }
+  - { request: "QUERY /search/", reason: "trailing slash: Hono's strict mode (the default) treats `/search/` as another path than `/search`, which no route takes for this method; atlas matches it to `/search`" }
+  - { request: "GET /user/value1", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/user/:name`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /user/value1/", reason: "trailing slash: Hono's strict mode (the default) treats `/user/value1/` as another path than `/user/value1`, which only the fallback `*` takes; atlas also matches `/user/:name`" }
+  - { request: "GET /users", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/users`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /users/", reason: "trailing slash: Hono's strict mode (the default) treats `/users/` as another path than `/users`, which only the fallback `*` takes; atlas also matches `/users`" }
+  - { request: "GET /wild/value1/card", reason: "registration order: Hono runs the handlers of the routes that match in the order they are registered, and `/wild/*/card`, registered before the fallback `*`, answers; atlas also matches the fallback" }
+  - { request: "GET /wild/value1/card/", reason: "trailing slash: Hono's strict mode (the default) treats `/wild/value1/card/` as another path than `/wild/value1/card`, which only the fallback `*` takes; atlas also matches `/wild/*/card`" }

@@ -5,6 +5,7 @@ import { HOLE, joinRoute, resolveReference, routeTemplate } from "../paths.js";
 import { lineOf } from "../source.js";
 import type { Spans } from "./spans.js";
 import { literalEnd, withoutComments } from "./calls.js";
+import { registeredMappingRoutes, routerFunctionRoutes, type FunctionalRoute } from "./functional.js";
 
 const SHORTCUTS: Record<string, string> = { GetMapping: "GET", PostMapping: "POST", PutMapping: "PUT", DeleteMapping: "DELETE", PatchMapping: "PATCH" };
 const MAPPING = /@(?:[\w.]*\.)?(RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\b/g;
@@ -704,6 +705,10 @@ interface TypeScope {
   mapping?: { at: number; args: string | undefined };
   /** What a `PathMatchConfigurer` predicate tests the type by. */
   handler: HandlerType;
+  /** Where its declaration starts, its annotations included. */
+  header: number;
+  /** The exchange interface its type-level mapping comes from, where it has none of its own. */
+  from?: [string, ExchangeInterface];
 }
 
 /**
@@ -714,7 +719,16 @@ interface TypeScope {
  * expression) is unknown: no route is registered for it, and `limits` says so.
  * `views` collects, per route, the view names its handler renders.
  */
-export function routesFromSpring(file: string, text: string, spec: RouteSource, views?: Views, spans?: Spans, limits?: string[], prefixes?: PathPrefixes): Surface[] {
+export function routesFromSpring(
+  file: string,
+  text: string,
+  spec: RouteSource,
+  views?: Views,
+  spans?: Spans,
+  limits?: string[],
+  prefixes?: PathPrefixes,
+  exchanges?: Exchanges,
+): Surface[] {
   const code = withoutComments(file, text);
   const masked = maskStrings(file, code);
   const kotlin = /\.kts?$/.test(file);
@@ -762,6 +776,7 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
         // A supertype past the parameters of a Kotlin primary constructor, or after `extends` or `implements`.
         inherits: /\b(?:extends|implements)\b/.test(head) || /:/.test(head.replace(/\([^()]*\)/g, "")),
       },
+      header,
       start: i,
       end,
       paths: own ? mappingPaths(own.args, kotlin, constant, own.at) : [""],
@@ -769,6 +784,25 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
       responseBody: /@(?:[\w.]*\.)?(?:RestController|ResponseBody)\b/.test(annotations),
       ...(own ? { mapping: { at: own.at, args: own.args } } : {}),
     });
+  }
+
+  // The exchange interfaces each controller implements. Spring takes one type-level mapping for the whole class, the first
+  // its type hierarchy holds (`createRequestMappingInfo`, `firstRunOf`): the class's own `@RequestMapping`, else the
+  // `@HttpExchange` of the first interface it lists that carries one, for its own methods as for the interfaces'.
+  const implemented = new Map<TypeScope, Array<[string, ExchangeInterface]>>();
+  for (const t of types) {
+    if (t.handler.kind === "interface" || !(t.handler.annotations.has("Controller") || t.handler.annotations.has("RestController"))) continue;
+    const found = supertypes(masked.slice(t.header, t.start), kotlin)
+      .map((name) => exchangeOf(exchanges, name, imports, file))
+      .filter((f): f is [string, ExchangeInterface] => !!f);
+    if (!found.length) continue;
+    implemented.set(t, found);
+    const typed = found.find(([, iface]) => iface.typed);
+    if (!t.mapping && typed) {
+      t.paths = typed[1].paths;
+      t.methods = typed[1].methods;
+      t.from = typed;
+    }
   }
 
   // The type a position is in: the innermost body around it.
@@ -848,8 +882,219 @@ export function routesFromSpring(file: string, text: string, spec: RouteSource, 
       }
     }
   }
+  // The `@HttpExchange` mappings of the interfaces a controller implements, where it maps the method no other way.
+  for (const [t, found] of implemented) {
+    const prefix = prefixes ? prefixes.of(t.handler) : "";
+    if (prefix === undefined) continue;
+    const own = mappings
+      .filter((m) => m.at > t.start && m.at < t.end && typeAt(m.at) === t)
+      .map((m) => methodAfter(masked, m.end, kotlin))
+      .filter((m): m is { name: string; params: string[] } => !!m);
+    const bases = t.paths;
+    const inherited = t.methods;
+    if ((!bases || !inherited) && t.from) {
+      const [qualified, iface] = t.from;
+      limits?.push(`routes ${spec.component}: ${iface.file}:${iface.line} maps ${bases ? "a method" : "a path"} the file does not spell out on ${qualified}, which ${t.handler.name} implements; its routes are not read`);
+    }
+    if (!bases || !inherited) continue;
+    for (const [qualified, iface] of found) {
+      const where = `${iface.file}:${iface.line}`;
+      if (iface.inherits) limits?.push(`routes ${spec.component}: ${where} ${qualified} extends interfaces whose exchanges are not read; the routes ${t.handler.name} serves from them are not read`);
+      for (const member of iface.members) {
+        if (own.some((m) => overrides(m, member))) continue;
+        if (!member.paths || !member.methods) {
+          limits?.push(`routes ${spec.component}: ${iface.file}:${member.line} maps ${member.paths ? "a method" : "a path"} the file does not spell out (${member.args.trim()}); the route ${t.handler.name} serves for it is not read`);
+          continue;
+        }
+        const united = [...new Set([...inherited, ...member.methods])];
+        for (const base of bases) {
+          for (const path of member.paths) {
+            const full = springTemplate(joinRoute(spec.prefix ?? "", prefix, base, path));
+            const patterns = springPatterns(full);
+            for (const method of united.length ? united : ["*"]) {
+              out.push({ id: surfaceId({ component: spec.component, method, path: full }), component: spec.component, method, path: full, at: { file: iface.file, line: member.line }, evidence: "text", ...(patterns ? { patterns } : {}) });
+            }
+          }
+        }
+      }
+    }
+  }
   out.push(...securityRoutes(file, text, code, masked, spec));
+  const functional = (r: FunctionalRoute): Surface => {
+    const full = springTemplate(joinRoute(spec.prefix ?? "", r.path));
+    const patterns = springPatterns(full);
+    return { id: surfaceId({ component: spec.component, method: r.method, path: full }), component: spec.component, method: r.method, path: full, at: { file, line: r.line }, evidence: "text", ...(patterns ? { patterns } : {}), ...(r.implicit ? { implicit: true } : {}) };
+  };
+  out.push(...routerFunctionRoutes(file, text, spec, constant, spans, limits).map(functional));
+  out.push(...registeredMappingRoutes(file, text, constant, spec.component, spans, limits).map(functional));
   return out;
+}
+
+/** The names of the interfaces a type's header lists after its name: Java's `implements A, B<T>`, Kotlin's `: A, B()`. */
+function supertypes(head: string, kotlin: boolean): string[] {
+  const flat = head.replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>/g, "");
+  const list = kotlin ? /:\s*([\s\S]*)$/.exec(flat.replace(/\([^()]*\)/g, ""))?.[1] : /\bimplements\s+([\s\S]*)$/.exec(flat)?.[1];
+  return (list ?? "")
+    .split(",")
+    .map((x) => /^\s*([\w.]+)/.exec(x.replace(/\bby\b[\s\S]*$/, ""))?.[1])
+    .filter((x): x is string => !!x);
+}
+
+/** Kotlin's types that are Java's primitives where they are not nullable. */
+const KOTLIN_PRIMITIVES: Record<string, string> = { Int: "int", Long: "long", Short: "short", Byte: "byte", Boolean: "boolean", Char: "char", Float: "float", Double: "double" };
+
+/**
+ * The method declared after an annotation that ends at `end`, past any other annotation: its name, and the erased
+ * types of its parameters (`Map<String, Object> m` is `Map`, `vararg x: String` and `String... x` are `String[]`, a
+ * Kotlin `Long` is `long`), by which a method overrides another of its name.
+ */
+function methodAfter(masked: string, end: number, kotlin: boolean): { name: string; params: string[] } | undefined {
+  let i = end;
+  for (;;) {
+    while (/\s/.test(masked[i] ?? "")) i++;
+    if (masked[i] !== "@") break;
+    i++;
+    while (/[\w.]/.test(masked[i] ?? "")) i++;
+    while (/\s/.test(masked[i] ?? "")) i++;
+    if (masked[i] === "(") i = (closing(masked, i) ?? i) + 1;
+  }
+  const open = masked.indexOf("(", i);
+  if (open < 0 || /[;{}=]/.test(masked.slice(i, open))) return undefined;
+  const name = /(\w+)\s*$/.exec(masked.slice(i, open))?.[1];
+  const close = closing(masked, open);
+  if (!name || close === undefined) return undefined;
+  const params = splitTop(masked.slice(open + 1, close).replace(/<[^<>]*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*>/g, ""), ",")
+    .filter(Boolean)
+    .map((p) => {
+      let text = p.replace(/@[\w.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?/g, " ").replace(/\bfinal\b/g, " ").trim();
+      let array = "";
+      if (kotlin) {
+        if (/^vararg\b/.test(text)) array = "[]";
+        text = (/:\s*([\s\S]*?)\s*(?:=[\s\S]*)?$/.exec(text.replace(/^vararg\s+/, ""))?.[1] ?? text).trim();
+        const nullable = text.endsWith("?");
+        text = text.replace(/\?$/, "");
+        const simple = text.slice(text.lastIndexOf(".") + 1);
+        return (nullable ? simple : (KOTLIN_PRIMITIVES[simple] ?? simple)) + array;
+      }
+      if (text.includes("...")) array = "[]";
+      const type = text.replace(/\.\.\./, " ").replace(/\s+\w+$/, "").replace(/\s+/g, "");
+      return type.slice(type.lastIndexOf(".", type.indexOf("[") < 0 ? type.length : type.indexOf("[")) + 1) + array;
+    });
+  return { name, params };
+}
+
+/** Whether a method of a class overrides one of an interface: the same name and parameter types. */
+const overrides = (a: { name: string; params: string[] }, b: { name: string; params: string[] }): boolean => a.name === b.name && a.params.join(",") === b.params.join(",");
+
+const EXCHANGE = /@(?:[\w.]*\.)?(HttpExchange|GetExchange|PostExchange|PutExchange|PatchExchange|DeleteExchange)\b/g;
+
+/** An interface with `@HttpExchange` mappings: a client's, or the routes of a controller that implements it. */
+export interface ExchangeInterface {
+  file: string;
+  line: number;
+  /** The interface's own `@HttpExchange` paths and methods ([""] and [] with none); undefined where not read. */
+  paths: string[] | undefined;
+  methods: string[] | undefined;
+  /** Whether it extends other interfaces, whose methods it holds too. */
+  inherits: boolean;
+  /** Whether it carries an `@HttpExchange` of its own. */
+  typed: boolean;
+  members: Array<{ name: string; params: string[]; line: number; args: string; paths: string[] | undefined; methods: string[] | undefined }>;
+}
+/** The interfaces with `@HttpExchange` mappings the files declare, by qualified name; null for one declared twice. */
+export type Exchanges = Map<string, ExchangeInterface | null>;
+
+/**
+ * The `@HttpExchange`, `@GetExchange`, `@PostExchange`, `@PutExchange`, `@PatchExchange` and `@DeleteExchange` mappings
+ * of the interfaces the files declare. Spring MVC and WebFlux serve a controller at those of an interface it implements
+ * (`RequestMappingHandlerMapping` reads them through the type hierarchy), as it does `@RequestMapping`: the type's
+ * `url` (or `value`) joined with the method's, and the type's `method` with the method's.
+ */
+export function httpExchanges(texts: Map<string, string>): Exchanges {
+  const out: Exchanges = new Map();
+  for (const [file, text] of texts) {
+    if (!/@(?:[\w.]*\.)?(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text)) continue;
+    const code = withoutComments(file, text);
+    const masked = maskStrings(file, code);
+    const kotlin = /\.kts?$/.test(file);
+    const constant = stringConstants(code, masked, kotlin);
+    const pkg = /^\s*package\s+([\w.]+)/m.exec(masked)?.[1] ?? "";
+    const found = [...masked.matchAll(EXCHANGE)].map((m) => {
+      const at = m.index ?? 0;
+      let open = at + m[0].length;
+      while (/\s/.test(masked[open] ?? "")) open++;
+      const close = masked[open] === "(" ? closing(masked, open) : undefined;
+      const args = close === undefined ? undefined : code.slice(open + 1, close);
+      const value = args === undefined || !args.trim() ? undefined : (() => {
+        const { positional, named } = attributes(args);
+        return named.get("url") ?? named.get("value") ?? positional;
+      })();
+      const listed = value === undefined ? [] : literals(value, kotlin);
+      const resolved = value === undefined ? undefined : constant(value, at);
+      const paths = value === undefined ? [""] : listed?.length === 1 ? listed : listed === undefined && resolved !== undefined ? [resolved] : undefined;
+      const method = args === undefined ? undefined : attributes(args).named.get("method");
+      const verb = m[1] === "HttpExchange" ? (method === undefined ? [] : (literals(method, kotlin)?.map((v) => v.toUpperCase()) ?? undefined)) : [m[1]!.replace("Exchange", "").toUpperCase()];
+      return { at, end: close === undefined ? at + m[0].length : close + 1, args: args ?? "", paths: paths?.some((p) => /:\/\//.test(p)) ? undefined : paths, methods: verb };
+    });
+    // Each type's body, for the types an interface is nested in: `p.Outer.Contract`.
+    const bodies = [...masked.matchAll(TYPE)].flatMap((t) => {
+      const open = masked.indexOf("{", (t.index ?? 0) + t[0].length);
+      const close = open < 0 ? undefined : closing(masked, open);
+      return close === undefined ? [] : [{ name: t[0].split(/\s+/).pop()!, start: open, end: close }];
+    });
+    for (const t of masked.matchAll(TYPE)) {
+      if (!t[0].startsWith("interface")) continue;
+      const at = t.index ?? 0;
+      const header = declarationStart(masked, at);
+      let i = at + t[0].length;
+      while (i < masked.length && masked[i] !== "{" && masked[i] !== ";") i++;
+      const end = masked[i] === "{" ? closing(masked, i) : undefined;
+      if (end === undefined) continue;
+      const own = found.find((f) => f.at >= header && f.at < at && onlyAnnotations(masked, f.end, at));
+      // Members of a type nested in the interface are that type's.
+      const nested = [...masked.slice(i + 1, end).matchAll(TYPE)].map((n) => i + 1 + (n.index ?? 0));
+      const members = found
+        .filter((f) => f.at > i && f.at < end && !nested.some((n) => {
+          const body = masked.indexOf("{", n);
+          const close = body < 0 ? undefined : closing(masked, body);
+          return close !== undefined && f.at > body && f.at < close;
+        }))
+        .flatMap((f) => {
+          const method = methodAfter(masked, f.end, kotlin);
+          return method ? [{ ...method, line: lineOf(text, f.at), args: f.args, paths: f.paths, methods: f.methods }] : [];
+        });
+      if (!own && !members.length) continue;
+      const outer = bodies.filter((b) => b.start < at && at < b.end).sort((a, b) => a.start - b.start).map((b) => b.name);
+      const name = [...outer, t[0].split(/\s+/).pop()!].join(".");
+      const key = pkg ? `${pkg}.${name}` : name;
+      const head = masked.slice(at + t[0].length, i);
+      out.set(key, out.has(key) ? null : { file, line: lineOf(text, own?.at ?? at), paths: own ? own.paths : [""], methods: own ? own.methods : [], inherits: kotlin ? /:/.test(head) : /\bextends\b/.test(head), typed: !!own, members });
+    }
+  }
+  return out;
+}
+
+/** The exchange interface a name in a type's header means: imported by name, of the file's package, or of a package imported whole. */
+function exchangeOf(exchanges: Exchanges | undefined, written: string, imports: Imports, file: string): [string, ExchangeInterface] | undefined {
+  if (!exchanges?.size) return undefined;
+  // A name imported by name, else a type of the file's own package, else one of a package imported whole (JLS 6.4.1);
+  // `Outer.Contract` by its first name. A type nested in another of the same file is named by its simple name there.
+  const dot = written.indexOf(".");
+  const head = dot < 0 ? written : written.slice(0, dot);
+  const tail = dot < 0 ? "" : written.slice(dot);
+  const own = imports.package ? `${imports.package}.${written}` : written;
+  const local = [...exchanges].filter(([k, v]) => v?.file === file && dot < 0 && k.endsWith(`.${written}`) && k !== own).map(([k]) => k);
+  const candidates = imports.single.has(head)
+    ? [`${imports.single.get(head)!}${tail}`]
+    : exchanges.get(own)
+      ? [own]
+      : local.length
+        ? local
+        : dot > 0 && exchanges.get(written)
+          ? [written]
+          : imports.wildcard.map((p) => `${p}.${written}`);
+  const hits = candidates.filter((c) => exchanges.get(c));
+  return hits.length === 1 ? [hits[0]!, exchanges.get(hits[0]!)!] : undefined;
 }
 
 /** Where the parenthesis that `close` closes opens, in masked code. */

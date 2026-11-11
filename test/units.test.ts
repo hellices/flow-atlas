@@ -324,8 +324,12 @@ describe("routesFromTypeScript", () => {
       routes: ["GET /list"],
       limits: [not(4, "listPath")],
     });
-    // A setting read with one argument, a receiver atlas does not know, or a literal that is no path register nothing.
-    expect(unread('app.get(SETTING);\ncache.get(key, h);\napp.get("*", h);', { ...fastify, receivers: ["app"] })).toEqual({ routes: [], limits: [] });
+    // A setting read with one argument, or a receiver atlas does not know, register nothing; a literal that does not
+    // start with `/` (Express 4's `*`) is a path atlas does not read, and says so.
+    expect(unread('app.get(SETTING);\ncache.get(key, h);\napp.get("*", h);', { ...fastify, receivers: ["app"] })).toEqual({
+      routes: [],
+      limits: ['routes svc: a.ts:3 registers "*" on app, a path that does not start with `/`; its routes are not read'],
+    });
     const helper = { component: "svc", files: [], calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
     expect(unread('registerRoute(app, "GET", "/a", h);\nregisterRoute(app, "POST", ROUTES.b, h);', helper)).toEqual({ routes: ["GET /a"], limits: [not(2, "ROUTES.b")] });
   });

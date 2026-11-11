@@ -100,7 +100,7 @@ export function excludePattern(path: string): RegExp | undefined {
   return depth ? undefined : new RegExp(`^${source}/?$`, "i");
 }
 
-const REQUEST_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "SEARCH", "ALL"]);
+const REQUEST_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "SEARCH", "QUERY", "ALL"]);
 
 /**
  * Reads the global prefix and versioning that `setGlobalPrefix` and `enableVersioning` calls in `texts` set, with

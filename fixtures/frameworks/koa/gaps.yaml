@@ -1,19 +1,9 @@
 # Where atlas's reading differs from the routes @koa/router serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-missing:
-  - { route: "POST /users", reason: "a verb chained on the router after another (`router.get(...).post(...)`) is not read, and nothing says so" }
-  - { route: "PUT /users/{}", reason: "a verb chained on the router after another (`router.get(...).put(...)`) is not read, and nothing says so" }
-  - { route: "DELETE /users/{}", reason: "a verb chained on the router after another (`router.get(...).delete(...)`) is not read, and nothing says so" }
-  - { route: "* /users/{}", reason: "`all` chained on the router after another verb is not read, and nothing says so" }
-  - { route: "GET /articles/{}", reason: "a verb chained after `router.param(...)` is not read, and nothing says so" }
-  - { route: "GET /articles/{}/comments", reason: "a verb chained after `router.param(...)` is not read, and nothing says so" }
-  - { route: "GET /user/{}", reason: "a named route (`router.get(name, path, ...)`) is not read, and nothing says so" }
-  - { route: "GET /sign-in", reason: "a named route (`router.get(name, path, ...)`) is not read, and nothing says so" }
-  - { route: "* /login", reason: "`router.redirect(path, destination)`, which registers `all` at the path, is not read, and nothing says so" }
-  - { route: "DELETE /sessions/{}", reason: "`router.del`, @koa/router's alias of `delete`, is not read, and nothing says so" }
-  - { route: "PURGE /cache/{}", reason: "a verb other than get, post, put, patch, delete, head, options and all (`router.purge`) is not read, and nothing says so" }
-  - { route: "GET /people", reason: "an array of paths is not read (named in a limit)" }
-  - { route: "GET /persons", reason: "an array of paths is not read (named in a limit)" }
 dispatch:
   - { request: "GET /reports/latest", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
   - { request: "GET /reports/latest/", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `/reports/latest`, registered first, answers; atlas also matches `/reports/:id`" }
+  - { request: "DELETE /users/value1", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `delete` at `/users/:id`, registered before `all` at the same path, answers; atlas also matches `all`" }
+  - { request: "DELETE /users/value1/", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `delete` at `/users/:id`, registered before `all` at the same path, answers; atlas also matches `all`" }
+  - { request: "PUT /users/value1", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `put` at `/users/:id`, registered before `all` at the same path, answers; atlas also matches `all`" }
+  - { request: "PUT /users/value1/", reason: "registration order: @koa/router runs the routes that match in the order they are registered (no `exclusive`), and `put` at `/users/:id`, registered before `all` at the same path, answers; atlas also matches `all`" }

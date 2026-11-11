@@ -7,16 +7,16 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
 import { operationShape } from "./apidocs.js";
-import { pathPrefixes, routesFromSpring, type Views } from "./spring.js";
+import { httpExchanges, pathPrefixes, routesFromSpring, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
 import { addCoverage } from "./coverage.js";
-import { expressMounts, type Mounts } from "./mounts.js";
+import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
 import type { Reach } from "./reach.js";
-import { declarationOf } from "./binding.js";
+import { declarationOf, unwrap } from "./binding.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
-import { nestSyntax, packageRanges, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
+import { nestSyntax, packageRanges, rangeMajor, readRoutePath, syntaxOf, type RoutePath, type Syntax } from "./syntax.js";
 
 const NEST_METHODS: Record<string, string> = {
   Get: "GET",
@@ -28,8 +28,12 @@ const NEST_METHODS: Record<string, string> = {
   Options: "OPTIONS",
   Sse: "GET",
   All: "*",
+  // @nestjs/common's decorator of the QUERY method; `Query` is the parameter decorator of the query string.
+  QueryMethod: "QUERY",
 };
 const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
+/** The names of the calls that may register a route on a router the express style reads. */
+const REGISTERING = new Set([...["express", "@koa/router", "fastify", "hono"].flatMap((p) => [...verbsOf(p)]), "route", "on", "redirect"]);
 /** The names whose calls the express style reads as routes when no router is traced, unless the entry names others. */
 const EXPRESS_RECEIVERS = ["app", "router", "server", "fastify"];
 
@@ -37,6 +41,21 @@ const EXPRESS_RECEIVERS = ["app", "router", "server", "fastify"];
 function propertyName(p: ts.ObjectLiteralElementLike): string | undefined {
   const n = p.name;
   return n && (ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isNumericLiteral(n)) ? n.text : undefined;
+}
+
+/** The text of a string literal, through parentheses and assertions; undefined for anything else, a spread included. */
+const literalText = (e: ts.Expression): string | undefined => {
+  const u = unwrap(e);
+  return ts.isStringLiteralLike(u) ? u.text : undefined;
+};
+
+/** A property's name as the object holds it, a computed one included where it is a literal (`["url"]`). */
+function literalKey(n: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(n)) {
+    const e = n.expression;
+    return ts.isStringLiteralLike(e) || ts.isNumericLiteral(e) ? e.text : undefined;
+  }
+  return ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isNumericLiteral(n) || ts.isPrivateIdentifier(n) ? n.text : undefined;
 }
 
 function stringValue(node: ts.Node | undefined): string | undefined {
@@ -464,6 +483,279 @@ export function routesFromTypeScript(
     if (handlers.size && !handlers.has("OPTIONS")) add("OPTIONS", next.path, sf.statements[0] ?? sf, undefined, undefined, { implicit: true });
   }
 
+  /** The router a receiver is: traced, with the package it is created from, or a name among the receivers read at the root. */
+  type Instance = { router?: string; pkg?: string; name: string };
+  const rootName = (e: ts.Expression): string => {
+    let x = unwrap(e);
+    while ((ts.isCallExpression(x) || ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) && !ts.isNewExpression(x)) x = unwrap(x.expression);
+    return ts.isIdentifier(x) ? x.text : x.getText(sf).replace(/\s+/g, " ");
+  };
+  const instanceAt = (e: ts.Expression): Instance | undefined => {
+    const router = mounts?.routerOf(file, e);
+    if (router) return { router, pkg: mounts!.packageOf(router), name: rootName(e) };
+    const x = unwrap(e);
+    return ts.isIdentifier(x) && receivers.has(x.text) ? { name: x.text } : undefined;
+  };
+  /**
+   * The name among the receivers a chain of route methods starts from, where no router is traced: what such a chain is
+   * on, and so where its routes are served, depends on the framework (Elysia's group callbacks, Hono's kept path).
+   */
+  const untracedChain = (e: ts.Expression): string | undefined => {
+    let x = unwrap(e);
+    if (!ts.isCallExpression(x)) return undefined;
+    while (ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression)) {
+      const n = x.expression.name.text;
+      if (n !== "use" && !HTTP_VERBS.has(n)) return undefined;
+      x = unwrap(x.expression.expression);
+    }
+    return ts.isIdentifier(x) && receivers.has(x.text) && !mounts?.routerOf(file, x) ? x.text : undefined;
+  };
+  /**
+   * The syntax of a router's paths: its package, at the version the package.json above where it is created gives it.
+   * Ranges that differ (a plugin under two instances) admit no one major version.
+   */
+  const syntaxFor = (inst: Instance): Syntax => {
+    const origins = inst.router ? mounts!.originsOf(inst.router) : [];
+    const given = inst.pkg === undefined ? [] : (origins.length ? origins : [file]).flatMap((f) => ranges?.(f, inst.pkg!) ?? []);
+    return syntaxOf(inst.pkg, given.length ? [...new Set(given)].join(" || ") : undefined);
+  };
+  const at0 = (node: ts.Node) => at(node).line;
+  const hono = (inst: Instance) => inst.pkg === "hono" || !!inst.pkg?.startsWith("hono/");
+  const koa = (inst: Instance) => inst.pkg === "@koa/router" || inst.pkg === "koa-router";
+  /** The prefixes a path not read would have been served under, for `unread`. */
+  const prefixesOf = (inst: Instance): string[] | undefined => (inst.router ? mounts!.prefixes(inst.router) : [""]);
+  /** The prefixes a router's routes are served under: none known for a router mounted where the code does not say. */
+  const servedUnder = (inst: Instance): string[] | undefined => {
+    if (!inst.router) return [""];
+    const prefixes = mounts!.prefixes(inst.router);
+    if (!prefixes) unmounted.set(inst.name, mounts!.why(inst.router) ?? "is mounted where the code gives no literal path");
+    return prefixes;
+  };
+  /**
+   * A route a registration on `inst` makes. A path must start with `/`, except on Hono, which joins one that does not
+   * (`*`, `users`) to the base path as if it did (`mergePath`); an empty one it joins with a trailing `/`, not read.
+   */
+  /**
+   * The route a registration on `inst` makes, its handlers being where what it runs is followed from (not the calls
+   * before it in a chain). A path must start with `/`, except on Hono, which joins one that does not (`*`, `users`) to
+   * the base path as if it did (`mergePath`), an empty one with a trailing `/`, not read; and on @koa/router 15, which
+   * puts its prefixes before it as text (see `Mounts.koaPaths`).
+   */
+  const register = (inst: Instance, method: string, path: string, node: ts.CallExpression, handlers: readonly ts.Node[]) => {
+    // A route is placed where its method is named, which in a chain is not where the chain starts.
+    const place = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
+    const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
+    const syntax = syntaxFor(inst);
+    const more = { syntax, alongside: handlers.slice(1).map((h) => ({ file, node: h })) };
+    const not = (why: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, ${why}; its routes are not read`);
+    if (!path.startsWith("/") && koa(inst) && path !== "") {
+      const range = (inst.router ? mounts!.originsOf(inst.router) : []).flatMap((f) => ranges?.(f, inst.pkg!) ?? []);
+      const major = range.length ? rangeMajor([...new Set(range)].join(" || ")) : undefined;
+      if (!inst.router || major === undefined || major < 15) return not(`a path that does not start with \`/\`, which @koa/router joins to its prefixes as text in a way atlas reads only from version 15${major === undefined ? ", and no package.json above it gives one major version" : ""}`);
+      const joined = mounts!.koaPaths(inst.router, path);
+      if ("why" in joined) {
+        if (joined.why.startsWith("is served under")) not("a path that does not start with `/`, under a path the configuration declares, to which @koa/router would join it as text");
+        else unmounted.set(inst.name, joined.why);
+        return;
+      }
+      for (const p of joined.paths) {
+        // A request's path starts with `/`, which literal text or a parameter (`:id`) at the start does not take; a group
+        // or a wildcard there may.
+        if (/^[{*\\]/.test(p)) not(`which @koa/router serves at ${JSON.stringify(p)}, whose syntax before its first \`/\` atlas does not read`);
+        else if (!p.startsWith("/")) not(`which @koa/router serves at ${JSON.stringify(p)}, a path no request has`);
+        else if (p.includes("//")) not(`which @koa/router serves at ${JSON.stringify(p)}, whose empty segment no path template holds`);
+        else add(verb, p, place, handlers[0], undefined, more);
+      }
+      return;
+    }
+    if (!path.startsWith("/") && (!hono(inst) || path === "")) return not("a path that does not start with `/`");
+    for (const p of servedUnder(inst) ?? []) add(verb, joinRoute(p, path.startsWith("/") ? path : `/${path}`), place, handlers[0], undefined, more);
+  };
+  /**
+   * The literal paths an argument gives: a string, or an array of strings on the routers that take one (Express's
+   * `Layer` and @koa/router's `register`); undefined where it gives none the file spells out, said in `limits`.
+   */
+  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): string[] | undefined => {
+    const u = unwrap(arg);
+    const one = stringValue(u);
+    if (one !== undefined) {
+      span(arg);
+      return [one];
+    }
+    if (ts.isArrayLiteralExpression(u)) {
+      const all = u.elements.map(literalText);
+      if (inst.pkg !== "express" && !koa(inst)) {
+        limits?.push(
+          `routes ${spec.component}: ${file}:${at0(arg)} registers an array of paths (${arg.getText(sf).replace(/\s+/g, " ")}) on ${inst.name}, which atlas reads only on a router traced to Express or @koa/router; its routes are not read`,
+        );
+        return undefined;
+      }
+      if (all.length && all.every((p) => p !== undefined)) {
+        span(arg);
+        return all;
+      }
+    }
+    unread(arg, method === "all" ? "*" : method, prefixesOf(inst));
+    return undefined;
+  };
+  /** Whether an argument is a function: written in place, or a name the file binds to one. */
+  const handlerAt = (e: ts.Expression): boolean => {
+    const u = unwrap(e);
+    if (ts.isArrowFunction(u) || ts.isFunctionExpression(u)) return true;
+    const decl = ts.isIdentifier(u) ? declarationOf(u) : undefined;
+    if (decl && ts.isFunctionDeclaration(decl)) return true;
+    const init = decl && ts.isVariableDeclaration(decl) && decl.parent.flags & ts.NodeFlags.Const && decl.initializer ? unwrap(decl.initializer) : undefined;
+    return !!init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
+  };
+  /** Hono's path a registration with none of its own takes: the one the last call on the instance set (`#path`). */
+  const honoPath = (e: ts.Expression): string | undefined => {
+    let x = unwrap(e);
+    for (;;) {
+      // A new instance, or the copy `basePath` makes, starts at `/`.
+      if (ts.isNewExpression(x)) return "/";
+      if (!ts.isCallExpression(x) || !ts.isPropertyAccessExpression(x.expression)) return undefined;
+      const n = x.expression.name.text;
+      const first = x.arguments[0] && unwrap(x.arguments[0]);
+      if (n === "basePath") return "/";
+      if (verbsOf("hono").has(n)) {
+        if (first && ts.isStringLiteralLike(first)) return first.text;
+        if (!first || !handlerAt(first)) return undefined;
+      } else if (n === "on") {
+        const p = x.arguments[1] && unwrap(x.arguments[1]);
+        const last = p && ts.isArrayLiteralExpression(p) ? p.elements[p.elements.length - 1] : p;
+        return last && ts.isStringLiteralLike(last) ? last.text : undefined;
+      } else if (n === "use") {
+        if (first && ts.isStringLiteralLike(first)) return first.text;
+        return first && handlerAt(first) ? "*" : undefined;
+      } else if (!["route", "onError", "notFound", "mount"].includes(n)) return undefined;
+      x = unwrap(x.expression.expression);
+    }
+  };
+  /** The `route(path)` call an Express route's chain starts from: `app.route("/book").get(h).post(h)`. */
+  const expressRoute = (e: ts.Expression): ts.CallExpression | undefined => {
+    let x = unwrap(e);
+    while (ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression)) {
+      const n = x.expression.name.text;
+      if (n === "route" && x.arguments.length === 1 && !ts.isObjectLiteralExpression(unwrap(x.arguments[0]!))) return x;
+      if (!verbsOf("express").has(n)) return undefined;
+      x = unwrap(x.expression.expression);
+    }
+    return undefined;
+  };
+  /** A string a method argument names, literal, or each of an array of them; undefined where one is not spelled out. */
+  const methodsAt = (arg: ts.Expression | undefined): string[] | undefined => {
+    const u = arg && unwrap(arg);
+    if (!u) return undefined;
+    if (ts.isStringLiteralLike(u)) return [u.text];
+    if (!ts.isArrayLiteralExpression(u) || !u.elements.length) return undefined;
+    const all = u.elements.map(literalText);
+    return all.every((m) => m !== undefined) ? all : undefined;
+  };
+  const express = (inst: Instance) => inst.pkg === undefined || inst.pkg === "express";
+
+  /** The routes a call of the express style registers: a method's, `route(path)`'s, Fastify's `route`, Hono's `on`, @koa/router's `redirect`. */
+  const expressRoutes = (node: ts.CallExpression): void => {
+    const callee = node.expression;
+    if (!ts.isPropertyAccessExpression(callee)) return;
+    const name = callee.name.text;
+    if (!REGISTERING.has(name)) return;
+    const args = node.arguments;
+    const said = (what: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(callee.name)} ${what}`);
+    // Express's `route(path)` returns a route whose methods take only handlers (router 2 `Route`).
+    const route = expressRoute(callee.expression);
+    const on = route && instanceAt((route.expression as ts.PropertyAccessExpression).expression);
+    // On another router `route(x)` is no Express route: Fastify's `route(options)` returns the instance.
+    if (route && on && express(on)) {
+      if (!verbsOf("express").has(name) || !args.length) return;
+      for (const path of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args);
+      return;
+    }
+    const inst = instanceAt(callee.expression);
+    if (!inst) {
+      const chained = HTTP_VERBS.has(name) && args.length > 1 ? untracedChain(callee.expression) : undefined;
+      if (chained) said(`registers a route chained on ${chained}, which atlas does not trace to Express, @koa/router, Fastify or Hono; its route is not read`);
+      return;
+    }
+    const verbs = inst.pkg === undefined ? HTTP_VERBS : verbsOf(inst.pkg);
+    if (verbs.has(name)) {
+      if (hono(inst)) {
+        // Hono's method takes a path, which it keeps for the next registration, or a handler for the path kept.
+        const first = args[0] && unwrap(args[0]);
+        if (!first) return;
+        if (ts.isStringLiteralLike(first)) {
+          span(first);
+          if (args.length > 1) register(inst, name, first.text, node, args.slice(1));
+        } else if (handlerAt(first)) {
+          const path = honoPath(callee.expression);
+          if (path !== undefined) register(inst, name, path, node, args);
+          else said(`registers ${name.toUpperCase()} on ${inst.name} with no path, at the one the last registration on it set; its route is not read`);
+        } else if (args.length > 1 || !ts.isIdentifier(first)) unread(first, name === "all" ? "*" : name, prefixesOf(inst));
+        else said(`registers ${name.toUpperCase()} on ${inst.name} with ${first.text}, a path or a handler the file does not settle; its route is not read`);
+        return;
+      }
+      // A route takes a path and a handler; with one argument Express's `get(name)` reads a setting.
+      if (args.length < 2) return;
+      // @koa/router takes a name before the path where the second argument is a string or a RegExp (`_registerMethod`).
+      const second = unwrap(args[1]!);
+      const named = koa(inst) && (ts.isStringLiteralLike(second) || ts.isTemplateExpression(second) || ts.isRegularExpressionLiteral(second));
+      if (named && args.length < 3) return;
+      for (const path of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1));
+      return;
+    }
+    if (name === "route" && args.length === 1 && inst.pkg === "fastify" && !ts.isObjectLiteralExpression(unwrap(args[0]!))) {
+      said(`declares a route with options the file does not spell out (${args[0]!.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+      return;
+    }
+    // Fastify's full declaration, `route({ method, url, handler })`: `url`, else `path` (lib/route.js), each method of a list.
+    if (name === "route" && args.length === 1 && ts.isObjectLiteralExpression(unwrap(args[0]!)) && (inst.pkg === undefined || inst.pkg === "fastify")) {
+      const options = unwrap(args[0]!) as ts.ObjectLiteralExpression;
+      const given = new Map<string, ts.Expression>();
+      for (const p of options.properties) {
+        const key = ts.isSpreadAssignment(p) ? undefined : literalKey(p.name);
+        if (key === undefined) {
+          said(`declares a route with options the file does not spell out (${p.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+          return;
+        }
+        if (ts.isPropertyAssignment(p)) given.set(key, p.initializer);
+        else if (ts.isShorthandPropertyAssignment(p)) given.set(key, p.name);
+        else given.set(key, p as unknown as ts.Expression);
+      }
+      const methods = methodsAt(given.get("method"));
+      const url = given.get("url") && stringValue(unwrap(given.get("url")!));
+      const path = given.get("path") && stringValue(unwrap(given.get("path")!));
+      const unknown = (given.has("url") && url === undefined) || (!url && given.has("path") && path === undefined);
+      if (!methods) said(`declares a route with a method the file does not spell out (${given.get("method")?.getText(sf).replace(/\s+/g, " ") ?? "none"}); its routes are not read`);
+      if (unknown) unread(given.get(url === undefined && given.has("url") ? "url" : "path")!, methods?.length === 1 ? methods[0] : undefined, prefixesOf(inst));
+      if (!methods || unknown) return;
+      const written = url || path || "";
+      for (const k of ["url", "path"]) if (given.has(k)) span(given.get(k));
+      for (const m of methods) register(inst, m.toLowerCase(), written, node, args);
+      return;
+    }
+    // Hono's `on(method or [methods], path or [paths], ...handlers)`: each method at each path (hono-base.js).
+    if (name === "on" && hono(inst)) {
+      if (args.length < 3) return;
+      const methods = methodsAt(args[0]);
+      const p = unwrap(args[1]!);
+      const paths = ts.isArrayLiteralExpression(p) ? p.elements.map(literalText) : [literalText(p)];
+      if (!methods) said(`registers a method the file does not spell out (${args[0]!.getText(sf).replace(/\s+/g, " ")}) on ${inst.name}; its routes are not read`);
+      if (paths.some((x) => x === undefined) || !paths.length) unread(args[1]!, methods?.length === 1 ? methods[0] : undefined, prefixesOf(inst));
+      if (!methods || paths.some((x) => x === undefined) || !paths.length) return;
+      span(args[1]);
+      for (const path of paths as string[]) for (const m of methods) register(inst, m.toUpperCase() === "ALL" ? "all" : m.toLowerCase(), path, node, args.slice(2));
+      return;
+    }
+    // @koa/router's `redirect(source, destination)` registers `all` at the source; a source that is no path names a route.
+    if (name === "redirect" && koa(inst) && args.length >= 2) {
+      const source = unwrap(args[0]!);
+      if (ts.isStringLiteralLike(source) && source.text.startsWith("/")) {
+        span(source);
+        register(inst, "all", source.text, node, []);
+      } else if (ts.isStringLiteralLike(source)) said(`redirects from the route named ${JSON.stringify(source.text)} on ${inst.name}, at the path @koa/router builds from it; its route is not read`);
+      else unread(source, "*", prefixesOf(inst));
+    }
+  };
+
   const visit = (node: ts.Node): void => {
     if (styles.has("nest") && ts.isClassDeclaration(node)) {
       let bases: string[] | undefined;
@@ -521,31 +813,7 @@ export function routesFromTypeScript(
     }
     if (ts.isCallExpression(node)) {
       const name = calleeName(node.expression);
-      if (styles.has("express") && ts.isPropertyAccessExpression(node.expression) && name && HTTP_VERBS.has(name)) {
-        const receiver = node.expression.expression;
-        const arg = node.arguments[0];
-        const path = stringValue(arg);
-        const router = ts.isIdentifier(receiver) ? mounts?.routerOf(file, receiver) : undefined;
-        // With one argument, `app.get(name)` reads a setting; a route takes a path and a handler.
-        if (ts.isIdentifier(receiver) && (router || receivers.has(receiver.text)) && arg && node.arguments.length > 1 && path === undefined) {
-          unread(arg, name, router ? mounts!.prefixes(router) : [""]);
-        }
-        if (ts.isIdentifier(receiver) && path?.startsWith("/") && (router || receivers.has(receiver.text))) {
-          span(node.arguments[0]);
-          const method = name === "all" ? "*" : name;
-          // The router's package, at the version the package.json above where it is created gives it, settles the
-          // syntax of the path. Ranges that differ (a plugin under two instances) admit no one major version.
-          const pkg = router ? mounts!.packageOf(router) : undefined;
-          const origins = router ? mounts!.originsOf(router) : [];
-          const given = pkg === undefined ? [] : (origins.length ? origins : [file]).flatMap((f) => ranges?.(f, pkg) ?? []);
-          const syntax = syntaxOf(pkg, given.length ? [...new Set(given)].join(" || ") : undefined);
-          if (router) {
-            const prefixes = mounts!.prefixes(router);
-            if (prefixes) for (const p of prefixes) add(method, joinRoute(p, path), node, node, undefined, { syntax });
-            else unmounted.set(receiver.text, mounts!.why(router) ?? "is mounted where the code gives no literal path");
-          } else if (receivers.has(receiver.text)) add(method, path, node, node, undefined, { syntax });
-        }
-      }
+      if (styles.has("express")) expressRoutes(node);
       for (const c of spec.calls ?? []) {
         if (name !== c.name) continue;
         const method = c.method ?? stringValue(node.arguments[c.methodArg]);
@@ -571,13 +839,17 @@ export function routesFromTypeScript(
   visit(sf);
   // A GET registration at the very path of a constant read as a route above is that route; any other, another method
   // or a prefix included, is said in `limits`.
+  // The methods chained on one `route(path)` share its path: one not spelled out is said once.
+  const saidPaths = new Set<string>();
   for (const { arg, method, prefixes } of unreadPaths) {
     const inner = ts.isTemplateExpression(arg) && !arg.head.text && arg.templateSpans.length === 1 && !arg.templateSpans[0]!.literal.text ? arg.templateSpans[0]!.expression : arg;
     const declaration = ts.isIdentifier(inner) ? declarationOf(inner) : undefined;
     const value = declaration && readConstants.get(declaration);
     const route = (p: string) => routeTemplate(joinRoute(p));
     if (value && method?.toUpperCase() === "GET" && prefixes?.length && prefixes.every((p) => route(joinRoute(p, value)) === route(value))) continue;
-    limits?.push(`routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`);
+    const line = `routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`;
+    if (!saidPaths.has(line)) limits?.push(line);
+    saidPaths.add(line);
   }
   for (const [name, why] of unmounted) {
     limits?.push(`routes ${spec.component}: router ${name} in ${file} ${why}; its routes are not read (declare it in mounts)`);
@@ -635,17 +907,25 @@ export function closingParen(code: string, from: number): number {
 }
 
 /**
- * The methods a FastAPI `api_route` serves: GET when `methods` is not given, the listed ones when it is a literal list,
- * tuple or set of strings; undefined when the list is built at run time, so no route is guessed.
+ * The methods a FastAPI `api_route` or `add_api_route` serves: GET when `methods` is not given or None (`APIRoute`), the
+ * listed ones when it is a literal list, tuple or set of strings; undefined when the list is built at run time, so no
+ * route is guessed.
  */
 function apiRouteMethods(text: string, code: string, argsStart: number): string[] | undefined {
   const end = closingParen(code, argsStart);
-  const m = /\bmethods\s*=\s*/.exec(code.slice(argsStart, end));
-  if (!m) return ["GET"];
-  const valueStart = argsStart + m.index + m[0].length;
-  const open = code[valueStart];
+  // The call's own `methods` argument: one of a call among its arguments (an endpoint factory's) is not the route's.
+  const starts = pythonArgStarts(code, argsStart);
+  const k = starts.findIndex((at) => /^methods\s*=(?!=)/.test(code.slice(at)));
+  if (k < 0) return ["GET"];
+  const valueStart = starts[k]! + /^methods\s*=\s*/.exec(code.slice(starts[k]))![0].length;
+  const valueEnd = k + 1 < starts.length ? code.lastIndexOf(",", starts[k + 1]) : end;
+  const value = code.slice(valueStart, valueEnd).trim();
+  if (value === "None") return ["GET"];
+  const open = value[0];
   if (!open || !"[({".includes(open)) return undefined;
   const close = closingParen(code, valueStart + 1);
+  // The list alone: `["GET"] + more` is computed.
+  if (code.slice(close + 1, valueEnd).trim()) return undefined;
   const items = text.slice(valueStart + 1, close).split(",").map((x) => x.trim()).filter(Boolean);
   const methods = items.map((x) => /^[rRuU]?(["'])([A-Za-z]+)\1$/.exec(x)?.[2]?.toUpperCase());
   return methods.length && methods.every(Boolean) ? [...new Set(methods as string[])] : undefined;
@@ -808,7 +1088,9 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
   };
   // A name traced to an application or router of the files read registers routes whatever it is called (`subapi`).
   const traced = (name: string, at: number) => (routers ?? own!).receiver(file, name, at);
-  for (const m of fastapi ? code.matchAll(FASTAPI) : []) {
+  // The decorators, and `add_api_route(path, endpoint, methods=...)`, which they call (fastapi/routing.py `APIRouter`).
+  const registrations = fastapi ? [...code.matchAll(FASTAPI), ...code.matchAll(/\b(\w+)\.(add_api_route)\(\s*/g)].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)) : [];
+  for (const m of registrations) {
     if (!receivers.has(m[1]!) && !traced(m[1]!, m.index ?? 0)) continue;
     const argsStart = (m.index ?? 0) + m[0].length;
     // The path is the first argument, or the one named `path` (`@app.get(path="/items")`).
@@ -826,7 +1108,8 @@ export function routesFromPython(file: string, text: string, spec: RouteSource, 
     // An empty path is the router's prefix itself; with no prefix FastAPI refuses it.
     if (!prefixes || (!path && prefixes.every((p) => joinRoute(p) === "/"))) continue;
     spans?.add(file, argsStart, closingParen(code, argsStart));
-    const methods = m[2] === "api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
+    const methods = m[2] === "api_route" || m[2] === "add_api_route" ? apiRouteMethods(text, code, argsStart) : [m[2]!.toUpperCase()];
+    if (!methods) limits?.push(`routes ${spec.component}: ${file}:${lineOf(text, m.index ?? 0)} registers ${path} with methods the file does not spell out; its routes are not read`);
     const before = out.length;
     for (const prefix of prefixes) for (const method of methods ?? []) add(method, joinRoute(prefix, path), m.index ?? 0);
     if (!key && out.length > before) untraced.add(m[1]!);
@@ -1150,7 +1433,9 @@ export function extractRoutes(
     const scripts = new Map(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => [f, source.read(f) ?? ""]));
     const mounts = (spec.styles ?? []).includes("express") ? expressMounts(scripts, spec.mounts, spec.receivers ?? EXPRESS_RECEIVERS) : undefined;
     const nest = (spec.styles ?? []).includes("nest") ? nestBootstrap(source, config, spec, files, roots.get(spec.component), limits) : undefined;
-    const prefixes = (spec.styles ?? []).includes("spring") ? pathPrefixes(springSources(source, config, files, roots.get(spec.component))) : undefined;
+    const java = (spec.styles ?? []).includes("spring") ? springSources(source, config, files, roots.get(spec.component)) : undefined;
+    const prefixes = java ? pathPrefixes(java) : undefined;
+    const exchanges = java ? httpExchanges(java) : undefined;
     const routers = (spec.styles ?? []).includes("fastapi")
       ? fastapiRouters(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.mounts)
       : undefined;
@@ -1160,7 +1445,7 @@ export function extractRoutes(
       if (text === undefined) continue;
       if (/\.(c|m)?tsx?$/.test(file) || /\.(c|m)?jsx?$/.test(file)) out.push(...routesFromTypeScript(file, text, spec, { reach, executed, mounts, limits, spans, root: roots.get(spec.component), nest, offered, ranges }));
       else if (file.endsWith(".py") && ((spec.styles ?? []).includes("fastapi") || spec.calls?.length)) out.push(...routesFromPython(file, text, { ...spec, styles: spec.styles ?? [] }, limits, spans, routers));
-      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes));
+      else if (/\.(java|kt|kts)$/.test(file) && (spec.styles ?? []).includes("spring")) out.push(...routesFromSpring(file, text, spec, views, spans, limits, prefixes, exchanges));
     }
     if (routers) limits.push(...routers.limits(spec.component));
     if (prefixes) limits.push(...prefixes.limits(spec.component));

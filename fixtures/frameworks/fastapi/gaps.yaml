@@ -5,7 +5,6 @@ missing:
   - { route: "GET /docs", reason: "the Swagger UI FastAPI serves by itself (`docs_url`) is not a surface" }
   - { route: "GET /docs/oauth2-redirect", reason: "the Swagger UI's OAuth2 redirect FastAPI serves by itself is not a surface" }
   - { route: "GET /redoc", reason: "the ReDoc page FastAPI serves by itself (`redoc_url`) is not a surface" }
-  - { route: "GET /health", reason: "`app.add_api_route(path, endpoint)` is not read, and nothing says so" }
   - { route: "GET /subapi/openapi.json", reason: "a mounted FastAPI application serves its own document, which is not a surface" }
   - { route: "GET /subapi/docs", reason: "a mounted FastAPI application serves its own Swagger UI, which is not a surface" }
   - { route: "GET /subapi/docs/oauth2-redirect", reason: "a mounted FastAPI application serves its own OAuth2 redirect, which is not a surface" }
@@ -24,6 +23,7 @@ dispatch:
   - { request: "GET /static", reason: "trailing slash: the static files mount takes `/static/` but not `/static`, which Starlette redirects to `/static/`; atlas matches `/static` to it" }
   - { request: "GET /hidden/", reason: "trailing slash: no route takes `/hidden/`, Starlette redirects it to `/hidden`; atlas drops the `/` and matches" }
   - { request: "GET /models/1/", reason: "trailing slash: no route takes `/models/1/`, Starlette redirects it to `/models/1`; atlas drops the `/` and matches" }
+  - { request: "GET /health/", reason: "trailing slash: no route takes `/health/`, Starlette redirects it to `/health`; atlas drops the `/` and matches" }
   - { request: "GET /ping/", reason: "trailing slash: no route takes `/ping/`, Starlette redirects it to `/ping`; atlas drops the `/` and matches" }
   - { request: "POST /ping/", reason: "trailing slash: no route takes `/ping/`, Starlette redirects it to `/ping`; atlas drops the `/` and matches" }
   - { request: "GET /users/value1/", reason: "trailing slash: no route takes `/users/value1/`, Starlette redirects it to `/users/value1`; atlas drops the `/` and matches" }
