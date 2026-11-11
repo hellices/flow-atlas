@@ -1,20 +1,6 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "PATCH /users/{}", reason: "the method `requests.request` takes as its first argument (`requests.request(\"PATCH\", url)`) is not read, and nothing says so" }
   - { call: "GET /users/{}/avatar", reason: "a URL concatenated from literals and values in Python (`API_URL + \"/users/\" + user_id + \"/avatar\"`) is not joined into one path, and nothing says so" }
-  - { call: "GET /orders", reason: "the method of the call a URL helper's result is handed to (`session.get(url(\"/orders\"))`) is not read, and nothing says so" }
-  - { call: "GET /orders/{}", reason: "the method of the call a URL helper's result is handed to is not read, and nothing says so" }
-  - { call: "POST /orders/{}/cancel", reason: "the method of the call a URL helper's result is handed to is not read, and nothing says so" }
-  - { call: "DELETE /orders/{}", reason: "the method of the call a URL helper's result is handed to is not read, and nothing says so" }
-  - { call: "POST /orders/import", reason: "the method a `requests.Request(\"POST\", url(...))` takes first, prepared and sent by the session, is not read, and nothing says so" }
-  - { call: "POST /api/v2/projects/{}/archive", reason: "the method `api.request` takes as its first argument (`api.request(\"POST\", f\"projects/{project_id}/archive\")`) is not read: the path is read under the session's base with its method unread, and nothing says so" }
 extra:
-  - { call: "* /users/{}", reason: "`requests.request(\"PATCH\", url)` read with its method unread" }
-  - { call: "* /users", reason: "the literal `\"/users/\"` of a concatenated URL read as a request of its own" }
-  - { call: "* /avatar", reason: "the literal `\"/avatar\"` of a concatenated URL read as a request of its own" }
-  - { call: "* /orders", reason: "a path handed to the URL helper read with the method of the session call around it unread" }
-  - { call: "* /orders/{}", reason: "a path handed to the URL helper read with the method of the session call around it unread" }
-  - { call: "* /orders/{}/cancel", reason: "a path handed to the URL helper read with the method of the session call around it unread" }
-  - { call: "* /orders/import", reason: "the URL of a `requests.Request` read with the method it takes first unread" }
-  - { call: "* /api/v2/projects/{}/archive", reason: "`api.request(\"POST\", f\"projects/{project_id}/archive\")` read with its method unread" }
+  - { call: "GET /avatar", reason: "the literal `\"/avatar\"` of a concatenated URL read as a request of its own, with the GET of the `requests.get` it is in (its literal `\"/users/\"` is read alone too, as the GET `/users` another function sends)" }

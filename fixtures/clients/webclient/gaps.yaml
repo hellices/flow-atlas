@@ -1,22 +1,6 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /orders/{}", reason: "the method of a WebClient request is the call before `.uri(` (`get()`), which is not read, and nothing says so" }
-  - { call: "GET /orders", reason: "the method of a WebClient request (`get()` before `.uri(builder -> builder.path(\"/orders\")...)`) is not read, and nothing says so" }
-  - { call: "POST /orders", reason: "the method of a WebClient request (`post()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "PUT /orders/{}", reason: "the method of a WebClient request (`put()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "PATCH /orders/{}", reason: "the method of a WebClient request (`patch()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "DELETE /orders/{}", reason: "the method of a WebClient request (`delete()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "HEAD /orders/{}", reason: "the method of a WebClient request (`head()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "OPTIONS /orders/{}", reason: "the method of a WebClient request given as `method(HttpMethod.OPTIONS)` before `.uri(` is not read, and nothing says so" }
-  - { call: "POST /orders/{}/refunds", reason: "the method of a WebClient request given as `method(HttpMethod.POST)` before `.uri(` is not read, and nothing says so" }
-  - { call: "PUT /orders/{}/items/{}", reason: "the method of a WebClient request given as `method(HttpMethod.PUT)` before `.uri(` is not read, and nothing says so" }
-  - { call: "GET /orders/{}/invoice", reason: "the method of a WebClient request (`get()` before a `.uri(` builder and `.exchangeToMono(`) is not read, and nothing says so" }
   - { call: "GET /customers/{}/orders", reason: "a path concatenated around a value (`\"/customers/\" + customerId + \"/orders\"`) is read as two paths, and nothing says so" }
 extra:
-  - { call: "* /orders", reason: "WebClient requests to `/orders` read with their method unread, and the tail of `\"/customers/\" + customerId + \"/orders\"` read as a request of its own" }
-  - { call: "* /orders/{}", reason: "WebClient requests to `/orders/{id}` read with their method (`get()`, `put()`, `patch()`, `delete()`, `head()`, `method(HttpMethod.OPTIONS)`) unread" }
-  - { call: "* /orders/{}/refunds", reason: "a WebClient `method(HttpMethod.POST)` request read with its method unread" }
-  - { call: "* /orders/{}/items/{}", reason: "a WebClient `method(HttpMethod.PUT)` request read with its method unread" }
-  - { call: "* /orders/{}/invoice", reason: "a WebClient `get()` request read with its method unread" }
-  - { call: "* /customers", reason: "the head of `\"/customers/\" + customerId + \"/orders\"` read as a request of its own" }
+  - { call: "GET /customers", reason: "the head of `\"/customers/\" + customerId + \"/orders\"` read as a request of its own, with the GET of the `get()` before its `.uri(` (its tail is read alone too, as the GET `/orders` another method sends)" }

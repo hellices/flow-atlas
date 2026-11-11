@@ -6,6 +6,7 @@ import { lineOf, matcher, select, type Source } from "../source.js";
 import { AngularValues } from "./angular.js";
 import { Clients, GENERATED_CLIENT, generatorOf, parseBase, type ClientRequest } from "./clients.js";
 import { httpExchanges } from "./spring.js";
+import { blankStrings, TextMethods } from "./verbs.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, importedFrom, isReference, references, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
@@ -121,6 +122,7 @@ function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): strin
   for (let depth = 0; current && depth < 6; depth++, current = current.parent) {
     const parent: ts.Node | undefined = current.parent;
     if (!parent) break;
+    if (ts.isNewExpression(parent) && parent.arguments?.[0] === current && isGlobal(unwrap(parent.expression), REQUEST)) return requestMethod(parent);
     if (ts.isCallExpression(parent) && parent.arguments.includes(current as ts.Expression)) {
       const callee = parent.expression;
       // A configured wrapper, by the name it is called with, comes before what its name would say without it.
@@ -128,6 +130,8 @@ function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): strin
       if (wrapper) return wrapperMethod(parent, current, wrapper.defaultMethod);
       const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
       if (VERBS.has(name.toLowerCase())) return name.toUpperCase();
+      // Ky's `query` sends QUERY (Ky, readme: ky.query(input, options?)); an instance's is read with its client.
+      if (name === "query" && parent.arguments[0] === current && ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && importedFrom(callee.expression, ["ky"]) === "default") return "QUERY";
       // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
       const global = ts.isIdentifier(callee) || (ts.isPropertyAccessExpression(callee) && /^(window|globalThis|self)$/.test(callee.expression.getText()));
       if (name === "fetch" && global && parent.arguments[0] === current) return fetchMethod(parent.arguments[1]);
@@ -144,6 +148,42 @@ function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): strin
     }
   }
   return "*";
+}
+
+const REQUEST = new Set(["Request"]);
+
+/**
+ * The method of a `new Request(url, init)`: its init's, GET without one (Fetch standard, the Request constructor);
+ * where it is handed, directly or through a `const`, to fetch or to another `new Request` with an init of its own, that
+ * init's method replaces it. A Request held in a `let` or `var`, which may be another by the time it is sent, is `*`.
+ */
+function requestMethod(request: ts.NewExpression, depth = 0): string {
+  return sentMethod(request, fetchMethod(request.arguments?.[1]), depth);
+}
+
+/** The method a Request whose own method is `own` is sent with, where the code hands it on. */
+function sentMethod(request: ts.NewExpression, own: string, depth: number): string {
+  const place = valuePlace(request);
+  const decl = place.parent;
+  const declared = ts.isVariableDeclaration(decl) && decl.initializer === place;
+  if (declared && (!ts.isIdentifier(decl.name) || (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.Const) === 0)) return "*";
+  const uses = declared ? references(decl.name as ts.Identifier).filter((r) => r !== decl.name && declarationOf(r) === decl).map(valuePlace) : [place];
+  let method: string | undefined;
+  for (const use of uses) {
+    const call = use.parent;
+    if (!(ts.isCallExpression(call) || ts.isNewExpression(call)) || call.arguments?.[0] !== use) continue;
+    const callee = unwrap(call.expression);
+    const m = member(callee);
+    const wrapped = ts.isNewExpression(call) && isGlobal(callee, REQUEST);
+    if (!wrapped && !(ts.isCallExpression(call) && (isGlobal(callee, FETCH) || (m?.name === "fetch" && isGlobal(unwrap(m.receiver), FETCH_GLOBALS))))) continue;
+    const init = call.arguments?.[1] && unwrap(call.arguments[1]);
+    let sent = init === undefined ? own : ts.isObjectLiteralExpression(init) ? (initMethod(init) ?? own) : "*";
+    // `new Request(request, init)` is a Request of its own, sent where that one is.
+    if (wrapped) sent = depth < 4 ? sentMethod(call, sent, depth + 1) : "*";
+    if (method !== undefined && method !== sent) return "*";
+    method = sent;
+  }
+  return method ?? own;
 }
 
 function methodProperty(obj: ts.ObjectLiteralExpression): string | undefined {
@@ -180,7 +220,7 @@ function rootRequest(node: ts.Node, raw: string, wrappers: CallSource["wrappers"
 
 /**
  * Whether a string is in a request's place: the URL, the first argument, of a call that requests or navigates (the
- * global fetch, a call named after an HTTP method, a configured wrapper, Next.js's navigations, the window Location's
+ * global fetch, the global Request constructor, a call named after an HTTP method, a configured wrapper, Next.js's navigations, the window Location's
  * `assign` and `replace`); a JSX `href`, `action`, `formAction` or `src`; a URL the window's Location is set to; a
  * client router's navigation that loads the document.
  */
@@ -190,6 +230,8 @@ function requestPosition(node: ts.Node, wrappers: CallSource["wrappers"] = []): 
   const holder = ts.isJsxExpression(value.parent) ? value.parent.parent : value.parent;
   if (ts.isJsxAttribute(holder)) return /^(href|action|formAction|src)$/.test(holder.name.getText());
   const place = argumentPlace(value);
+  // The global Request constructor's URL is the request a fetch of it sends.
+  if (place?.at === 0 && ts.isNewExpression(place.call) && isGlobal(place.callee, REQUEST)) return true;
   if (!place || place.at !== 0 || !ts.isCallExpression(place.call)) return false;
   if (navigates(place.callee) || wrappers.some((w) => w.name === place.call.expression.getText().replace(/\s+/g, ""))) return true;
   if (VERBS.has(place.name.toLowerCase())) return true;
@@ -1860,7 +1902,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
-      method: parsed.method ?? (navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers)),
+      method: parsed.method ?? clients.pathBasedMethod(node) ?? (navigatesWithGet(node) ? "GET" : methodNear(node, spec.wrappers)),
       path: parsed.path,
       based: parsed.based,
       ...(parsed.slash ? { slash: true as const } : {}),
@@ -2182,6 +2224,40 @@ export interface Argument {
 }
 
 /**
+ * A bracket in code read as text: a call's parentheses (with the callee written before them), or other parentheses,
+ * square brackets or braces. `parts` are the spans of its comma-separated parts, its arguments where it is a call: none
+ * for `f()`, and no empty one after a trailing comma.
+ */
+export interface Frame {
+  open: "(" | "[" | "{";
+  /** Where it opens, and where it closes (undefined where it does not). */
+  at: number;
+  close?: number;
+  /** The callee written before a `(`, whether it is called on a receiver, and that receiver where it is a name. */
+  name?: string;
+  method?: boolean;
+  receiver?: string;
+  annotation?: boolean;
+  /** Where the callee's name starts, past the `.` or `?.` it is called with. */
+  callee?: number;
+  /** For a method call, where its `.` (or `?.`) is. */
+  dot?: number;
+  /** The bracket it is written in, by where that opens, and the part of it it is in. */
+  outer?: number;
+  slot?: number;
+  parts: Array<{ start: number; end: number }>;
+}
+
+/** The brackets and string literals of code read as text, as `textCalls` scans them. */
+export interface TextCalls {
+  args: Argument[];
+  /** Every bracket, by where it opens. */
+  frames: Map<number, Frame>;
+  /** Every string literal's span. */
+  strings: Array<[number, number]>;
+}
+
+/**
  * The string literals in code read as text that are arguments of a call, directly in its parentheses. A request
  * written inside those parentheses is inside a call of its own, so it is that call's.
  *
@@ -2190,17 +2266,34 @@ export interface Argument {
  * the standard library's throwing functions.
  */
 export function callArguments(file: string, text: string): Argument[] {
+  return textCalls(file, text).args;
+}
+
+/** The scan `callArguments` reads arguments from, with every bracket and string literal of the code. */
+export function textCalls(file: string, text: string): TextCalls {
   const kotlin = /\.kts?$/.test(file);
   const hash = /\.(py|pyi|rb|sh|bash)$/.test(file);
   const out: Argument[] = [];
-  const frames: Array<{ open: string; name?: string; method?: boolean; receiver?: string; exception?: string; annotation?: boolean; index: number; from: number; at: number }> = [];
+  const all = new Map<number, Frame>();
+  const strings: Array<[number, number]> = [];
+  const frames: Array<Frame & { exception?: string; index: number; from: number }> = [];
   const opener: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  const push = (frame: Frame & { exception?: string; index: number; from: number }) => {
+    const outer = frames.at(-1);
+    if (outer) {
+      frame.outer = outer.at;
+      frame.slot = outer.index;
+    }
+    frames.push(frame);
+    all.set(frame.at, frame);
+  };
   for (let i = 0; i < text.length; ) {
     const c = text[i]!;
     const quote = text.startsWith('"""', i) ? '"""' : text.startsWith("'''", i) && hash ? "'''" : /["'`]/.test(c) ? c : undefined;
     if (quote) {
       const frame = frames.at(-1);
       const end = literalEnd(text, i, quote, file);
+      strings.push([i, end]);
       if (frame?.name !== undefined) {
         const label = /^\s*([A-Za-z_]\w*)\s*(?::(?!:)|=(?!=))/.exec(text.slice(frame.from, i))?.[1];
         out.push({
@@ -2220,25 +2313,30 @@ export function callArguments(file: string, text: string): Argument[] {
       continue;
     }
     if (c === "(") {
-      const before = withoutTypeArguments(text.slice(Math.max(0, i - 200), i));
+      const from = Math.max(0, i - 200);
+      const before = withoutTypeArguments(text.slice(from, i));
       const m = CALLEE_BEFORE.exec(before);
       const [, thrown, receivers = "", name = ""] = m ?? [];
       const exception = !!thrown || /^(?:[A-Z]\w*)?(?:Error|Exception)$/.test(name) || (kotlin && !receivers && KOTLIN_THROWING.has(name));
       // A method is called on whatever comes before its dot, a call's result too (`get(x).replaceFirst(`). A keyword's
       // parentheses (`if ("/x")`) are no call.
-      const method = /(?:\?\.|\.)\s*([A-Za-z_]\w*)\s*$/.exec(before);
-      const bare = method ? undefined : /(?<![\w$])([A-Za-z_]\w*)\s*$/.exec(before)?.[1];
-      frames.push({
+      const method = /(\?\.|\.)\s*([A-Za-z_]\w*)\s*$/.exec(before);
+      const bare = method ? undefined : /(?<![\w$])([A-Za-z_]\w*)\s*$/.exec(before);
+      const called = method ? method[2] : bare && !CONTROL_KEYWORDS.has(bare[1]!) ? bare[1] : undefined;
+      push({
         open: c,
-        name: method ? method[1] : bare && !CONTROL_KEYWORDS.has(bare) ? bare : undefined,
+        at: i,
+        name: called,
         method: !!method,
         receiver: method ? /(?<![\w$.])([A-Za-z_]\w*)\s*(?:\?\.|\.)\s*[A-Za-z_]\w*\s*$/.exec(before)?.[1] : undefined,
         exception: m && exception ? (receivers + name).replace(/\s+/g, "") : undefined,
         // `@GET(` in Java and Kotlin, `[Get(` in C#: the callee written after `@`, or first in an attribute's brackets.
         annotation: /(?:@|\[\s*)(?:[A-Za-z_]\w*\s*\.\s*)*[A-Za-z_]\w*\s*$/.test(before),
+        ...(called !== undefined ? { callee: from + before.lastIndexOf(called) } : {}),
+        ...(method ? { dot: from + method.index } : {}),
+        parts: [],
         index: 0,
         from: i + 1,
-        at: i,
       });
     } else if (c === "<" && /[\w$]/.test(text[i - 1] ?? "")) {
       // A call's type arguments (`helper<T, U>(`): their commas separate no arguments.
@@ -2247,21 +2345,28 @@ export function callArguments(file: string, text: string): Argument[] {
         i = close;
         continue;
       }
-    } else if (c === "[" || c === "{") frames.push({ open: c, index: 0, from: i + 1, at: i });
+    } else if (c === "[" || c === "{") push({ open: c, at: i, parts: [], index: 0, from: i + 1 });
     else if (c === ",") {
       const frame = frames.at(-1);
       if (frame) {
+        frame.parts.push({ start: frame.from, end: i });
         frame.index++;
         frame.from = i + 1;
       }
     } else if (opener[c]) {
       // A bracket left open by text the scan misreads closes with the bracket around it.
-      const at = frames.map((f) => f.open).lastIndexOf(opener[c]);
-      if (at >= 0) frames.length = at;
+      const at = frames.map((f) => f.open).lastIndexOf(opener[c] as Frame["open"]);
+      if (at >= 0) {
+        const frame = frames[at]!;
+        // `f()` has no argument, and a trailing comma (`f(a,)`) opens none.
+        if (text.slice(frame.from, i).trim()) frame.parts.push({ start: frame.from, end: i });
+        frame.close = i;
+        frames.length = at;
+      }
     }
     i++;
   }
-  return out;
+  return { args: out, frames: all, strings };
 }
 
 /** Keywords of the languages read as text that are written before parentheses that hold no call's arguments. */
@@ -2374,7 +2479,7 @@ export interface TextContext {
   written?: Place[];
   /** Collects the paths written relative to a base the configuration does not give. */
   unbaseRelative?: Place[];
-  /** Collects the paths a type-level prefix is not read for, with why. */
+  /** Collects the requests a declaration states that are not read (a type-level prefix not read, a URL given as a value), with why. */
   untyped?: Array<{ why: string; at: Place }>;
 }
 
@@ -2483,14 +2588,58 @@ function exchangeCalls(file: string, text: string, spec: CallSource, untyped?: T
   return out;
 }
 
+/**
+ * Where a Retrofit method annotation names no URL (`@GET`, `@HTTP(method = "GET")` without `path`) and the method takes
+ * it from a parameter annotated `@Url` (Retrofit, Url): a value, so the request is not read.
+ */
+function retrofitUrls(file: string, text: string, scan: TextCalls): number[] {
+  if (!/\.(java|kt|kts)$/.test(file)) return [];
+  const masked = blankStrings(text, scan.strings);
+  const out: number[] = [];
+  const annotations = [...masked.matchAll(/@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|HTTP)\b(\s*\(([^()]*)\))?/g)];
+  annotations.forEach((m, i) => {
+    const path = m[1] === "HTTP" ? /\bpath\s*=/.test(m[3] ?? "") : (m[3] ?? "").trim() !== "";
+    if (path) return;
+    const end = (m.index ?? 0) + m[0].length;
+    const next = annotations[i + 1]?.index ?? masked.length;
+    if (/@Url\b/.test(masked.slice(end, next))) out.push(m.index ?? 0);
+  });
+  return out;
+}
+
+/** Whether a string is the request line of OpenFeign's `@RequestLine("GET /repos/{owner}")`, its value. */
+function requestLine(file: string, text: string, a: Argument): boolean {
+  return /\.(java|kt|kts)$/.test(file) && !!a.annotation && a.name === "RequestLine" && a.index === 0 && (a.label === undefined || a.label === "value") && wholeArgument(text, a);
+}
+
+/**
+ * The method and the path of a Feign request line, as Feign's contract reads it (DefaultContract: `^([A-Z]+)[ ]*(.*)$`,
+ * the method one of its HttpMethod's): the URI after the method, a `/` put before one that starts with a literal
+ * (RequestTemplate.uri), without its query. Null where Feign refuses the line (it fails to start); undefined where
+ * the URI starts with a value, which atlas does not read.
+ */
+function feignLine(inner: string): { method: string; path: string } | null | undefined {
+  const m = /^([A-Z]+) *(.*)$/.exec(inner);
+  if (!m || !FEIGN_METHODS.has(m[1]!)) return null;
+  const uri = m[2]!.replace(/[?#].*$/s, "");
+  if (uri.startsWith(HOLE) || uri.startsWith(";")) return undefined;
+  return { method: m[1]!, path: uri.startsWith("/") ? uri : `/${uri}` };
+}
+
+/** OpenFeign's `Request.HttpMethod`. */
+const FEIGN_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "QUERY"]);
+
 export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean, context: TextContext = {}): ReadCall[] {
   const out: ReadCall[] = exchangeCalls(file, original, spec, context.untyped);
   const text = withoutComments(file, original);
   const scopeAt = textScopes(text);
-  const args = callArguments(file, text);
+  const scan = textCalls(file, text);
+  const args = scan.args;
+  const methods = new TextMethods(file, text, scan);
   const csharp = /\.cs$/.test(file);
   const prefixes = csharp ? refitPrefixes(file, text, args) : [];
   for (const p of prefixes) if (p.why) context.untyped?.push({ why: `Refit's [PathPrefix] is not read where ${p.why}`, at: { file, line: lineOf(text, p.at) } });
+  for (const at of retrofitUrls(file, text, scan)) context.untyped?.push({ why: "a Retrofit method takes its URL from its @Url parameter, a value", at: { file, line: lineOf(text, at) } });
   const python = /\.pyi?$/.test(file);
   const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
@@ -2522,11 +2671,18 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     if (csharp && argument?.annotation && argument.name === "PathPrefix") return;
     const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
     if (typed?.why) return;
-    const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : inner;
-    const place = argument && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
-    // The root path only as a verb call's URL.
+    const lined = !!argument && requestLine(file, text, argument);
+    const line = lined ? feignLine(inner) : undefined;
+    if (line === null) return;
+    if (lined && !line) {
+      context.untyped?.push({ why: "a Feign request line's URI starts with a value", at: { file, line: lineOf(text, index) } });
+      return;
+    }
+    const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : line ? line.path : inner;
+    const place = argument && !line && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
+    // The root path only as a verb call's URL, or a request line's.
     let parsed: (CallPath & { relative?: true }) | undefined =
-      place === "root" ? undefined : (callPath(path, false, served) ?? (VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
+      place === "root" ? undefined : (callPath(path, false, served) ?? (line || VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
     // The path of a URL whose host is given beside it starts at that host's root, a leading `/` written or not.
     let host = hostOf(inner);
     if (place === "root") {
@@ -2548,18 +2704,18 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     }
     // The configured base written once more (`base_url=f"{API_URL}/api/v1"`, `SetBaseURL(gatewayURL + "/billing/v1")`),
     // where nothing makes it a request's URL.
-    if (context.base && !place && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
+    if (context.base && !place && !line && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
       context.written?.push({ file, line: lineOf(text, index) });
       return;
     }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
-    const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const verb = before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(line, index - lineStart, index - lineStart + length);
+    const statement = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+    const verb = line?.method ?? (argument && methods.of(argument)) ?? (before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(statement, index - lineStart, index - lineStart + length))?.toUpperCase();
     out.push({
       from: spec.from,
       to: spec.to,
-      method: verb ? verb.toUpperCase() : "*",
+      method: verb ?? "*",
       path: parsed.path,
       based: parsed.based,
       ...(parsed.slash ? { slash: true as const } : {}),

@@ -273,6 +273,40 @@ export class Clients {
   }
 
   /**
+   * The method of a call through openapi-fetch's path-based client (`createPathBasedClient(options)`,
+   * `wrapAsPathBasedClient(client)`): `client["/users/{id}"].GET(init)` forwards to the client's `GET` with that path
+   * (openapi-fetch, PathCallForwarder). Undefined anywhere else.
+   */
+  pathBasedMethod(node: ts.Node): string | undefined {
+    const value = valuePlace(node);
+    const access = value.parent;
+    if (!ts.isElementAccessExpression(access) || access.argumentExpression !== value || access.questionDotToken) return undefined;
+    const method = access.parent;
+    if (!ts.isPropertyAccessExpression(method) || method.expression !== access || !OPENAPI_FETCH_METHODS.has(method.name.text)) return undefined;
+    const call = method.parent;
+    if (!ts.isCallExpression(call) || call.expression !== method) return undefined;
+    return this.pathBased(access.expression, 0) ? method.name.text : undefined;
+  }
+
+  /** Whether an expression is a path-based client openapi-fetch makes, followed through `const`s and imports. */
+  private pathBased(e: ts.Expression, depth: number): boolean {
+    const u = unwrap(e);
+    if (depth > DEPTH) return false;
+    if (ts.isCallExpression(u)) {
+      const callee = unwrap(u.expression);
+      if (!ts.isIdentifier(callee)) return false;
+      const name = importedFrom(callee, ["openapi-fetch"]);
+      return name === "createPathBasedClient" || name === "wrapAsPathBasedClient";
+    }
+    if (!ts.isIdentifier(u)) return false;
+    const d = this.declarationThrough(u);
+    if (!d || !ts.isVariableDeclaration(d) || !d.initializer) return false;
+    const list = d.parent;
+    if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+    return this.pathBased(d.initializer, depth + 1);
+  }
+
+  /**
    * The request a URL is the URL of, made through a client instance: the path argument of its methods (axios's, Ky's,
    * openapi-fetch's) or of the instance called; the `url` of an axios request config; the URL an RTK Query endpoint's
    * `query` returns. Undefined anywhere else.
@@ -296,14 +330,15 @@ export class Clients {
     if (!ts.isCallExpression(p) || p.arguments[0] !== value) return undefined;
     const found = this.requestCall(p);
     if (!found || found.config) return undefined;
-    return this.request(found.instance, found.options);
+    const request = this.request(found.instance, found.options);
+    return found.method ? { ...request, method: found.method } : request;
   }
 
   /**
    * The instance a call is made through and the options it is given: `api.get(url, options)`, `api(url, options)`; with
    * `config` where the call takes an axios request config first (`api(config)`, `api.request(config)`).
    */
-  private requestCall(call: ts.CallExpression): { instance: Instance; options: ts.Expression | undefined; config?: true } | undefined {
+  private requestCall(call: ts.CallExpression): { instance: Instance; options: ts.Expression | undefined; config?: true; method?: string } | undefined {
     const callee = unwrap(call.expression);
     const m = member(callee);
     const on = m ? this.instanceOf(m.receiver) : undefined;
@@ -313,7 +348,8 @@ export class Clients {
         if (!AXIOS_PATH_FIRST.has(m.name)) return undefined;
         return { instance: on, options: call.arguments[AXIOS_WITH_DATA.has(m.name) ? 2 : 1] };
       }
-      if (on.library === "ky" && KY_METHODS.has(m.name)) return { instance: on, options: call.arguments[1] };
+      // Ky's methods set the method they are named for over the options' (Ky, readme: ky.get(input, options?)...).
+      if (on.library === "ky" && KY_METHODS.has(m.name)) return { instance: on, options: call.arguments[1], method: m.name.toUpperCase() };
       if (on.library === "openapi-fetch" && OPENAPI_FETCH_METHODS.has(m.name)) return { instance: on, options: call.arguments[1] };
       return undefined;
     }

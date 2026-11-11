@@ -1,31 +1,5 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs. atlas reads C# as text: the route of each of Refit's verb attributes
-# (`[Get("/users/{id}")]`) is read as a path, with no method, after the interface's `[PathPrefix]`.
+# (`[Get("/users/{id}")]`) is read as a path, with the attribute's method, after the interface's `[PathPrefix]`.
 missing:
-  - { call: "GET /api/users/{}", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/users/{}`), and nothing says so" }
-  - { call: "GET /api/users", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/users`), and nothing says so" }
-  - { call: "GET /api/users/search", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/users/search`), and nothing says so" }
-  - { call: "POST /api/users", reason: "the method of Refit's `[Post]` attribute is not read (`* /api/users`), and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "the method of Refit's `[Put]` attribute is not read (`* /api/users/{}`), and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "the method of Refit's `[Patch]` attribute is not read (`* /api/users/{}`), and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "the method of Refit's `[Delete]` attribute is not read (`* /api/users/{}`), and nothing says so" }
-  - { call: "HEAD /api/users/{}", reason: "the method of Refit's `[Head]` attribute is not read (`* /api/users/{}`), and nothing says so" }
-  - { call: "GET /api/orders/{}/items", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/orders/{}/items`), and nothing says so" }
-  - { call: "GET /api/projects/{}", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/projects/{}`, `[Get(\"/{id}\")]` after the interface's `[PathPrefix(\"/projects\")]`), and nothing says so" }
-  - { call: "GET /api/projects/{}/members", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/projects/{project.Id}/members`), and nothing says so" }
   - { call: "GET /api/projects/{}/files/{}", reason: "a route with Refit's catch-all placeholder (`[Get(\"/{id}/files/{**path}\")]`) is not read, and nothing says so" }
-  - { call: "POST /api/projects/{}/archive", reason: "the method of Refit's `[Post]` attribute is not read (`* /api/projects/{}/archive`), and nothing says so" }
-  - { call: "POST /api/projects/{}/files", reason: "the method of Refit's `[Post]` attribute is not read (`* /api/projects/{}/files`), and nothing says so" }
-  - { call: "GET /api/v2/reports/{}", reason: "the method of Refit's `[Get]` attribute is not read (`* /api/v2/reports/{}`, `[Get(\"/{year}\")]` after `[PathPrefix(\"/v2/reports\")]`), and nothing says so" }
-  - { call: "POST /api/v2/reports/{}/export", reason: "the method of Refit's `[Post]` attribute is not read (`* /api/v2/reports/{}/export`), and nothing says so" }
-extra:
-  - { call: "* /api/users/{}", reason: "the routes of `[Get]`, `[Put]`, `[Patch]`, `[Delete]` and `[Head]` on `/users/{id}`, read without their methods" }
-  - { call: "* /api/users", reason: "the routes of `[Get]` and `[Post]` on `/users`, read without their methods" }
-  - { call: "* /api/users/search", reason: "the route of `[Get]`, read without its method" }
-  - { call: "* /api/orders/{}/items", reason: "the route of `[Get]`, read without its method" }
-  - { call: "* /api/projects/{}", reason: "the route of `[Get(\"/{id}\")]` after the interface's `[PathPrefix]`, read without its method" }
-  - { call: "* /api/projects/{}/archive", reason: "the route of `[Post]` after the interface's `[PathPrefix]`, read without its method" }
-  - { call: "* /api/projects/{}/files", reason: "the route of `[Post]` after the interface's `[PathPrefix]`, read without its method" }
-  - { call: "* /api/projects/{}/members", reason: "the route of `[Get]` (`{project.Id}`, a property of the argument) after the interface's `[PathPrefix]`, read without its method" }
-  - { call: "* /api/v2/reports/{}", reason: "the route of `[Get(\"/{year}\")]` after the interface's `[PathPrefix]`, read without its method" }
-  - { call: "* /api/v2/reports/{}/export", reason: "the route of `[Post]` after the interface's `[PathPrefix]`, read without its method" }

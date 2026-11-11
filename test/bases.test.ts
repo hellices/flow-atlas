@@ -272,7 +272,7 @@ describe("paths relative to a client's base, in code read as text", () => {
       'api.get("https://other.example/x")',
     ].join("\n");
     expect(read({ "web/p.py": python }, { base: "/api/v2/", join: "resolve", receivers: ["api"] })).toEqual({
-      calls: ["* /api/v2/projects/{}/archive @2", "GET /api/v2/projects @1"],
+      calls: ["GET /api/v2/projects @1", "POST /api/v2/projects/{}/archive @2"],
       limits: ["calls web->api: URLs to other.example (web/p.py:6) are not read as requests to api; set origins.api if that is its host"],
     });
     expect(read({ "web/p.py": python }, { receivers: ["api"] })).toEqual({
@@ -284,14 +284,14 @@ describe("paths relative to a client's base, in code read as text", () => {
     });
   });
 
-  it("reads Retrofit's annotations, .NET's HttpRequestMessage and Dart's Uri.http without receivers", () => {
+  it("reads Retrofit's annotations, .NET's HttpRequestMessage and Dart's Uri.http without receivers, with their methods", () => {
     const retrofit = 'interface UserApi {\n  @GET("users/{id}")\n  suspend fun user(@Path("id") id: String): User\n  @HTTP(method = "DELETE", path = "users/{id}/sessions", hasBody = true)\n  suspend fun end(): Unit\n  @GET("/health")\n  suspend fun health(): Unit\n}';
-    expect(read({ "web/UserApi.kt": retrofit }, { base: "/api/v1/", join: "resolve" })).toEqual({ calls: ["* /api/v1/users/{} @2", "* /api/v1/users/{}/sessions @4", "* /health @6"], limits: [] });
+    expect(read({ "web/UserApi.kt": retrofit }, { base: "/api/v1/", join: "resolve" })).toEqual({ calls: ["DELETE /api/v1/users/{}/sessions @4", "GET /api/v1/users/{} @2", "GET /health @6"], limits: [] });
     const dotnet = 'var request = new HttpRequestMessage(HttpMethod.Patch, $"users/{id}");\nvar other = new HttpRequestMessage(HttpMethod.Head, requestUri: "reports");';
     expect(read({ "web/A.cs": dotnet }, { base: "/api/", join: "resolve" })).toEqual({ calls: ["HEAD /api/reports @2", "PATCH /api/users/{} @1"], limits: [] });
     const dart = "final a = client.get(Uri.http(host, 'catalog/items'));\nfinal b = client.get(Uri.https(host, '/catalog/items/$id'));\nfinal c = client.get(Uri.https('maps.example.com', '/x'));";
     expect(read({ "web/a.dart": dart }, { prefix: "/api" })).toEqual({
-      calls: ["* /catalog/items based @1", "* /catalog/items/{} based @2"],
+      calls: ["GET /catalog/items based @1", "GET /catalog/items/{} based @2"],
       limits: ["calls web->api: URLs to maps.example.com (web/a.dart:3) are not read as requests to api; set origins.api if that is its host"],
     });
   });
@@ -318,7 +318,7 @@ describe("prefixes a type or a helper puts before its paths", () => {
       "}",
     ].join("\n");
     expect(read({ "web/Apis.cs": refit }, { prefix: "/api" })).toEqual({
-      calls: ["* /api/projects/{} @4", "* /api/projects/{}/archive @5", "* /api/users/{} @10"],
+      calls: ["GET /api/projects/{} @4", "GET /api/users/{} @10", "POST /api/projects/{}/archive @5"],
       limits: ["calls web->api: the requests are not read where Refit's [PathPrefix] is not read where IReportsApi extends another interface: web/Apis.cs:12"],
     });
   });
@@ -441,7 +441,7 @@ describe("a client's requests as its library sends them", () => {
       limits: ["calls web->api: the configured base /api/, written as a value (web/a.js:3), is the client's base, not a request"],
     });
     expect(read({ "web/A.kt": 'interface A {\n  @GET("/api")\n  suspend fun a(): Unit\n}', "web/a.py": 'api.get("/api")\nbase_url = "/api/"' }, { base: "/api/", join: "resolve", receivers: ["api"] })).toEqual({
-      calls: ["* /api @2", "GET /api @1"],
+      calls: ["GET /api @1", "GET /api @2"],
       limits: ["calls web->api: the configured base /api/, written as a value (web/a.py:2), is the client's base, not a request"],
     });
   });

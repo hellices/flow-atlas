@@ -1,20 +1,6 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /users/{}", reason: "the method of a RestClient request is the call before `.uri(` (`get()`), which is not read, and nothing says so" }
-  - { call: "GET /users", reason: "the method of a RestClient request (`get()` before `.uri(builder -> builder.path(\"/users\")...)`) is not read, and nothing says so" }
-  - { call: "POST /users", reason: "the method of a RestClient request (`post()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "PUT /users/{}", reason: "the method of a RestClient request (`put()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "PATCH /users/{}", reason: "the method of a RestClient request (`patch()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "DELETE /users/{}", reason: "the method of a RestClient request (`delete()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "HEAD /users/emails/{}", reason: "the method of a RestClient request (`head()` before `.uri(`) is not read, and nothing says so" }
-  - { call: "GET /users/{}/avatar", reason: "the method of a RestClient request (`get()` before a `.uri(` builder) is not read, and nothing says so" }
-  - { call: "GET /users/{}/settings", reason: "the method of a RestClient request (`get()` before `.uri(` and `.exchange(`) is not read, and nothing says so" }
   - { call: "GET /users/{}/posts", reason: "a path concatenated around a value (`\"/users/\" + userId + \"/posts\"`) is read as two paths, and nothing says so" }
 extra:
-  - { call: "* /users", reason: "RestClient requests to `/users` read with their method (`get()`, `post()` before `.uri(`) unread" }
-  - { call: "* /users/{}", reason: "RestClient requests to `/users/{id}` read with their method (`get()`, `put()`, `patch()`, `delete()` before `.uri(`) unread" }
-  - { call: "* /users/emails/{}", reason: "a RestClient `head()` request read with its method unread" }
-  - { call: "* /users/{}/avatar", reason: "a RestClient `get()` request read with its method unread" }
-  - { call: "* /users/{}/settings", reason: "a RestClient `get()` request read with its method unread" }
-  - { call: "* /posts", reason: "the tail of `\"/users/\" + userId + \"/posts\"` read as a request of its own" }
+  - { call: "GET /posts", reason: "the tail of `\"/users/\" + userId + \"/posts\"` read as a request of its own, with the GET of the `get()` before its `.uri(` (its head is read alone too, as the GET `/users` another method sends)" }

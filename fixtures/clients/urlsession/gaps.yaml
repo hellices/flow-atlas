@@ -1,14 +1,14 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/v1/users/{}", reason: "a path appended to a base URL without a leading `/` (`baseURL.appendingPathComponent(\"users/\\(id)\")`) is not read, nor the method set in `request.httpMethod`, and nothing says so" }
-  - { call: "POST /api/v1/users", reason: "a path appended to a base URL without a leading `/` (`appendingPathComponent(\"users\")`) is not read, nor the method set in `request.httpMethod`, and nothing says so" }
-  - { call: "PUT /api/v1/users/{}", reason: "a path appended to a base URL without a leading `/` is not read, nor the method set in `request.httpMethod`, and nothing says so" }
-  - { call: "PATCH /api/v1/users/{}", reason: "a path appended with `appending(path:)` without a leading `/` is not read, nor the method set in `request.httpMethod`, and nothing says so" }
-  - { call: "DELETE /api/v1/users/{}", reason: "path components appended one by one (`appendingPathComponent(\"users\").appendingPathComponent(id)`) are not read, nor the method set in `request.httpMethod`, and nothing says so" }
-  - { call: "GET /api/v1/users/{}/avatar", reason: "a path appended to a base URL without a leading `/` is not read, nor the GET `URLSession.data(from:)` sends, and nothing says so" }
-  - { call: "GET /store/products", reason: "the GET `URLSession.data(from:)` sends to the URL `URLComponents` builds is not read: the path given to the components is read with its method unread, and nothing says so" }
+  - { call: "GET /api/v1/users/{}", reason: "a path appended to a base URL without a leading `/` (`baseURL.appendingPathComponent(\"users/\\(id)\")`) is not read, and nothing says so" }
+  - { call: "POST /api/v1/users", reason: "a path appended to a base URL without a leading `/` (`appendingPathComponent(\"users\")`) is not read, and nothing says so" }
+  - { call: "PUT /api/v1/users/{}", reason: "a path appended to a base URL without a leading `/` is not read, and nothing says so" }
+  - { call: "PATCH /api/v1/users/{}", reason: "a path appended with `appending(path:)` without a leading `/` is not read, and nothing says so" }
+  - { call: "DELETE /api/v1/users/{}", reason: "path components appended one by one (`appendingPathComponent(\"users\").appendingPathComponent(id)`) are not read, and nothing says so" }
+  - { call: "GET /api/v1/users/{}/avatar", reason: "a path appended to a base URL without a leading `/` is not read, and nothing says so" }
+  - { call: "GET /store/products", reason: "the GET `URLSession.data(from:)` sends to the URL `URLComponents` builds in a variable is not read: the path given to the components is read with its method unread, and nothing says so" }
   - { call: "GET /store/orders/{}", reason: "a path with a Swift interpolation in it (`\"/store/orders/\\(number)\"`) is not read, and nothing says so" }
-  - { call: "POST /store/orders/{}/cancel", reason: "a path with a Swift interpolation in it is not read, nor the method set in `request.httpMethod`, and nothing says so" }
+  - { call: "POST /store/orders/{}/cancel", reason: "a path with a Swift interpolation in it is not read, and nothing says so" }
 extra:
-  - { call: "* /store/products", reason: "the path `URLComponents` is given read with the GET `URLSession.data(from:)` sends unread" }
+  - { call: "* /store/products", reason: "the path `URLComponents` is given read with the GET `URLSession.data(from:)` sends, through a variable, unread" }

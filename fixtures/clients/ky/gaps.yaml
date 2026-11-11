@@ -1,6 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "QUERY /search/items", reason: "Ky's `query` method, which sends QUERY, is not read: the path is read with `*`, and nothing says so" }
-extra:
-  - { call: "* /search/items", reason: "`search.query(\"items\", ...)` read under the instance's `baseUrl` with its QUERY method unread" }

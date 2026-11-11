@@ -1,23 +1,16 @@
 # Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
 missing:
-  - { call: "GET /api/users/{}", reason: "the method of a URL handed to a verb inside `Uri.parse` (`http.get(Uri.parse(...))`) is not read, and the base URL's path (`'$baseUrl/users/$id'`, the base being `'$origin/api'`) is not put before a path that starts with a value, though the call source's prefix names it, and nothing says so" }
-  - { call: "POST /api/users", reason: "the method of `http.post(Uri.parse(...))` is not read, nor the base URL's path before `'$baseUrl/users'`, and nothing says so" }
-  - { call: "PUT /api/users/{}", reason: "the method of `http.put(Uri.parse(...))` is not read, nor the base URL's path, and nothing says so" }
-  - { call: "PATCH /api/users/{}", reason: "the method of a `Request` built with it (`http.Request('PATCH', uri)`) and sent with `Client.send` is not read, nor the base URL's path, and nothing says so" }
-  - { call: "DELETE /api/users/{}", reason: "the method of `http.delete(Uri.parse(...))` is not read, and a path concatenated before a value (`baseUrl + '/users/' + id`) is read without the value, and nothing says so" }
-  - { call: "GET /api/users/{}/avatar", reason: "`http.read`, which sends GET, is not read as a method, nor the base URL's path, and nothing says so" }
-  - { call: "GET /catalog/items", reason: "the method of a client's `get` whose URL is built by `Uri.http(host, path, query)` is not read, and nothing says so" }
-  - { call: "GET /catalog/items/{}", reason: "the method of a client's `get(Uri.http(host, path))` is not read, and nothing says so" }
-  - { call: "PATCH /catalog/items/{}", reason: "the method of a client's `patch(Uri.http(host, path))` is not read, and nothing says so" }
-  - { call: "DELETE /catalog/items/{}/reviews/{}", reason: "the method of a client's `delete(Uri.http(host, path))` is not read, and nothing says so" }
-  - { call: "POST /catalog/items/{}/reviews", reason: "the method of a client's `post(Uri.http(host, path))` is not read (the path, given without its leading `/` as the package's README writes one, is), and nothing says so" }
+  - { call: "GET /api/users/{}", reason: "the base URL's path (`'$baseUrl/users/$id'`, the base being `'$origin/api'`) is not put before a path that starts with a value, though the call source's prefix names it, and nothing says so" }
+  - { call: "POST /api/users", reason: "the base URL's path is not put before `'$baseUrl/users'`, and nothing says so" }
+  - { call: "PUT /api/users/{}", reason: "the base URL's path is not put before `'$baseUrl/users/$id'`, and nothing says so" }
+  - { call: "PATCH /api/users/{}", reason: "the base URL's path is not put before the URL of `http.Request('PATCH', Uri.parse('$baseUrl/users/$id'))`, and nothing says so" }
+  - { call: "DELETE /api/users/{}", reason: "a path concatenated before a value (`baseUrl + '/users/' + id`) is read without the value, and nothing says so" }
+  - { call: "GET /api/users/{}/avatar", reason: "the base URL's path is not put before `'$baseUrl/users/$id/avatar'`, and nothing says so" }
 extra:
-  - { call: "* /users/{}", reason: "the requests to `'$baseUrl/users/$id'` read with their methods unread and without the base URL's path" }
-  - { call: "* /users", reason: "`http.post(Uri.parse('$baseUrl/users'))` read with its method unread and without the base URL's path" }
-  - { call: "* /users/{}/avatar", reason: "`http.read(Uri.parse('$baseUrl/users/$id/avatar'))` read with its method unread and without the base URL's path" }
-  - { call: "* /api/users", reason: "`http.delete(Uri.parse(baseUrl + '/users/' + id))` read with its method unread and without the value after the path" }
-  - { call: "* /catalog/items", reason: "a client's `get(Uri.http(...))` read with its method unread" }
-  - { call: "* /catalog/items/{}", reason: "a client's `get` and `patch` of `Uri.http(...)` read with their methods unread" }
-  - { call: "* /catalog/items/{}/reviews", reason: "a client's `post(Uri.http(host, 'catalog/items/$id/reviews'))` read with its method unread" }
-  - { call: "* /catalog/items/{}/reviews/{}", reason: "a client's `delete(Uri.http(...))` read with its method unread" }
+  - { call: "GET /users/{}", reason: "`http.get(Uri.parse('$baseUrl/users/$id'))` read without the base URL's path" }
+  - { call: "PUT /users/{}", reason: "`http.put(Uri.parse('$baseUrl/users/$id'))` read without the base URL's path" }
+  - { call: "PATCH /users/{}", reason: "`http.Request('PATCH', Uri.parse('$baseUrl/users/$id'))` read without the base URL's path" }
+  - { call: "POST /users", reason: "`http.post(Uri.parse('$baseUrl/users'))` read without the base URL's path" }
+  - { call: "GET /users/{}/avatar", reason: "`http.read(Uri.parse('$baseUrl/users/$id/avatar'))` read without the base URL's path" }
+  - { call: "DELETE /api/users", reason: "`http.delete(Uri.parse(baseUrl + '/users/' + id))` read without the value after the path" }
