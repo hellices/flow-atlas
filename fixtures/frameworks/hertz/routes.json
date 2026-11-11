@@ -22,6 +22,7 @@
     {"method":"GET","path":"/get"},
     {"method":"HEAD","path":"/head"},
     {"method":"GET","path":"/hertz/{}","raw":"/hertz/:version"},
+    {"method":"GET","path":"/hertz/{}","raw":"/hertz/:version/"},
     {"method":"POST","path":"/hertz/{}","raw":"/hertz/:version/"},
     {"method":"GET","path":"/hertz/{}/{**}","raw":"/hertz/:version/*action"},
     {"method":"POST","path":"/hertz/{}/{**}","raw":"/hertz/:version/*action"},

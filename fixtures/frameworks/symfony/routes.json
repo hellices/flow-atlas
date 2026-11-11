@@ -24,6 +24,7 @@
     {"method":"PATCH","path":"/blog/{}","raw":"/blog/{slug}"},
     {"method":"PUT","path":"/blog/{}","raw":"/blog/{slug}"},
     {"method":"GET","path":"/blog/{}/comments","raw":"/blog/{slug}/comments"},
+    {"method":"GET","path":"/blog/{}/comments","raw":"/blog/{slug}/comments/{id}"},
     {"method":"GET","path":"/blog/{}/comments/{}","raw":"/blog/{slug}/comments/{id}"},
     {"method":"GET","path":"/blog/archive","raw":"/blog/archive/{year}"},
     {"method":"GET","path":"/blog/archive/{}","raw":"/blog/archive/{year}"},

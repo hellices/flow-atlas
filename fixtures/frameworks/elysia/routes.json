@@ -29,6 +29,7 @@
     {"method":"PATCH","path":"/items/{}","raw":"/items/:id"},
     {"method":"PUT","path":"/items/{}","raw":"/items/:id"},
     {"method":"*","path":"/legacy"},
+    {"method":"*","path":"/legacy","raw":"/legacy/*"},
     {"method":"*","path":"/legacy/{**}","raw":"/legacy/*"},
     {"method":"M-SEARCH","path":"/m-search"},
     {"method":"GET","path":"/optional","raw":"/optional/:id?"},

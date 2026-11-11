@@ -13,6 +13,7 @@
     {"method":"GET","path":"/articles","raw":"/articles/"},
     {"method":"POST","path":"/articles","raw":"/articles/"},
     {"method":"DELETE","path":"/articles/{}","raw":"/articles/{articleID}/"},
+    {"method":"GET","path":"/articles/{}","raw":"/articles/{articleID}/"},
     {"method":"GET","path":"/articles/{}","raw":"/articles/{articleSlug:[a-z-]+}"},
     {"method":"PUT","path":"/articles/{}","raw":"/articles/{articleID}/"},
     {"method":"GET","path":"/articles/{}-{}-{}","raw":"/articles/{month}-{day}-{year}"},

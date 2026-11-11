@@ -20,6 +20,7 @@
     {"method":"PUT","path":"/items/{}","raw":"/items/{id}"},
     {"method":"*","path":"/ping"},
     {"method":"GET","path":"/robots.txt"},
+    {"method":"GET","path":"/static"},
     {"method":"GET","path":"/static","raw":"/static/"},
     {"method":"GET","path":"/static/{**}","raw":"/static/{*rest}"},
     {"method":"GET","path":"/teams"},

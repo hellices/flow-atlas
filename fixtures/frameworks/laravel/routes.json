@@ -3,7 +3,9 @@
   "version": "13.40.0",
   "routes": [
     {"method":"GET","path":"/"},
+    {"method":"GET","path":"/","raw":"{fallbackPlaceholder}"},
     {"method":"HEAD","path":"/"},
+    {"method":"HEAD","path":"/","raw":"{fallbackPlaceholder}"},
     {"method":"GET","path":"/{**}","raw":"{fallbackPlaceholder}"},
     {"method":"HEAD","path":"/{**}","raw":"{fallbackPlaceholder}"},
     {"method":"GET","path":"/admin/reports","raw":"admin/reports"},
