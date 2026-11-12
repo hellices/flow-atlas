@@ -286,11 +286,27 @@ export class TextMethods {
       const after = /^\s*\{/.exec(this.text.slice((f.close ?? this.text.length) + 1));
       block = after ? this.scan.frames.get((f.close ?? 0) + after[0].length) : undefined;
     }
-    if (!block) return fallback;
+    return block ? this.blockMethod(block, fallback) : fallback;
+  }
+
+  /**
+   * The method of Ktor's `client.request { }`, whose block opens at `at`: as `request(url) { }` reads it, GET where the
+   * block names no `method`; `*` where the file does not import Ktor's `request`.
+   */
+  ktorRequestBlock(at: number): string {
+    const block = this.scan.frames.get(at);
+    return block && this.lang === "kotlin" && this.imports(KTOR_REQUEST) ? this.blockMethod(block, "GET") : "*";
+  }
+
+  /** The `method = HttpMethod.X` a Ktor builder block states at its top, `fallback` where it names none, `*` otherwise. */
+  private blockMethod(block: Frame, fallback: string): string {
     const code = this.code().slice(block.at + 1, block.close ?? this.text.length);
     const sets = [...code.matchAll(/(?<![\w.$])method\s*=(?!=)\s*([^\n;]*)/g)];
     if (sets.length === 0) return /(?<![\w$])method(?![\w$])/.test(code) ? "*" : fallback;
     if (sets.length > 1 || this.innermost(block.at + 1 + sets[0]!.index) !== block) return "*";
+    // An assignment under a condition written without braces (`if (x) method = ...`) may not run.
+    const statement = code.slice(0, sets[0]!.index).split(/[;\n{}]/).at(-1)!;
+    if (/(?<![\w$])(?:if|else|when|while|for)(?![\w$])|\)\s*$/.test(statement)) return "*";
     const constant = /^HttpMethod\s*\.\s*([A-Z][a-z]+)\s*$/.exec(sets[0]![1]!)?.[1]?.toUpperCase();
     return constant && KNOWN.has(constant) ? constant : "*";
   }
@@ -397,6 +413,20 @@ export class TextMethods {
 
   private empty(f: Frame): boolean {
     return f.parts.length === 0;
+  }
+
+  /** The calls a method call's chain makes before it, first to last: `a()` and `b()` for `a().b().c()`. */
+  chainBefore(f: Frame): Frame[] {
+    const out: Frame[] = [];
+    for (let p = this.previous(f); p; p = this.previous(p)) out.unshift(p);
+    return out;
+  }
+
+  /** The calls a chain makes on a call's result, first to last: `b()` and `c()` for `a().b().c()`. */
+  chainAfter(f: Frame): Frame[] {
+    const out: Frame[] = [];
+    for (let n = this.following(f); n; n = this.following(n)) out.push(n);
+    return out;
   }
 
   /** The call a method call is made on, where it is a call's result: `a()` for `a().b()`, also across lines. */

@@ -1,8 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "GET /billing/v2/invoices/{}", reason: "the path an interceptor puts before each request's (`options.path = '/$version${options.path}'` in `onRequest`, the version a constructor argument) is not read: the repository is given its Dio by its own constructor, so which Dio, and which interceptors, its caller decides; the call source's prefix can state it" }
-  - { call: "POST /billing/v2/invoices/{}/payments", reason: "the path an interceptor puts before each request's is not read, for the reason above" }
-extra:
-  - { call: "GET /billing/invoices/{}", reason: "read without the `/v2` the billing Dio's interceptor puts before the path" }
-  - { call: "POST /billing/invoices/{}/payments", reason: "read without the `/v2` the billing Dio's interceptor puts before the path" }

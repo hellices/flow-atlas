@@ -4,4 +4,7 @@ components:
 calls:
   # Each Dio's base path (`baseUrl`) is the prefix of the paths its repository requests.
   - { from: client, to: api, files: ["lib/data/user_repository.dart"], prefix: /api/v1 }
-  - { from: client, to: api, files: ["lib/data/billing_repository.dart"], prefix: /billing }
+  # The billing Dio's base path is /billing, and its ApiVersionInterceptor (lib/data/api_client.dart, given 'v2' in
+  # createBillingClient) puts /v2 before each path it requests: the repository's paths are joined to /billing/v2. The
+  # repository is handed its Dio, so atlas does not see which interceptors it has.
+  - { from: client, to: api, files: ["lib/data/billing_repository.dart"], prefix: /billing/v2 }

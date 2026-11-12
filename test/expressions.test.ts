@@ -273,3 +273,125 @@ describe("string literals with a prefix", () => {
     expect(read({ "web/A.kt": 'fun a() = client.get("/price/\\$x")' })).toEqual({ calls: [], limits: [] });
   });
 });
+
+describe("the review round's cases", () => {
+  it("places a URL held in a value only where every call that sends it places it alike", () => {
+    const cs = (a: string, b: string) => lines("class C {", `  async Task A() { string p = "users"; await ${a}.GetAsync(p); await ${b}.GetAsync(p); }`, "}");
+    const source = { base: "/api/", join: "resolve", receivers: ["api"] };
+    const differ = { calls: [], limits: [untyped("a URL held in a value is sent by calls that place it differently", "web/C.cs:2")] };
+    expect(read({ "web/C.cs": cs("api", "other") }, source)).toEqual(differ);
+    expect(read({ "web/C.cs": cs("other", "api") }, source)).toEqual(differ);
+    expect(read({ "web/C.cs": cs("api", "api") }, source)).toEqual({ calls: ["GET /api/users @2"], limits: [] });
+    const methods = lines("class C {", '  async Task A() { string p = "users"; await api.GetAsync(p); await api.DeleteAsync(p); }', "}");
+    expect(read({ "web/C.cs": methods }, source)).toEqual({ calls: ["* /api/users @2"], limits: [] });
+  });
+
+  it("cleans // only in a path, keeping an absolute URL's scheme", () => {
+    const java = lines(
+      "import org.springframework.web.util.UriComponentsBuilder;",
+      'class C { String a() { return UriComponentsBuilder.fromUriString("https://localhost/api/").path("/users").toUriString(); } }',
+    );
+    expect(read({ "web/C.java": java })).toEqual({ calls: ["* /api/users based @2"], limits: [] });
+    const go = lines("package a", 'import (\n\t"net/url"\n\t"path"\n)', 'func a() { http.Get(path.Join("/api//users/", "active/")) }', 'func b() { e, _ := url.JoinPath("http://localhost//api", "users/"); http.Get(e) }');
+    expect(read({ "web/a.go": go })).toEqual({ calls: ["GET /api/users based @7", "GET /api/users/active @6"], limits: [] });
+  });
+
+  it("reads JoinPath on a URL held in a value, and none on a name a package goes by", () => {
+    const go = lines("package a", 'import "net/http"', 'func a() { http.Get(baseURL.JoinPath("users", id).String()) }', 'func b() { http.Get(path.JoinPath("x")) }');
+    expect(read({ "web/a.go": go }, { base: "/api", join: "resolve", baseValues: ["baseURL"] })).toEqual({ calls: ["GET /api/users/{} based @3"], limits: [] });
+  });
+
+  it("reads the host, scheme and port an OkHttp builder sets last, and no host set on a URL it is made from", () => {
+    const kotlin = lines(
+      "import okhttp3.HttpUrl",
+      'val a = HttpUrl.Builder().scheme("http").host("cdn.example").host("localhost").port(8080).addPathSegment("a").build()',
+      'val b = HttpUrl.Builder().scheme("https").host("localhost").host("cdn.example").addPathSegment("b").build()',
+      'val c = "http://localhost/api".toHttpUrl().newBuilder().host("cdn.example").addPathSegment("c").build()',
+      'val d = HttpUrl.Builder().scheme(scheme).host("localhost").addPathSegment("d").build()',
+      'val e = "http://localhost/api".toHttpUrl().newBuilder().port(9000).addPathSegment("e").build()',
+      'val f = base.newBuilder().scheme("http").port(9000).addPathSegment("f").build()',
+    );
+    expect(read({ "web/A.kt": kotlin })).toEqual({
+      calls: ["* /a based @2", "* /f based @7"],
+      limits: [
+        "calls web->api: URLs to cdn.example (web/A.kt:3) are not read as requests to api; set origins.api if that is its host",
+        untyped("an OkHttp HttpUrl.Builder sets the host of the URL it is made from", "web/A.kt:4"),
+        untyped("an OkHttp HttpUrl.Builder sets a host with a scheme atlas does not read", "web/A.kt:5"),
+        untyped("an OkHttp HttpUrl.Builder sets the scheme or the port of the URL it is made from", "web/A.kt:6"),
+      ],
+    });
+  });
+
+  it("encodes and checks a constant's text as a segment", () => {
+    const kotlin = lines("import okhttp3.HttpUrl", 'const val KEY = "a/b"', 'const val UP = ".."', "val a = base.newBuilder().addPathSegment(KEY).build()", "val b = base.newBuilder().addPathSegment(UP).build()");
+    expect(read({ "web/A.kt": kotlin })).toEqual({ calls: ["* /a%2Fb based @4"], limits: [untyped('an OkHttp HttpUrl.Builder adds the segment ".."', "web/A.kt:5")] });
+    const swift = lines("enum K {", '    static let key = "a/b"', "    static func c() async throws { let (c, _) = try await session.data(from: base.appending(component: key)) }", "}");
+    expect(read({ "web/A.swift": swift })).toEqual({ calls: ["GET /a%2Fb based @3"], limits: [] });
+  });
+
+  it("leaves a request made inside a format's argument to be read on its own", () => {
+    expect(read({ "web/a.py": 'requests.get("/users/{}".format(requests.get("/token").text))' })).toEqual({ calls: ["GET /token @1", "GET /users/{} @1"], limits: [] });
+    const go = lines("package a", 'import "fmt"', 'func a() { http.Get(fmt.Sprintf("/users/%s", load("/token"))) }');
+    // The URL a call nested in a request's URL builds is that request's (`http.get(Uri.parse(...))`), as before.
+    expect(read({ "web/a.go": go })).toEqual({ calls: ["GET /token @3", "GET /users/{} @3"], limits: [] });
+  });
+
+  it("reads the method a Ktor request block sets", () => {
+    const kotlin = (block: string) =>
+      lines("import io.ktor.client.request.request", "import io.ktor.http.appendPathSegments", `suspend fun a() = client.request("users") { ${block}url { appendPathSegments("active") } }`);
+    const source = { base: "/api/v1/", join: "resolve", receivers: ["client"] };
+    expect(read({ "web/A.kt": kotlin("method = HttpMethod.Post; ") }, source)).toEqual({ calls: ["POST /api/v1/users/active @3"], limits: [] });
+    expect(read({ "web/A.kt": kotlin("") }, source)).toEqual({ calls: ["GET /api/v1/users/active @3"], limits: [] });
+    expect(read({ "web/A.kt": kotlin("if (x) method = HttpMethod.Post; ") }, source)).toEqual({ calls: ["* /api/v1/users/active @3"], limits: [] });
+  });
+
+  it("refuses Java's argument index 0, and reads a Python field whose spec holds a field as a value", () => {
+    const java = 'class C { Object a() { return rest.getForObject(String.format("/users/%0$s", id), Map.class); } }';
+    expect(read({ "web/C.java": java })).toEqual({ calls: [], limits: [untyped("a format names argument 0, which Java's Formatter refuses", "web/C.java:1")] });
+    const python = lines('requests.get("/u/{0:{1}}/x".format(v, w))', 'requests.get("/u/{}/{:{}}".format(a, b, w))', 'requests.get("/u/{0:{}}".format(a, w))');
+    expect(read({ "web/a.py": python })).toEqual({
+      calls: ["GET /u/{}/x @1", "GET /u/{}/{} @2"],
+      limits: [untyped("str.format numbers its fields both ways", "web/a.py:3")],
+    });
+  });
+});
+
+describe("what a client puts into every request", () => {
+  const without = (what: string, ...at: string[]) => `calls web->api: the requests are read without ${what}: ${at.join(", ")}`;
+
+  it("fills a resty request's template with the path parameters its client sets, where the request sets none", () => {
+    const go = lines(
+      "package api",
+      'import "github.com/go-resty/resty/v2"',
+      "type Users struct { http *resty.Client }",
+      'func New() *Users { client := resty.New().\n\tSetPathParam("version", "v2").\n\tSetPathParams(map[string]string{"tenant": "acme"})\n\treturn &Users{http: client} }',
+      'func (u *Users) A() { u.http.R().Get("/{version}/{tenant}/reports/{year}") }',
+      'func (u *Users) B() { u.http.R().SetPathParam("version", "v3").Get("/{version}/reports") }',
+      'func (u *Users) C() { other.R().Get("/{version}/items") }',
+    );
+    expect(read({ "web/a.go": go })).toEqual({ calls: ["GET /v2/acme/reports/{} @8", "GET /{}/items @10", "GET /{}/reports @9"], limits: [] });
+  });
+
+  it("names a resty client whose path parameters are not literals, or whose holder it does not see", () => {
+    const go = lines("package api", 'import r "github.com/go-resty/resty/v2"', 'func New(v string) { c := r.New().SetPathParam("version", v); c.R().Get("/{version}/x") }', 'func Make() { use(r.New().SetPathParam("k", "v")) }');
+    expect(read({ "web/a.go": go })).toEqual({
+      calls: ["GET /{}/x @3"],
+      limits: [without("a resty client's own path parameters (SetPathParam on the client), a hole in their place", "web/a.go:3", "web/a.go:4")],
+    });
+  });
+
+  it("names a dio interceptor that writes the request's path", () => {
+    const dart = lines(
+      "import 'package:dio/dio.dart';",
+      "class Version extends Interceptor {",
+      "  @override",
+      "  void onRequest(RequestOptions options, RequestInterceptorHandler handler) { options.path = '/v2${options.path}'; super.onRequest(options, handler); }",
+      "}",
+      "final a = dio.get('/invoices');",
+    );
+    expect(read({ "web/a.dart": dart })).toEqual({
+      calls: ["GET /invoices @6"],
+      limits: [without("the path a dio interceptor writes into each request's (options.path), which the call source's prefix can state", "web/a.dart:2")],
+    });
+  });
+});

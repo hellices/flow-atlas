@@ -1,5 +1,6 @@
-import { HOLE, type Base } from "../paths.js";
+import { HOLE, hostOf, type Base } from "../paths.js";
 import type { Argument, Frame, TextCalls } from "./calls.js";
+import { parseGo } from "./golang.js";
 import { blankStrings } from "./verbs.js";
 
 /**
@@ -70,7 +71,7 @@ export function fieldEnd(body: string, from: number, expression?: (start: number
 }
 
 /** What a URL is built from: literal text, a value (by the name it is written with, where it is one), or one `/` between segments. */
-type Piece = { text: string } | { value: string | null } | { sep: true };
+type Piece = { text: string; constant?: number } | { value: string | null } | { sep: true };
 
 /** A part of an expression, read: its pieces, where it ends, the literals it takes, and whether it builds (joins, formats). */
 interface Read {
@@ -126,6 +127,8 @@ export interface StringExpression {
   builder?: true;
   /** The method the request is sent with, where the builder states it (Ktor's `client.post { }`). */
   method?: string;
+  /** Ktor's `client.request { }`: where its block opens, which may set the method. */
+  block?: number;
 }
 
 /** A value declared with an expression (`val url = ...`, `u, err := ...`), and where that expression lies. */
@@ -153,8 +156,6 @@ const GO_PACKAGES = new Map([
 
 /** `HttpUrl.Builder`'s calls that leave the path as it is (OkHttp, HttpUrl.Builder). */
 const OKHTTP_KEEPS = new Set([
-  "scheme",
-  "port",
   "username",
   "encodedUsername",
   "password",
@@ -232,11 +233,11 @@ export class StringExpressions {
    * Where a URL written at [start, end) is held in a value declared with it (`val url = ...`, `u, err := url.Parse(...)`,
    * `var c = components(path: "/x")`), the requests that value is sent by: each use of it in the block after its
    * declaration is the whole argument of a call (as itself, or as Go's `u.String()` or Swift's `c.url`), or reads or sets
-   * its query. The method each such call states, by `methodOf`, and that argument; `*` where a use is anything else, the
-   * value is assigned again, or the calls state no method or different ones. Undefined where the URL is held in no
+   * its query. The method those calls state, by `methodOf` (`*` where they differ), and their arguments, which place it;
+   * `*` and none where a use is anything else, the value is assigned again, or a call states no method. Undefined where the URL is held in no
    * declared value, or that value is used by no call.
    */
-  heldIn(start: number, end: number, methodOf: (a: Argument) => string | undefined): { method: string; anchor?: Argument } | undefined {
+  heldIn(start: number, end: number, methodOf: (a: Argument) => string | undefined): { method: string; anchors: Argument[] } | undefined {
     if (this.lang === "python") return undefined;
     const declaration = this.scanned().declarations.find((d) => d.start <= start && end <= d.end);
     if (!declaration) return undefined;
@@ -247,23 +248,24 @@ export class StringExpressions {
     const stop = block?.close ?? this.text.length;
     const uses = [...this.code.slice(declaration.end, stop).matchAll(new RegExp(`(?<![\\w$.])${declaration.name}(?![\\w$])`, "g"))];
     const methods = new Set<string>();
-    let anchor: Argument | undefined;
+    const anchors: Argument[] = [];
+    const any = { method: "*", anchors: [] };
     for (const u of uses) {
       const at = declaration.end + u.index;
       let to = at + declaration.name.length;
       const after = this.code.slice(to, to + 200);
-      if (/^\s*(?::=|=(?!=))/.test(after)) return { method: "*" };
+      if (/^\s*(?::=|=(?!=))/.test(after)) return any;
       const appended = /^\s*\+=\s*/.exec(after);
       if (appended) {
         // Text appended that starts a query (`path += "?" + q.Encode()`) leaves the path as it is.
         const lit = this.literalAt(to + appended[0].length);
         if (lit && this.text.slice(lit.start + 1, lit.end).startsWith("?")) continue;
-        return { method: "*" };
+        return any;
       }
       const member = /^\s*(?:\?\.|!!\.|!\.|\.)\s*([A-Za-z_]\w*)/.exec(after);
       if (member) {
         if (QUERY_MEMBERS[this.lang!]?.has(member[1]!)) continue;
-        if (!ACCESSORS[this.lang!]?.has(member[1]!)) return { method: "*" };
+        if (!ACCESSORS[this.lang!]?.has(member[1]!)) return any;
         to += member[0].length;
         const call = /^\s*\(\s*\)/.exec(this.code.slice(to, to + 20));
         if (call) to += call[0].length;
@@ -272,12 +274,12 @@ export class StringExpressions {
       if (bang) to += bang[0].length;
       const argument = this.argumentAt(at, to);
       const method = argument && methodOf(argument);
-      if (!argument || method === undefined) return { method: "*" };
+      if (!argument || method === undefined) return any;
       methods.add(method);
-      anchor ??= argument;
+      anchors.push(argument);
     }
     if (methods.size === 0) return undefined;
-    return methods.size === 1 ? { method: [...methods][0]!, anchor } : { method: "*" };
+    return { method: methods.size === 1 ? [...methods][0]! : "*", anchors };
   }
 
   /** The call argument [start, end) is, whole, past the name it may be given by; undefined where it is no call's. */
@@ -396,14 +398,12 @@ export class StringExpressions {
       if ("text" in p) {
         text = p.text;
         literal = true;
-      } else {
-        const c = p.value === null ? undefined : this.constant(p.value);
-        if (c) {
-          text = c.text;
-          consts.push(c.at);
-          literal = true;
+        if (p.constant !== undefined) {
+          consts.push(p.constant);
           resolved = true;
-        } else if (i === 0 && p.value !== null && this.baseValues.has(p.value)) {
+        }
+      } else {
+        if (i === 0 && p.value !== null && this.baseValues.has(p.value)) {
           text = this.options.base!.path;
           onBase = true;
         } else text = out.endsWith(HOLE) ? "" : HOLE;
@@ -412,8 +412,14 @@ export class StringExpressions {
       separated = false;
       out += text;
     });
-    if (sanitize) out = out.replace(/\/{2,}/g, "/");
+    if (sanitize) out = cleanPath(out);
     return { text: out, literal, resolved, onBase, consts };
+  }
+
+  /** A value written by its name: a string constant of the file gives its text, already, so a builder encodes or checks that text. */
+  private named(name: string | null): Piece {
+    const c = name === null ? undefined : this.constant(name);
+    return c ? { text: c.text, constant: c.at } : { value: name };
   }
 
   /** The operands of a `+` from `i`, each read; undefined where a part is no string expression atlas reads. */
@@ -459,7 +465,7 @@ export class StringExpressions {
             ? chain.segs[0]!.name
             : null
         : null;
-    return { pieces: [{ value: name }], end: chain.end, literals: [], built: false };
+    return { pieces: [this.named(name)], end: chain.end, literals: [], built: false };
   }
 
   /** An atom (a literal, a name, a parenthesized expression, a call by name) and the members, calls and indexes after it. */
@@ -606,7 +612,7 @@ export class StringExpressions {
 
   /** A part read as a string expression, or a hole for a value atlas does not read into. */
   private operandOf(f: Frame, index: number): Read {
-    return this.whole(f, index) ?? { pieces: [{ value: nameOf(this.code.slice(f.parts[index]!.start, f.parts[index]!.end)) }], end: f.parts[index]!.end, literals: [], built: false };
+    return this.whole(f, index) ?? { pieces: [this.named(nameOf(this.code.slice(f.parts[index]!.start, f.parts[index]!.end)))], end: f.parts[index]!.end, literals: [], built: false };
   }
 
   private go(chain: Chain): Read | undefined {
@@ -615,15 +621,19 @@ export class StringExpressions {
     if (atom.kind === "name" && segs.length === 1 && last?.call) {
       const pkg = this.goPackage(atom.name);
       if (pkg === "fmt" && last.name === "Sprintf") return this.printf(last.call, "go");
-      if (pkg === "net/url" && last.name === "JoinPath" && last.call.parts.length >= 1) return this.joined(this.operandOf(last.call, 0), last.call, 1);
+      if (pkg === "net/url" && last.name === "JoinPath" && last.call.parts.length >= 1) return this.joined(this.operandOf(last.call, 0), last.call, 1, "url");
       if (pkg === "net/url" && (last.name === "Parse" || last.name === "ParseRequestURI") && last.call.parts.length === 1) return this.whole(last.call, 0);
-      if (pkg === "path" && last.name === "Join") return this.joined(undefined, last.call, 0);
+      if (pkg === "path" && last.name === "Join") return this.joined(undefined, last.call, 0, "path");
     }
-    if (!last?.call || segs.length < 2) return undefined;
+    if (!last?.call) return undefined;
+    // A package's function (`url.JoinPath` where `url` is no package the file imports as `url`) is no URL's method.
+    // A name a package of Go is known by (`url`), imported under another, is no URL either: atlas does not tell them apart.
+    if (segs.length === 1 && atom.kind === "name" && (this.goImported(atom.name) || [...GO_PACKAGES.values()].includes(atom.name))) return undefined;
+    if (segs.length === 1 && atom.kind !== "name") return undefined;
     const before = { ...chain, segs: segs.slice(0, -1) };
     // A *url.URL's own `String()` and `JoinPath(...)`.
     if (last.name === "String" && last.call.parts.length === 0) return this.interpret(before);
-    if (last.name === "JoinPath") return this.joined(this.interpret(before) ?? this.valueOf(before), last.call, 0);
+    if (last.name === "JoinPath") return this.joined(this.interpret(before) ?? this.valueOf(before), last.call, 0, "url");
     return undefined;
   }
 
@@ -658,12 +668,32 @@ export class StringExpressions {
     if (rest.at(-1)?.name !== "build" || rest.at(-1)?.call?.parts.length !== 0) return undefined;
     rest = rest.slice(0, -1);
     let read: Read;
+    // The last `scheme`, `host` and `port` set win, as a builder's setters do.
+    const set = (name: string) => rest.filter((s) => s.name === name && s.call?.parts.length === 1).at(-1)?.call;
+    const lone = (f: Frame | undefined) => {
+      const r = f ? this.whole(f, 0) : undefined;
+      return r && r.pieces.length === 1 && "text" in r.pieces[0]! && r.pieces[0].constant === undefined ? r.pieces[0].text : undefined;
+    };
+    // A builder left unread takes the literals written in its chain, its own calls'.
+    const written: number[] = chain.atom.kind === "literal" ? [chain.atom.start] : [];
+    for (const g of segs) if (g.call) this.literalsIn(g.call, written);
+    const unread = (why: string): Read => ({ pieces: [], end: chain.end, literals: written, built: true, unread: `an OkHttp HttpUrl.Builder ${why}`, builder: true });
     if (fresh > 0) {
-      const host = rest.find((s) => s.name === "host")?.call;
-      const literal = host && host.parts.length === 1 ? this.whole(host, 0) : undefined;
-      const text = literal && literal.pieces.length === 1 && "text" in literal.pieces[0]! ? literal.pieces[0].text : undefined;
-      read = { pieces: [text ? { text: `https://${text}` } : { value: null }], end: chain.end, literals: literal?.literals ?? [], built: true };
+      const host = set("host");
+      if (!host) return unread("builds a URL without a host");
+      const name = host.parts.length === 1 && this.code.slice(host.parts[0]!.start, host.parts[0]!.end).trim().match(/^["']/) ? lone(host) : undefined;
+      if (name === undefined) read = { pieces: [{ value: null }], end: chain.end, literals: [], built: true };
+      else {
+        // A host the code names is checked as an absolute URL's: with the scheme and the port the builder sets.
+        const scheme = lone(set("scheme"));
+        const port = set("port");
+        const number = port ? /^\s*(\d+)\s*$/.exec(this.code.slice(port.parts[0]!.start, port.parts[0]!.end))?.[1] : "";
+        if (scheme !== "http" && scheme !== "https") return unread("sets a host with a scheme atlas does not read");
+        if (number === undefined) return unread("sets a host with a port atlas does not read");
+        read = { pieces: [{ text: `${scheme}://${name}${number ? `:${number}` : ""}` }], end: chain.end, literals: [], built: true };
+      }
     } else {
+      if (set("host")) return unread("sets the host of the URL it is made from");
       let before: Chain = { ...chain, segs: segs.slice(0, made) };
       // `HttpUrl.get(url)`, `HttpUrl.parse(url)` and Kotlin's `url.toHttpUrl()` make the URL from a string.
       const tail = before.segs.at(-1);
@@ -671,11 +701,14 @@ export class StringExpressions {
       else if (atom.kind === "name" && atom.name === "HttpUrl" && before.segs.length === 1 && tail?.call?.parts.length === 1 && (tail.name === "get" || tail.name === "parse")) {
         const url = this.whole(tail.call, 0);
         read = { ...(url ?? this.valueOf(before)), built: true };
+        if ((set("scheme") || set("port")) && hostOf(this.assemble(read.pieces).text) !== undefined) return unread("sets the scheme or the port of the URL it is made from");
         return this.okhttpPath(read, rest, chain);
       }
       if (before.segs.at(-1)?.other === "bang") before = { ...before, segs: before.segs.slice(0, -1) };
       read = { ...(this.interpret(before) ?? this.valueOf(before)), built: true };
     }
+    // A scheme or a port set on a URL whose host the code names changes where it goes.
+    if (fresh < 0 && (set("scheme") || set("port")) && hostOf(this.assemble(read.pieces).text) !== undefined) return unread("sets the scheme or the port of the URL it is made from");
     return this.okhttpPath(read, rest, chain);
   }
 
@@ -685,10 +718,10 @@ export class StringExpressions {
     for (const s of rest) {
       if (!s.call) return unread(`calls ${s.name || "a value"}`);
       this.literalsIn(s.call, out.literals);
-      if (s.name === "host" || OKHTTP_KEEPS.has(s.name)) continue;
+      if (s.name === "host" || s.name === "scheme" || s.name === "port" || OKHTTP_KEEPS.has(s.name)) continue;
       if ((s.name === "addPathSegment" || s.name === "addPathSegments") && s.call.parts.length === 1) {
         const one = s.name === "addPathSegment";
-        const segment = this.operandOf(s.call, 0).pieces.map((p) => ("text" in p && one ? { text: p.text.replace(/\//g, "%2F") } : p));
+        const segment = this.operandOf(s.call, 0).pieces.map((p) => ("text" in p && one ? { ...p, text: p.text.replace(/\//g, "%2F") } : p));
         // OkHttp takes `.` and `..` as dot segments, and an empty segment (`addPathSegments("a//b")`) as a `/`.
         const written = segment.map((p) => ("text" in p ? p.text : HOLE)).join("");
         if (written.split("/").some((t) => t === "." || t === ".." || t === "")) return unread(`adds the segment ${JSON.stringify(written)}`);
@@ -776,7 +809,7 @@ export class StringExpressions {
           : chain.atom.kind === "name" && (chain.atom.name === "this" || chain.atom.name === "self") && chain.segs.length === 1 && !chain.segs[0]!.call
             ? chain.segs[0]!.name
             : null;
-    return { pieces: [{ value: name }], end: chain.end, literals: [], built: false };
+    return { pieces: [this.named(name)], end: chain.end, literals: [], built: false };
   }
 
   /**
@@ -784,8 +817,9 @@ export class StringExpressions {
    * each after one `/`, empty ones left out, as `path.Join` cleans them. An element that is a `.` or `..` segment, or
    * holds an empty one, is left unread.
    */
-  private joined(base: Read | undefined, f: Frame, from: number): Read {
-    const out: Read = { pieces: [...(base?.pieces ?? [])], end: f.close! + 1, literals: [...(base?.literals ?? [])], built: true };
+  private joined(base: Read | undefined, f: Frame, from: number, by: "path" | "url"): Read {
+    // path.Join cleans the whole path (JoinPath the base's path with the elements): `//` is `/`.
+    const out: Read = { pieces: [...(base?.pieces ?? [])], end: f.close! + 1, literals: [...(base?.literals ?? [])], built: true, sanitize: true };
     for (let i = from; i < f.parts.length; i++) {
       const part = this.operandOf(f, i);
       out.literals.push(...part.literals);
@@ -796,6 +830,9 @@ export class StringExpressions {
       if (out.pieces.length === 0) out.pieces.push(...part.pieces);
       else out.pieces.push({ sep: true }, ...part.pieces);
     }
+    // path.Join leaves no trailing `/`; JoinPath keeps the one its last element ends in.
+    const last = out.pieces.at(-1);
+    if (by === "path" && last && "text" in last && /[^/]\/+$/.test(last.text)) out.pieces[out.pieces.length - 1] = { ...last, text: last.text.replace(/\/+$/, "") };
     return out;
   }
 
@@ -813,7 +850,6 @@ export class StringExpressions {
     const body = this.bodyOf(format);
     const args = literal ? 0 : formatAt + 1;
     const out: Read = { pieces: [], end: f.close! + 1, literals: [format.start], built: true };
-    this.literalsIn(f, out.literals);
     let next = 0;
     let at = 0;
     const verbs = style === "go" ? /%(%|[-+# 0]*(?:\[\d+\])?(?:\d+|\*)?(?:\.(?:\d+|\*)?)?(?:\[\d+\])?[a-zA-Z])/g : /%(%|n|(?:\d+\$)?[-#+ 0,(<]*\d*(?:\.\d+)?[a-zA-Z])/g;
@@ -827,10 +863,15 @@ export class StringExpressions {
       }
       const plain = style === "go" ? /^[sdv]$/.test(verb) : /^(?:(\d+)\$)?([sd])$/.exec(verb);
       if (!plain) return { ...out, unread: `a format verb (%${verb}) writes more than its value` };
-      const index = style === "java" && Array.isArray(plain) && plain[1] ? Number(plain[1]) - 1 : next++;
+      // Java's argument index counts from 1 (Formatter refuses `%0$s`).
+      const named = style === "java" && Array.isArray(plain) && plain[1] !== undefined ? Number(plain[1]) : undefined;
+      if (named === 0) return { ...out, unread: "a format names argument 0, which Java's Formatter refuses" };
+      const index = named !== undefined ? named - 1 : next++;
       const part = args + index;
       if (part >= f.parts.length) return { ...out, unread: "a format has fewer arguments than verbs" };
-      out.pieces.push(...this.operandOf(f, part).pieces);
+      const operand = this.operandOf(f, part);
+      out.pieces.push(...operand.pieces);
+      out.literals.push(...operand.literals);
     }
     out.pieces.push({ text: body.slice(at) });
     return out;
@@ -845,7 +886,6 @@ export class StringExpressions {
     if (!lit) return undefined;
     const body = this.bodyOf(lit.atom);
     const out: Read = { pieces: [], end: f.close! + 1, literals: [lit.atom.start], built: true };
-    this.literalsIn(f, out.literals);
     let at = 0;
     for (const m of body.matchAll(/\{\{|\}\}|\{(\d+)(,[^:}]*)?(?::[^}]*)?\}/g)) {
       out.pieces.push({ text: body.slice(at, m.index) });
@@ -857,7 +897,9 @@ export class StringExpressions {
       if (m[2]) return { ...out, unread: "a format item pads its value" };
       const part = lit.index + 1 + Number(m[1]);
       if (part >= f.parts.length) return { ...out, unread: "a format has fewer arguments than items" };
-      out.pieces.push(...this.operandOf(f, part).pieces);
+      const operand = this.operandOf(f, part);
+      out.pieces.push(...operand.pieces);
+      out.literals.push(...operand.literals);
     }
     out.pieces.push({ text: body.slice(at) });
     return out;
@@ -872,7 +914,6 @@ export class StringExpressions {
     if (/[fF]/.test(literal.prefix)) return undefined;
     const body = this.bodyOf(literal);
     const out: Read = { pieces: [], end: f.close! + 1, literals: [literal.start], built: true };
-    this.literalsIn(f, out.literals);
     const positional: number[] = [];
     const keywords = new Map<string, number>();
     for (let i = 0; i < f.parts.length; i++) {
@@ -885,33 +926,53 @@ export class StringExpressions {
     }
     let auto = 0;
     let numbered = false;
-    let at = 0;
-    for (const m of body.matchAll(/\{\{|\}\}|\{([^{}]*)\}/g)) {
-      out.pieces.push({ text: body.slice(at, m.index) });
-      at = m.index + m[0].length;
-      if (m[0] === "{{" || m[0] === "}}") {
-        out.pieces.push({ text: m[0][0]! });
+    let text = "";
+    // The argument a field's name takes; undefined where it has none, null where it numbers fields both ways.
+    const argument = (key: string): number | null | undefined => {
+      if (key === "") {
+        if (numbered) return null;
+        return positional[auto++];
+      }
+      if (/^\d+$/.test(key)) {
+        if (auto > 0) return null;
+        numbered = true;
+        return positional[Number(key)];
+      }
+      return keywords.get(key);
+    };
+    for (let i = 0; i < body.length; ) {
+      const c = body[i]!;
+      if ((c === "{" || c === "}") && body[i + 1] === c) {
+        text += c;
+        i += 2;
         continue;
       }
-      const field = /^([A-Za-z_]\w*|\d*)(.*)$/s.exec(m[1]!)!;
-      const [, key = "", more = ""] = field;
-      let index: number | undefined;
-      if (key === "") {
-        if (numbered) return { ...out, unread: "str.format numbers its fields both ways" };
-        index = positional[auto++];
-      } else if (/^\d+$/.test(key)) {
-        if (auto > 0) return { ...out, unread: "str.format numbers its fields both ways" };
-        numbered = true;
-        index = positional[Number(key)];
-      } else index = keywords.get(key);
-      if (index === undefined) return { ...out, unread: "str.format has no argument for a field" };
-      if (more) out.pieces.push({ value: null });
+      if (c !== "{") {
+        text += c;
+        i++;
+        continue;
+      }
+      // A field, its spec's nested fields (`{0:{1}}`) included, as Python's parser reads it.
+      const names: Array<{ start: number; end: number }> = [];
+      const end = fieldEnd(body, i + 1, (start, stop) => names.push({ start, end: stop }));
+      const whole = body.slice(i + 1, end - 1);
+      out.pieces.push({ text });
+      text = "";
+      i = end;
+      const keys = names.map((n) => /^([A-Za-z_]\w*|\d*)/.exec(body.slice(n.start, n.end))![1]!);
+      const indexes = keys.map(argument);
+      if (indexes.includes(null)) return { ...out, unread: "str.format numbers its fields both ways" };
+      if (indexes.length === 0 || indexes.includes(undefined)) return { ...out, unread: "str.format has no argument for a field" };
+      const key = keys[0]!;
+      // A field with an attribute, an index, a conversion or a spec writes a value of its own.
+      if (whole !== key) out.pieces.push({ value: null });
       else {
-        const value = keywords.has(key) ? this.keywordValue(f, index) : this.operandOf(f, index);
+        const value = keywords.has(key) ? this.keywordValue(f, indexes[0]!) : this.operandOf(f, indexes[0]!);
         out.pieces.push(...value.pieces);
+        out.literals.push(...value.literals);
       }
     }
-    out.pieces.push({ text: body.slice(at) });
+    out.pieces.push({ text });
     return out;
   }
 
@@ -922,7 +983,6 @@ export class StringExpressions {
     const body = this.bodyOf(literal);
     const out: Read = { pieces: [], end: right.end, literals: [literal.start], built: true };
     const tuple = right.atom.kind === "paren" && right.segs.length === 0 ? right.atom.frame : undefined;
-    if (tuple) this.literalsIn(tuple, out.literals);
     let next = 0;
     let at = 0;
     for (const m of body.matchAll(/%(.)/g)) {
@@ -936,8 +996,14 @@ export class StringExpressions {
       const index = next++;
       if (tuple) {
         if (index >= tuple.parts.length) return { ...out, unread: "a % format has fewer values than conversions" };
-        out.pieces.push(...this.operandOf(tuple, index).pieces);
-      } else if (index === 0) out.pieces.push(...(this.interpret(right) ?? this.valueOf(right)).pieces);
+        const operand = this.operandOf(tuple, index);
+        out.pieces.push(...operand.pieces);
+        out.literals.push(...operand.literals);
+      } else if (index === 0) {
+        const operand = this.interpret(right) ?? this.valueOf(right);
+        out.pieces.push(...operand.pieces);
+        out.literals.push(...operand.literals);
+      }
       else return { ...out, unread: "a % format has fewer values than conversions" };
     }
     out.pieces.push({ text: body.slice(at) });
@@ -949,7 +1015,7 @@ export class StringExpressions {
     const p = f.parts[index]!;
     const label = /^\s*[A-Za-z_]\w*\s*=\s*/.exec(this.code.slice(p.start, p.end))!;
     const read = this.parseSum(p.start + label[0].length, p.end, true);
-    return read && !this.code.slice(read.end, p.end).trim() ? read : { pieces: [{ value: nameOf(this.code.slice(p.start + label[0].length, p.end)) }], end: p.end, literals: [], built: false };
+    return read && !this.code.slice(read.end, p.end).trim() ? read : { pieces: [this.named(nameOf(this.code.slice(p.start + label[0].length, p.end)))], end: p.end, literals: [], built: false };
   }
 
   /** A call's part that is a lone string literal, at `index`. */
@@ -962,9 +1028,15 @@ export class StringExpressions {
     return { atom: { kind: "literal", ...lit }, index };
   }
 
-  /** Every string literal in a call's parentheses, which a builder that reads it takes. */
+  /**
+   * The string literals written right in a call's parentheses (or in the calls right in a block), which a builder that
+   * reads the call takes: not those of a call nested in them, which runs, and may request, on its own.
+   */
   private literalsIn(f: Frame, into: number[]): void {
-    for (const [start] of this.scan.strings) if (start > f.at && start < (f.close ?? f.at)) into.push(start);
+    for (const a of this.scan.args) {
+      if (a.call === f.at) into.push(a.start);
+      else if (f.open === "{" && this.scan.frames.get(a.call)?.outer === f.at) into.push(a.start);
+    }
   }
 
   /**
@@ -996,11 +1068,11 @@ export class StringExpressions {
       for (const u of urls) this.literalsIn(u, literals);
       if (call) this.literalsIn(call, literals);
       const anchor: Argument = { start, end, name: m[2]!, method: true, receiver: m[1]!, index: 0, call: call?.at ?? block.at };
-      const method = m[2] === "request" ? "*" : m[2]!.toUpperCase();
-      const all: number[] = [];
+      const method = m[2] === "request" ? undefined : m[2]!.toUpperCase();
+      const own = m[2] === "request" ? { block: block.at } : { method: method! };
+      const all: number[] = [...literals];
       this.literalsIn(block, all);
-      if (call) this.literalsIn(call, all);
-      const unread = (why: string): StringExpression => ({ start, end, text: "", literals: all, anchor, method, unread: `a Ktor request's block ${why}`, builder: true });
+      const unread = (why: string): StringExpression => ({ start, end, text: "", literals: all, anchor, ...own, unread: `a Ktor request's block ${why}`, builder: true });
       // Outside its `url { }` blocks, the request's block sets no other URL.
       let outside = this.code.slice(block.at + 1, block.close);
       for (const u of urls) outside = outside.slice(0, u.at - block.at - 1) + " ".repeat(u.close! - u.at + 1) + outside.slice(u.close! - block.at);
@@ -1044,7 +1116,7 @@ export class StringExpressions {
         continue;
       }
       const assembled = this.assemble(pieces);
-      out.push({ start, end, text: assembled.text, literals, anchor, method });
+      out.push({ start, end, text: assembled.text, literals, anchor, ...own });
     }
     return out;
   }
@@ -1068,7 +1140,7 @@ export class StringExpressions {
         const name = m[1]!;
         if (!lit || !/^\s*(?:;|$)/m.test(this.code.slice(lit.end, lit.end + 40))) continue;
         const pieces = this.literalPieces(lit);
-        const text = pieces.length === 1 && "text" in pieces[0]! && !pieces[0].text.includes(HOLE) ? pieces[0].text : undefined;
+        const text = pieces.length === 1 && "text" in pieces[0]! && pieces[0].constant === undefined && !pieces[0].text.includes(HOLE) ? pieces[0].text : undefined;
         // A name assigned twice, or a parameter's, may hold another value where it is used.
         const assigned = [...this.code.matchAll(new RegExp(`(?<![\\w$.])${name}\\s*(?::=|=(?!=))`, "g"))].length;
         const parameter = new RegExp(`[(,]\\s*[A-Za-z_][\\w<>[\\]?.]*\\s+${name}\\s*[,)=]|[(,]\\s*${name}\\s*:\\s*[A-Za-z_]|[(,]\\s*${name}\\s+[A-Za-z_*[]`).test(this.code);
@@ -1080,27 +1152,34 @@ export class StringExpressions {
 
   /** The name a Go file's code refers to an imported package by: its own, or the one the import gives it. */
   private goPackage(name: string): string | undefined {
+    const path = this.goImports().get(name);
+    return path !== undefined && GO_PACKAGES.has(path) ? path : undefined;
+  }
+
+  /** Whether a Go file's code names an imported package by `name`. */
+  private goImported(name: string): boolean {
+    return this.goImports().has(name);
+  }
+
+  /** The packages a Go file imports, by the name its code refers to each by (the alias, else the package's name), read by Go's parser. */
+  private goImports(): Map<string, string> {
     if (!this.goNames) {
       this.goNames = new Map();
-      for (const m of this.code.matchAll(/(?:^|\n)[ \t]*import[ \t]*(\(([^)]*)\)|[^\n]*)/g)) {
-        const at = m.index + m[0].length - m[1]!.length;
-        const lines = m[2] === undefined ? [[at, at + m[1]!.length]] : [];
-        if (m[2] !== undefined) {
-          let from = at + 1;
-          for (const line of m[2].split("\n")) {
-            lines.push([from, from + line.length]);
-            from += line.length + 1;
-          }
-        }
-        for (const [from, to] of lines) {
-          const s = /^\s*([A-Za-z_]\w*|\.)?\s*"([^"\n]*)"\s*;?\s*$/.exec(this.text.slice(from, to));
-          if (!s) continue;
-          const local = s[1] ?? GO_PACKAGES.get(s[2]!);
-          if (local && local !== "." && local !== "_" && GO_PACKAGES.has(s[2]!)) this.goNames.set(local, s[2]!);
-        }
+      let imports: ReturnType<typeof parseGo>["imports"];
+      try {
+        imports = parseGo(this.text).imports;
+      } catch {
+        imports = [];
+      }
+      for (const i of imports) {
+        const segments = i.path.split("/");
+        // A major version's suffix (`.../v2`) is no part of the package's name.
+        const last = segments.length > 1 && /^v\d+$/.test(segments.at(-1)!) ? segments.at(-2)! : segments.at(-1)!;
+        const local = i.name ?? GO_PACKAGES.get(i.path) ?? last.replace(/\.v\d+$/, "").replace(/^go-/, "");
+        if (local !== "." && local !== "_") this.goNames.set(local, i.path);
       }
     }
-    return this.goNames.get(name);
+    return this.goNames;
   }
 
   /** Whether a JVM file imports a name, by itself or with its package's `*`, without renaming it. */
@@ -1206,12 +1285,12 @@ export class StringExpressions {
             const close = matching(body, i + 1, "{", "}");
             if (close < 0) return [legacy(body)];
             flush(false);
-            out.push({ value: nameOf(body.slice(i + 2, close)) });
+            out.push(this.named(nameOf(body.slice(i + 2, close))));
             i = close + 1;
           } else if (c === "$" && /[A-Za-z_]/.test(body[i + 1] ?? "")) {
             const name = /^[A-Za-z_]\w*/.exec(body.slice(i + 1))![0];
             flush(false);
-            out.push({ value: name });
+            out.push(this.named(name));
             i += 1 + name.length;
           } else {
             text += c;
@@ -1227,7 +1306,7 @@ export class StringExpressions {
             const close = matching(body, i + 1, "(", ")");
             if (close < 0) return [legacy(body)];
             flush(false);
-            out.push({ value: nameOf(body.slice(i + 2, close)) });
+            out.push(this.named(nameOf(body.slice(i + 2, close))));
             i = close + 1;
           } else if (body[i] === "\\") {
             text += body.slice(i, i + 2);
@@ -1248,7 +1327,7 @@ export class StringExpressions {
             const close = matching(body, i, "{", "}");
             if (close < 0) return [legacy(body)];
             flush(true);
-            out.push({ value: nameOf(/^[^,:]*/.exec(body.slice(i + 1, close))![0]) });
+            out.push(this.named(nameOf(/^[^,:]*/.exec(body.slice(i + 1, close))![0])));
             i = close + 1;
           } else {
             text += c;
@@ -1269,7 +1348,7 @@ export class StringExpressions {
             let expression = "";
             i = fieldEnd(body, i + 1, (s, e) => (expression ||= body.slice(s, e)));
             flush(true);
-            out.push({ value: nameOf(expression) });
+            out.push(this.named(nameOf(expression)));
           } else {
             text += c;
             i++;
@@ -1282,6 +1361,15 @@ export class StringExpressions {
         return [legacy(body)];
     }
   }
+}
+
+/**
+ * A URL with each `//` of its path written `/`, as Spring's built path and Go's cleaned one are: its scheme's `//`,
+ * and its query and fragment, are kept.
+ */
+function cleanPath(url: string): string {
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*)?([^?#]*)([\s\S]*)$/.exec(url)!;
+  return `${m[1] ?? ""}${m[2]!.replace(/\/{2,}/g, "/")}${m[3]}`;
 }
 
 /** Where the bracket that opens at `open` closes, nested ones counted; -1 where it does not. */
