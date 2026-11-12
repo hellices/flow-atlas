@@ -79,8 +79,11 @@ For each route and call, atlas also reads:
   JavaScript), and the links and forms a Spring or Next.js page renders.
 
 atlas reads only what the code states for certain: a literal path, with the meaning the framework's documentation or
-source gives it. Where it cannot be certain, it reads nothing, guesses nothing in its place, and prints a `limit:` line
-that says what it left out. So "no caller" means none among what atlas can read.
+source gives it. Nothing is guessed in place of what it cannot read. Where it sees something it cannot settle (a path
+in a syntax it does not read, a base held in a value, a prefix it cannot trace), it prints a `limit:` line that says
+what it left out. A URL held entirely in a value, such as one taken from a server response, is not a call atlas can
+see, so it leaves no limit either. "No caller" therefore means none among what atlas can read, and no limit does not
+prove that everything was read.
 
 Every rule, per framework and library: [config.md](skills/flow-atlas/references/config.md#what-the-extractors-read).
 How atlas reads each framework and client library is measured against the framework itself in
@@ -129,16 +132,14 @@ Or copy the directory into your host's skills directory (for example `.github/sk
 
 ## Use
 
-Start by letting atlas suggest a configuration, then scan until it reads what it should:
+Start from what atlas finds, write the configuration, then scan until it reads what it should:
 
-```bash
-atlas inventory --root <repo>                 # candidate components, routes and client calls
-atlas scan --root <repo>                      # what each configured source yielded
-atlas check --root <repo>                     # findings new since the baseline
-```
-
-Writing the configuration is described in [config.md](skills/flow-atlas/references/config.md). Expect two or three
-rounds of `scan` and correction before the findings are worth trusting.
+1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
+2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that list: the components, where each serves routes, and which
+   files call others. [config.md](skills/flow-atlas/references/config.md) describes every key.
+3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
+   expect two or three rounds before the findings are worth trusting.
+4. `atlas check --root <repo>` prints the findings.
 
 <details>
 <summary>All commands</summary>
@@ -204,8 +205,10 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 - **Output.** Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema),
   with `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests). There are no
   timestamps, so the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`).
-- **Standards.** SARIF 2.1.0 for findings, Arazzo 1.0 for flows. Why each field is there:
-  [docs/schema.md](docs/schema.md) and [docs/standards.md](docs/standards.md).
+- **Standards.** `check --format sarif` prints findings as SARIF 2.1.0, and `export arazzo` prints the flows as an
+  Arazzo 1.0 description. The flow files themselves follow the project's own Kubernetes-style schema, with Arazzo-style
+  steps; they are not Arazzo documents. Why each field is there: [docs/schema.md](docs/schema.md) and
+  [docs/standards.md](docs/standards.md).
 
 ## Limits
 
