@@ -18,6 +18,7 @@ import type { Reach } from "./reach.js";
 import { declarationOf, importedFrom, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
+import { djangoRoutes } from "./django.js";
 import { flaskRoutes } from "./flask.js";
 import { springBootRoutes } from "./springboot.js";
 import { metadataSuffix, nextBuiltins, nextConfig, nextPageMethods, nextSetting, type NextConfig, type NextPage, type PageMethods } from "./next.js";
@@ -1979,6 +1980,7 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
   const order = JSON.stringify(a.order) === JSON.stringify(b.order) ? a.order : undefined;
   if (out.picks && order) out.order = order;
   if (a.passes || b.passes) out.passes = true;
+  if (out.picks && a.byPath && b.byPath) out.byPath = true;
   if (a.slashes && a.slashes === b.slashes) {
     out.slashes = a.slashes;
     if (a.trailing === b.trailing) {
@@ -2074,6 +2076,25 @@ export function extractRoutes(
           evidence: "text",
           ...(r.implicit ? { implicit: true } : {}),
           ...(r.convention ? { convention: r.convention } : {}),
+          ...(r.patterns ? { patterns: r.patterns } : {}),
+          dispatch: r.dispatch,
+        });
+      }
+      for (const s of read.spans) spans?.add(s.file, s.start, s.end);
+      limits.push(...read.limits);
+    }
+    if ((spec.styles ?? []).includes("django")) {
+      const read = djangoRoutes(new Map(files.filter((f) => f.endsWith(".py")).map((f) => [f, source.read(f) ?? ""])), spec.component, spec.mounts);
+      for (const r of read.routes) {
+        const path = spec.prefix ? joinRoute(spec.prefix, r.path) : r.path;
+        out.push({
+          id: surfaceId({ component: spec.component, method: r.method, path }),
+          component: spec.component,
+          method: r.method,
+          path,
+          at: { file: r.file, line: r.line },
+          evidence: "text",
+          ...(r.implicit ? { implicit: true } : {}),
           ...(r.patterns ? { patterns: r.patterns } : {}),
           dispatch: r.dispatch,
         });

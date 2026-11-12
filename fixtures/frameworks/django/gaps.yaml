@@ -1,6 +1,52 @@
 # Where atlas's reading differs from the routes Django serves. Remove an entry when atlas reads it right; the test
 # fails while a listed difference no longer occurs.
-unread: >-
-  atlas has no Django style: the URLconfs (`path`, `re_path`, `include` with its prefix, the admin's and Django REST
-  framework's routers' patterns) and the methods each view answers are not read; a limit says the route files gave
-  nothing ("14 files read, nothing extracted"), and `atlas inventory` offers no route candidate for them.
+#
+# The admin site's patterns (`path("admin/", admin.site.urls)`) are left out with a limit: the models they serve are
+# those every installed app's admin module registers (django.contrib.auth's User and Group here, third-party apps'
+# elsewhere, outside the files read), most of each model's pages take `<path:object_id>` before more segments, which
+# atlas's path form does not hold, and the methods its views answer depend on the signed-in user (logout takes only
+# POST from one); an anonymous user is sent to the login page by any method.
+missing:
+  - { route: "* /admin", reason: "the admin site's index and its catch-all `(?P<url>.*)$` (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/api/item", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/api/item/add", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/api/item/{**}/change", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/api/item/{**}/delete", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/api/item/{**}/history", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/group", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/group/add", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/group/{**}/change", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/group/{**}/delete", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/group/{**}/history", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user/add", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user/{**}/change", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user/{**}/delete", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user/{**}/history", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/auth/user/{}/password", reason: "UserAdmin's own page (`UserAdmin.get_urls`) for `auth/user`, which django.contrib.auth registers; atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/autocomplete", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/jsi18n", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/logout", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/password_change", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/password_change/done", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/r/{**}/{**}", reason: "the admin's view on site, `r/<path:content_type_id>/<path:object_id>/`; atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/{**}", reason: "the admin site's index and its catch-all `(?P<url>.*)$` (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "* /admin/{}", reason: "the admin's app index, `^(?P<app_label>auth|api)/$`, one label for each app with a model registered; atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "DELETE /admin/api/item/{**}", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "DELETE /admin/auth/group/{**}", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "DELETE /admin/auth/user/{**}", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "GET /admin/api/item/{**}", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "GET /admin/auth/group/{**}", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "GET /admin/auth/user/{**}", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "GET /admin/login", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PATCH /admin/api/item/{**}", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PATCH /admin/auth/group/{**}", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PATCH /admin/auth/user/{**}", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "POST /admin/api/item/{**}", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "POST /admin/auth/group/{**}", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "POST /admin/auth/user/{**}", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "POST /admin/login", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PUT /admin/api/item/{**}", reason: "a page of the model `api/item`, which api/admin.py registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PUT /admin/auth/group/{**}", reason: "a page of the model `auth/group`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PUT /admin/auth/user/{**}", reason: "a page of the model `auth/user`, which django.contrib.auth registers (`ModelAdmin.get_urls`); atlas leaves `admin.site.urls` out with a limit" }
+  - { route: "PUT /admin/login", reason: "a page of the admin site itself (`AdminSite.get_urls`); atlas leaves `admin.site.urls` out with a limit" }

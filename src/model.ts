@@ -133,14 +133,23 @@ export interface Dispatch {
   /** The handler takes the `next` it may pass the request on with, so a route registered after it may answer too. */
   passes?: true;
   /**
+   * The router picks a route by the request's path alone, and the route answers a method it does not take with 405
+   * (Django: the first pattern the path fits, whatever the method), so a route after it that takes the method is not
+   * reached.
+   */
+  byPath?: true;
+  /**
    * How the router treats a `/` at the end of a request's path: `ignored` (Express, @koa/router), `strict` (a path with
    * it is another path: Fastify, Hono, Spring 6 and later), `redirected` (Starlette redirects a request no route takes
    * to the path with the `/` added or removed where a route takes that), `removed` and `added` (Next.js redirects every
    * request to the path without it, or with it, by `trailingSlash`), `appended` (Werkzeug serves the path as the route
    * writes it, and redirects a request without the `/` to the path with it where a route written with one takes that,
-   * unless its matcher reaches a route that takes the request as written first: `strict_slashes`).
+   * unless its matcher reaches a route that takes the request as written first: `strict_slashes`), `append-slash`
+   * (Django serves the path as the pattern writes it, and CommonMiddleware answers a request without the `/` that no
+   * pattern takes as written with a redirect to the path with it, where the first pattern that takes that is this
+   * route's: `APPEND_SLASH`).
    */
-  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added" | "appended";
+  slashes?: "ignored" | "strict" | "redirected" | "removed" | "added" | "appended" | "append-slash";
   /**
    * The route's path as served ends with a `/` (`slash`), or is served with and without one (`both`). On a route that
    * ends in a wildcard, `slash` says the path before the wildcard is served only with the `/` (find-my-way's `/x/*`,

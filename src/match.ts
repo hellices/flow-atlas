@@ -502,6 +502,28 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
         if (!candidates.length) return;
       }
     }
+    // Django resolves a request to the first pattern its path fits, by any method (`URLResolver.resolve`), and that
+    // pattern's view answers a method it does not take with 405: a later pattern that takes the method is not reached.
+    if (candidates.some((c) => c.surface.dispatch?.byPath)) {
+      const any = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, slash));
+      candidates = candidates.filter((c) => !c.surface.dispatch?.byPath || !any.some((d) => d !== c.surface && beats(d, c.surface, call)));
+    }
+    // CommonMiddleware answers a request without a trailing `/` that no pattern takes as written, by any method, with a
+    // redirect to the path with it, where the first pattern that takes that appends one (`APPEND_SLASH`,
+    // `should_redirect_with_slash`). A call with values may be redirected for some and served for others.
+    if (!slash && call.path !== "/" && graph.surfaces.some((s) => s.component === call.to && s.dispatch?.slashes === "append-slash")) {
+      const asWritten = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, false));
+      if (!asWritten.some((s) => pathCovers(s.path, call.path, s.patterns))) {
+        const withSlash = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, true));
+        const firstPattern = withSlash.filter((d) => !withSlash.some((e) => e !== d && beats(e, d, { ...call, slash: true })));
+        // The redirect is the middleware's, whatever the method; the routes named are those of the method, none where
+        // the pattern's view answers it with 405.
+        if (firstPattern.some((s) => s.dispatch?.slashes === "append-slash")) {
+          const to = firstPattern.filter((s) => s.dispatch?.slashes === "append-slash" && methodsMatch(s.method, call.method) && !(s.implicit && (s.method === "HEAD" || s.method === "OPTIONS") && call.method.toUpperCase() !== s.method));
+          redirected.set(ci, { path: call.path, slash: true, surfaces: to });
+        }
+      }
+    }
     // A router that redirects answers a request no route of it takes as written, by any method, with a redirect to the
     // path with the `/` added or removed, where a route of it takes that path.
     const redirecting = graph.surfaces.filter((s) => s.component === call.to && REDIRECTING.has(s.dispatch?.slashes));
@@ -564,7 +586,9 @@ export function redirectedLimits(graph: Pick<Graph, "calls">, redirected: Matche
     const c = graph.calls[ci]!;
     const to = slash ? `${path}/` : path;
     const routes = [...new Set(surfaces.map((s) => `${s.method === "*" ? "any method" : s.method} ${s.path}`))].join(", ");
-    return `calls ${c.from}->${c.to}: ${c.method} ${c.path}${c.slash ? "/" : ""} at ${c.at.file}:${c.at.line} is answered with a redirect to ${to}, which ${routes} serves; it reaches that route only as its client follows the redirect, so it is matched to none`;
+    const call = `calls ${c.from}->${c.to}: ${c.method} ${c.path}${c.slash ? "/" : ""} at ${c.at.file}:${c.at.line} is answered with a redirect to ${to}`;
+    if (!routes) return `${call}, where the route the path reaches does not take ${c.method}; it is matched to none`;
+    return `${call}, which ${routes} serves; it reaches that route only as its client follows the redirect, so it is matched to none`;
   });
 }
 

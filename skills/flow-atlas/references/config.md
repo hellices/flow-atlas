@@ -23,10 +23,10 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi | spring | next | flask | aspnetcore
+    styles: [nest]            # nest | express | fastapi | spring | next | flask | aspnetcore | django
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
-      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, or a Flask blueprint's url_prefix
+      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, a Flask blueprint's url_prefix, or the path a Django URLconf is included at
     prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
     bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
@@ -533,6 +533,60 @@ and a converter registered there leaves the rules that name it unread. Werkzeug 
 values equal the `defaults` of another rule of the same endpoint with the same arguments to that rule
 (`redirect_defaults`), in whichever order they were registered, since `Map.update` sorts an endpoint's rules with more
 defaults first: a limit names each such pair, as the request is matched to the rule it fits all the same.
+The `django` style reads Django's URLconfs, and Django REST framework's routers and views, from Python, as Django 6.1
+and DRF 3.18 build and dispatch them (the version the project depends on is not read). The root URLconf is the module
+`ROOT_URLCONF` names, read from each settings module among the route files: a file that sets it, itself or through a
+`from x import *` of one that does; a setting (`DEBUG`, `MIDDLEWARE`, `APPEND_SLASH`, `MEDIA_URL`, `STATIC_URL`) is read
+where every settings module gives it the same literal value, and Django's default where none sets it. A URLconf's
+`urlpatterns` is read from its top-level statements in order (`=`, `+=`, `+`, `append`, `extend`, `insert`, and `if
+settings.DEBUG:` and its `else`); a statement under another condition (`if`, `try`, `for`) leaves what it adds unread,
+with a limit. Each `path(route, view)` and `re_path(regex, view)` is a pattern, and `include()` of a module named by a
+string or imported, a list of patterns, a `(patterns, app_name)` pair or a router's `urls` serves the patterns it names
+under its own, joined as `URLResolver.resolve` matches them, each its part of the path in turn; the same URLconf included
+twice serves its patterns under both, and one included within itself is read once, with a limit. A `path()` route is
+read as `_route_to_regex` reads it: its text as written, and `<name>` or `<converter:name>` a parameter whose regex is
+its converter's (`str` any one segment; `int`, `slug` and `uuid` the segments their regex takes, kept as the parameter's
+pattern; `path` at the end the rest of the path, `{name}/**`), or that of a converter `register_converter` registers in the route files where the call runs
+as the module is imported (at its top level, or under `if settings.DEBUG:`), whose `regex` its class or a base sets; one whose `to_python` may refuse a value (anything but returning it, `str()` of it,
+or `int()` of digits), which makes Django try the next pattern, is kept as `{name:converter}`, whose values are not
+read. A `re_path()` regex is read where its shape is certain: it starts with `^` (Django searches any other anywhere in
+the path), a view's ends with `$` or `\Z` (any other takes any text after it) and an include's does not; outside a
+group it holds text, an optional character, and optional or alternative non-capturing groups, each form a path of the
+route; each capturing group is a parameter whose regex is its pattern (an unnamed one `{_0}`, `{_1}`, ...); `.+` and
+`.*` at the end take the rest of the path (`.*` also `media/`, not `media`); an optional `/` at the end makes the route
+take the path with and without it. Anything else is not read, with a limit: a class, `.`, a repeat or a `|` outside a
+group, a group that takes some slashes but not any text, one that may take an empty segment, or one at the end of an
+include's pattern whose next text it may take (the included patterns match what it leaves). Python's `\d` and `\w` also take the digits and letters of
+other scripts; atlas tests ASCII ones, as JavaScript reads them. A view's methods are its own: a function's any (`*`)
+unless its decorators say otherwise (`require_http_methods([...])`, compared with the method as written, `require_GET`,
+`require_POST`, `require_safe`, DRF's `@api_view([...])`, GET where none is given, with the OPTIONS APIView answers);
+Django's and DRF's decorators that check a user, a token or a cache leave them as they are, and any other decorator
+leaves the route unread, with a limit. A view that takes no method still takes its pattern's requests, which it
+answers with 405: no route is read for it, and a later pattern whose every request it takes is left out, with a
+limit. A class's `as_view()` takes each of its `http_method_names` (View's eight, its
+own or a base's list, or the one `as_view` is given) it has a handler for along its method resolution order, its bases
+in the files and Django's and DRF's generic views (`TemplateView` GET, `RedirectView` every method, `FormView`,
+`CreateView` and `UpdateView` GET, POST and PUT, `DeleteView` GET, POST and DELETE, `LoginView`, `LogoutView` POST
+only, `APIView`, DRF's generic views and their mixins), and HEAD where it has GET (`View.setup`); HEAD and the OPTIONS
+`View` answers are `implicit`; `method_decorator(require_POST, name="dispatch")` limits them. A ViewSet's `as_view(actions)`
+takes the methods its actions map. DRF's `SimpleRouter` and `DefaultRouter` (`trailing_slash`, `use_regex_path`, and a
+`trailing_slash` set on the router after) serve, for each ViewSet registered on them in the same file, in order, the
+list route (`list` GET, `create` POST), each `@action(detail=False)`, the detail route (`retrieve` GET, `update` PUT,
+`partial_update` PATCH, `destroy` DELETE) and each `@action(detail=True)` (by name, its `url_path` and `methods`, and
+`@<action>.mapping.<method>`), each where the ViewSet has an action it maps (its own methods, its bases' and DRF's
+mixins'), at `<prefix>/<lookup>/`, the lookup `lookup_url_kwarg` or `lookup_field` (`pk`) taking
+`lookup_value_regex` (`[^/.]+`) or, without regexes, `lookup_value_converter`; a DefaultRouter adds its API root view
+(GET) and, as `format_suffix_patterns` does, each pattern again with `.<format>` after it. `static(settings.MEDIA_URL,
+...)` serves the files under its prefix while `DEBUG` is `True`, as `staticfiles_urlpatterns()` does under
+`STATIC_URL`. DRF's `rest_framework.urls` and Django's `django.contrib.auth.urls` are read as Django and DRF write
+them, their routes placed at the `include()`. `mounts` gives the path a URLconf file is served under, in place of where
+it is included. Not read, each with a limit: the admin site's patterns (`admin.site.urls`: which models they serve
+depends on every installed app's admin module, most of a model's pages take `<path:object_id>` before more segments,
+and its views' methods depend on the signed-in user), `i18n_patterns`, another library's patterns (`api.urls` of
+Django Ninja), a URLconf that is not among the files read, a route, view or include the file does not spell out, a
+view of another module's (but `django.views.static.serve`), a class with a base atlas does not trace, a router
+registered on in another file or whose registry is changed, more than 10000 patterns or URLconfs more than 32 deep,
+and, where no settings module among the route files sets `ROOT_URLCONF`, every route (declare a URLconf in `mounts`).
 The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
@@ -736,6 +790,10 @@ it does not, the call joins every route its path fits, and a limit names what is
   then a catch-all), then one that names the method before one that takes any; a route whose constraint atlas does not
   read may refuse the request and keeps no other route from it. It matches a path's literal text whatever its case,
   and HEAD only to a route that takes HEAD.
+- Path first. Django's resolver answers a request with the first pattern its path fits, in the order of the URLconf
+  and the URLconfs it includes, whatever the method (`URLResolver.resolve`); that pattern's view answers a method it
+  does not take with 405, so a later pattern that takes the method is not reached (`/api/items/recent/` is DRF's
+  `recent` action's, GET only, and not the detail route's for DELETE).
 - Trailing `/`. Express, @koa/router, Nest on Express and ASP.NET Core ignore it. Express's `Router({ strict: true })` makes a
   route take the path as written, a router's `/` taking its mount's path with and without the `/`; an application's
   `strict routing` is read where every `set`, `enable` or `disable` of it is at the top level of the file that creates
@@ -752,6 +810,11 @@ it does not, the call joins every route its path fits, and a limit names what is
   `/` is not served by a rule written without one. A rule with `strict_slashes=False`, or every rule where
   `url_map.strict_slashes` is `False`, takes either form; where it is set otherwise than to `True` or `False`, a call
   is matched to its route either way.
+  Django serves the path as the pattern writes it; with CommonMiddleware in `MIDDLEWARE` and `APPEND_SLASH` on (the
+  default), a request without a `/` that no pattern takes as written, by any method, is answered with a redirect to
+  the path with it, where the first pattern that takes that does not say otherwise (`@no_append_slash`); with `DEBUG`
+  on, Django raises an error for a DELETE, POST, PUT or PATCH instead. Either way the request reaches no route as
+  written.
   Starlette serves the path as the route writes it, and redirects a request no route takes by any method to the path
   with the `/` added or removed where a route takes that (`redirect_slashes`, read from `FastAPI(...)`, or from the
   `APIRouter(...)` an application mounts); a call with a value may be served for some values and redirected for

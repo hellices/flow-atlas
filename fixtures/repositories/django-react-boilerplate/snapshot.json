@@ -1,12 +1,38 @@
 {
-  "surfaces": [],
+  "surfaces": [
+    "backend|GET /",
+    "backend|GET /api",
+    "backend|GET /api/{format}",
+    "backend|GET /users",
+    "backend|HEAD / (implicit)",
+    "backend|HEAD /api (implicit)",
+    "backend|HEAD /api/{format} (implicit)",
+    "backend|HEAD /users (implicit)",
+    "backend|OPTIONS / (implicit)",
+    "backend|OPTIONS /api (implicit)",
+    "backend|OPTIONS /api/{format} (implicit)",
+    "backend|OPTIONS /users (implicit)"
+  ],
   "calls": [
     "frontend->backend|GET / @ frontend/js/components/TopNav.tsx:11",
     "frontend->backend|GET /admin/login @ frontend/js/loaders/users.ts:20"
   ],
-  "edges": [],
-  "findings": [],
+  "edges": [
+    "match frontend->backend|GET /@frontend/js/components/TopNav.tsx#TopNav -> backend|GET / (static)"
+  ],
+  "findings": [
+    "FA001|backend|GET /api",
+    "FA001|backend|GET /api/{format}",
+    "FA001|backend|GET /users"
+  ],
   "limits": [
-    "routes backend: 31 files read, nothing extracted"
+    "routes backend: ROOT_URLCONF is {{project_name}}.urls, a module that is not among the files read; the routes it serves are not read",
+    "routes backend: backend/project_name/urls.py:19 changes router under a condition atlas does not read; what it adds is not read",
+    "routes backend: backend/project_name/urls.py:23: \"admin/\" includes the admin site's patterns (admin.site.urls): which models they serve depends on every installed app's admin module, their pages take <path:object_id> before more segments, and their methods the signed-in user; its routes are not read",
+    "routes backend: backend/project_name/urls.py:24 (under \"admin/defender/\"): include(\"defender.urls\"), a URLconf that is not among the files read; its routes are not read",
+    "routes backend: backend/project_name/urls.py:25 serves \"jsreverse/\" with the view django_js_reverse.views.urls_js, which atlas does not trace to a function or class of the files read; its routes are not read",
+    "routes backend: backend/project_name/urls.py:28 serves \"api/schema/\" with the view of a class atlas does not read (SpectacularAPIView, which atlas does not trace to a class of the files read, Django's or DRF's); its routes are not read",
+    "routes backend: backend/project_name/urls.py:29 serves \"api/schema/swagger-ui/\" with the view of a class atlas does not read (SpectacularSwaggerView, which atlas does not trace to a class of the files read, Django's or DRF's); its routes are not read",
+    "routes backend: backend/project_name/urls.py:34 serves \"api/schema/redoc/\" with the view of a class atlas does not read (SpectacularRedocView, which atlas does not trace to a class of the files read, Django's or DRF's); its routes are not read"
   ]
 }

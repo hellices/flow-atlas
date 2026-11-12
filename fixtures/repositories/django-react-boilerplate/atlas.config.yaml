@@ -1,9 +1,11 @@
-# Django REST framework backend, React frontend. atlas does not read Django's URLconfs; the OpenAPI document
-# drf-spectacular writes is generated, not committed, so the backend's routes are not read here.
+# Django REST framework backend, React frontend. The backend's URLconfs are read from the code (`styles: [django]`);
+# its settings name the root URLconf by the startproject template's placeholder (backend/project_name/settings/base.py:
+# ROOT_URLCONF = "{{project_name}}.urls"), so where that URLconf is served is declared: backend/project_name/urls.py at
+# the root. Its router registers its ViewSets in a loop (backend/project_name/urls.py:18), which atlas does not read.
 components:
   - { name: frontend, path: frontend }
   - { name: backend, path: backend }
 routes:
-  - { component: backend, files: ["backend/**/*.py"] }
+  - { component: backend, files: ["backend/**/*.py"], styles: [django], mounts: { "backend/project_name/urls.py": / } }
 calls:
   - { from: frontend, to: backend, files: ["frontend/js/**/*.ts", "frontend/js/**/*.tsx"] }

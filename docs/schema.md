@@ -207,7 +207,10 @@ where that is not some text of it: Fastify's `(.*?)` and Spring's `(.*)`, none i
 variable, written for Java, is not kept, so `.*` stands for it). Starlette's other converters (`{id:int}`,
 `{id:float}`, `{id:uuid}`) are kept as written: each takes only the segments its regex does. Werkzeug's (Flask, Quart)
 are written `{id}` with their regex in `patterns` (`<int:id>` takes `[0-9]+`), `<path:rest>` at the end as `{rest}/**`,
-and a converter the application registers as `{id:name}`, whose values are not read. Two forms
+and a converter the application registers as `{id:name}`, whose values are not read. Django's are written the same
+way: a `path()` converter or a `re_path()` group is `{name}` with its regex in `patterns` (an unnamed group `{_0}`),
+`.+` at the end (`<path:rest>`) `{rest}/**`, `.*` at the end `**` with `dispatch.trailing: slash` (`media/` is taken,
+`media` is not), and a converter the files register whose `to_python` may refuse a value `{name:converter}`. Two forms
 are kept as the router writes them, because OpenAPI has no template for them: a catch-all at the end of a path, which
 matches the rest of a request's path, and a wildcard within a segment (`*.txt`, and Spring's `t?st.html`, `?` being one
 character), which matches any text in that segment. Spring's `{*rest}` and `**` (and Next.js's `[[...rest]]`, written
@@ -228,11 +231,13 @@ holding it, each a sequence of registrations and a place in it; `find-my-way`, F
 Nest's sort by the `rank` of each segment, then `order`; `werkzeug`, the precedence of Werkzeug's matcher (Flask,
 Quart) by the route's `parts`, each segment's static text or its regex and weight; `precedence`, ASP.NET Core's endpoint
 routing by the `rank` of its `Order` and each segment's precedence digit, then a route that names the method), `passes`
-(its handler may pass the request on to a later route), `slashes` (`ignored`, `strict`, `redirected` for Starlette,
-`removed` and `added` for Next.js's `trailingSlash`, `appended` for Werkzeug's `strict_slashes`), `constrained` (Fastify
-takes a request to it only with headers that meet its constraints), `caseless` (its literal text matches whatever the
-case, as ASP.NET Core matches it) and `unchecked` (parameters whose constraint atlas does not read, so the route may
-refuse a value its path takes). Where an OpenAPI document writes the
+(its handler may pass the request on to a later route), `byPath` (the router picks the route by the path alone and the
+route answers another method with 405, as Django's resolver does, so a later route of that method is not reached),
+`slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed` and `added` for Next.js's `trailingSlash`,
+`appended` for Werkzeug's `strict_slashes`, `append-slash` for Django's CommonMiddleware with `APPEND_SLASH`),
+`constrained` (Fastify takes a request to it only with headers that meet its constraints), `caseless` (its literal text
+matches whatever the case, as ASP.NET Core matches it) and `unchecked` (parameters whose constraint atlas does not read,
+so the route may refuse a value its path takes). Where an OpenAPI document writes the
 `/` (a server path or `basePath` before the root key `/` puts one after it), a call that leaves it out is matched to
 the route only by GET or HEAD. Whether another method reaches it depends on the framework (Starlette's redirect keeps
 the method, Django's may lose a POST's body), so such a call is matched to none and a `limit:` names it. A route
@@ -245,7 +250,7 @@ Spring MVC routes are read from annotations with `styles: [spring]`: a type's `@
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` in the type's
 body, methods united as Spring combines them, and the POST endpoints Spring Security's `formLogin` and `logout` serve.
 
-For a framework atlas does not read (Django and others), the OpenAPI 2.0 or 3.x document the framework generates
+For a framework atlas does not read (Django Ninja and others), the OpenAPI 2.0 or 3.x document the framework generates
 is given in `routes[].openapi`, and each operation becomes a route. The path takes Swagger 2.0's `basePath` or the path
 of the first OpenAPI 3 server URL in front, without the host or a trailing `/`. The handler is placed by the rule the
 framework derives operationIds by (FastAPI `function_path_method`, Nest `Class_method`, springdoc's method name; a
