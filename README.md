@@ -207,9 +207,10 @@ Recorded on the `view-order` flow of [`fixtures/shop`](fixtures/shop/flows/order
 ([MP4](docs/media/flows.mp4)).
 
 - **Flows.** Besides its steps and their roles, a flow can name the decisions behind it (`sources`), what it produces
-  (`produces`) and whether it is planned or going away (`lifecycle`); `atlas flows` reports `ProducesListed` and
-  `Documented` for those too. `atlas draft flows` drafts a flow for each chain no flow names yet, leaving only the
-  title and roles to write. A flow file is reviewed like code, in the pull request that changes it.
+  (`produces`) and whether it is planned or going away (`lifecycle`). `atlas flows` also reports `ProducesListed`
+  (each `produces` entry is in a registry) and `Documented` (the title and every role are written). `atlas draft
+  flows` drafts a flow for each chain no flow names yet, leaving only the title and roles to write. A flow file is
+  reviewed like code, in the pull request that changes it.
 - **Output.** Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema),
   with `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests). There are no
   timestamps, so the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`).
