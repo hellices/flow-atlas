@@ -20,9 +20,10 @@ export interface RouteSource {
    * GET, POST and the like, and API routes under `pages/api`. flask: Flask's and Quart's `@app.route("/x")`,
    * `add_url_rule` and blueprints in Python. aspnetcore: ASP.NET Core minimal APIs (`app.MapGet("/x")`, `MapGroup`) and
    * controllers' attribute and conventional routes in C#. django: Django's URLconfs from `ROOT_URLCONF` (`path`,
-   * `re_path`, `include`) and Django REST framework's routers, in Python.
+   * `re_path`, `include`) and Django REST framework's routers, in Python. go: Gin's, chi's and net/http's ServeMux
+   * registrations in Go, each router told by the package it comes from.
    */
-  styles?: Array<"nest" | "express" | "fastapi" | "spring" | "next" | "flask" | "aspnetcore" | "django">;
+  styles?: Array<"nest" | "express" | "fastapi" | "spring" | "next" | "flask" | "aspnetcore" | "django" | "go">;
   receivers?: string[];
   /**
    * Where the routers a file declares serve their routes, when the code does not say it with literal paths: an Express

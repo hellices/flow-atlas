@@ -184,8 +184,8 @@
           ],
           "properties": {
             "picks": {
-              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order. werkzeug: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and variables by their weight, whatever the order, by parts. precedence: ASP.NET Core's endpoint routing takes, of the routes whose template and constraints a request meets, the one first by rank (lower first), and of those a route that names the request's method before one that takes any (EndpointComparer, HttpMethodMatcherPolicy); routes left tied are ambiguous.",
-              "enum": ["registration", "find-my-way", "specificity", "werkzeug", "precedence"]
+              "description": "registration: the first route registered that a request fits answers it (Express, @koa/router, Hono, Nest on Express, Starlette), by order. find-my-way: Fastify's router tries static text before a parameter, a parameter with a regexp before one without, and a parameter before a wildcard. specificity: Nest's routeResolutionStrategy 'specificity' registers the more specific routes first, by rank, and routes of one rank in order. werkzeug: Werkzeug's matcher (Flask, Quart) tries a segment's static text before its variables, and variables by their weight, whatever the order, by parts. precedence: ASP.NET Core's endpoint routing takes, of the routes whose template and constraints a request meets, the one first by rank (lower first), and of those a route that names the request's method before one that takes any (EndpointComparer, HttpMethodMatcherPolicy); routes left tied are ambiguous. httprouter: Gin's tree tries, segment by segment, static text before a parameter and a parameter before a catch-all, whatever the order. chi: chi's tree tries, from each place in the path, static text, then a parameter with a regexp, then one without, then a catch-all, whatever the order, a mounted router's routes as a catch-all at their mount (mounted). servemux: Go's ServeMux (1.22 and later) takes the most specific pattern, the one whose requests are a strict subset of the other's (by method and by path); two patterns that share a request with neither more specific conflict, and ServeMux refuses the second as it is registered, so atlas leaves it out. Of patterns that do not conflict, the more specific is the one its tree tries first: a pattern that names the method before one that names none, and segment by segment a literal before a wildcard before a remainder. A route of a router a ServeMux serves under a subtree is first a route of that subtree there (under).",
+              "enum": ["registration", "find-my-way", "specificity", "werkzeug", "precedence", "httprouter", "chi", "servemux"]
             },
             "rank": {
               "description": "For specificity, the kind of each segment of the route's path as Nest's specificity sort ranks it (RouteSpecificitySorter): a literal 0, text with a parameter 2, a parameter 3, a wildcard 4. For precedence, the route's Order (any integer) and then the digit of each segment of its template (RoutePrecedence.ComputeInbound): a literal 1, a constrained parameter or a segment of several parts 2, a parameter 3, a constrained catch-all 4, a catch-all 5. Which values each takes is checked by picks.",
@@ -210,6 +210,18 @@
                 ]
               }
             },
+            "mounted": {
+              "description": "chi: the number of segments of the route's path before each router mounted on the way to the route's (Mount, Route), from the outermost; chi's tree matches a mount as a catch-all after its path, then the mounted router's tree.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "integer", "minimum": 0 }
+            },
+            "under": {
+              "description": "The number of segments of the route's path before each subtree a ServeMux serves the route's router under (http.StripPrefix), from the outermost: that ServeMux picks between its own patterns and the subtree first.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "integer", "minimum": 0 }
+            },
             "order": {
               "description": "Where the route is registered, from the router a request enters down to the one that holds it: each step a sequence of registrations whose order is known (router) and the place in it (at). Of two routes, the one before is the one whose steps first differ in at within the same router; routes whose steps first differ in router are in no order atlas knows.",
               "type": "array",
@@ -233,8 +245,8 @@
               "const": true
             },
             "slashes": {
-              "description": "How the router treats a / at the end of a request's path: ignored (Express, @koa/router), strict (a path with it is another path: Fastify, Hono, Spring 6 and later), redirected (Starlette redirects a request no route takes to the path with the / added or removed where a route takes that), removed and added (Next.js redirects every request to the path without it, or with it, by trailingSlash), appended (Werkzeug serves the path as the route writes it, and redirects a request without the / to the path with it where a route written with one takes that, unless its matcher reaches a route that takes the request as written first: strict_slashes), append-slash (Django serves the path as the pattern writes it, and CommonMiddleware answers a request without the / that no pattern takes as written with a redirect to the path with it, where the first pattern that takes that is this route's: APPEND_SLASH).",
-              "enum": ["ignored", "strict", "redirected", "removed", "added", "appended", "append-slash"]
+              "description": "How the router treats a / at the end of a request's path: ignored (Express, @koa/router), strict (a path with it is another path: Fastify, Hono, Spring 6 and later), redirected (Starlette redirects a request no route takes to the path with the / added or removed where a route takes that), removed and added (Next.js redirects every request to the path without it, or with it, by trailingSlash), appended (Werkzeug serves the path as the route writes it, and redirects a request without the / to the path with it where a route written with one takes that, unless its matcher reaches a route that takes the request as written first: strict_slashes), append-slash (Django serves the path as the pattern writes it, and CommonMiddleware answers a request without the / that no pattern takes as written with a redirect to the path with it, where the first pattern that takes that is this route's: APPEND_SLASH), tsr (Gin serves the path as the route writes it, and redirects a request to the path with the / added or removed where the route its tree reaches first takes that form: RedirectTrailingSlash), subtree (Go's ServeMux serves the path as the pattern writes it, and redirects a request without a / that no pattern but a remainder or subtree matches to the path with it, where a pattern matches that with nothing left for its remainder).",
+              "enum": ["ignored", "strict", "redirected", "removed", "added", "appended", "append-slash", "tsr", "subtree"]
             },
             "trailing": {
               "description": "The route's path as served ends with a / (slash), or is served with and without one (both). On a route that ends in a wildcard, slash says the path before the wildcard is served only with the /.",

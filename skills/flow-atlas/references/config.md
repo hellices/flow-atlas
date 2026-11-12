@@ -23,10 +23,10 @@ components:                   # used when there are no manifests
 routes:
   - component: orders
     files: ["services/orders/src/**/*.ts"]
-    styles: [nest]            # nest | express | fastapi | spring | next | flask | aspnetcore | django
+    styles: [nest]            # nest | express | fastapi | spring | next | flask | aspnetcore | django | go
     receivers: [app, router]  # express receivers; default app, router, server, fastify
     mounts:                   # where the routers a file declares serve their routes, when the code gives no literal path:
-      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, a Flask blueprint's url_prefix, or the path a Django URLconf is included at
+      "services/orders/src/routes/collect.js": /collect   # an Express, @koa/router or Hono router's or a Fastify plugin's mount path and prefix, a FastAPI router's include prefix, a Flask blueprint's url_prefix, the path a Django URLconf is included at, or where a Go file's routers are served
     prefix: /api              # the path every route of the entry is served under, where atlas does not read it: Nest's global prefix from a variable
     bootstrap: services/orders/src/main.ts   # nest: the file that sets the global prefix and versioning, when atlas finds several
     constants: "Path$"        # const names whose string value is a GET route (SSE paths and the like)
@@ -587,6 +587,46 @@ Django Ninja), a URLconf that is not among the files read, a route, view or incl
 view of another module's (but `django.views.static.serve`), a class with a base atlas does not trace, a router
 registered on in another file or whose registry is changed, more than 10000 patterns or URLconfs more than 32 deep,
 and, where no settings module among the route files sets `ROOT_URLCONF`, every route (declare a URLconf in `mounts`).
+The `go` style reads Go services on Gin (`github.com/gin-gonic/gin`, routergroup.go), chi (`github.com/go-chi/chi/v5`,
+mux.go) and net/http's ServeMux, each router told by the package it is made from, under any name that package is
+imported as: a Gin engine (`gin.New()`, `gin.Default()`) and its groups (`Group(path)`, nested, each path joined to
+its parent's by Gin's `joinPaths`, which cleans it and keeps a `/` the route ends with), with `GET` and the other method
+functions, `Handle`, `Any` (any method), `Match`, and `Static`, `StaticFS` and `StaticFile`, which serve files with GET
+and HEAD at the path (`<path>/*filepath` for a directory) and are `implicit`, with `gin static` as their convention;
+a chi router (`chi.NewRouter()`), with its method functions, `Method` and `MethodFunc` (a method `chi.RegisterMethod`
+adds in a file read included), `Handle` and `HandleFunc` (any method, or the method a `GET /path` pattern starts with),
+`Group` and `With` (the same router), `Route` (a router mounted at the pattern) and `Mount` (a chi router under the
+pattern, any other handler for any method at the pattern and everything under it); a ServeMux (`http.NewServeMux()`,
+or the `DefaultServeMux` of `http.Handle` and `http.HandleFunc`), its patterns read as Go 1.22 parses them, `[METHOD
+][HOST]/[PATH]` with `{name}`, a last `{name...}` or `/` that takes the rest, and `{$}`; GET also serves HEAD
+(`implicit`); a ServeMux serves a router under a subtree where `http.StripPrefix` removes the subtree's path, and at
+the root where its pattern is `/`. A ServeMux's patterns are read as the Go of the nearest go.mod above the file reads
+them: a `go` line before 1.22, none, or `godebug httpmuxgo121=1` (there, or in a `//go:debug` line of a main package of the module) gives Go 1.21's
+mux, whose patterns are paths (a method, host or `{` in one is left out with a limit). A file served by
+`http.FileServer` is `implicit`, with `net/http FileServer` as its convention. A chi parameter's regexp
+(`{id:[0-9]+}`) is kept in `patterns` as chi tests it, `^` and `$` added as text where missing; one in RE2's own syntax
+(`\pL`, flags, POSIX classes) leaves its route unread. Routers are followed through variables, blocks and closures,
+struct fields and methods (embedded fields too; a struct value copied where Go copies it, a pointer shared),
+constants, a `range` over a literal list of strings, and the calls
+between the functions of the route files' packages (across packages of the module the go.mod names), each function
+read for each call that reaches it, from the functions no code read calls; a router nothing read mounts is served at
+the root. `mounts` gives the path the routers a file makes, and the router parameters of its functions that no call
+read binds, are served under, in place of their mounts. Not read, each with a limit: a path, method or pattern the
+file does not spell out, a group or mount at such a path, a wildcard Gin refuses or within a segment, a registration
+on a value atlas does not trace to a router (a parameter no read call passes one, a router or field a branch or loop
+may replace, a field no read code sets, a router a function returns from more than one place), a router put in a value
+atlas does not follow (a map, a slice, an index, another package's struct other than `http.Server`) or handed to a
+registration on a value atlas does not trace, a package-level
+variable that a function other than `init` assigns, read in a function no read code calls (another package may have
+assigned it first), a router handed to a library function whose result the code drops, a recursive call, calls more
+than 32 deep or 20000 in all, a router mounted into itself or at more than 64 paths, `gin.New` options that are not
+function literals, `RedirectTrailingSlash` set in a branch or loop, a ServeMux pattern with a host, one Go refuses or one that conflicts with one registered
+before it, a router a ServeMux or chi serves without the path stripped (it sees the whole path; it is not read at the
+root either), and chi's `middleware.StripSlashes`, `RedirectSlashes`,
+`URLFormat`, `StripPrefix` and `PathRewrite`, which route a request by another path than it names (chi's
+`middleware.GetHead`, used on a router, makes its GET routes serve HEAD as well, `implicit`, where no HEAD route or
+route for any method takes the path). Other Go routers (Echo,
+Fiber, gorilla/mux and the rest) are not read.
 The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
 it, in Java and Kotlin (paths joined, methods united as Spring does), and the POST endpoints Spring Security's
@@ -777,7 +817,20 @@ it does not, the call joins every route its path fits, and a limit names what is
   wildcard), those of one rank in declaration order. Another strategy, or one not spelled out, leaves every route a
   target.
 - Precedence. Fastify's find-my-way tries a static segment before a parameter, a parameter with a regexp before one
-  without, and a parameter before a wildcard, whatever the order; Spring ranks by specificity and Next.js by its file
+  without, and a parameter before a wildcard, whatever the order; Gin's tree (tree.go `getValue`) tries, segment by
+  segment, static text before a parameter before a catch-all, in the tree of the request's method only (a HEAD
+  request reaches a HEAD route, not a GET one); chi's (tree.go `findRoute`) tries, from each place in the path, static text, then a
+  parameter with a regexp, then one without (one ending at a `/` after one ending at another character), then a
+  catch-all, going back where a branch finds no route of the request's method, and a router mounted with `Mount` or
+  `Route` as a catch-all after its path, then that router's tree; Go's ServeMux takes the most specific pattern, the one whose
+  requests are a strict subset of the other's by method and by path (pattern.go `comparePathsAndMethods`); two that
+  share a request with neither more specific conflict, and ServeMux panics as the second is registered, which atlas
+  leaves out with a limit. Of patterns that do not conflict, the more specific is the one its tree tries first
+  (routing_tree.go): one that names the request's method, then one that names GET for a HEAD request, then one that
+  names none, and segment by segment a literal before a wildcard before a remainder. A router ServeMux serves under a
+  subtree with `http.StripPrefix` is that subtree to the ServeMux, which picks between it and its own patterns first;
+  chi's tree takes a request under a router's mount to that router for any method, so a route of the parent's its
+  tree tries after the mount is not reached by such a request; Spring ranks by specificity and Next.js by its file
   conventions, as before. Werkzeug (Flask, Quart) walks a request's segments and tries a segment's static text before
   its variables, and the variables by their weight (`Weighting`: more pieces of static text in the segment first, the
   longer first, then more converters, then lower converter weights: `int` and `float` 50, `string`, `any`, `uuid` and a
@@ -804,6 +857,13 @@ it does not, the call joins every route its path fits, and a limit names what is
   path with a `/` only to a route that has one: find-my-way also gives the empty text after a last `/` to a parameter
   (`/users/:id` takes `/users/`), Fastify serves a plugin's `/` at its prefix with and without the `/`
   (`prefixTrailingSlash`), and Spring joins `@RequestMapping("/owners")` and `@GetMapping("/")` into `/owners/`.
+  chi serves the path as the pattern writes it; a router mounted at `/x` serves its `/` at `/x` and `/x/`. Gin serves
+  the path as the route writes it, and with `RedirectTrailingSlash` (on unless the code sets it to `false`) redirects a
+  request with the `/` added or removed where its tree, walking the request, reaches a route of that form first (so
+  `GET /user/groups/` is redirected to `/user/groups` even where `/user/:name/*action` takes it). Go's ServeMux serves
+  the path as the pattern writes it, a subtree (`/x/`) and a remainder (`/x/{rest...}`) taking `/x/` and what follows,
+  and redirects a request without a `/` that no pattern but a subtree or remainder matches to the path with it, where a
+  pattern matches that with nothing left for its remainder (server.go `matchOrRedirect`).
   Werkzeug (Flask, Quart) serves the path as the rule writes it, and answers a request without a `/` with a redirect to
   the path with it where a rule written with one takes that (`strict_slashes`, on by default), unless a rule of that
   same path, or one its matcher tries first (a static segment before a variable), takes the request; a request with a

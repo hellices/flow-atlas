@@ -19,7 +19,8 @@ route that takes its requests. A route that a call of unread method may reach, a
 reported, nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than
 GET or HEAD, one a call reaches only after its router's trailing-slash redirect, or one taken only with headers that
 meet its constraints (Fastify's); a `limit:` line names that call. A route the framework serves by itself (`implicit`:
-FastAPI's OpenAPI document, Flask's static files route, Spring Boot's error page and static resources, Next.js's public
+FastAPI's OpenAPI document, Flask's static files route, the files Gin's `Static*` and net/http's `FileServer` serve,
+Spring Boot's error page and static resources, Next.js's public
 files and build files) is
 not reported either.
 

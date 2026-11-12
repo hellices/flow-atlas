@@ -2,7 +2,7 @@ import ts from "typescript";
 import type { Config, RouteSource } from "../config.js";
 import type { Coverage, Dispatch, Place, Surface } from "../model.js";
 import { surfaceId } from "../model.js";
-import { joinRoute, routeTemplate } from "../paths.js";
+import { joinRoute, routeTemplate, segments } from "../paths.js";
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
@@ -20,6 +20,7 @@ import { Constants } from "./constants.js";
 import { fastapiRouters, type Routers } from "./fastapi.js";
 import { djangoRoutes } from "./django.js";
 import { flaskRoutes } from "./flask.js";
+import { goRoutes } from "./goroutes.js";
 import { springBootRoutes } from "./springboot.js";
 import { metadataSuffix, nextBuiltins, nextConfig, nextPageMethods, nextSetting, type NextConfig, type NextPage, type PageMethods } from "./next.js";
 import { nestApp, nestModules, nestPaths, property, versionsOf, type NestApp } from "./nest.js";
@@ -1969,6 +1970,13 @@ function unique(surfaces: Surface[]): Surface[] {
   });
 }
 
+/** A Go route's dispatch with its `mounted` and `under` boundaries moved past the segments of a configured prefix. */
+function shifted(d: Dispatch, prefix: string | undefined): Dispatch {
+  const n = prefix ? segments(prefix).length : 0;
+  if (!n || (!d.mounted && !d.under)) return d;
+  return { ...d, ...(d.mounted ? { mounted: d.mounted.map((m) => m + n) } : {}), ...(d.under ? { under: d.under.map((m) => m + n) } : {}) };
+}
+
 /** One dispatch for two routes read as one surface (see `unique`); undefined where they share no rule. */
 function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefined {
   if (!b) return undefined;
@@ -1976,6 +1984,8 @@ function mergeDispatch(a: Dispatch, b: Dispatch | undefined): Dispatch | undefin
   if (a.picks && a.picks === b.picks) out.picks = a.picks;
   if (out.picks && a.rank && JSON.stringify(a.rank) === JSON.stringify(b.rank)) out.rank = a.rank;
   if (out.picks && a.parts && JSON.stringify(a.parts) === JSON.stringify(b.parts)) out.parts = a.parts;
+  if (out.picks && a.mounted && JSON.stringify(a.mounted) === JSON.stringify(b.mounted)) out.mounted = a.mounted;
+  if (a.under && JSON.stringify(a.under) === JSON.stringify(b.under)) out.under = a.under;
   // Two registrations at two places are both the surface, which then has no one place.
   const order = JSON.stringify(a.order) === JSON.stringify(b.order) ? a.order : undefined;
   if (out.picks && order) out.order = order;
@@ -2097,6 +2107,27 @@ export function extractRoutes(
           ...(r.implicit ? { implicit: true } : {}),
           ...(r.patterns ? { patterns: r.patterns } : {}),
           dispatch: r.dispatch,
+        });
+      }
+      for (const s of read.spans) spans?.add(s.file, s.start, s.end);
+      limits.push(...read.limits);
+    }
+    if ((spec.styles ?? []).includes("go")) {
+      const read = goRoutes(new Map(files.filter((f) => f.endsWith(".go")).map((f) => [f, source.read(f) ?? ""])), spec.component, (p) => source.read(p), spec.mounts);
+      for (const r of read.routes) {
+        const path = spec.prefix ? joinRoute(spec.prefix, r.path) : r.path;
+        out.push({
+          id: surfaceId({ component: spec.component, method: r.method, path }),
+          component: spec.component,
+          method: r.method,
+          path,
+          at: { file: r.file, line: r.line },
+          evidence: "text",
+          ...(r.implicit ? { implicit: true } : {}),
+          ...(r.convention ? { convention: r.convention } : {}),
+          ...(r.patterns ? { patterns: r.patterns } : {}),
+          // A prefix the configuration puts before the routes moves the segments their mounts count.
+          dispatch: shifted(r.dispatch, spec.prefix),
         });
       }
       for (const s of read.spans) spans?.add(s.file, s.start, s.end);
