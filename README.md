@@ -39,10 +39,9 @@ For a Spring app, read its annotations (`styles: [spring]`) and give it springdo
 controller lines and take the document's operationIds. For a Flask or Quart app, read its code (`styles: [flask]`), and
 give it the document flask-smorest or flasgger generates where it uses one (flask-smorest's own `Blueprint` is read
 from that document only). For a Django app, Django REST framework's included, read its URLconfs (`styles: [django]`)
-from the settings module that sets `ROOT_URLCONF`; the admin site's patterns are left out with a limit. For a Go service on Gin,
-chi or net/http, read its code (`styles: [go]`). For Django
-Ninja and the rest, give atlas the document the framework generates; it finds each operation's handler by the
-operationId where it can.
+from the settings module that sets `ROOT_URLCONF`; the admin site's patterns are left out with a limit. For a Go
+service on Gin, chi or net/http, read its code (`styles: [go]`). For Django Ninja and the rest, give atlas the document
+the framework generates; it finds each operation's handler by the operationId where it can.
 [`fixtures/openapi`](fixtures/openapi/README.md) holds eight documents that seven frameworks actually generate (Fastify in both formats), and
 [openapi.md](skills/flow-atlas/references/openapi.md) how to produce one without serving it.
 
