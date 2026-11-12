@@ -40,7 +40,7 @@ npx github:hellices/flow-atlas check --root fixtures/shop
 | An API nobody calls | `orders` serves `GET /orders/{id}/history`, and no client in the repository requests it | FA001 |
 | A call nothing serves | the demo above | FA002 |
 | A dependency that is not declared, or a cycle | `web` calls `orders` directly, but its `component.json` declares only that it uses `bff` | FA003 |
-| A document or event with one side missing | a `coupon` document is produced, and nothing consumes it | FA004 |
+| A registry entry (an artifact, a tool or an event) with one side missing | a `coupon` document is produced, and nothing consumes it | FA004 |
 | A written flow the code no longer follows | a flow names a route that was renamed, or two steps the code does not connect | FA007 |
 
 The code is how a finding is named everywhere: in the output, in the exceptions file and in the configuration
