@@ -1,58 +1,74 @@
 # flow-atlas
 
-**Find where flows across a monorepo's components come apart, while you are still writing the code.**
+**Check that the services in a monorepo still fit together, while the code is being written.**
 
-- an API no client calls
-- a client call no service serves
-- a call across a boundary the manifests do not declare
-- an artifact nothing produces or nothing consumes
+When a change touches one service, flow-atlas checks it against the others:
 
-Every finding points at a file and a line, and the same code always gives the same findings: no LLM is involved.
+- a client calls an API that no service serves (a typo, a route that was never added, one that was removed);
+- a service serves an API that nothing calls any more;
+- a service calls another that it is not meant to depend on;
+- a document or event is produced and never consumed, or the other way round.
 
-flow-atlas is built for coding agents. An agent works on one part of a repository at a time, so it easily adds a second
-API that does what an existing one does, builds the service and forgets the client, or puts one component's job into
-another. flow-atlas shows those gaps where the work happens, instead of in a later review. The
+It reads the code itself: the routes each service registers and the requests each client sends. Every finding points at
+a file and a line, and the same code always gives the same findings: no LLM is involved.
+
+flow-atlas is built for coding agents. An agent works on one part of a repository at a time, so it easily builds the
+client and forgets the service, adds a second API that does what an existing one does, or puts one service's job into
+another. flow-atlas shows those gaps while the agent works, instead of in a later review. The
 [agent skill](skills/flow-atlas/SKILL.md) tells an agent when to run it and how to handle what it finds.
 
-```text
-$ atlas check --root fixtures/shop
-8 new, 0 with an expired exception, 0 in the baseline, 0 excepted
+![A refund call that no service serves, found by atlas check and fixed](docs/media/demo.gif)
 
-FA002 call that no surface serves
-  bff calls POST /orders/{}/refund on orders, which serves no matching route.
-  at services/bff/src/clients/orders.ts:14
-  key FA002|bff->orders|POST /orders/{}/refund
+The demo runs on [`fixtures/shop`](fixtures/shop), the sample monorepo in this repository: a change makes the BFF call
+`POST /orders/{id}/refund`, which the orders service does not serve. `atlas check --since main` points at the line, the
+route is added, and the check comes back clean. ([MP4](docs/media/demo.mp4))
 
-FA003 boundary call or cycle the declarations do not state
-  web calls orders, but no declaration lets web consume what orders provides.
-  at apps/web/src/legacy.ts:2
-  key FA003|undeclared|web->orders
-...
+Try it on the same sample:
+
+```bash
+git clone https://github.com/hellices/flow-atlas && cd flow-atlas
+npx github:hellices/flow-atlas check --root fixtures/shop
 ```
 
 ## Contents
 
 - [What it finds](#what-it-finds)
+- [Key terms](#key-terms)
 - [What it reads](#what-it-reads)
 - [Install](#install)
 - [Use](#use)
 - [Day to day](#day-to-day)
+- [Use with a coding agent](#use-with-a-coding-agent)
 - [Flows and output](#flows-and-output)
 - [Limits](#limits)
-- [Develop](#develop)
 - [Documentation](#documentation)
+- [Contributing](#contributing)
 
 ## What it finds
 
-| Rule | Finds |
-|---|---|
-| FA001 | a route that no client in the repository calls |
-| FA002 | a call to a path its target component does not serve |
-| FA003 | a call between components the manifests do not declare, and component cycles |
-| FA004 | a registry entry (artifact, tool, event) with no producer or no consumer |
-| FA007 | a flow description that the code does not bear out |
+| Finding | Example | Code in the output |
+|---|---|---|
+| An API nobody calls | `orders` serves `GET /orders/{id}/history`, and no client in the repository requests it | FA001 |
+| A call nothing serves | `bff` sends `POST /orders/{id}/refund`, and `orders` has no such route | FA002 |
+| A dependency that is not declared, or a cycle | `web` calls `orders` directly, but its `component.json` declares only that it uses `bff` | FA003 |
+| A document or event with one side missing | a `coupon` document is produced, and nothing consumes it | FA004 |
+| A written flow the code no longer follows | a flow names a route that was renamed, or two steps the code does not connect | FA007 |
 
-Causes and fixes for each rule are in [rules.md](skills/flow-atlas/references/rules.md).
+The code is how a finding is named everywhere: in the output, in the exceptions file and in the configuration
+(`rules.FA003.enabled: false` switches that check off). Causes and fixes for each:
+[rules.md](skills/flow-atlas/references/rules.md).
+
+## Key terms
+
+| Term | Meaning |
+|---|---|
+| component | a service or app in the monorepo, such as `web`, `bff` or `orders` |
+| surface | something a component serves: an HTTP route, most of the time (`orders\|GET /orders/{id}`) |
+| call | a request one component sends to another (`bff -> orders  POST /orders`) |
+| chain | one request and everything it reaches in turn |
+| flow | a journey you describe in a file (`flows/*.flow.yaml`), built from chains, with what each component does in it |
+| limit | a `limit:` line: something atlas saw but could not read for certain, so it left it out rather than guess |
+| baseline | the findings you accepted as known debt; `check` shows only findings new since then |
 
 ## What it reads
 
@@ -118,25 +134,13 @@ npm install -g github:hellices/flow-atlas    # install the atlas command
 Recent npm versions may ask before running install scripts. If `prepare` is blocked, install the packed release
 instead (`npm install -g <flow-atlas-x.y.z.tgz URL>`).
 
-### The agent skill
-
-The skill is the [`skills/flow-atlas`](skills/flow-atlas) directory and follows the
-[Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor and other hosts
-load it the same way. With GitHub CLI 2.90 or later:
-
-```bash
-gh skill install hellices/flow-atlas flow-atlas
-```
-
-Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
-
 ## Use
 
 Start from what atlas finds, write the configuration, then scan until it reads what it should:
 
 1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
-2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that list: the components, where each serves routes, and which
-   files call others. [config.md](skills/flow-atlas/references/config.md) describes every key.
+2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that
+   list: the components, where each serves routes, and which files call others. [config.md](skills/flow-atlas/references/config.md) describes every key.
 3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
    expect two or three rounds before the findings are worth trusting.
 4. `atlas check --root <repo>` prints the findings.
@@ -176,14 +180,29 @@ atlas baseline update                         # accept the current findings as k
 1. **Record the debt.** Once the configuration reads what it should, run `atlas baseline update`. From then on only new
    findings appear. Existing debt is reduced on its own schedule, and each change answers only for what it introduced.
 2. **Handle each new finding.**
-   - Fix it, or record it in the exceptions file with the decision behind it and a date to look again. When the date
-     passes, the finding comes back.
+   - Fix it, or record it in the exceptions file (`flows/atlas-exceptions.yaml`) with the decision behind it and a
+     date to look again. When the date passes, the finding comes back.
    - A wrong finding caused by the configuration is fixed there. A misread file is recorded as an exception that says
      which file was misread and how.
    - A rule that is mostly wrong for a repository is switched off there (`rules.<id>.enabled: false`), or its extractor
      is fixed.
 3. **Decide whether CI blocks.** atlas reports and does not block by default. To fail CI on new findings, add
    `--fail-on-new`.
+
+## Use with a coding agent
+
+The agent skill teaches an agent when to run atlas (before it adds a route or a call, and before it opens a PR) and
+how to treat what it finds.
+
+The skill is the [`skills/flow-atlas`](skills/flow-atlas) directory and follows the
+[Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor and other hosts
+load it the same way. With GitHub CLI 2.90 or later:
+
+```bash
+gh skill install hellices/flow-atlas flow-atlas
+```
+
+Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
 
 ### Who does what
 
@@ -213,7 +232,7 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 ## Limits
 
 - **Only what is written out is read.** A path assembled across several functions, or a URL taken from a server
-  response, is not seen, and the route it calls shows up as FA001.
+  response, is not seen, and the route it calls shows up as an API nobody calls (FA001).
 - **Some calls are named, not read.** These are not read as calls, and a `limit:` line names each:
   - a path handed to a function after its first argument;
   - an absolute URL to a host that is neither a loopback address nor the target's `origins` entry;
@@ -225,37 +244,6 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
   base in a value.
 - **Only configured files are read,** so no finding does not prove a flow complete.
 - **Field-level contract checks** are not implemented yet.
-
-## Develop
-
-```bash
-pnpm install   # also points git at the hooks in .githooks
-pnpm check     # strict types (tsc) and the type-aware lint (typescript-eslint)
-pnpm build
-pnpm test
-```
-
-The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests. A pre-push hook of your own in `.git/hooks`
-runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the same checks.
-
-| Fixtures | What they check |
-|---|---|
-| [`fixtures/shop`](fixtures/shop) | a small monorepo with eight planted problems: exactly those are found; baselines, exceptions and `--since` work; commits are read without a checkout; flows trace from a web client through a BFF handler's port call to a service; SARIF and Arazzo output pass the official schemas |
-| [`fixtures/scenarios`](fixtures/scenarios/README.md) | small repositories in the shapes of real ones atlas was run on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a scenario before it is fixed |
-| [`fixtures/frameworks`](fixtures/frameworks/README.md) | an application for each of 58 frameworks (Node, Bun, Python, JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart), with the routes the framework itself reports serving. The tests compare atlas's reading with them and list where it still falls short |
-| [`fixtures/clients`](fixtures/clients/README.md) | code on each of 26 client libraries, with the requests it sends when run against a server that records them |
-| [`fixtures/repositories`](fixtures/repositories/README.md) | public repositories pinned at a commit, with what atlas read there |
-
-The `frameworks` workflow installs each framework and library and checks their routes and requests again, weekly on
-the latest release. The `repositories` workflow fetches the pinned repositories and fails when a change moves anything
-atlas read there.
-
-If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
-
-```bash
-git config filter.public-registry.clean "node scripts/public-registry.mjs"
-git config filter.public-registry.smudge cat
-```
 
 ## Documentation
 
@@ -270,6 +258,10 @@ git config filter.public-registry.smudge cat
 | [docs/direction.md](docs/direction.md) | the scope, the research it rests on, and the extensions left open |
 | [docs/responsibilities.md](docs/responsibilities.md) | what atlas, agents and people each decide |
 | [docs/schema.md](docs/schema.md), [docs/standards.md](docs/standards.md) | the output formats and the standards they follow |
+
+## Contributing
+
+Building, testing, the hooks and the fixtures that check atlas against real frameworks: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
