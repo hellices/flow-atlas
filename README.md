@@ -11,9 +11,6 @@ flow-atlas shows those gaps while the agent works, instead of in a later review.
 
 ![A refund call that no service serves, found by atlas check and fixed](docs/media/demo.gif)
 
-Recorded on [`fixtures/shop`](fixtures/shop), the sample monorepo in this repository ([MP4](docs/media/demo.mp4)). To
-run the check on it yourself:
-
 ```bash
 git clone https://github.com/hellices/flow-atlas && cd flow-atlas
 npx github:hellices/flow-atlas check --root fixtures/shop
@@ -202,9 +199,6 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 ## Flows and output
 
 ![A flow checked against the code, broken by a renamed route, and exported as an Arazzo workflow](docs/media/flows.gif)
-
-Recorded on the `view-order` flow of [`fixtures/shop`](fixtures/shop/flows/orders.flow.yaml)
-([MP4](docs/media/flows.mp4)).
 
 - **Flows.** Besides its steps and their roles, a flow can name the decisions behind it (`sources`), what it produces
   (`produces`) and whether it is planned or going away (`lifecycle`). `atlas flows` also reports `ProducesListed`
