@@ -737,6 +737,143 @@ describe("where Django dispatches a request", () => {
   });
 });
 
+describe("the review of #82", () => {
+  it("keeps a pattern whose view takes no method from the requests it takes, and reads a repeated pattern at its first place", () => {
+    const files = {
+      "proj/settings.py": settings(),
+      "proj/views.py": lines(
+        "from django.views.decorators.http import require_http_methods, require_GET, require_POST",
+        '@require_http_methods(["get"])',
+        "def none(request): ...",
+        "@require_GET",
+        "def get(request, **kw): ...",
+        "@require_POST",
+        "def post(request): ...",
+      ),
+      "proj/urls.py": urls('urlpatterns = [path("x/", views.none), path("x/", views.get), path("y/<int:n>/", views.none), path("y/<int:n>/", views.get), path("y/<str:n>/", views.get), path("z/", views.get), path("z/", views.post), path("z/", views.get)]'),
+    };
+    const { surfaces, limits } = read(files);
+    expect(surfaces).toEqual(["GET /y/{n}", "GET /z", "POST /z"]);
+    expect(limits).toEqual([
+      'routes api: proj/urls.py:3 serves "x/" with a view that takes no method, which Django answers every request to with 405; no route is read for it, a later pattern whose every request it takes is left out, and one that shares only some may be matched to those',
+      'routes api: proj/urls.py:3 serves "x/", whose requests proj/urls.py:3 serves "x/" takes first, with a view that takes no method; its routes are not read',
+      'routes api: proj/urls.py:3 serves "y/<int:n>/" with a view that takes no method, which Django answers every request to with 405; no route is read for it, a later pattern whose every request it takes is left out, and one that shares only some may be matched to those',
+      'routes api: proj/urls.py:3 serves "y/<int:n>/", whose requests proj/urls.py:3 serves "y/<int:n>/" takes first, with a view that takes no method; its routes are not read',
+    ]);
+    // `/y/{n}` is the `str` pattern's, which the `int` one leaves the values that are not digits.
+    expect(read(files).raw.find((s) => s.path === "/y/{n}")?.patterns).toBeUndefined();
+    expect(reach(files, ["GET /x/", "POST /z/", "GET /z/"]).reached).toEqual({ "GET /x/": [], "POST /z/": [], "GET /z/": ["GET /z"] });
+  });
+
+  it("sees a list an include holds changed after it, by append, extend, insert and +=", () => {
+    const files = {
+      "proj/settings.py": settings(),
+      "proj/views.py": "def a(request): ...",
+      "proj/urls.py": urls(
+        "extra = []",
+        "alias = extra",
+        'urlpatterns = [path("api/", include(extra))]',
+        'extra.append(path("a/", views.a))',
+        'alias.extend([path("b/", views.a)])',
+        'extra.insert(0, path("c/", views.a))',
+        'alias += [path("d/", views.a)]',
+        'copy = extra + [path("e/", views.a)]',
+        'gone = [path("f/", views.a)]',
+        'urlpatterns += [path("g/", include(gone))]',
+        "gone.clear()",
+      ),
+    };
+    expect(read(files)).toMatchObject({
+      surfaces: ["* /api/c", "* /api/a", "* /api/b", "* /api/d"],
+      limits: ['routes api: proj/urls.py:13 (under "g/"): gone, changed at proj/urls.py:13 in a way atlas does not read; its routes are not read'],
+    });
+  });
+
+  it("reads a converter registered only where its call runs, and a to_python it does not read as one that may refuse", () => {
+    const files = (debug: string) => ({
+      "proj/settings.py": settings(`DEBUG = ${debug}`),
+      "proj/converters.py": lines(
+        "from django.urls.converters import IntConverter",
+        "class Code:",
+        '    regex = "[A-Z]+"',
+        "    to_python = str",
+        "class Year(IntConverter):",
+        '    regex = "[0-9]{4}"',
+        "class Prefixed(IntConverter):",
+        '    regex = "x[0-9]+"',
+      ),
+      "proj/urls.py": lines(
+        "from django.conf import settings",
+        "from django.urls import path, register_converter",
+        "from . import converters, views",
+        'register_converter(converters.Code, "code")',
+        'register_converter(converters.Year, "yyyy")',
+        'register_converter(converters.Prefixed, "xint")',
+        "if settings.DEBUG:",
+        '    register_converter(converters.Year, "dbg")',
+        "def ready():",
+        '    register_converter(converters.Year, "late")',
+        'urlpatterns = [path("c/<code:c>/", views.a), path("y/<yyyy:y>/", views.a), path("x/<xint:x>/", views.a), path("d/<dbg:d>/", views.a), path("l/<late:l>/", views.a)]',
+      ),
+      "proj/views.py": "def a(request, **kw): ...",
+    });
+    const on = read(files("True"));
+    expect(on.raw.map((s) => [s.path, s.patterns ?? {}])).toEqual([
+      ["/c/{c:code}", {}],
+      ["/y/{y}", { y: "[0-9]{4}" }],
+      ["/x/{x:xint}", {}],
+      ["/d/{d}", { d: "[0-9]{4}" }],
+    ]);
+    expect(on.limits).toEqual([
+      'routes api: proj/urls.py:11 serves a pattern atlas does not read: the route "l/<late:l>/" names the converter late: the converter late is registered at proj/urls.py:10 in a function or class, which runs only when it is called; its routes are not read',
+    ]);
+    expect(read(files("False")).limits).toContain(
+      'routes api: proj/urls.py:11 serves a pattern atlas does not read: the route "d/<dbg:d>/" names the converter dbg, which is neither Django\'s nor one the files register; its routes are not read',
+    );
+    expect(read(files("env()")).limits).toContain(
+      'routes api: proj/urls.py:11 serves a pattern atlas does not read: the route "d/<dbg:d>/" names the converter dbg: the converter dbg is registered at proj/urls.py:8 under a condition atlas does not read; its routes are not read',
+    );
+  });
+
+  it("reads a router without regexes as DRF builds it, lookup_value_regex standing as a converter Django refuses", () => {
+    const files = {
+      "proj/settings.py": settings(),
+      "proj/views.py": lines("from rest_framework import viewsets", "class Notes(viewsets.ViewSet):", '    lookup_value_regex = "[0-9]+"', "    def retrieve(self, request, pk=None): ..."),
+      "proj/urls.py": lines("from rest_framework.routers import SimpleRouter", "from . import views", "router = SimpleRouter(use_regex_path=False)", 'router.register("notes", views.Notes)', "urlpatterns = router.urls"),
+    };
+    expect(read(files).limits).toEqual([
+      'routes api: proj/urls.py:4 serves a pattern atlas does not read: the route "notes/<[0-9]+:pk>/" names the converter [0-9]+, which is neither Django\'s nor one the files register; its routes are not read',
+    ]);
+  });
+
+  it("writes Python's \\s as the characters it takes, and reads a character beyond U+FFFF whole", () => {
+    const files = {
+      "proj/settings.py": settings(),
+      "proj/views.py": "def a(request, **kw): ...",
+      "proj/urls.py": urls('urlpatterns = [re_path(r"^s/(?P<x>a\\s)/$", views.a), re_path(r"^e/(?P<x>😀?)/$", views.a), re_path(r"^f/(?P<x>😀+)/$", views.a), re_path(r"^n/(?P<x>[\\Sa])/$", views.a)]'),
+    };
+    const { raw, limits } = read(files);
+    const s = raw.find((r) => r.path === "/s/{x}")!.patterns!.x!;
+    expect(["a\x1c", "a\x85", "a\ufeff"].map((v) => new RegExp(`^(?:${s})$`).test(v))).toEqual([true, true, false]);
+    expect(new RegExp(`^(?:${raw.find((r) => r.path === "/f/{x}")!.patterns!.x!})$`).test("😀😀")).toBe(true);
+    expect(limits).toEqual([
+      'routes api: proj/urls.py:3 serves a pattern atlas does not read: r"^e/(?P<x>😀?)/$" has a parameter x that takes an empty segment, which atlas\'s path form does not hold; its routes are not read',
+      'routes api: proj/urls.py:3 serves a pattern atlas does not read: the regex "^n/(?P<x>[\\\\Sa])/$" has \\S inside a class, which JavaScript does not write there; its routes are not read',
+    ]);
+  });
+
+  it("redirects a request without its / by any method, naming no route where the view refuses the method", () => {
+    const files = {
+      "proj/settings.py": settings(),
+      "proj/views.py": lines("from django.views.decorators.http import require_POST", "@require_POST", "def submit(request): ..."),
+      "proj/urls.py": urls('urlpatterns = [path("submit/", views.submit)]'),
+    };
+    const { reached, matched } = reach(files, ["GET /submit", "POST /submit"]);
+    expect(reached).toEqual({ "GET /submit": ["redirect /submit/: "], "POST /submit": ["redirect /submit/: POST /submit"] });
+    expect(matched[0]).toBe("calls web->api: GET /submit at x:1 is answered with a redirect to /submit/, where the route the path reaches does not take GET; it is matched to none");
+  });
+});
+
 describe("the django style in a scan", () => {
   it("offers the django style for the files that import Django or DRF and register patterns", () => {
     const files = {
@@ -750,6 +887,8 @@ describe("the django style in a scan", () => {
   it("writes the routes of the Django fixture as the model's schema says", () => {
     const dir = "fixtures/frameworks/django";
     const graph = scan(new WorktreeSource(dir), loadConfig(`${dir}/atlas.config.yaml`), { root: dir, requested: "WORKTREE" });
+    // Every route the fixture's gaps.yaml does not list is read (test/frameworks.test.ts compares them one by one).
+    expect(graph.surfaces.filter((s) => !s.implicit).length).toBe(95);
     expect(graph.surfaces.every((s) => s.dispatch?.byPath && s.dispatch.picks === "registration")).toBe(true);
     expect(graph.limits.filter((l) => l.startsWith("routes app:"))).toEqual([
       "routes app: project/urls.py:17: \"admin/\" includes the admin site's patterns (admin.site.urls): which models they serve depends on every installed app's admin module, their pages take <path:object_id> before more segments, and their methods the signed-in user; its routes are not read",

@@ -1,6 +1,7 @@
 import type { Dispatch } from "../model.js";
 import { lineOf } from "../source.js";
-import { chainPaths, DJANGO_CONVERTERS, mayTake, parseRegex, type Converter, type Piece } from "./djangopaths.js";
+import { HOLE, pathCovers } from "../paths.js";
+import { chainPaths, digitsOnly, DJANGO_CONVERTERS, parseRegex, type Converter, type FormPath, type Piece } from "./djangopaths.js";
 import { assignment, moduleFiles, plainImports, pythonBindings, pythonImports, submodule, type Imports } from "./python.js";
 import { closingParen, pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
 
@@ -733,11 +734,17 @@ export function djangoRoutes(
   };
 
   // Converters `register_converter` registers, by name, anywhere in the files: Django keeps one registry for the process.
+  // A call is read where it runs as the module is imported: at the top level, or under `if settings.DEBUG:`; one in a
+  // function, or under a condition atlas does not read, may not have run when a pattern names the converter.
   const registered = new Map<string, Converter | Why>();
   for (const [file, info] of infos) {
     if (info.library) continue;
+    const ran: Array<{ at: number; end: number; runs: boolean | undefined }> = [];
+    statements(info, (line, runs) => ran.push({ at: line.at, end: line.end, runs }), condition(info));
     for (const m of info.code.matchAll(/(?<![\w.])([A-Za-z_][\w.]*)\s*\(\s*/g)) {
       if (qualify(info, m[1]!) !== "django.urls.register_converter" && qualify(info, m[1]!) !== "django.urls.converters.register_converter") continue;
+      const statement = ran.find((r) => r.at <= (m.index ?? 0) && (m.index ?? 0) < r.end);
+      if (statement?.runs === false) continue;
       const from = (m.index ?? 0) + m[0].length;
       const cls = argAt(info.text, info.code, from, "converter", 0);
       const name = argAt(info.text, info.code, from, "type_name", 1);
@@ -748,6 +755,11 @@ export function djangoRoutes(
         continue;
       }
       if (Object.hasOwn(DJANGO_CONVERTERS, typeName)) continue;
+      if (!statement || statement.runs === undefined) {
+        const why = `the converter ${typeName} is registered at ${place} ${statement ? "under a condition atlas does not read" : "in a function or class, which runs only when it is called"}`;
+        registered.set(typeName, { why });
+        continue;
+      }
       const read = converterClass(classView(classRef(info, info.text.slice(cls.at, cls.end))), typeName);
       const before = registered.get(typeName);
       registered.set(typeName, before === undefined ? read : { why: `the converter ${typeName} is registered twice, which Django refuses` });
@@ -772,7 +784,7 @@ export function djangoRoutes(
       regex = s.value;
     }
     const parsed = parseRegex(regex);
-    const digits = !("why" in parsed) && [...Array(95).keys()].every((k) => /[0-9]/.test(String.fromCharCode(32 + k)) || !mayTake(parsed.alts, String.fromCharCode(32 + k))) && !mayTake(parsed.alts, "é");
+    const digits = !("why" in parsed) && digitsOnly(parsed.alts);
     const owner = definer("to_python");
     let refuses: boolean;
     if (!owner) refuses = true;
@@ -781,9 +793,11 @@ export function djangoRoutes(
       refuses = t === "int" ? !digits : t === "uuid" ? regex !== DJANGO_CONVERTERS.uuid!.regex : false;
     } else {
       const member = owner.def.members.get("to_python")!;
-      const head = owner.info.code.slice(member.at, member.body![0]).replace(/\s+/g, " ");
+      // A callable assigned (`to_python = str`) is not read: it may refuse a value.
+      if (member.kind !== "def" || !member.body) return { regex, refuses: true };
+      const head = owner.info.code.slice(member.at, member.body[0]).replace(/\s+/g, " ");
       const arg = /def to_python ?\( ?self ?, ?([A-Za-z_]\w*) ?\)/.exec(head)?.[1];
-      const body = owner.info.code.slice(member.body![0], member.body![1]).replace(/\s+/g, " ").trim();
+      const body = owner.info.code.slice(member.body[0], member.body[1]).replace(/\s+/g, " ").trim();
       refuses = !arg || !(body === `return ${arg}` || body === `return str(${arg})` || (digits && body === `return int(${arg})`));
     }
     return { regex, refuses };
@@ -1373,6 +1387,12 @@ export function djangoRoutes(
     const info = infos.get(file);
     if (!info || evaluating.has(file)) return env;
     evaluating.add(file);
+    /** A list changed in a way atlas does not read: what it holds is not read, wherever it is held. */
+    const unreadList = (name: string, why: string, at: number) => {
+      const v = env.get(name);
+      if (v?.kind === "patterns") v.items.splice(0, v.items.length, { kind: "unread", why, place: { file, at } });
+      else env.set(name, unreadValue(why));
+    };
     const changed = (name: string, line: Line) => {
       const v = env.get(name);
       if (name === "urlpatterns" || v?.kind === "patterns" || v?.kind === "router") {
@@ -1397,7 +1417,7 @@ export function djangoRoutes(
           const v = env.get(m[1]!);
           if (runs === false || !(m[1] === "urlpatterns" || v?.kind === "patterns" || v?.kind === "router")) continue;
           if (inline || runs === undefined) changed(m[1]!, line);
-          else env.set(m[1]!, unreadValue(`${m[1]}, changed at ${where({ file, at: line.at })} in a way atlas does not read`));
+          else unreadList(m[1]!, `${m[1]}, changed at ${where({ file, at: line.at })} in a way atlas does not read`, line.at);
         }
         if (other) return;
         const assign = /^([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?(\+=|=(?!=))[ \t]*/.exec(statement);
@@ -1411,7 +1431,15 @@ export function djangoRoutes(
           }
           const value = evalExpr(info, env, line.at + assign[0].length, line.end);
           if (assign[2] === "=") env.set(assign[1]!, value);
-          else env.set(assign[1]!, join(env.get(assign[1]!) ?? nameValue(info, env, assign[1]!), value, { file, at: line.at }));
+          else {
+            // `+=` extends the list itself, which an include made before, or another name, holds too.
+            const current = env.get(assign[1]!) ?? nameValue(info, env, assign[1]!);
+            const joined = join(current, value, { file, at: line.at });
+            if (current.kind === "patterns" && joined.kind === "patterns") {
+              current.items.splice(0, current.items.length, ...joined.items);
+              env.set(assign[1]!, current);
+            } else env.set(assign[1]!, joined);
+          }
           return;
         }
         const method = /^([A-Za-z_]\w*)[ \t]*\.[ \t]*(\w+)[ \t]*\(\s*/.exec(statement);
@@ -1430,17 +1458,15 @@ export function djangoRoutes(
           const open = line.at + method[0].length;
           const op = method[2]!;
           const arg = argAt(info.text, info.code, open, "", op === "insert" ? 1 : 0);
+          // The list is changed in place, so an include made before, or another name, sees the change.
           if ((op === "append" || op === "extend" || op === "insert") && arg && arg !== "spread") {
             const added = op === "extend" ? evalExpr(info, env, arg.at, arg.end) : { kind: "patterns" as const, items: [patternItem(info, env, arg.at, arg.end)] };
+            const items = join({ kind: "patterns", items: [] }, added, place);
             const index = op === "insert" ? argAt(info.text, info.code, open, "", 0) : undefined;
-            const at = index && index !== "spread" && /^\d+$/.test(info.text.slice(index.at, index.end)) ? Number(info.text.slice(index.at, index.end)) : undefined;
-            if (op === "insert" && at === undefined) env.set(name!, unreadValue(`${name}, changed at ${where(place)} in a way atlas does not read`));
-            else if (op === "insert") {
-              const inserted = join({ kind: "patterns", items: [] }, added, place);
-              env.set(name!, { kind: "patterns", items: [...current.items.slice(0, at), ...(inserted.kind === "patterns" ? inserted.items : []), ...current.items.slice(at)] });
-            }
-            else env.set(name!, join(current, added, place));
-          } else env.set(name!, unreadValue(`${name}, changed at ${where(place)} in a way atlas does not read`));
+            const at = index && index !== "spread" && /^\d+$/.test(info.text.slice(index.at, index.end)) ? Number(info.text.slice(index.at, index.end)) : current.items.length;
+            if (op === "insert" && (!index || index === "spread" || !/^\d+$/.test(info.text.slice(index.at, index.end)))) unreadList(name!, `${name}, changed at ${where(place)} in a way atlas does not read`, line.at);
+            else current.items.splice(at, 0, ...(items.kind === "patterns" ? items.items : []));
+          } else unreadList(name!, `${name}, changed at ${where(place)} in a way atlas does not read`, line.at);
           return;
         }
         if (current.kind === "router") {
@@ -1509,6 +1535,19 @@ export function djangoRoutes(
   }
 
   let leaves = 0;
+  const blockers: Array<{ router: string; form: FormPath; at: string }> = [];
+  const served = new Set<string>();
+  /**
+   * Whether a pattern's form takes every request another's does: in each form the other is served at, a path its own
+   * takes, each parameter of the other's standing for any text its segment may hold.
+   */
+  const formCovers = (by: FormPath, form: FormPath): boolean => {
+    if (by.trailing !== "both" && by.trailing !== form.trailing) return false;
+    if (by.path === form.path && JSON.stringify([...by.patterns]) === JSON.stringify([...form.patterns])) return true;
+    if (form.path.includes("**")) return false;
+    const call = form.path.replace(/\{[^{}]*\}/g, HOLE);
+    return pathCovers(by.path, call, Object.fromEntries(by.patterns));
+  };
   const chainText = (chain: Piece[]) => chain.map((p) => (p.type === "route" ? JSON.stringify(p.text) : `r${JSON.stringify(p.text)}`)).join(" + ");
   const walk = (items: Item[], chain: Piece[], stack: string[], router: string, override: Place | undefined) => {
     for (const item of items) {
@@ -1537,8 +1576,25 @@ export function djangoRoutes(
           continue;
         }
         const slashes = appendSlash && item.view.appendSlash ? ("append-slash" as const) : ("strict" as const);
+        const here = `${where(place)} serves ${chainText(whole)}`;
+        // A view that takes no method still takes the requests its pattern matches, which it answers with 405, so
+        // Django reaches no later pattern for them.
+        if (!item.view.methods.length) {
+          for (const form of read) blockers.push({ router, form, at: here });
+          limit(`${here} with a view that takes no method, which Django answers every request to with 405; no route is read for it, a later pattern whose every request it takes is left out, and one that shares only some may be matched to those`);
+          continue;
+        }
         for (const form of read) {
+          const blocker = blockers.find((b) => b.router === router && formCovers(b.form, form));
+          if (blocker) {
+            limit(`${here}, whose requests ${blocker.at} takes first, with a view that takes no method; its routes are not read`);
+            continue;
+          }
           for (const m of item.view.methods) {
+            // The same method and form of a pattern before it takes every request this one would: Django never reaches it.
+            const key = `${router}|${m.method} ${form.path}|${form.trailing ?? ""}|${JSON.stringify([...form.patterns])}`;
+            if (served.has(key)) continue;
+            served.add(key);
             routes.push({
               method: m.method,
               path: form.path,

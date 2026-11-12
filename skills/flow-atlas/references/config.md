@@ -546,8 +546,8 @@ under its own, joined as `URLResolver.resolve` matches them, each its part of th
 twice serves its patterns under both, and one included within itself is read once, with a limit. A `path()` route is
 read as `_route_to_regex` reads it: its text as written, and `<name>` or `<converter:name>` a parameter whose regex is
 its converter's (`str` any one segment; `int`, `slug` and `uuid` the segments their regex takes, kept as the parameter's
-pattern; `path` at the end the rest of the path, `{name}/**`), or that of a converter `register_converter` registers in the route files, whose
-`regex` its class or a base sets; one whose `to_python` may refuse a value (anything but returning it, `str()` of it,
+pattern; `path` at the end the rest of the path, `{name}/**`), or that of a converter `register_converter` registers in the route files where the call runs
+as the module is imported (at its top level, or under `if settings.DEBUG:`), whose `regex` its class or a base sets; one whose `to_python` may refuse a value (anything but returning it, `str()` of it,
 or `int()` of digits), which makes Django try the next pattern, is kept as `{name:converter}`, whose values are not
 read. A `re_path()` regex is read where its shape is certain: it starts with `^` (Django searches any other anywhere in
 the path), a view's ends with `$` or `\Z` (any other takes any text after it) and an include's does not; outside a
@@ -561,7 +561,9 @@ other scripts; atlas tests ASCII ones, as JavaScript reads them. A view's method
 unless its decorators say otherwise (`require_http_methods([...])`, compared with the method as written, `require_GET`,
 `require_POST`, `require_safe`, DRF's `@api_view([...])`, GET where none is given, with the OPTIONS APIView answers);
 Django's and DRF's decorators that check a user, a token or a cache leave them as they are, and any other decorator
-leaves the route unread, with a limit. A class's `as_view()` takes each of its `http_method_names` (View's eight, its
+leaves the route unread, with a limit. A view that takes no method still takes its pattern's requests, which it
+answers with 405: no route is read for it, and a later pattern whose every request it takes is left out, with a
+limit. A class's `as_view()` takes each of its `http_method_names` (View's eight, its
 own or a base's list, or the one `as_view` is given) it has a handler for along its method resolution order, its bases
 in the files and Django's and DRF's generic views (`TemplateView` GET, `RedirectView` every method, `FormView`,
 `CreateView` and `UpdateView` GET, POST and PUT, `DeleteView` GET, POST and DELETE, `LoginView`, `LogoutView` POST

@@ -516,8 +516,12 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       if (!asWritten.some((s) => pathCovers(s.path, call.path, s.patterns))) {
         const withSlash = graph.surfaces.filter((s) => s.component === call.to && s.dispatch?.byPath && fits(s, true));
         const firstPattern = withSlash.filter((d) => !withSlash.some((e) => e !== d && beats(e, d, { ...call, slash: true })));
-        const to = firstPattern.filter((s) => s.dispatch?.slashes === "append-slash" && methodsMatch(s.method, call.method) && !(s.implicit && (s.method === "HEAD" || s.method === "OPTIONS") && call.method.toUpperCase() !== s.method));
-        if (to.length) redirected.set(ci, { path: call.path, slash: true, surfaces: to });
+        // The redirect is the middleware's, whatever the method; the routes named are those of the method, none where
+        // the pattern's view answers it with 405.
+        if (firstPattern.some((s) => s.dispatch?.slashes === "append-slash")) {
+          const to = firstPattern.filter((s) => s.dispatch?.slashes === "append-slash" && methodsMatch(s.method, call.method) && !(s.implicit && (s.method === "HEAD" || s.method === "OPTIONS") && call.method.toUpperCase() !== s.method));
+          redirected.set(ci, { path: call.path, slash: true, surfaces: to });
+        }
       }
     }
     // A router that redirects answers a request no route of it takes as written, by any method, with a redirect to the
@@ -582,7 +586,9 @@ export function redirectedLimits(graph: Pick<Graph, "calls">, redirected: Matche
     const c = graph.calls[ci]!;
     const to = slash ? `${path}/` : path;
     const routes = [...new Set(surfaces.map((s) => `${s.method === "*" ? "any method" : s.method} ${s.path}`))].join(", ");
-    return `calls ${c.from}->${c.to}: ${c.method} ${c.path}${c.slash ? "/" : ""} at ${c.at.file}:${c.at.line} is answered with a redirect to ${to}, which ${routes} serves; it reaches that route only as its client follows the redirect, so it is matched to none`;
+    const call = `calls ${c.from}->${c.to}: ${c.method} ${c.path}${c.slash ? "/" : ""} at ${c.at.file}:${c.at.line} is answered with a redirect to ${to}`;
+    if (!routes) return `${call}, where the route the path reaches does not take ${c.method}; it is matched to none`;
+    return `${call}, which ${routes} serves; it reaches that route only as its client follows the redirect, so it is matched to none`;
   });
 }
 

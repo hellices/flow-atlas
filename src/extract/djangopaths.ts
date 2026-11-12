@@ -19,15 +19,22 @@ class Unread extends Error {}
 const DIGIT = /^\p{Nd}$/u;
 // Python's `\w` in a str pattern: what `str.isalnum()` takes, and `_`.
 const WORD = /^[\p{L}\p{N}_]$/u;
-// Python's `\s` in a str pattern also takes the separators U+001C to U+001F.
-const SPACE = (c: string) => /^\s$/u.test(c) || "\u001c\u001d\u001e\u001f\u0085".includes(c);
-const CATEGORIES: Record<string, { has: (c: string) => boolean; js: string }> = {
-  d: { has: (c) => DIGIT.test(c), js: "\\d" },
-  D: { has: (c) => !DIGIT.test(c), js: "\\D" },
-  w: { has: (c) => WORD.test(c), js: "\\w" },
-  W: { has: (c) => !WORD.test(c), js: "\\W" },
-  s: { has: (c) => SPACE(c), js: "\\s" },
-  S: { has: (c) => !SPACE(c), js: "\\S" },
+// Python's `\s` in a str pattern: what `str.isspace()` takes, which is JavaScript's `\s` with U+001C to U+001F and
+// U+0085, and without U+FEFF; written out, so JavaScript tests the same characters.
+const SPACES = "\\t\\n\\v\\f\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const SPACE = (c: string) => new RegExp(`^[${SPACES}]$`).test(c);
+/**
+ * Python's classes, and how JavaScript writes them, alone and inside a `[...]` (none where it cannot: a negated class
+ * there). Python's `\d` and `\w` take the digits and letters of every script, JavaScript's (without the `u` flag) only
+ * ASCII ones: atlas tests the ASCII ones, as code writes paths with them.
+ */
+const CATEGORIES: Record<string, { has: (c: string) => boolean; js: string; inClass?: string }> = {
+  d: { has: (c) => DIGIT.test(c), js: "\\d", inClass: "\\d" },
+  D: { has: (c) => !DIGIT.test(c), js: "\\D", inClass: "\\D" },
+  w: { has: (c) => WORD.test(c), js: "\\w", inClass: "\\w" },
+  W: { has: (c) => !WORD.test(c), js: "\\W", inClass: "\\W" },
+  s: { has: (c) => SPACE(c), js: `[${SPACES}]`, inClass: SPACES },
+  S: { has: (c) => !SPACE(c), js: `[^${SPACES}]` },
 };
 const CONTROL: Record<string, string> = { n: "\n", t: "\t", r: "\r", f: "\f", v: "\v", a: "\x07" };
 
@@ -65,10 +72,17 @@ export function parseRegex(src: string): { alts: Rx[][] } | { why: string } {
     }
     if (/[0-9]/.test(n!)) fail(`a back reference or octal escape (\\${n})`);
     if (/[A-Za-z]/.test(n!)) fail(`an escape atlas does not read (\\${n})`);
-    i += 2;
-    return n!;
+    i += 1;
+    return take();
   };
-  const jsClassChar = (c: string) => (/[\\\][^-]/.test(c) ? `\\${c}` : c === "\n" ? "\\n" : c);
+  /** One character at `i`, a whole code point (an emoji is one, as Python reads it). */
+  const take = (): string => {
+    const c = String.fromCodePoint(src.codePointAt(i)!);
+    i += c.length;
+    return c;
+  };
+  // JavaScript without the `u` flag reads a code point beyond U+FFFF in a class as two.
+  const jsClassChar = (c: string) => (c.length > 1 ? fail(`a character beyond U+FFFF in a class (${c})`) : /[\\\][^-]/.test(c) ? `\\${c}` : c === "\n" ? "\\n" : c);
   const charClass = (): Rx => {
     i++;
     let negate = false;
@@ -90,20 +104,21 @@ export function parseRegex(src: string): { alts: Rx[][] } | { why: string } {
       if (src[i] === "\\") {
         const category = CATEGORIES[src[i + 1] ?? ""];
         if (category) {
+          if (category.inClass === undefined) fail(`\\${src[i + 1]} inside a class, which JavaScript does not write there`);
           tests.push(category.has);
-          js += category.js;
+          js += category.inClass;
           i += 2;
           continue;
         }
         lo = escaped(true);
-      } else lo = src[i++]!;
+      } else lo = take();
       if (src[i] === "-" && src[i + 1] !== undefined && src[i + 1] !== "]") {
         i++;
         let hi: string;
         if (src[i] === "\\") {
           if (CATEGORIES[src[i + 1] ?? ""]) fail("a range to a class");
           hi = escaped(true);
-        } else hi = src[i++]!;
+        } else hi = take();
         const [a, b] = [point(lo), point(hi)];
         if (b < a) fail(`a range out of order (${lo}-${hi})`);
         tests.push((c) => point(c) >= a && point(c) <= b);
@@ -139,7 +154,7 @@ export function parseRegex(src: string): { alts: Rx[][] } | { why: string } {
     if (c === "[") return charClass();
     if (c === ".") {
       i++;
-      return { t: "set", has: (x) => x !== "\n", js: ".", any: true };
+      return { t: "set", has: (x) => x !== "\n", js: "[^\\n]", any: true };
     }
     if (c === "^" || c === "$") {
       i++;
@@ -160,8 +175,7 @@ export function parseRegex(src: string): { alts: Rx[][] } | { why: string } {
     }
     if ("*+?".includes(c)) fail(`a ${c} with nothing to repeat`);
     if (c === ")") fail("a ) that opens nothing");
-    i += c.length;
-    return { t: "char", c };
+    return { t: "char", c: take() };
   };
   const quantifier = (): { min: number; max: number } | undefined => {
     const c = src[i];
@@ -215,9 +229,19 @@ export function parseRegex(src: string): { alts: Rx[][] } | { why: string } {
 }
 
 /** The fewest characters a node matches. */
-function minLength(alts: Rx[][]): number {
+export function minLength(alts: Rx[][]): number {
   const one = (r: Rx): number => (r.t === "char" || r.t === "set" ? 1 : r.t === "anchor" ? 0 : r.t === "group" ? minLength(r.alts) : r.min * one(r.item));
   return Math.min(...alts.map((seq) => seq.reduce((n, r) => n + one(r), 0)));
+}
+
+/**
+ * Whether every text the expression matches is decimal digits, one or more, which `int()` takes: its text `0` to `9`,
+ * and its classes `\d` or `[0-9]`.
+ */
+export function digitsOnly(alts: Rx[][]): boolean {
+  const one = (r: Rx): boolean =>
+    r.t === "char" ? /^[0-9]$/.test(r.c) : r.t === "set" ? r.js === "\\d" || /^\[(?:0-9|\\d)+\]$/.test(r.js) : r.t === "group" ? digitsOnly(r.alts) : r.t === "rep" ? one(r.item) : false;
+  return minLength(alts) > 0 && alts.every((seq) => seq.every(one));
 }
 
 /** Whether some text the expression matches holds the character `c`. */
@@ -245,7 +269,8 @@ function jsOf(alts: Rx[][]): string {
   const quant = (min: number, max: number) =>
     min === 0 && max === Infinity ? "*" : min === 1 && max === Infinity ? "+" : min === 0 && max === 1 ? "?" : max === min ? `{${min}}` : max === Infinity ? `{${min},}` : `{${min},${max}}`;
   const one = (r: Rx): string => {
-    if (r.t === "char") return r.c.replace(/[\\^$.|?*+()[\]{}/]/g, "\\$&").replace(/\n/g, "\\n");
+    // A code point beyond U+FFFF is two units in JavaScript, which a repeat after it must take together.
+    if (r.t === "char") return r.c.length > 1 ? `(?:${r.c})` : r.c.replace(/[\\^$.|?*+()[\]{}/]/g, "\\$&").replace(/\n/g, "\\n");
     if (r.t === "set") return r.js;
     if (r.t === "group") return `(?:${jsOf(r.alts)})`;
     if (r.t === "rep") return `${one(r.item)}${quant(r.min, r.max)}${r.lazy ? "?" : ""}`;
