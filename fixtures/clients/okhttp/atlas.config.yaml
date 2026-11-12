@@ -3,5 +3,5 @@ components:
   - { name: api, path: server }
 calls:
   # The base URL comes from the build's configuration (ApiConfig, ".../api"); `HttpUrl.resolve` resolves a path
-  # against it as a URL reference.
-  - { from: client, to: api, files: ["src/main/kotlin/**/data/*RemoteDataSource.kt"], base: /api, join: resolve }
+  # against it as a URL reference. UserRemoteDataSource holds it in `base` (a string) and `baseUrl` (an HttpUrl).
+  - { from: client, to: api, files: ["src/main/kotlin/**/data/*RemoteDataSource.kt"], base: /api, join: resolve, baseValues: [base, baseUrl] }

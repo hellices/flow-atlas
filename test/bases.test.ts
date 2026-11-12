@@ -262,7 +262,7 @@ describe("the configured base", () => {
 });
 
 describe("paths relative to a client's base, in code read as text", () => {
-  it("reads one only where a client takes it, whole, and names it where no base is given", () => {
+  it("reads one only where a client takes it, whole or joined to values, and names it where no base is given", () => {
     const python = [
       'api.get("projects")',
       'api.request("POST", f"projects/{pid}/archive")',
@@ -272,14 +272,14 @@ describe("paths relative to a client's base, in code read as text", () => {
       'api.get("https://other.example/x")',
     ].join("\n");
     expect(read({ "web/p.py": python }, { base: "/api/v2/", join: "resolve", receivers: ["api"] })).toEqual({
-      calls: ["GET /api/v2/projects @1", "POST /api/v2/projects/{}/archive @2"],
+      calls: ["GET /api/v2/projects @1", "GET /api/v2/projects/{} @3", "POST /api/v2/projects/{}/archive @2"],
       limits: ["calls web->api: URLs to other.example (web/p.py:6) are not read as requests to api; set origins.api if that is its host"],
     });
     expect(read({ "web/p.py": python }, { receivers: ["api"] })).toEqual({
       calls: [],
       limits: [
         "calls web->api: URLs to other.example (web/p.py:6) are not read as requests to api; set origins.api if that is its host",
-        "calls web->api: paths without a leading / are relative to a client's base, which the call source does not give (set base and join): web/p.py:1, web/p.py:2",
+        "calls web->api: paths without a leading / are relative to a client's base, which the call source does not give (set base and join): web/p.py:1, web/p.py:2, web/p.py:3",
       ],
     });
   });

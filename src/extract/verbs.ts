@@ -42,6 +42,7 @@ export class TextMethods {
     file: string,
     private readonly text: string,
     private readonly scan: TextCalls,
+    private readonly receivers: string[] = [],
   ) {
     this.lang = /\.java$/.test(file)
       ? "jvm"
@@ -94,6 +95,12 @@ export class TextMethods {
     }
     const own = this.ownMethod(f, slot, label, first);
     if (own !== undefined) return own;
+    // A call on a client the call source names, given a method just before the URL (`c.newRequest(ctx, http.MethodGet,
+    // path, nil)`, `api.send("POST", url)`), sends it with that method.
+    if (f.method && f.receiver !== undefined && this.receivers.includes(f.receiver) && slot >= 1) {
+      const method = this.stated(this.part(f, slot - 1));
+      if (method !== undefined) return method;
+    }
     if (f.method && VERBS.has(name.toLowerCase())) return first ? name.toUpperCase() : STOP;
     return undefined;
   }
@@ -174,6 +181,41 @@ export class TextMethods {
     }
   }
 
+  /** Whether the argument just before `a` in its call states a method, as a literal or a library's constant for one. */
+  statedBefore(a: Pick<Argument, "call" | "index">): boolean {
+    const f = this.scan.frames.get(a.call);
+    return !!f && a.index >= 1 && this.stated(this.part(f, a.index - 1)) !== undefined;
+  }
+
+  /**
+   * Whether `a` is the URL of an OkHttp `Request.Builder()` chain whose later `.url(...)` replaces it before
+   * `.build()`: the request is not sent to it.
+   */
+  replaced(a: Pick<Argument, "call" | "index">): boolean {
+    const url = this.scan.frames.get(a.call);
+    if (!url || url.name !== "url" || !url.method || a.index !== 0 || (this.lang !== "jvm" && this.lang !== "kotlin")) return false;
+    const chain = this.okHttpChain(url);
+    return !!chain && chain.chain.some((c) => c !== url && c.name === "url" && c.at > url.at);
+  }
+
+  /** A method a call's argument states: a literal, as written, or the constant of a library of the file's language. */
+  private stated(text: string | undefined): string | undefined {
+    if (text === undefined) return undefined;
+    const literal = literalMethod(text, true) ?? literalMethod(text, false);
+    if (literal !== undefined) return literal;
+    if (this.lang === "go") {
+      const method = this.goMethod(text);
+      return method === "*" ? undefined : method;
+    }
+    if (this.lang === "jvm" || this.lang === "kotlin") {
+      const method = /^HttpMethod\s*\.\s*([A-Z]+)$/.exec(text)?.[1];
+      return method && SPRING_METHODS.has(method) ? method : undefined;
+    }
+    if (this.lang === "csharp") return dotnetMethod(text);
+    if (this.lang === "swift") return /^HTTPMethod\s*\.\s*[a-z]+$/.test(text.trim()) ? swiftMethod(text) : undefined;
+    return undefined;
+  }
+
   /** RestClient's or WebClient's method: the call `.uri(...)` is made on, `get()` or `method(HttpMethod.X)`. */
   private springMethod(uri: Frame): string | undefined {
     const before = this.previous(uri);
@@ -190,18 +232,9 @@ export class TextMethods {
    * default is. A chain with another call, or that ends before `.build()`, may get its method elsewhere: `*`.
    */
   private okHttpMethod(url: Frame): string | undefined {
-    let start = url;
-    const chain: Frame[] = [url];
-    for (let p = this.previous(url); p; p = this.previous(p)) {
-      chain.unshift(p);
-      start = p;
-    }
-    if (start.name !== "Builder" || start.receiver !== "Request" || !this.empty(start)) return undefined;
-    let last = url;
-    for (let n = this.following(url); n && last.name !== "build"; n = this.following(n)) {
-      chain.push(n);
-      last = n;
-    }
+    const found = this.okHttpChain(url);
+    if (!found) return undefined;
+    const { chain, last } = found;
     if (last.name !== "build") return "*";
     // A later `url(...)` replaces this one: the request is not sent to it.
     if (chain.some((c) => c !== url && c.name === "url" && c.at > url.at)) return "*";
@@ -215,6 +248,23 @@ export class TextMethods {
       else return "*";
     }
     return method;
+  }
+
+  /** The `Request.Builder()` chain a `.url(...)` call is in, from the builder through `.build()` or as far as it goes. */
+  private okHttpChain(url: Frame): { chain: Frame[]; last: Frame } | undefined {
+    let start = url;
+    const chain: Frame[] = [url];
+    for (let p = this.previous(url); p; p = this.previous(p)) {
+      chain.unshift(p);
+      start = p;
+    }
+    if (start.name !== "Builder" || start.receiver !== "Request" || !this.empty(start)) return undefined;
+    let last = url;
+    for (let n = this.following(url); n && last.name !== "build"; n = this.following(n)) {
+      chain.push(n);
+      last = n;
+    }
+    return { chain, last };
   }
 
   /**

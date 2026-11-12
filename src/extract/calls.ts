@@ -7,6 +7,7 @@ import { AngularValues } from "./angular.js";
 import { Clients, GENERATED_CLIENT, generatorOf, parseBase, type ClientRequest } from "./clients.js";
 import { httpExchanges } from "./spring.js";
 import { blankStrings, TextMethods } from "./verbs.js";
+import { fieldEnd, StringExpressions } from "./expressions.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, importedFrom, isReference, references, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
@@ -2035,39 +2036,6 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
 
 /**
- * Where the f-string replacement field whose text starts at `from` ends, after its `}`. In the expression, quoted strings
- * (`{'}'}`) and brackets hold their braces; after a top-level `:` comes the format spec, literal text in which only a
- * nested field (`{width}`) opens.
- */
-function fieldEnd(body: string, from: number, expression?: (start: number, end: number) => void): number {
-  let depth = 0;
-  let spec = false;
-  for (let i = from; i < body.length; i++) {
-    const c = body[i]!;
-    if (spec) {
-      if (c === "{") i = fieldEnd(body, i + 1, expression) - 1;
-      else if (c === "}") return i + 1;
-    } else if (c === "'" || c === '"') {
-      const quote = body.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
-      for (i += quote.length; i < body.length && !body.startsWith(quote, i); i++) if (body[i] === "\\") i++;
-      i += quote.length - 1;
-    } else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]") depth--;
-    else if (c === "}") {
-      if (depth === 0) {
-        expression?.(from, i);
-        return i + 1;
-      }
-      depth--;
-    } else if (c === ":" && depth === 0) {
-      expression?.(from, i);
-      spec = true;
-    }
-  }
-  return body.length;
-}
-
-/**
  * Where the f-string whose quote is at `open` closes: the next unescaped quote of its kind outside its replacement
  * fields; undefined when the line ends first.
  */
@@ -2238,6 +2206,8 @@ export interface Frame {
   method?: boolean;
   receiver?: string;
   annotation?: boolean;
+  /** The exception the call throws or makes, by the name it is called by (see `Argument`). */
+  exception?: string;
   /** Where the callee's name starts, past the `.` or `?.` it is called with. */
   callee?: number;
   /** For a method call, where its `.` (or `?.`) is. */
@@ -2493,10 +2463,10 @@ const REFIT_VERBS = new Set(["Get", "Post", "Put", "Patch", "Delete", "Head", "O
  * Where a string written without a leading `/` is a path, in code read as text: `base` where it is relative to the
  * client's base, `root` where it is the path of a URL whose host is given beside it. Retrofit's verb annotations
  * (`@GET("users/{id}")`, `@HTTP(path = ...)`), the URI of .NET's `new HttpRequestMessage(method, uri)`, and the URL a
- * call on one of the call source's `receivers` takes first (or after a method written as a string) are relative to
- * the base; the path Dart's `Uri.http(host, path)` and `Uri.https` take is from the root of that host.
+ * call on one of the call source's `receivers` takes first (or right after a method, written as a string or as a
+ * library's constant) are relative to the base; the path Dart's `Uri.http(host, path)` and `Uri.https` take is from the root of that host.
  */
-function pathPlace(file: string, a: Argument, args: Argument[], text: string, receivers: string[] | undefined): "base" | "root" | undefined {
+function pathPlace(file: string, a: Argument, text: string, receivers: string[] | undefined, methods: TextMethods): "base" | "root" | undefined {
   const jvm = /\.(java|kt|kts)$/.test(file);
   if (jvm && a.annotation && RETROFIT_VERBS.has(a.name) && a.index === 0 && (a.label === undefined || a.label === "value")) return "base";
   if (jvm && a.annotation && a.name === "HTTP" && a.label === "path") return "base";
@@ -2505,7 +2475,7 @@ function pathPlace(file: string, a: Argument, args: Argument[], text: string, re
   if (!a.method || a.receiver === undefined || !receivers?.includes(a.receiver)) return undefined;
   const methodAt = (b: Argument | undefined) => !!b && METHODS.has(text.slice(b.start, b.end).replace(/^["'`]+|["'`]+$/g, "").toUpperCase());
   if (a.index === 0) return methodAt(a) ? undefined : "base";
-  return a.index === 1 && methodAt(args.find((b) => b.call === a.call && b.index === 0)) ? "base" : undefined;
+  return methods.statedBefore(a) ? "base" : undefined;
 }
 
 /**
@@ -2635,11 +2605,18 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const scopeAt = textScopes(text);
   const scan = textCalls(file, text);
   const args = scan.args;
-  const methods = new TextMethods(file, text, scan);
+  const methods = new TextMethods(file, text, scan, spec.receivers);
   const csharp = /\.cs$/.test(file);
   const prefixes = csharp ? refitPrefixes(file, text, args) : [];
   for (const p of prefixes) if (p.why) context.untyped?.push({ why: `Refit's [PathPrefix] is not read where ${p.why}`, at: { file, line: lineOf(text, p.at) } });
   for (const at of retrofitUrls(file, text, scan)) context.untyped?.push({ why: "a Retrofit method takes its URL from its @Url parameter, a value", at: { file, line: lineOf(text, at) } });
+  const resources = ktorResources(file, text, scan);
+  if (resources.length) context.untyped?.push({ why: "Ktor's Resources plugin makes them from @Resource classes (client.get(Articles()))", at: { file, line: lineOf(text, resources[0]!) } });
+  const router = alamofireRouter(file, text, scan);
+  if (router !== undefined) context.untyped?.push({ why: "an Alamofire router (URLRequestConvertible) builds them in its asURLRequest", at: { file, line: lineOf(text, router) } });
+  const expressions = new StringExpressions(file, text, scan, { baseValues: spec.baseValues, base: context.base });
+  const built = expressions.expressions();
+  const taken = new Set(built.flatMap((e) => [...e.literals, ...(e.constants ?? [])]));
   const python = /\.pyi?$/.test(file);
   const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
@@ -2661,15 +2638,25 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     const fields: Array<[number, number]> = [];
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
-    if (registered) return;
-    const before = text.slice(Math.max(0, index - 200), index);
+    // A literal an expression is built from is read with it, below.
+    if (registered || (!field && taken.has(index))) return;
+    // The string as its language interpolates it (Swift's `\(id)`, C#'s `$"{id}"`), where the scan reads it alike.
+    const own = fString || field || scan.strings.find(([s]) => s === index)?.[1] !== index + length ? undefined : expressions.literalText(index);
     // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
     // the exception's literal the string lies in. A string in an f-string field is in code of its own.
-    const argument = field ? undefined : argumentAt(args, index);
+    consider({ inner: own ?? inner, index, length, argument: field ? undefined : argumentAt(args, index) });
+  };
+  const consider = (c: { inner: string; index: number; length: number; argument?: Argument; whole?: true; onBase?: true; method?: string }): void => {
+    const { inner, index, length, argument } = c;
+    const before = text.slice(Math.max(0, index - 200), index);
     // An `@HttpExchange` interface's mappings are read whole above; Refit's prefix is read before its routes.
     if (argument?.annotation && /^(?:Http|Get|Post|Put|Patch|Delete)Exchange$/.test(argument.name) && /\.(java|kt|kts)$/.test(file)) return;
     if (csharp && argument?.annotation && argument.name === "PathPrefix") return;
-    const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
+    // A Ktor resource's path names a resource, which typed requests are made to (named in a limit above).
+    if (argument?.annotation && argument.name === "Resource" && resources.length) return;
+    // OkHttp sends a request to the last URL its builder is given.
+    if (argument && methods.replaced(argument)) return;
+    const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) && argument.index === 0 ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
     if (typed?.why) return;
     const lined = !!argument && requestLine(file, text, argument);
     const line = lined ? feignLine(inner) : undefined;
@@ -2678,8 +2665,15 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       context.untyped?.push({ why: "a Feign request line's URI starts with a value", at: { file, line: lineOf(text, index) } });
       return;
     }
+    // Where the URL is held in a value, the calls that send that value.
+    let held: ReturnType<StringExpressions["heldIn"]> | null = null;
+    const heldBy = () => (held ??= expressions.heldIn(index, index + length, (a) => methods.of(a)) ?? undefined) || undefined;
     const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : line ? line.path : inner;
-    const place = argument && !line && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
+    let place = argument && !line && (c.whole || wholeArgument(text, argument)) ? pathPlace(file, argument, text, spec.receivers, methods) : undefined;
+    if (!place && !line && !c.onBase) {
+      const anchor = heldBy()?.anchor;
+      if (anchor) place = pathPlace(file, anchor, text, spec.receivers, methods);
+    }
     // The root path only as a verb call's URL, or a request line's.
     let parsed: (CallPath & { relative?: true }) | undefined =
       place === "root" ? undefined : (callPath(path, false, served) ?? (line || VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
@@ -2693,6 +2687,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       if (authority) host = hostOf(`http://${text.slice(authority.start + 1, authority.end - 1).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, HOLE)}`);
     } else if (!parsed && place === "base") parsed = relativePath(path, served);
     if (!parsed) return;
+    // A URL built on the client's base value has the configured base's path already.
+    if (c.onBase) parsed = { ...parsed, based: true };
     if (argument?.exception) {
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
@@ -2704,14 +2700,20 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     }
     // The configured base written once more (`base_url=f"{API_URL}/api/v1"`, `SetBaseURL(gatewayURL + "/billing/v1")`),
     // where nothing makes it a request's URL.
-    if (context.base && !place && !line && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
+    if (context.base && !c.onBase && !place && !line && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
       context.written?.push({ file, line: lineOf(text, index) });
       return;
     }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
     const statement = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const verb = line?.method ?? (argument && methods.of(argument)) ?? (before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(statement, index - lineStart, index - lineStart + length))?.toUpperCase();
+    const sent = heldBy()?.method;
+    const verb =
+      line?.method ??
+      c.method ??
+      (argument && methods.of(argument)) ??
+      (sent === "*" ? undefined : sent) ??
+      (before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(statement, index - lineStart, index - lineStart + length))?.toUpperCase();
     out.push({
       from: spec.from,
       to: spec.to,
@@ -2727,7 +2729,36 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     });
   };
   read(text, 0);
+  for (const e of built) {
+    if (spans?.holds(file, e.start)) continue;
+    if (e.unread) {
+      if (e.builder || callPath(e.text, true) || hostOf(e.text) !== undefined) context.untyped?.push({ why: e.unread, at: { file, line: lineOf(text, e.start) } });
+      continue;
+    }
+    consider({ inner: e.text, index: e.start, length: e.end - e.start, ...(e.anchor ? { argument: e.anchor, whole: true as const } : {}), ...(e.onBase ? { onBase: true as const } : {}), ...(e.method ? { method: e.method } : {}) });
+  }
   return out;
+}
+
+/**
+ * Where a Kotlin file that imports Ktor's `Resource` annotation (`io.ktor.resources`) annotates a class with
+ * `@Resource("/path")`: the resource's path, which the Resources plugin's typed requests (`client.get(Articles())`) are
+ * made to, and which atlas does not read.
+ */
+function ktorResources(file: string, text: string, scan: TextCalls): number[] {
+  if (!/\.kts?$/.test(file) || !/^\s*import\s+io\.ktor\.resources\.(?:Resource|\*)\s*;?\s*$/m.test(blankStrings(text, scan.strings))) return [];
+  return scan.args.filter((a) => a.annotation && a.name === "Resource" && a.index === 0).map((a) => a.start);
+}
+
+/**
+ * Where a Swift file that imports Alamofire declares a router, a type that conforms to `URLRequestConvertible` and
+ * builds each request in its `asURLRequest()` (Alamofire's Advanced Usage, Routing Requests).
+ */
+function alamofireRouter(file: string, text: string, scan: TextCalls): number | undefined {
+  if (!/\.swift$/.test(file)) return undefined;
+  const code = blankStrings(text, scan.strings);
+  if (!/^\s*import\s+Alamofire\b/m.test(code)) return undefined;
+  return /\b(?:enum|struct|class|extension)\s+[A-Za-z_]\w*\s*:[^{]*\bURLRequestConvertible\b/.exec(code)?.index;
 }
 
 /** A `<script>` or `<style>` element: its start tag and where its raw-text body lies in the template. */

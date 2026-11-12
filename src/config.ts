@@ -86,6 +86,12 @@ export interface CallSource {
    */
   receivers?: string[];
   /**
+   * In code read as text, the names of the values that hold the client's base URL, whose path `base` or `prefix` gives
+   * (`base` in `"$base/users"`, `baseUrl` in `baseUrl.newBuilder()`): a URL built on one is read with that path in its
+   * place.
+   */
+  baseValues?: string[];
+  /**
    * The project's own wrappers around fetch, by the name they are called with (`authFetch`, `api.authFetch`), in
    * TypeScript and JavaScript: the URL first and a fetch init second. A call whose init states no method sends
    * `defaultMethod`, as fetch sends GET.
@@ -221,6 +227,12 @@ function checkCalls(spec: CallSource): CallSource {
   } else if (spec.join !== undefined) throw new Error(`${edge}: join says how a path joins base, which is not given`);
   if (spec.receivers !== undefined && !(Array.isArray(spec.receivers) && spec.receivers.every((r) => typeof r === "string" && /^[A-Za-z_$][\w$]*$/.test(r)))) {
     throw new Error(`${edge}: receivers lists the names clients are called on (${JSON.stringify(spec.receivers)})`);
+  }
+  if (spec.baseValues !== undefined) {
+    if (!(Array.isArray(spec.baseValues) && spec.baseValues.every((r) => typeof r === "string" && /^[A-Za-z_$][\w$]*$/.test(r)))) {
+      throw new Error(`${edge}: baseValues lists the names of the values that hold the client's base URL (${JSON.stringify(spec.baseValues)})`);
+    }
+    if (spec.base === undefined && spec.prefix === undefined) throw new Error(`${edge}: baseValues needs base (with join) or prefix, the path of the base URL those values hold`);
   }
   if (spec.wrappers === undefined) return spec;
   // A list of wrappers, each with a name and one of the methods fetch sends.

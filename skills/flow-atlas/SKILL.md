@@ -166,7 +166,7 @@ through a sample of findings with a person. Only then record the baseline.
 - What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
   client's base (`calls[].base` with how it joins a path, `join`, or `calls[].prefix`, from a Dio `baseUrl` or an
   `axios.create({ baseURL })` given a value atlas does not read; and, in code read as text, `calls[].receivers`, the
-  names the client is called on), the path an Express,
+  names the client is called on, and `calls[].baseValues`, the values that hold its base URL), the path an Express,
   @koa/router or Hono router or a Fastify plugin is mounted at, a FastAPI router included at, a Flask blueprint registered at, a Django URLconf included at or a Go file's routers are served at (`routes[].mounts`), a Nest global prefix set from a variable
   (`routes[].prefix`), a registration helper's method (`routes[].calls[].method`), the `data-*`
   attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends
