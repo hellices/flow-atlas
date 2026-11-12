@@ -201,17 +201,21 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 
 ## Flows and output
 
-- **Flows.** A flow is written in `flows/*.flow.yaml` as a Kubernetes-style object (`apiVersion`, `kind: Flow`,
-  `metadata`, `spec`), with Arazzo-style steps. Each step names one of the repository's own routes or calls and the
-  role its component plays, and `sources` names the decisions behind the flow. `atlas flows` reports
-  Kubernetes-style conditions for each flow (`Ready`, `Resolved`, `Connected`, `ProducesListed`, `Documented`). A flow
-  file is reviewed like code, in the pull request that changes it.
+![A flow checked against the code, broken by a renamed route, and exported as an Arazzo workflow](docs/media/flows.gif)
+
+Recorded on the `view-order` flow of [`fixtures/shop`](fixtures/shop/flows/orders.flow.yaml)
+([MP4](docs/media/flows.mp4)).
+
+- **Flows.** Besides its steps and their roles, a flow can name the decisions behind it (`sources`), what it produces
+  (`produces`) and whether it is planned or going away (`lifecycle`); `atlas flows` reports `ProducesListed` and
+  `Documented` for those too. `atlas draft flows` drafts a flow for each chain no flow names yet, leaving only the
+  title and roles to write. A flow file is reviewed like code, in the pull request that changes it.
 - **Output.** Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema),
   with `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests). There are no
   timestamps, so the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`).
-- **Standards.** `check --format sarif` prints findings as SARIF 2.1.0, and `export arazzo` prints the flows as an
-  Arazzo 1.0 description. The flow files themselves follow the project's own Kubernetes-style schema, with Arazzo-style
-  steps; they are not Arazzo documents. Why each field is there: [docs/schema.md](docs/schema.md) and
+- **Standards.** `check --format sarif` prints findings as SARIF 2.1.0. Flow files follow the project's own
+  Kubernetes-style schema; only the export is an Arazzo 1.0 document, and it leaves parameters, request bodies and
+  success criteria to the tool that runs it. Why each field is there: [docs/schema.md](docs/schema.md) and
   [docs/standards.md](docs/standards.md).
 
 ## Limits
