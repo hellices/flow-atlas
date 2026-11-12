@@ -48,6 +48,7 @@ calls:
     base: /api/v1/            # the path of the base URL the client joins its paths to, where the code sets it in a way atlas does not read
     join: resolve             # resolve: as a URL reference (HttpClient, Retrofit, Ktor, urljoin); append: after it with one / (axios, Ky's prefix, RTK Query)
     receivers: [client]       # code read as text: the names the client is called on; a path without a leading / is read only as their calls' URL
+    baseValues: [baseUrl]     # code read as text: the values that hold the base URL; a URL built on one ("$baseUrl/users") is read under base
   - { from: web, to: api, files: ["src/main/resources/templates/**/*.html"], dataUrls: [data-api-url] }   # data-* a script requests
   - from: spa
     to: api
@@ -900,7 +901,8 @@ which route takes its requests.
 Most HTTP clients take a base URL and join each path they are given to it; how, each library documents. atlas reads
 the base where the code states it, for the calls made through that client, and the call source's `base` (with `join`)
 or `prefix` where it does not: a base held in a value (`process.env.API_URL`, a build's
-`BuildConfig`), or a client atlas does not follow. A client's base option is its base, no request of its own.
+`BuildConfig`), or a client atlas does not follow. A client's base option is its base, no request of its own. In code
+read as text, `baseValues` names the values the code holds that base URL in, so a URL built on one is read under it.
 
 - `join: resolve` is RFC 3986's resolution of a reference (section 5.2), as the URL Standard, .NET's `Uri` (HttpClient's
   `BaseAddress`), OkHttp's `HttpUrl.resolve` (Retrofit's `baseUrl`, whose documentation shows it), Ktor's
@@ -915,7 +917,7 @@ Clients differ on a `.` or `..` segment after the join: the URL Standard, .NET's
 remove it, resty's `url.Parse` and Ktor's `DefaultRequest` send it as written; so a path with one, joined to the
 configured base, is left unread with a limit, and one joined to a base read from code (whose libraries send it through
 the URL Standard) has it removed. A URL with a host, or one that starts
-with a value (`${base}/orders`), keeps its own path. A path without a leading `/` is read only where the place it is
+with a value (`${base}/orders`), keeps its own path, unless that value is one `baseValues` names. A path without a leading `/` is read only where the place it is
 written in makes it relative to a client's base, and only where that base is known; where it is not, a limit names
 the place and says to set `base` and `join`.
 
@@ -981,10 +983,76 @@ In an Angular app, a URL that starts with a value Angular fixes is read with tha
 - a `readonly` or `private` field initialized with one of these, or such a constructor parameter, that no code of the
   class writes (`` `${this.baseUrl}/${year}` ``).
 
+In code read as text, a URL built from more than one piece is read as one, as its language or library builds it, each
+value a hole (`{}`) as in a TypeScript template:
+
+- the operands of a `+` (`"/users/" + id + "/posts"`, `base + "/users/" + id`), and a string's interpolations:
+  Kotlin's and Dart's `$name` and `${...}`, Swift's `\(...)`, C#'s `$"{...}"` (`{{` a brace), Python's f-strings;
+- formatting: Go's `fmt.Sprintf` (`%s`, `%d`, `%v`; `%%` a `%`), Java's and Kotlin's `String.format` and Kotlin's
+  `"...".format(...)` (`%s`, `%d`, `%1$s`), C#'s `string.Format` (`{0}`, `{0:D}`), Python's `str.format` (`{}`, `{0}`,
+  `{name}`; a field with a spec, nested fields in it too, a value) and `%` (`%s`, `%d`). A verb that writes more than
+  its value (a width, a flag, `%q`), Java's argument index 0, which its `Formatter` refuses, an aligned item
+  (`{0,8}`), fields numbered both ways, or fewer arguments than verbs leave the URL unread, and a limit names it where
+  the text reads as a path. A call made inside an argument (`"/u/{}".format(requests.get("/token").text)`) is read on
+  its own;
+- joining and building, as each library documents it: Go's `url.JoinPath`, `URL.JoinPath` (on a URL held in a value,
+  not on a name a package goes by) and `path.Join` (each element after one `/`, the path cleaned of `//`, path.Join's
+  of a trailing `/`; a `.` or `..` element, which they clean away, leaves the URL unread with a limit), `url.Parse` and
+  `URL.String()`; OkHttp's `HttpUrl.Builder` through `build()`, made new (its path empty; its host the one the last
+  `host(...)` gives, read with the scheme and port the last `scheme(...)` and `port(...)` give, or a value) or from a
+  URL (`url.newBuilder()`, `"...".toHttpUrl().newBuilder()`), where `addPathSegment` encodes a `/` as `%2F` (a
+  constant's too) and `addPathSegments` splits at it, and the query and fragment leave the path as it is; a host set
+  on a URL a builder is made from, a scheme or port set on one whose host the code names, or a host set with a scheme
+  or port atlas does not read, leaves the URL unread with a limit; Spring's `UriComponentsBuilder` from `fromUriString`, `fromPath` or `fromUri` through
+  `build`, `buildAndExpand`, `toUriString` or `toUri`, where `path` is appended as written (with a `/` after segments)
+  and `pathSegment` after one `/`, and `//` in the path, not the scheme's, is written `/` (`FullPathComponentBuilder`);
+  Ktor's `appendPathSegments` in a request's `url { }` block (`client.post { url { appendPathSegments("orders", id) } }`,
+  after the request's own URL where it has one), its components split at `/`, relative to the client's base as
+  `DefaultRequest` resolves them, sent with the verb's method, or for `client.request { }` the one its block sets (GET
+  where it sets none, `*` where it sets it under a condition);
+  Swift's `appendingPathComponent` and `appending(path:)` (a `/` kept) and `appending(component:)` (a `/` encoded),
+  each after one `/`, and `URL(string:)`; Dart's `Uri.parse`. A builder call that may change the path otherwise
+  (OkHttp's `setPathSegment` or `encodedPath`, Spring's `host` or `replacePath`, a Ktor block that sets the URL another
+  way, writes more in its `url` block, adds an empty segment or encodes a `/`) leaves the URL unread, and a limit names
+  it. OkHttp's builder is read where the file imports `okhttp3.HttpUrl`, Spring's where it imports
+  `org.springframework.web.util.UriComponentsBuilder` and Ktor's where it imports `io.ktor.http.appendPathSegments`
+  (or their packages' `*`), not under another name; Go's packages by the names the file imports them under.
+
+A value that starts such a URL is a base, and the URL keeps its own path, as a TypeScript template's does, but for two
+kinds of value. A string constant of the file (`const string Projects = "projects"` in C#, `static final String` in
+Java, `const val` in Kotlin, `const` in Go and Dart, `static let` in Swift), written as one literal, assigned nowhere
+else and no parameter's name, gives its text in any place of the URL (`GetFromJsonAsync<P[]>(Projects)`,
+`$"{Projects}/{id}"`), and is no request of its own. A value the call source names in `baseValues` as holding the
+client's base URL (`base` in `"$base/users"`, `baseUrl` in `baseUrl.newBuilder()`, also as `this.base`) is the
+configured `base` (or `prefix`), whose path takes its place: the rest is written after it as the code joins it.
+
+A URL held in a value declared with it (`val url = ...`, `String uri = ...`, `u, err := url.Parse(...)`, `var c =
+components(path: "/x")`), outside Python, is sent with the method each use of the value states, as the whole URL
+argument of a call (as itself, Go's `u.String()` or Swift's `c.url`: `http.Get(u.String())`,
+`Request.Builder().url(url)`, `session.data(from: c.url!)`), where they agree (`*` where they differ), and placed by
+those calls (a path without a leading `/` relative to the base); where they place it differently (a configured client
+and another), a path that needs its place is not read, and a limit names it. A use that reads or sets its query alone (Go's `Query()` and `RawQuery`,
+Swift's `queryItems`, `path += "?" + q`) is none; a use of any other kind, or the value assigned again, leaves it
+`*`. A URL a later `.url(...)` of the same OkHttp `Request.Builder` chain replaces is no request. Ktor's typed
+requests (the Resources plugin's `client.get(Articles())`, made from `@Resource` classes) and an Alamofire router (a
+type that conforms to `URLRequestConvertible` and builds each request in `asURLRequest`) are not read, and a limit
+names the file; a `@Resource` path is no request of its own.
+
+What a client puts into each request is read where the file states it for certain. resty's client-level path
+parameters (`resty.New().SetPathParam("version", "v2")`, `SetPathParams` with a literal map; resty, `Client.SetPathParam`:
+"It can be overridden at the request level") fill the template of each request made on that client (`c.R()`, or
+`u.http.R()` where the file gives the client to the field `http`) that does not set the parameter itself; a value
+`SetPathParam` would escape differently is not read. A client's parameters that are not literals, or a client held
+where atlas does not see, leave the hole, and a limit names the client. A dio interceptor of a call file that writes
+`options.path` in `onRequest` is named in a limit (the requests are read without it; the call source's `prefix` can
+state the path it puts first), and the path it writes is no request.
+
 In code read as text, a path without a leading `/` is read relative to the call source's `base` (or `prefix`) where it
-is a whole string argument (not `"users/" + id`) of: Retrofit's `@GET("users/{id}")` and the other verb annotations,
-`@HTTP(path = ...)`; .NET's `new HttpRequestMessage(method, "users")`; a call on one of the call source's `receivers`,
-taken first or after a method written as a string (`client.get("users/$id")`, `api.request("POST", "projects")`). A
+is a whole argument, a string or one built as above (`"users/" + id`), of: Retrofit's `@GET("users/{id}")` and the
+other verb annotations, `@HTTP(path = ...)`; .NET's `new HttpRequestMessage(method, "users")`; a call on one of the
+call source's `receivers`, taken first or right after a method, written as a string or as a library's constant
+(`client.get("users/$id")`, `api.request("POST", "projects")`, `c.newRequest(ctx, http.MethodGet, "invoices", nil)`),
+with that method. A
 path Dart's `Uri.http(host, path)` or `Uri.https` takes, written with its leading `/` or not, starts at that host's
 root, as the package documents; a host written there as a literal is checked as an absolute URL's is. Two type-level
 prefixes are read: Refit's `[PathPrefix("/projects")]`, joined before each verb attribute's route of its interface with

@@ -1,8 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "PATCH /users/{}", reason: "`Patch(\"/users/\" + id)` is read without the value after the path, and nothing says so" }
-  - { call: "GET /v2/reports/{}", reason: "the client's own path parameter (`SetPathParam(\"version\", \"v2\")` on the client) is read as a request's argument (`/{version}/reports/{year}` as `/{}/reports/{}`), and nothing says so" }
-extra:
-  - { call: "PATCH /users", reason: "`Patch(\"/users/\" + id)` read without the value after `/users/`" }
-  - { call: "GET /{}/reports/{}", reason: "`/{version}/reports/{year}` read with the client's own `version` path parameter as an argument" }

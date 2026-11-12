@@ -31,10 +31,6 @@
     "webhooks-api|POST /api/webhooks"
   ],
   "calls": [
-    "client-app->catalog-api|* /catalogbrands based @ src/ClientApp/Services/Catalog/CatalogService.cs:69",
-    "client-app->catalog-api|* /catalogtypes based @ src/ClientApp/Services/Catalog/CatalogService.cs:78",
-    "client-app->catalog-api|* /items based @ src/ClientApp/Services/Catalog/CatalogService.cs:38",
-    "client-app->catalog-api|* /items/{} based @ src/ClientApp/Services/Catalog/CatalogService.cs:54",
     "webapp->catalog-api|* /api/catalog/items/{}/pic @ src/WebApp/Program.cs:32",
     "webapp->ordering-api|* /api/Orders @ src/WebApp/Services/OrderingService.cs:5",
     "webhook-client->webhooks-api|GET /api/webhooks @ src/WebhookClient/Services/WebHooksClient.cs:12",
@@ -69,13 +65,10 @@
     "FA001|ordering-api|PUT /api/orders/cancel",
     "FA001|ordering-api|PUT /api/orders/ship",
     "FA001|webhooks-api|DELETE /api/webhooks/{id}",
-    "FA001|webhooks-api|GET /api/webhooks/{id}",
-    "FA002|client-app->catalog-api|* /catalogbrands",
-    "FA002|client-app->catalog-api|* /catalogtypes",
-    "FA002|client-app->catalog-api|* /items",
-    "FA002|client-app->catalog-api|* /items/{}"
+    "FA001|webhooks-api|GET /api/webhooks/{id}"
   ],
   "limits": [
+    "calls client-app->catalog-api: 5 files read, nothing extracted",
     "calls client-app->ordering-api: 3 files read, nothing extracted",
     "calls hybrid-app->catalog-api: 3 files read, nothing extracted",
     "calls webapp->ordering-api: * /api/Orders at src/WebApp/Services/OrderingService.cs:5 fits routes of GET and POST; its method is not read, so it is matched to none of them",

@@ -1,8 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "GET /invoices", reason: "the method of a URL built with `UriComponentsBuilder.fromUriString(url).path(\"/invoices\")` into a variable, which `getForObject` then sends, is not read: atlas does not follow the variable, and nothing says so" }
-  - { call: "DELETE /invoices/{}", reason: "a path ending in a concatenated value (`url + \"/invoices/\" + number`) sent with `exchange(..., HttpMethod.DELETE, ...)` is read as `/invoices`, and nothing says so" }
-extra:
-  - { call: "* /invoices", reason: "the `UriComponentsBuilder` path held in a variable, read with the method of the `getForObject` that sends it unread" }
-  - { call: "DELETE /invoices", reason: "`url + \"/invoices/\" + number`, sent with `exchange(..., HttpMethod.DELETE, ...)`, read without its value" }

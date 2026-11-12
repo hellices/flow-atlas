@@ -1,6 +1,0 @@
-# Where atlas's reading differs from the requests this code sends. Remove an entry when atlas reads it right; the test
-# fails while a listed difference no longer occurs.
-missing:
-  - { call: "GET /customers/{}/orders", reason: "a path concatenated around a value (`\"/customers/\" + customerId + \"/orders\"`) is read as two paths, and nothing says so" }
-extra:
-  - { call: "GET /customers", reason: "the head of `\"/customers/\" + customerId + \"/orders\"` read as a request of its own, with the GET of the `get()` before its `.uri(` (its tail is read alone too, as the GET `/orders` another method sends)" }

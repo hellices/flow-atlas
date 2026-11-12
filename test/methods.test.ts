@@ -337,8 +337,9 @@ describe("the review round's cases", () => {
     expect(read({ "web/b.go": 'package users\nfunc a() { http.PostForm(base+"/a", v) }' })).toEqual({ calls: ["* /a @2"], limits: [] });
   });
 
-  it("reads no method for an OkHttp URL a later url(...) replaces", () => {
-    expect(read({ "web/A.kt": 'val r = Request.Builder().url("/old").url("/new").post(body).build()' })).toEqual({ calls: ["* /old @1", "POST /new @1"], limits: [] });
+  it("reads no request to an OkHttp URL a later url(...) replaces", () => {
+    expect(read({ "web/A.kt": 'val r = Request.Builder().url("/old").url("/new").post(body).build()' })).toEqual({ calls: ["POST /new @1"], limits: [] });
+    expect(read({ "web/A.kt": 'val r = Request.Builder().url("/old").post(body)\nval s = r.url("/new")' })).toEqual({ calls: ["* /new @2", "* /old @1"], limits: [] });
   });
 
   it("reads Python imports with a trailing comment and in parentheses", () => {

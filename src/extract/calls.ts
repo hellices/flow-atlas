@@ -7,6 +7,8 @@ import { AngularValues } from "./angular.js";
 import { Clients, GENERATED_CLIENT, generatorOf, parseBase, type ClientRequest } from "./clients.js";
 import { httpExchanges } from "./spring.js";
 import { blankStrings, TextMethods } from "./verbs.js";
+import { fieldEnd, StringExpressions } from "./expressions.js";
+import { parseGo } from "./golang.js";
 import { addCoverage } from "./coverage.js";
 import { declarationOf, importedFrom, isReference, references, unwrap } from "./binding.js";
 import { Constants } from "./constants.js";
@@ -2035,39 +2037,6 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
 const STRING = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
 
 /**
- * Where the f-string replacement field whose text starts at `from` ends, after its `}`. In the expression, quoted strings
- * (`{'}'}`) and brackets hold their braces; after a top-level `:` comes the format spec, literal text in which only a
- * nested field (`{width}`) opens.
- */
-function fieldEnd(body: string, from: number, expression?: (start: number, end: number) => void): number {
-  let depth = 0;
-  let spec = false;
-  for (let i = from; i < body.length; i++) {
-    const c = body[i]!;
-    if (spec) {
-      if (c === "{") i = fieldEnd(body, i + 1, expression) - 1;
-      else if (c === "}") return i + 1;
-    } else if (c === "'" || c === '"') {
-      const quote = body.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
-      for (i += quote.length; i < body.length && !body.startsWith(quote, i); i++) if (body[i] === "\\") i++;
-      i += quote.length - 1;
-    } else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]") depth--;
-    else if (c === "}") {
-      if (depth === 0) {
-        expression?.(from, i);
-        return i + 1;
-      }
-      depth--;
-    } else if (c === ":" && depth === 0) {
-      expression?.(from, i);
-      spec = true;
-    }
-  }
-  return body.length;
-}
-
-/**
  * Where the f-string whose quote is at `open` closes: the next unescaped quote of its kind outside its replacement
  * fields; undefined when the line ends first.
  */
@@ -2238,6 +2207,8 @@ export interface Frame {
   method?: boolean;
   receiver?: string;
   annotation?: boolean;
+  /** The exception the call throws or makes, by the name it is called by (see `Argument`). */
+  exception?: string;
   /** Where the callee's name starts, past the `.` or `?.` it is called with. */
   callee?: number;
   /** For a method call, where its `.` (or `?.`) is. */
@@ -2481,6 +2452,8 @@ export interface TextContext {
   unbaseRelative?: Place[];
   /** Collects the requests a declaration states that are not read (a type-level prefix not read, a URL given as a value), with why. */
   untyped?: Array<{ why: string; at: Place }>;
+  /** Collects what the requests a declaration states are read without (a dio interceptor's path), with what. */
+  without?: Array<{ what: string; at: Place }>;
 }
 
 /** Retrofit's annotations of an interface method that name its method and its URL relative to the base URL. */
@@ -2493,10 +2466,10 @@ const REFIT_VERBS = new Set(["Get", "Post", "Put", "Patch", "Delete", "Head", "O
  * Where a string written without a leading `/` is a path, in code read as text: `base` where it is relative to the
  * client's base, `root` where it is the path of a URL whose host is given beside it. Retrofit's verb annotations
  * (`@GET("users/{id}")`, `@HTTP(path = ...)`), the URI of .NET's `new HttpRequestMessage(method, uri)`, and the URL a
- * call on one of the call source's `receivers` takes first (or after a method written as a string) are relative to
- * the base; the path Dart's `Uri.http(host, path)` and `Uri.https` take is from the root of that host.
+ * call on one of the call source's `receivers` takes first (or right after a method, written as a string or as a
+ * library's constant) are relative to the base; the path Dart's `Uri.http(host, path)` and `Uri.https` take is from the root of that host.
  */
-function pathPlace(file: string, a: Argument, args: Argument[], text: string, receivers: string[] | undefined): "base" | "root" | undefined {
+function pathPlace(file: string, a: Argument, text: string, receivers: string[] | undefined, methods: TextMethods): "base" | "root" | undefined {
   const jvm = /\.(java|kt|kts)$/.test(file);
   if (jvm && a.annotation && RETROFIT_VERBS.has(a.name) && a.index === 0 && (a.label === undefined || a.label === "value")) return "base";
   if (jvm && a.annotation && a.name === "HTTP" && a.label === "path") return "base";
@@ -2505,7 +2478,7 @@ function pathPlace(file: string, a: Argument, args: Argument[], text: string, re
   if (!a.method || a.receiver === undefined || !receivers?.includes(a.receiver)) return undefined;
   const methodAt = (b: Argument | undefined) => !!b && METHODS.has(text.slice(b.start, b.end).replace(/^["'`]+|["'`]+$/g, "").toUpperCase());
   if (a.index === 0) return methodAt(a) ? undefined : "base";
-  return a.index === 1 && methodAt(args.find((b) => b.call === a.call && b.index === 0)) ? "base" : undefined;
+  return methods.statedBefore(a) ? "base" : undefined;
 }
 
 /**
@@ -2635,11 +2608,23 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const scopeAt = textScopes(text);
   const scan = textCalls(file, text);
   const args = scan.args;
-  const methods = new TextMethods(file, text, scan);
+  const methods = new TextMethods(file, text, scan, spec.receivers);
   const csharp = /\.cs$/.test(file);
   const prefixes = csharp ? refitPrefixes(file, text, args) : [];
   for (const p of prefixes) if (p.why) context.untyped?.push({ why: `Refit's [PathPrefix] is not read where ${p.why}`, at: { file, line: lineOf(text, p.at) } });
   for (const at of retrofitUrls(file, text, scan)) context.untyped?.push({ why: "a Retrofit method takes its URL from its @Url parameter, a value", at: { file, line: lineOf(text, at) } });
+  const resources = ktorResources(file, text, scan);
+  if (resources.length) context.untyped?.push({ why: "Ktor's Resources plugin makes them from @Resource classes (client.get(Articles()))", at: { file, line: lineOf(text, resources[0]!) } });
+  const router = alamofireRouter(file, text, scan);
+  if (router !== undefined) context.untyped?.push({ why: "an Alamofire router (URLRequestConvertible) builds them in its asURLRequest", at: { file, line: lineOf(text, router) } });
+  const interceptors = dioInterceptors(file, text, scan);
+  for (const at of interceptors.at)
+    context.without?.push({ what: "the path a dio interceptor writes into each request's (options.path), which the call source's prefix can state", at: { file, line: lineOf(text, at) } });
+  const resty = restyClients(file, text, scan, methods);
+  for (const at of resty.unread) context.without?.push({ what: "a resty client's own path parameters (SetPathParam on the client), a hole in their place", at: { file, line: lineOf(text, at) } });
+  const expressions = new StringExpressions(file, text, scan, { baseValues: spec.baseValues, base: context.base });
+  const built = expressions.expressions();
+  const taken = new Set(built.flatMap((e) => [...e.literals, ...(e.constants ?? [])]));
   const python = /\.pyi?$/.test(file);
   const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
@@ -2659,17 +2644,31 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     // In a Python f-string every replacement field is a value, however it is written; `{{` and `}}` are braces. The
     // code in a field runs, so the requests written in it are read too.
     const fields: Array<[number, number]> = [];
+    // A resty request's path parameters its client sets fill the template.
+    const filled = resty.clients.size && !field ? restyPath(body, argumentAt(args, index), resty, methods, scan, text) : body;
+    const substituted = filled !== body;
+    body = filled;
     const inner = fString ? fStringText(body, (start, end) => fields.push([start, end])) : body.replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*|%[sd]|\{[A-Za-z_]\w*\}/g, HOLE);
     for (const [start, end] of fields) read(body.slice(start, end), index + 1 + start, true);
-    if (registered) return;
-    const before = text.slice(Math.max(0, index - 200), index);
+    // A literal an expression is built from is read with it, below.
+    if (registered || (!field && taken.has(index)) || interceptors.rewrites.some(([s, e]) => s <= index && index < e)) return;
+    // The string as its language interpolates it (Swift's `\(id)`, C#'s `$"{id}"`), where the scan reads it alike.
+    const own = fString || field || substituted || scan.strings.find(([s]) => s === index)?.[1] !== index + length ? undefined : expressions.literalText(index);
     // The reader's strings are quoted pairs on one line, so it reads `"""/my"""` from its third quote: what decides is
     // the exception's literal the string lies in. A string in an f-string field is in code of its own.
-    const argument = field ? undefined : argumentAt(args, index);
+    consider({ inner: own ?? inner, index, length, argument: field ? undefined : argumentAt(args, index) });
+  };
+  const consider = (c: { inner: string; index: number; length: number; argument?: Argument; whole?: true; onBase?: true; method?: string }): void => {
+    const { inner, index, length, argument } = c;
+    const before = text.slice(Math.max(0, index - 200), index);
     // An `@HttpExchange` interface's mappings are read whole above; Refit's prefix is read before its routes.
     if (argument?.annotation && /^(?:Http|Get|Post|Put|Patch|Delete)Exchange$/.test(argument.name) && /\.(java|kt|kts)$/.test(file)) return;
     if (csharp && argument?.annotation && argument.name === "PathPrefix") return;
-    const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
+    // A Ktor resource's path names a resource, which typed requests are made to (named in a limit above).
+    if (argument?.annotation && argument.name === "Resource" && resources.length) return;
+    // OkHttp sends a request to the last URL its builder is given.
+    if (argument && methods.replaced(argument)) return;
+    const typed = csharp && argument?.annotation && REFIT_VERBS.has(argument.name) && argument.index === 0 ? prefixes.find((p) => p.start < index && index < p.end) : undefined;
     if (typed?.why) return;
     const lined = !!argument && requestLine(file, text, argument);
     const line = lined ? feignLine(inner) : undefined;
@@ -2678,8 +2677,21 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       context.untyped?.push({ why: "a Feign request line's URI starts with a value", at: { file, line: lineOf(text, index) } });
       return;
     }
+    // Where the URL is held in a value, the calls that send that value.
+    let held: ReturnType<StringExpressions["heldIn"]> | null = null;
+    const heldBy = () => (held ??= expressions.heldIn(index, index + length, (a) => methods.of(a)) ?? undefined) || undefined;
     const path = typed?.prefix ? `${typed.prefix.replace(/\/+$/, "")}/${inner.replace(/^\/+/, "")}` : line ? line.path : inner;
-    const place = argument && !line && wholeArgument(text, argument) ? pathPlace(file, argument, args, text, spec.receivers) : undefined;
+    let place = argument && !line && (c.whole || wholeArgument(text, argument)) ? pathPlace(file, argument, text, spec.receivers, methods) : undefined;
+    if (!place && !line && !c.onBase) {
+      // Each call that sends the value places it: where they differ (a configured client and another), a path that
+      // needs its place is not read.
+      const places = new Set((heldBy()?.anchors ?? []).map((a) => pathPlace(file, a, text, spec.receivers, methods)));
+      if (places.size === 1) place = [...places][0];
+      else if (places.size > 1 && !callPath(path, false, served)) {
+        context.untyped?.push({ why: "a URL held in a value is sent by calls that place it differently", at: { file, line: lineOf(text, index) } });
+        return;
+      }
+    }
     // The root path only as a verb call's URL, or a request line's.
     let parsed: (CallPath & { relative?: true }) | undefined =
       place === "root" ? undefined : (callPath(path, false, served) ?? (line || VERB_BEFORE.test(before) ? callPath(path, true, served) : undefined));
@@ -2693,6 +2705,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       if (authority) host = hostOf(`http://${text.slice(authority.start + 1, authority.end - 1).replace(/\$\{[^}]*\}|\$[A-Za-z_]\w*/g, HOLE)}`);
     } else if (!parsed && place === "base") parsed = relativePath(path, served);
     if (!parsed) return;
+    // A URL built on the client's base value has the configured base's path already.
+    if (c.onBase) parsed = { ...parsed, based: true };
     if (argument?.exception) {
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
@@ -2704,14 +2718,20 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     }
     // The configured base written once more (`base_url=f"{API_URL}/api/v1"`, `SetBaseURL(gatewayURL + "/billing/v1")`),
     // where nothing makes it a request's URL.
-    if (context.base && !place && !line && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
+    if (context.base && !c.onBase && !place && !line && !VERB_BEFORE.test(before) && !parsed.relative && sameBase(parsed.path, context.base.path) && (!parsed.based || (inner.trimStart().startsWith(HOLE) && hostOf(inner) === undefined))) {
       context.written?.push({ file, line: lineOf(text, index) });
       return;
     }
     const lineStart = text.lastIndexOf("\n", index) + 1;
     const lineEnd = text.indexOf("\n", index);
     const statement = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const verb = line?.method ?? (argument && methods.of(argument)) ?? (before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(statement, index - lineStart, index - lineStart + length))?.toUpperCase();
+    const sent = heldBy()?.method;
+    const verb =
+      line?.method ??
+      c.method ??
+      (argument && methods.of(argument)) ??
+      (sent === "*" ? undefined : sent) ??
+      (before.match(VERB_BEFORE)?.[1] ?? enumMethodNear(statement, index - lineStart, index - lineStart + length))?.toUpperCase();
     out.push({
       from: spec.from,
       to: spec.to,
@@ -2727,7 +2747,160 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
     });
   };
   read(text, 0);
+  for (const e of built) {
+    if (spans?.holds(file, e.start)) continue;
+    if (e.unread) {
+      if (e.builder || callPath(e.text, true) || hostOf(e.text) !== undefined) context.untyped?.push({ why: e.unread, at: { file, line: lineOf(text, e.start) } });
+      continue;
+    }
+    const method = e.method ?? (e.block !== undefined ? methods.ktorRequestBlock(e.block) : undefined);
+    consider({ inner: e.text, index: e.start, length: e.end - e.start, ...(e.anchor ? { argument: e.anchor, whole: true as const } : {}), ...(e.onBase ? { onBase: true as const } : {}), ...(method ? { method } : {}) });
+  }
   return out;
+}
+
+/** resty's packages, by their import paths. */
+const RESTY = new Set(["github.com/go-resty/resty/v2", "resty.dev/v3"]);
+
+/** The calls of resty that set path parameters, on a client or a request. */
+const RESTY_PARAMS = new Set(["SetPathParam", "SetRawPathParam", "SetPathParams", "SetRawPathParams"]);
+
+/**
+ * The path parameters a Go file's resty clients set themselves (`resty.New().SetPathParam("version", "v2")`), which
+ * resty puts into every request's URL template that its request does not set (resty, Client.SetPathParam), by the
+ * names a request reaches the client by: the variable the client is held in, and the struct fields that variable is
+ * given to in the file (`&Users{http: client}`). A name two clients are given to holds neither; a client whose
+ * parameters are not all literals, or whose holder atlas does not see, is listed in `unread`.
+ */
+interface RestyClients {
+  clients: Map<string, Map<string, string> | null>;
+  unread: number[];
+}
+
+function restyClients(file: string, text: string, scan: TextCalls, methods: TextMethods): RestyClients {
+  const out: RestyClients = { clients: new Map(), unread: [] };
+  if (!/\.go$/.test(file)) return out;
+  let imports: ReturnType<typeof parseGo>["imports"];
+  try {
+    imports = parseGo(text).imports;
+  } catch {
+    return out;
+  }
+  const names = new Set(imports.filter((i) => RESTY.has(i.path)).map((i) => i.name ?? "resty"));
+  if (!names.size) return out;
+  const code = blankStrings(text, scan.strings);
+  for (const f of scan.frames.values()) {
+    if (f.name !== "New" || !f.method || f.receiver === undefined || !names.has(f.receiver) || f.parts.length || f.dot === undefined) continue;
+    const sets = methods.chainAfter(f).filter((c) => c.name !== undefined && RESTY_PARAMS.has(c.name));
+    if (!sets.length) continue;
+    const params = new Map<string, string>();
+    const literal = (c: Frame, i: number) => /^\s*"([^"\\]*)"\s*$/.exec(text.slice(c.parts[i]!.start, c.parts[i]!.end))?.[1];
+    let known = true;
+    for (const c of sets) {
+      const pairs: Array<[string | undefined, string | undefined]> = [];
+      if (c.name!.endsWith("Params")) {
+        const map = c.parts.length === 1 ? /^\s*map\s*\[\s*string\s*\]\s*string\s*\{([^{}]*)\}\s*$/.exec(text.slice(c.parts[0]!.start, c.parts[0]!.end)) : null;
+        if (!map) known = false;
+        else for (const entry of map[1]!.split(",").filter((e) => e.trim())) pairs.push((/^\s*"([^"\\]*)"\s*:\s*"([^"\\]*)"\s*$/.exec(entry)?.slice(1, 3) ?? [undefined, undefined]) as [string | undefined, string | undefined]);
+      } else pairs.push(c.parts.length === 2 ? [literal(c, 0), literal(c, 1)] : [undefined, undefined]);
+      for (const [key, value] of pairs) {
+        // SetPathParam escapes its value; only one escaping leaves alike is read.
+        if (key === undefined || value === undefined || (!c.name!.startsWith("SetRaw") && !/^[A-Za-z0-9._~-]*$/.test(value))) known = false;
+        else params.set(key, value);
+      }
+    }
+    // The client's holder: a variable (`client := resty.New()...`) or a struct field (`{http: resty.New()...}`).
+    const before = code.slice(Math.max(0, f.dot - 300), f.dot).replace(/[A-Za-z_]\w*\s*$/, "");
+    const holder = /(?<![\w$.])([A-Za-z_]\w*)\s*(:=|=(?!=)|:)\s*&?\s*$/.exec(before);
+    if (!known || !holder) {
+      out.unread.push(sets[0]!.at);
+      continue;
+    }
+    const held = [holder[1]!];
+    if (holder[2] !== ":") for (const m of code.matchAll(new RegExp(`(?<![\\w$.])([A-Za-z_]\\w*)\\s*:\\s*${holder[1]}(?![\\w$])`, "g"))) held.push(m[1]!);
+    for (const name of held) {
+      const had = out.clients.get(name);
+      out.clients.set(name, had === undefined ? params : had !== null && [...had].join() === [...params].join() ? had : null);
+    }
+  }
+  return out;
+}
+
+/** A resty request's URL template with the path parameters its client sets and the request does not, filled in. */
+function restyPath(body: string, a: Argument | undefined, resty: RestyClients, methods: TextMethods, scan: TextCalls, source: string): string {
+  const text = (p: { start: number; end: number }) => source.slice(p.start, p.end);
+  const call = a && scan.frames.get(a.call);
+  if (!call || !/^\{|[/]\{/.test(body)) return body;
+  const chain = methods.chainBefore(call);
+  const request = chain.find((c) => c.name === "R" && c.parts.length === 0);
+  // The name `R()` is called on, a member's last (`u.http.R()`).
+  const receiver = request?.dot !== undefined ? /([A-Za-z_]\w*)\s*$/.exec(source.slice(Math.max(0, request.dot - 100), request.dot))?.[1] : undefined;
+  const params = receiver !== undefined ? resty.clients.get(receiver) : undefined;
+  if (!params) return body;
+  // A request's own parameters take the place of its client's; one set from a value may be any.
+  const own = new Set<string>();
+  for (const c of chain) {
+    if (c.name === undefined || !RESTY_PARAMS.has(c.name) || !c.parts[0]) continue;
+    const written = scan.args.filter((g) => g.call === c.at);
+    const part = text(c.parts[0]);
+    if (c.name.endsWith("Params")) {
+      const map = /^\s*map\s*\[\s*string\s*\]\s*string\s*\{([^{}]*)\}\s*$/.exec(part);
+      if (!map) return body;
+      for (const entry of map[1]!.split(",").filter((e) => e.trim())) {
+        const key = /^\s*"([^"\\]*)"\s*:/.exec(entry)?.[1];
+        if (key === undefined) return body;
+        own.add(key);
+      }
+    } else {
+      const key = written.find((g) => g.index === 0);
+      if (!key || !/^\s*"[^"\\]*"\s*$/.test(part)) return body;
+      own.add(part.trim().slice(1, -1));
+    }
+  }
+  return body.replace(/\{([^{}/]+)\}/g, (m, key: string) => (!own.has(key) && params.has(key) ? params.get(key)! : m));
+}
+
+/**
+ * Where a Dart file declares a dio interceptor that writes the path of the request it is given (`options.path = ...`
+ * in `onRequest`), which the requests of the Dios it is added to are read without.
+ */
+function dioInterceptors(file: string, text: string, scan: TextCalls): { at: number[]; rewrites: Array<[number, number]> } {
+  const out = { at: [] as number[], rewrites: [] as Array<[number, number]> };
+  if (!/\.dart$/.test(file)) return out;
+  const code = blankStrings(text, scan.strings);
+  if (!/^\s*import\s+['"]package:dio\/dio\.dart['"]/m.test(text)) return out;
+  for (const m of code.matchAll(/\bclass\s+[A-Za-z_]\w*[^{]*\bextends\s+(?:[A-Za-z_]\w*\.)?(?:Queued)?Interceptor\b[^{]*\{|\bInterceptorsWrapper\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const frame = scan.frames.get(open);
+    const body = frame?.close !== undefined ? code.slice(open, frame.close) : "";
+    const writes = [...body.matchAll(/(?<![\w$])options\s*\.\s*path\s*=(?!=)[^;]*/g)];
+    if (!writes.length) continue;
+    out.at.push(m.index);
+    // The path it writes is the request's own, rewritten: no request of its own.
+    for (const w of writes) out.rewrites.push([open + w.index, open + w.index + w[0].length]);
+  }
+  return out;
+}
+
+/**
+ * Where a Kotlin file that imports Ktor's `Resource` annotation (`io.ktor.resources`) annotates a class with
+ * `@Resource("/path")`: the resource's path, which the Resources plugin's typed requests (`client.get(Articles())`) are
+ * made to, and which atlas does not read.
+ */
+function ktorResources(file: string, text: string, scan: TextCalls): number[] {
+  if (!/\.kts?$/.test(file) || !/^\s*import\s+io\.ktor\.resources\.(?:Resource|\*)\s*;?\s*$/m.test(blankStrings(text, scan.strings))) return [];
+  return scan.args.filter((a) => a.annotation && a.name === "Resource" && a.index === 0).map((a) => a.start);
+}
+
+/**
+ * Where a Swift file that imports Alamofire declares a router, a type that conforms to `URLRequestConvertible` and
+ * builds each request in its `asURLRequest()` (Alamofire's Advanced Usage, Routing Requests).
+ */
+function alamofireRouter(file: string, text: string, scan: TextCalls): number | undefined {
+  if (!/\.swift$/.test(file)) return undefined;
+  const code = blankStrings(text, scan.strings);
+  if (!/^\s*import\s+Alamofire\b/m.test(code)) return undefined;
+  return /\b(?:enum|struct|class|extension)\s+[A-Za-z_]\w*\s*:[^{]*\bURLRequestConvertible\b/.exec(code)?.index;
 }
 
 /** A `<script>` or `<style>` element: its start tag and where its raw-text body lies in the template. */
@@ -3364,6 +3537,7 @@ export function extractCalls(
     const unbaseRelative: Place[] = [];
     const dotted: Place[] = [];
     const untyped: Array<{ why: string; at: Place }> = [];
+    const without: Array<{ what: string; at: Place }> = [];
     // Generated client files: the functions no other file names, and the files nothing else could call.
     const uncalled = new Map<string, string[]>();
     const alone: string[] = [];
@@ -3377,7 +3551,7 @@ export function extractCalls(
         ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, angular, anyClient, base, written, unjoined, helpers })
         : /\.html?$/.test(file)
           ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased, base, written, unjoined, helpers })
-          : callsFromText(file, text, spec, spans, labels, served, { base, written, unbaseRelative, untyped });
+          : callsFromText(file, text, spec, spans, labels, served, { base, written, unbaseRelative, untyped, without });
       // A host is named at the leading hole that writes it, ahead of the URLs built on it.
       for (const { host, at } of elsewhere.splice(0)) if (!foreign.has(host)) foreign.set(host, `${at.file}:${at.line}`);
       if (calls.length && GENERATED_CLIENT.test(text)) {
@@ -3435,6 +3609,11 @@ export function extractCalls(
       const byWhy = new Map<string, Place[]>();
       for (const u of untyped) (byWhy.get(u.why) ?? byWhy.set(u.why, []).get(u.why)!).push(u.at);
       for (const [why, at] of byWhy) limits.push(`${edge}: the requests are not read where ${why}: ${places(at)}`);
+    }
+    if (without.length) {
+      const byWhat = new Map<string, Place[]>();
+      for (const w of without) (byWhat.get(w.what) ?? byWhat.set(w.what, []).get(w.what)!).push(w.at);
+      for (const [what, at] of byWhat) limits.push(`${edge}: the requests are read without ${what}: ${places(at)}`);
     }
     if (dotted.length) limits.push(`${edge}: paths with a . or .. segment joined to the configured base are not read, since clients differ on removing them: ${places(dotted)}`);
     if (unbaseRelative.length) limits.push(`${edge}: paths without a leading / are relative to a client's base, which the call source does not give (set base and join): ${places(unbaseRelative)}`);

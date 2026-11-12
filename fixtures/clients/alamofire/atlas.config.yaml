@@ -2,6 +2,6 @@ components:
   - { name: client, path: . }
   - { name: api, path: server }
 calls:
-  # UsersClient's base URL is the server's with `/api/v1` after it; the orders router's is the server's with `api/v2`.
-  - { from: client, to: api, files: ["app/Sources/Client/UsersClient.swift"], prefix: /api/v1 }
+  # UsersClient's base URL, `baseURL`, is the server's with `/api/v1` after it; the orders router's is the server's with `api/v2`.
+  - { from: client, to: api, files: ["app/Sources/Client/UsersClient.swift"], prefix: /api/v1, baseValues: [baseURL] }
   - { from: client, to: api, files: ["app/Sources/Client/OrdersAPI.swift"], prefix: /api/v2 }
