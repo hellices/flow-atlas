@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig, normalizeConfig } from "../src/config.js";
 import { parseGo, tokenize } from "../src/extract/golang.js";
-import { chiPath, chiPattern, ginJoin, goClean, re2ToJs } from "../src/extract/goroutes.js";
+import { chiPath, chiPattern, ginJoin, goClean, muxConflict, muxPattern, re2ToJs } from "../src/extract/goroutes.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import { inventory } from "../src/inventory.js";
 import { matchCalls, rankedComponents, redirectedLimits } from "../src/match.js";
@@ -47,8 +47,8 @@ const call = (request: string, i = 0): Call => {
 };
 
 /** What each request reaches: `METHOD /path` of each target, and `redirect /path/: ...` where the router redirects it. */
-const reach = (files: Record<string, string>, requests: string[]) => {
-  const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.go"], styles: ["go"] }] });
+const reach = (files: Record<string, string>, requests: string[], entry: Record<string, unknown> = {}) => {
+  const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/**/*.go"], styles: ["go"], ...entry }] });
   const surfaces = extractRoutes(memory({ "svc/go.mod": GO_MOD, ...files }), config, undefined, [], []);
   const calls = requests.map(call);
   const m = matchCalls({ surfaces, calls }, rankedComponents(config));
@@ -505,6 +505,7 @@ describe("net/http's ServeMux routes", () => {
     expect(surfaces).toEqual(["GET /api", "GET /api/users", "GET /health"]);
     expect(limits).toEqual([
       'routes svc: svc/app.go:22 serves other at "/full/" without http.StripPrefix, so it is handed the request\'s whole path; its routes are not read',
+      "routes svc: svc/app.go:19 makes a router that svc/app.go:22 passes on where atlas does not follow it; a mount of it from there is not read",
       'routes svc: svc/app.go:21 serves a router under "/other/" with http.StripPrefix("/other/"); atlas reads such a mount only where the pattern is a subtree with no method and StripPrefix removes its path without the last /, so its routes are not read',
     ]);
   });
@@ -859,5 +860,196 @@ describe("a router mounted on a value atlas does not trace", () => {
       'routes svc: svc/app.go:13 registers Mount "/api" on other, which atlas does not trace to a router; it is not read',
       "routes svc: svc/app.go:11 makes a router that svc/app.go:13 passes on where atlas does not follow it; where it is served is not read, so its routes are not read",
     ]);
+  });
+});
+
+describe("the review of #53", () => {
+  it("reads a string's \\x and octal escapes as bytes of UTF-8, and leaves a string that is not UTF-8 unread", () => {
+    const value = (src: string) => tokenize(src)[0]!.value;
+    expect([value('"/caf\\xc3\\xa9"'), value('"/caf\\303\\251"'), value('"/caf\\u00e9"'), value('"/café"'), value('"\\xff"')]).toEqual(["/café", "/café", "/café", "/café", undefined]);
+  });
+
+  it("parses an array parameter of a constant length, type parameters, a case's list and a slice's bounds", () => {
+    const file = parseGo(
+      lines(
+        "package app",
+        "type Pair[T, U any] struct { a T }",
+        "type Buf [N]byte",
+        "func f(a [N]int, b List[T]) {",
+        "\tswitch x { case a, b: }",
+        "\t_ = s[f():g()]",
+        "}",
+      ),
+    );
+    expect(file.decls.map((d) => d.specs[0]!.type?.k)).toEqual(["structtype", "arraytype"]);
+    expect(file.funcs[0]!.type.params.map((p) => p.names.map((n) => n.name).join(","))).toEqual(["a", "b"]);
+    const sw = file.funcs[0]!.body!.stmts[0]!;
+    expect(sw.k === "switch" ? sw.clauses[0]!.exprs.length : 0).toBe(2);
+    const sl = file.funcs[0]!.body!.stmts[1]!;
+    expect(sl.k === "assign" && sl.rhs[0]!.k === "slice" ? sl.rhs[0].bounds.length : 0).toBe(2);
+  });
+
+  it("serves no router a mount atlas does not read hands it to, at the root either", () => {
+    const { surfaces, limits } = read({
+      "svc/app.go": lines(
+        "package app",
+        "import (",
+        '\t"net/http"',
+        '\t"github.com/go-chi/chi/v5"',
+        ")",
+        "func New() *http.ServeMux {",
+        "\tmux := http.NewServeMux()",
+        '\tsub := chi.NewRouter(); sub.Get("/users", nil)',
+        '\tmux.Handle("/api/", sub)',
+        '\tsub2 := chi.NewRouter(); sub2.Get("/two", nil)',
+        "\tmux.Handle(pattern, sub2)",
+        "\tr := chi.NewRouter()",
+        '\tinner := http.NewServeMux(); inner.HandleFunc("/three", nil)',
+        '\tr.Mount("/m", inner)',
+        "\treturn mux",
+        "}",
+      ),
+    });
+    expect(surfaces).toEqual([]);
+    expect(limits.filter((l) => l.includes("makes a router")).length).toBe(3);
+  });
+
+  it("reads a route of a router ServeMux serves under a subtree after ServeMux's own choice, with its redirect to the subtree", () => {
+    const files = {
+      "svc/app.go": muxFile(
+        "inner := http.NewServeMux()",
+        'inner.HandleFunc("GET /users", h)',
+        'inner.HandleFunc("GET /{$}", h)',
+        'mux.Handle("/api/", http.StripPrefix("/api", inner))',
+        'mux.HandleFunc("/api/users", h)',
+        "engine := gin.New()",
+        'engine.GET("/", nil)',
+        'mux.Handle("/g/", http.StripPrefix("/g", engine))',
+      ).replace('import "net/http"', 'import (\n\t"net/http"\n\n\t"github.com/gin-gonic/gin"\n)'),
+    };
+    const { raw } = read(files);
+    expect(raw.filter((s) => s.path === "/g").map((s) => s.dispatch)).toEqual([{ picks: "httprouter", slashes: "tsr", trailing: "slash", under: [1] }]);
+    expect(reach(files, ["GET /api/users", "GET /api", "GET /api/"]).reached).toEqual({
+      "GET /api/users": ["* /api/users"],
+      "GET /api": ["redirect /api/: GET /api"],
+      "GET /api/": ["GET /api"],
+    });
+  });
+
+  it("sends a HEAD request to a chi route that takes HEAD before a GET one under middleware.GetHead", () => {
+    const files = {
+      "svc/app.go": chiFile("r.Use(middleware.GetHead)", 'r.Head("/{id}", h)', 'r.Get("/health", h)').replace('\t"github.com/go-chi/chi/v5"', '\t"github.com/go-chi/chi/v5"\n\t"github.com/go-chi/chi/v5/middleware"'),
+    };
+    expect(reach(files, ["HEAD /health", "GET /health"]).reached).toEqual({ "HEAD /health": ["HEAD /{id}"], "GET /health": ["GET /health"] });
+  });
+
+  it("moves chi's mount boundaries past a configured prefix", () => {
+    const files = { "svc/app.go": chiFile('r.Get("/{section}/accounts", h)', "admin := chi.NewRouter()", 'admin.Get("/accounts", h)', 'r.Mount("/admin", admin)') };
+    expect(read(files, { prefix: "/api" }).raw.find((s) => s.path === "/api/admin/accounts")!.dispatch!.mounted).toEqual([2]);
+    expect(reach(files, ["GET /api/admin/accounts"], { prefix: "/api" }).reached).toEqual({ "GET /api/admin/accounts": ["GET /api/admin/accounts"] });
+  });
+
+  it("takes a request under a chi mount to the mounted router for any method, as chi's tree does", () => {
+    const files = { "svc/app.go": chiFile('r.Delete("/{a}/{b}", h)', "admin := chi.NewRouter()", 'admin.Get("/x", h)', 'r.Mount("/admin", admin)') };
+    expect(reach(files, ["DELETE /admin/x", "DELETE /other/x", "GET /admin/x"]).reached).toEqual({
+      "DELETE /admin/x": [],
+      "DELETE /other/x": ["DELETE /{a}/{b}"],
+      "GET /admin/x": ["GET /admin/x"],
+    });
+  });
+
+  it("forgets what a branch changes through the functions it calls, and what a loop's post statement changes", () => {
+    const { surfaces, limits } = read({
+      "svc/main.go": lines(
+        "package main",
+        'import "github.com/go-chi/chi/v5"',
+        'var prefix = "/api"',
+        "type Box struct{ p string }",
+        "func (b *Box) set(p string) { b.p = p }",
+        'func configure() { prefix = "/v2" }',
+        "func main() {",
+        "\tr := chi.NewRouter()",
+        "\tif flag {",
+        "\t\tconfigure()",
+        "\t}",
+        '\tr.Get(prefix+"/users", nil)',
+        '\tb := &Box{p: "/a"}',
+        "\tif flag {",
+        '\t\tb.set("/b")',
+        "\t}",
+        '\tr.Get(b.p+"/x", nil)',
+        '\tfor p := "/a"; flag; p += "/next" {',
+        '\t\tr.Get(p+"/loop", nil)',
+        "\t}",
+        "}",
+      ),
+    });
+    expect(surfaces).toEqual([]);
+    expect(limits).toEqual([
+      'routes svc: svc/main.go:12 registers a GET route at a path the file does not spell out (prefix+"/users"); it is not read',
+      'routes svc: svc/main.go:17 registers a GET route at a path the file does not spell out (b.p+"/x"); it is not read',
+      'routes svc: svc/main.go:19 registers a GET route at a path the file does not spell out (p+"/loop"); it is not read',
+    ]);
+  });
+
+  it("reads named results, a compound assignment to a field, a case's expressions and packages' init in import order", () => {
+    const files = {
+      "svc/main.go": lines(
+        "package main",
+        "import (",
+        '\t"github.com/gin-gonic/gin"',
+        '\t"example.com/svc/conf"',
+        ")",
+        "type Cfg struct{ Path string }",
+        "var r *gin.Engine",
+        "func newEngine() (e *gin.Engine) { e = gin.New(); return }",
+        "func init() { r = newEngine(); r.GET(conf.Prefix+\"/init\", nil) }",
+        "func main() {",
+        '\tcfg := Cfg{Path: "/api"}',
+        '\tcfg.Path += "/v1"',
+        "\tr.GET(cfg.Path, nil)",
+        "\tswitch {",
+        '\tcase r.GET("/case", nil) != nil:',
+        "\t}",
+        "}",
+      ),
+      "svc/conf/conf.go": lines("package conf", "var Prefix string", 'func init() { Prefix = "/conf" }'),
+    };
+    expect(read(files)).toMatchObject({ surfaces: ["GET /conf/init", "GET /api/v1", "GET /case"], limits: [] });
+  });
+
+  it("keeps the literals a registered path is built of from being read as requests", () => {
+    const files = { "svc/go.mod": GO_MOD, "svc/app.go": ginFile('r.GET("/api" + "/orders", h)', 'resp, _ := http.Get("/payments")', "_ = resp").replace('import "github.com/gin-gonic/gin"', 'import (\n\t"net/http"\n\n\t"github.com/gin-gonic/gin"\n)') };
+    const config = normalizeConfig({
+      components: [
+        { name: "svc", path: "svc" },
+        { name: "pay", path: "pay" },
+      ],
+      routes: [{ component: "svc", files: ["svc/**/*.go"], styles: ["go"] }],
+      calls: [{ from: "svc", to: "pay", files: ["svc/**/*.go"] }],
+    });
+    const graph = scan(memory(files), config, { root: ".", requested: "WORKTREE" });
+    expect(graph.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["GET /payments"]);
+  });
+
+  it("leaves out a ServeMux pattern that conflicts with one registered before it", () => {
+    const { surfaces, limits } = read({ "svc/app.go": muxFile('mux.HandleFunc("/{x}/b", h)', 'mux.HandleFunc("/a/{y}", h)', 'mux.HandleFunc("GET /a/b", h)', 'mux.HandleFunc("/a/b/{z}", h)') });
+    expect(surfaces).toEqual(["* /{x}/b", "GET /a/b", "* /a/b/{z}", "HEAD /a/b (implicit)"]);
+    expect(limits).toEqual(['routes svc: svc/app.go:8 registers "/a/{y}", which conflicts with "/{x}/b" (svc/app.go:7): neither is more specific, and ServeMux panics as it is registered; the route is not read']);
+    const p = (s: string) => muxPattern(s, false) as Parameters<typeof muxConflict>[0];
+    expect([muxConflict(p("/a/{x}/c"), p("/a/b/{y}"), false), muxConflict(p("GET /x"), p("/x"), false), muxConflict(p("/x/"), p("/x/{$}"), false), muxConflict(p("HEAD /{id}"), p("GET /health"), false), muxConflict(p("/x"), p("/x"), true)]).toEqual([true, false, false, true, true]);
+  });
+
+  it("does not redirect a CONNECT request in Gin, and takes RE2's repeat limit and its literal braces", () => {
+    expect(reach({ "svc/app.go": ginFile('r.Handle("CONNECT", "/foo/", h)') }, ["CONNECT /foo"]).reached).toEqual({ "CONNECT /foo": [] });
+    expect([chiPattern("a{1001}"), chiPattern("a{1x}"), chiPattern("a{2,1000}")]).toEqual([undefined, "a{1x}", "a{2,1000}"]);
+  });
+
+  it("offers the go style for Handle, Match, Method and the other registrations, and a raw-string import", () => {
+    const files = {
+      "svc/a.go": lines("package app", 'import "github.com/gin-gonic/gin"', 'func A(r *gin.Engine) { r.Handle("POST", "/a", nil); r.Match([]string{"GET"}, "/m", nil) }'),
+      "svc/b.go": lines("package app", "import `github.com/go-chi/chi/v5`", 'func B(r chi.Router) { r.Method("CONNECT", "/t", nil); r.MethodFunc(http.MethodGet, "/f", nil); r.Trace("/e", nil); r.Query("/q", nil) }'),
+    };
+    expect(inventory(memory(files), []).routes.filter((r) => r.style === "go").map((r) => `${r.file} ${r.style} ${r.count}`)).toEqual(["svc/a.go go 2", "svc/b.go go 4"]);
   });
 });

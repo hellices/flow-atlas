@@ -387,6 +387,9 @@ class Scope {
   }
 }
 
+/** What a branch or loop body changed: for each map of variables or fields, the value of each key it assigned before it. */
+type Journal = Map<Map<string, V>, Map<string, V | undefined>>;
+
 /** What a function is read with: its package and file, and what its `return` statements give. */
 interface Frame {
   pkg: Pkg;
@@ -397,6 +400,8 @@ interface Frame {
   returns: V[][];
   returned: boolean;
   fn: string;
+  /** The names of the function's named results, which a bare `return` gives. */
+  named: string[];
 }
 
 /** The most calls read in all, and the deepest chain of calls: a guard against runaway expansion. */
@@ -466,6 +471,8 @@ class Interp {
    * no read code calls a number of its own.
    */
   private epoch = 0;
+  /** The journals of the branches and loop bodies being read, innermost last (see `write`). */
+  private readonly journals: Journal[] = [];
   /** How many branches or loop bodies, which may not run, the code being read is in. */
   private conditional = 0;
   /** The package-level variables (`dir\0name`) a function other than `init` assigns. */
@@ -521,8 +528,12 @@ class Interp {
       }
     }
     const start = (r: (typeof all)[number]) => this.invoke({ k: "func", fn: r.fn, pkg: r.pkg, scope: undefined }, [], true);
-    // Go runs every `init`, then `main` of a main package.
-    const init = all.filter((r) => !r.decl.recv && r.decl.name === "init");
+    // Go runs every `init`, a package's after those of the packages it imports and in the order of its files' names
+    // (go.dev/ref/spec, "Package initialization"), then `main` of a main package.
+    const order = this.initOrder();
+    const init = all
+      .filter((r) => !r.decl.recv && r.decl.name === "init")
+      .sort((a, b) => order.indexOf(a.pkg) - order.indexOf(b.pkg) || (a.fn.file < b.fn.file ? -1 : a.fn.file > b.fn.file ? 1 : a.fn.start - b.fn.start));
     const main = all.filter((r) => !r.decl.recv && r.decl.name === "main" && r.pkg.name === "main");
     init.forEach(start);
     main.forEach(start);
@@ -624,6 +635,23 @@ class Interp {
     return out;
   }
 
+  /** The packages in the order Go initializes them: each after the packages of the route files it imports. */
+  private initOrder(): Pkg[] {
+    const out: Pkg[] = [];
+    const seen = new Set<Pkg>();
+    const visit = (p: Pkg) => {
+      if (seen.has(p)) return;
+      seen.add(p);
+      for (const f of p.files) for (const path of [...f.imports.values(), ...f.dots]) {
+        const dep = this.byPath.get(path);
+        if (dep) visit(dep);
+      }
+      out.push(p);
+    };
+    this.pkgs.forEach(visit);
+    return out;
+  }
+
   private fnKey(fn: Fn): number {
     // A function is told apart by its file and where it starts; files are numbered by their place among the packages.
     let n = 0;
@@ -663,7 +691,7 @@ class Interp {
     this.stack.push(key);
     const file = this.fileOf(f.pkg, fn.file);
     const scope = new Scope(f.scope);
-    const frame: Frame = { pkg: f.pkg, file: fn.file, text: file.text, imports: file.imports, dots: file.dots, returns: [], returned: false, fn: fn.name };
+    const frame: Frame = { pkg: f.pkg, file: fn.file, text: file.text, imports: file.imports, dots: file.dots, returns: [], returned: false, fn: fn.name, named: [] };
     const unbound = (name: string, type: Expr | undefined): V => {
       // A struct of the route files' packages, its fields not set: what they hold is unknown, of the types they declare.
       const struct = type ? this.typeRef(type, frame) : undefined;
@@ -696,6 +724,18 @@ class Interp {
         if (name !== "_") scope.vars.set(name, copied(v));
         i++;
       }
+    }
+    // Named results start at their zero value: nil, which atlas holds as unknown of the declared type, or a struct
+    // with no field set; a bare `return` gives what they hold then.
+    for (const r of fn.type.results) {
+      for (const n of r.names) {
+        if (n.name === "_") continue;
+        const ref = this.typeRef(r.type, frame);
+        const t = this.routerType(r.type, frame);
+        const zero: V = ref && r.type.k !== "unary" && ref.pkg.types.get(ref.name)?.type.k === "structtype" ? { k: "obj", type: ref, fields: new Map(), byValue: true } : t ? { k: "unknown", type: t } : UNKNOWN;
+        scope.vars.set(n.name, zero);
+      }
+      if (r.names.length) frame.named.push(...r.names.map((n) => n.name));
     }
     try {
       this.block(fn.body.stmts, scope, frame);
@@ -760,40 +800,86 @@ class Interp {
     const dot = target.indexOf(".");
     if (dot < 0) {
       const vars = this.binding(target, scope, frame);
-      return vars && { get: () => vars.get(target), set: (v) => v !== undefined && vars.set(target, v) };
+      return vars && { get: () => vars.get(target), set: (v) => v !== undefined && this.write(vars, target, v) };
     }
     const base = this.lookup(target.slice(0, dot), scope, frame, 0);
     if (base.k !== "obj") return undefined;
     const field = target.slice(dot + 1);
-    return { get: () => base.fields.get(field), set: (v) => (v === undefined ? base.fields.delete(field) : base.fields.set(field, v)) };
+    return { get: () => base.fields.get(field), set: (v) => v !== undefined && this.write(base.fields, field, v) };
   }
 
-  /** Reads each branch from the same values, and keeps after them a name or field every branch leaves at one value. */
-  private branches(bodies: Array<(scope: Scope) => void>, exhaustive: boolean, scope: Scope, frame: Frame, names: Set<string>): void {
-    const slots = [...names].flatMap((n) => {
-      const slot = this.slot(n, scope, frame);
-      return slot ? [{ slot, before: slot.get() }] : [];
-    });
-    const after: Array<Array<V | undefined>> = [];
+  /**
+   * Assigns a variable or a field, noting in the innermost journal open (a branch's or a loop body's) what it held
+   * before, so that what the code there changes, in the functions it calls too, is known when the branches join.
+   */
+  private write(map: Map<string, V>, key: string, v: V): void {
+    const top = this.journals[this.journals.length - 1];
+    if (top) {
+      const entries = top.get(map) ?? top.set(map, new Map()).get(map)!;
+      if (!entries.has(key)) entries.set(key, map.get(key));
+    }
+    map.set(key, v);
+  }
+
+  /** Closes the innermost journal: what it noted counts for the one around it, where that had not noted it yet. */
+  private closeJournal(): Journal {
+    const j = this.journals.pop()!;
+    const outer = this.journals[this.journals.length - 1];
+    if (outer) {
+      for (const [map, entries] of j) {
+        const into = outer.get(map) ?? outer.set(map, new Map()).get(map)!;
+        for (const [key, before] of entries) if (!into.has(key)) into.set(key, before);
+      }
+    }
+    return j;
+  }
+
+  /**
+   * Reads each branch from the same values, and keeps after them a variable or field every branch leaves at one value,
+   * forgetting one they leave at different values; whatever the branch assigns counts, in the functions it calls too.
+   */
+  private branches(bodies: Array<(scope: Scope) => void>, exhaustive: boolean, scope: Scope, frame: Frame): void {
+    const runs: Journal[] = [];
     this.conditional++;
     try {
       for (const body of bodies) {
-        for (const { slot, before } of slots) slot.set(before);
-        body(new Scope(scope));
-        frame.returned = false;
-        after.push(slots.map(({ slot }) => slot.get()));
+        this.journals.push(new Map());
+        try {
+          body(new Scope(scope));
+        } finally {
+          frame.returned = false;
+          const j = this.journals.pop()!;
+          // What the branch left, then the values from before it, for the next branch.
+          const after: Journal = new Map();
+          for (const [map, entries] of j) {
+            after.set(map, new Map([...entries.keys()].map((k) => [k, map.get(k)])));
+            for (const [k, before] of entries) {
+              if (before === undefined) map.delete(k);
+              else map.set(k, before);
+            }
+          }
+          runs.push(after);
+        }
       }
     } finally {
       this.conditional--;
     }
-    if (!exhaustive) after.push(slots.map(({ before }) => before));
-    slots.forEach(({ slot, before }, i) => {
-      const values = after.map((a) => a[i]);
-      const kept = values[0];
-      if (values.every((x) => (x === undefined && kept === undefined) || (x !== undefined && kept !== undefined && same(x, kept)))) return slot.set(kept);
-      const known = values.find((x) => x !== undefined) ?? before;
-      slot.set(known === undefined ? UNKNOWN : forget(known));
-    });
+    const keys = new Map<Map<string, V>, Set<string>>();
+    for (const r of runs) for (const [map, entries] of r) for (const k of entries.keys()) (keys.get(map) ?? keys.set(map, new Set()).get(map)!).add(k);
+    for (const [map, names] of keys) {
+      for (const k of names) {
+        const before = map.get(k);
+        const values = runs.map((r) => (r.get(map)?.has(k) ? r.get(map)!.get(k) : before));
+        if (!exhaustive) values.push(before);
+        const kept = values[0];
+        if (values.every((x) => (x === undefined && kept === undefined) || (x !== undefined && kept !== undefined && same(x, kept)))) {
+          if (kept !== undefined && kept !== before) this.write(map, k, kept);
+          continue;
+        }
+        const known = values.find((x) => x !== undefined);
+        this.write(map, k, known === undefined ? UNKNOWN : forget(known));
+      }
+    }
   }
 
   stmt(s: Stmt, scope: Scope, frame: Frame): void {
@@ -831,23 +917,26 @@ class Interp {
         this.evalAll(s.cond, inner, frame);
         const bodies = [(sc: Scope) => this.block(s.then.stmts, sc, frame)];
         if (s.else) bodies.push((sc: Scope) => this.stmt(s.else!, sc, frame));
-        const names = assignedNames([...s.then.stmts, ...(s.else ? [s.else] : [])]);
-        this.branches(bodies, !!s.else, inner, frame, names);
+        this.branches(bodies, !!s.else, inner, frame);
         return;
       }
       case "switch": {
         const inner = new Scope(scope);
         if (s.init) this.stmt(s.init, inner, frame);
         if (s.tag) this.stmt(s.tag, inner, frame);
-        const names = assignedNames(s.clauses.flatMap((c) => c.body));
         const exhaustive = s.clauses.some((c) => !c.exprs.length);
-        this.branches(s.clauses.map((c) => (sc: Scope) => this.block(c.body, sc, frame)), exhaustive, inner, frame, names);
+        // A case's expressions are evaluated as the switch reaches it, which it may not.
+        const clause = (c: (typeof s.clauses)[number]) => (sc: Scope) => {
+          for (const x of c.exprs) this.evalAll(x, sc, frame);
+          this.block(c.body, sc, frame);
+        };
+        this.branches(s.clauses.map(clause), exhaustive, inner, frame);
         return;
       }
       case "for": {
         const inner = new Scope(scope);
         if (s.init) this.stmt(s.init, inner, frame);
-        this.loop(s.body.stmts, inner, frame, () => {
+        this.loop(s.body.stmts, s.post, inner, frame, () => {
           if (s.cond) this.evalAll(s.cond, inner, frame);
         });
         return;
@@ -874,11 +963,11 @@ class Interp {
           return;
         }
         bind(UNKNOWN, UNKNOWN);
-        this.loop(s.body.stmts, inner, frame);
+        this.loop(s.body.stmts, undefined, inner, frame);
         return;
       }
       case "return": {
-        const values = this.values(s.results, s.results.length, scope, frame);
+        const values = !s.results.length && frame.named.length ? frame.named.map((n) => (n === "_" ? UNKNOWN : this.lookup(n, scope, frame, s.start))) : this.values(s.results, s.results.length, scope, frame);
         frame.returns.push(values);
         frame.returned = true;
         return;
@@ -892,15 +981,32 @@ class Interp {
   }
 
   /** A loop's body, read once with every name it assigns unknown, as each pass may find it changed. */
-  private loop(body: Stmt[], scope: Scope, frame: Frame, before?: () => void): void {
-    const names = assignedNames(body);
+  /**
+   * A loop's body and post statement, read with every name or field they assign unknown, as each pass may find it
+   * changed; where a pass changes what the code it calls assigns, that is made unknown and the body read again.
+   */
+  private loop(body: Stmt[], post: Stmt | undefined, scope: Scope, frame: Frame, before?: () => void): void {
+    const all = post ? [...body, post] : body;
+    const names = assignedNames(all);
     this.forgetAll(names, scope, frame);
     before?.();
-    this.conditional++;
-    try {
-      this.block(body, new Scope(scope), frame);
-    } finally {
-      this.conditional--;
+    const pass = () => {
+      this.conditional++;
+      this.journals.push(new Map());
+      try {
+        this.block(body, new Scope(scope), frame);
+        frame.returned = false;
+        if (post) this.stmt(post, scope, frame);
+      } finally {
+        this.conditional--;
+      }
+      return this.closeJournal();
+    };
+    const changed = (j: Journal) => [...j].flatMap(([map, entries]) => [...entries].filter(([k, b]) => !(b !== undefined && map.get(k) !== undefined && same(b, map.get(k)))).map(([k]) => ({ map, k })));
+    const first = changed(pass());
+    if (first.length) {
+      for (const { map, k } of first) if (map.has(k)) this.write(map, k, forget(map.get(k)!));
+      for (const { map, k } of changed(pass())) if (map.has(k)) this.write(map, k, forget(map.get(k)!));
     }
     frame.returned = false;
     this.forgetAll(names, scope, frame);
@@ -926,10 +1032,11 @@ class Interp {
 
   private assign(s: Stmt & { k: "assign" }, scope: Scope, frame: Frame): void {
     if (s.op !== ":=" && s.op !== "=") {
-      // `x += "/y"` keeps a string read where both sides are; any other operator leaves the name unknown.
+      // `x += "/y"` (or `s.path += "/y"`) keeps a string read where both sides are; any other operator leaves what it
+      // assigns unknown.
       const target = s.lhs[0];
       const right = s.rhs[0] ? this.eval(s.rhs[0], scope, frame) : UNKNOWN;
-      if (target?.k === "ident") {
+      if (target) {
         const left = this.eval(target, scope, frame);
         const v: V = s.op === "+=" && left.k === "str" && right.k === "str" ? { k: "str", value: left.value + right.value } : UNKNOWN;
         this.store(target, v, scope, frame);
@@ -952,7 +1059,7 @@ class Interp {
     if (target.k === "paren") return this.store(target.x, v, scope, frame);
     if (target.k === "ident") {
       const sc = scope.find(target.name);
-      if (sc) sc.vars.set(target.name, v);
+      if (sc) this.write(sc.vars, target.name, v);
       else if (frame.pkg.values.get(target.name)?.kind === "var") this.setGlobal(frame.pkg, target.name, v);
       return;
     }
@@ -964,7 +1071,7 @@ class Interp {
     if (target.k !== "sel") return;
     const x = this.eval(target.x, scope, frame);
     if (x.k === "obj") {
-      x.fields.set(target.name, v);
+      this.write(x.fields, target.name, v);
       return;
     }
     if (x.k === "router" && x.r.lib === "gin" && target.name === "RedirectTrailingSlash") {
@@ -1014,7 +1121,8 @@ class Interp {
 
   /** Assigns a package-level variable. */
   private setGlobal(pkg: Pkg, name: string, v: V): void {
-    pkg.globals.set(name, v);
+    this.global(pkg, name);
+    this.write(pkg.globals, name, v);
     pkg.epochs.set(name, this.epoch);
   }
 
@@ -1022,7 +1130,7 @@ class Interp {
     const decl = pkg.values.get(name)!;
     pkg.globals.set(name, UNKNOWN);
     const file = this.fileOf(pkg, decl.file);
-    const frame: Frame = { pkg, file: decl.file, text: file.text, imports: file.imports, dots: file.dots, returns: [], returned: false, fn: name };
+    const frame: Frame = { pkg, file: decl.file, text: file.text, imports: file.imports, dots: file.dots, returns: [], returned: false, fn: name, named: [] };
     let v: V = UNKNOWN;
     if (decl.value) {
       if (decl.count > 1 && decl.value.k === "call") v = this.evalAll(decl.value, new Scope(), frame)[decl.index] ?? UNKNOWN;
@@ -1117,6 +1225,10 @@ class Interp {
       }
       case "assert":
         return [this.eval(e.x, scope, frame)];
+      case "slice":
+        this.eval(e.x, scope, frame);
+        for (const b of e.bounds) this.eval(b, scope, frame);
+        return [UNKNOWN];
       case "kv":
         return [this.eval(e.value, scope, frame)];
       default:
@@ -1241,7 +1353,17 @@ class Interp {
     if (!e) return undefined;
     const v = this.eval(e, scope, frame);
     if (v.k !== "str") return undefined;
-    if (e.k === "string") this.spans.push({ file: frame.file, start: e.start, end: e.end });
+    // The literals the path is written with here (`"/api" + "/orders"`) are the registration's, not requests; a
+    // constant's literal, written elsewhere, may be a client's as well, so it is left to be read.
+    const literals = (x: Expr): void => {
+      if (x.k === "string") this.spans.push({ file: frame.file, start: x.start, end: x.end });
+      else if (x.k === "paren") literals(x.x);
+      else if (x.k === "binary" && x.op === "+") {
+        literals(x.x);
+        literals(x.y);
+      }
+    };
+    literals(e);
     return v.value;
   }
 
@@ -1406,6 +1528,7 @@ class Interp {
         const h = e.args[1] ? this.eval(e.args[1], scope, frame) : UNKNOWN;
         if (h.k === "router" && h.r.lib === "chi") this.mount(h.r, r, pattern, "chi", frame, at, e.args[0]);
         else if (h.k === "router" || (h.k === "handler" && h.strip?.inner.k === "router")) {
+          this.escapeHandler(h, frame, e.start);
           this.limit(`${this.at(frame.file, at)} mounts ${this.source(e.args[1], frame)}, which is not a chi router and is handed the request's whole path; its routes are not read`);
         } else if (h.k === "handler" || h.k === "func") {
           if (pattern === undefined) this.unreadPath("a handler for any method", e.args[0], frame, at);
@@ -1430,10 +1553,15 @@ class Interp {
   private muxRegister(r: Router, e: Expr & { k: "call" }, h: V, scope: Scope, frame: Frame): void {
     const at = this.nameAt(e);
     const pattern = this.text(e.args[0], scope, frame);
-    if (pattern === undefined) return this.unreadPath("a pattern", e.args[0], frame, at);
+    // A router served where atlas does not read is served nowhere atlas knows: not at the root either.
+    if (pattern === undefined) {
+      this.escapeHandler(h, frame, e.start);
+      return this.unreadPath("a pattern", e.args[0], frame, at);
+    }
     if (h.k === "handler" && h.strip && h.strip.inner.k === "router") return this.mount(h.strip.inner.r, r, h.strip.prefix, "strip", frame, at, e.args[0], pattern);
     if (h.k === "router") {
       if (pattern === "/") return this.mount(h.r, r, "", "root", frame, at, e.args[0], pattern);
+      this.escapeHandler(h, frame, e.start);
       return this.limit(`${this.at(frame.file, at)} serves ${this.source(e.args[1], frame)} at ${JSON.stringify(pattern)} without http.StripPrefix, so it is handed the request's whole path; its routes are not read`);
     }
     const files = h.k === "handler" && (h.files || (h.strip?.inner.k === "handler" && h.strip.inner.files));
@@ -1444,6 +1572,11 @@ class Interp {
   private httpServer(type: Expr, frame: Pick<Frame, "imports">): boolean {
     if (type.k === "unary" && type.op === "*") return this.httpServer(type.x, frame);
     return type.k === "sel" && type.x.k === "ident" && frame.imports.get(type.x.name) === HTTP && type.name === "Server";
+  }
+
+  /** `escape` for a router a handler is, or serves under `http.StripPrefix`. */
+  private escapeHandler(h: V, frame: Frame, at: number): void {
+    this.escape(h.k === "handler" && h.strip ? h.strip.inner : h, frame, at);
   }
 
   /** Notes where a router is put in a value atlas does not follow, from which it may be mounted anywhere. */
@@ -1697,6 +1830,9 @@ export function re2ToJs(src: string): string | undefined {
       i += named[0].length;
       continue;
     }
+    // RE2 refuses a repeat count above 1000 (`{1001}`), which JavaScript takes.
+    const repeat = c === "{" ? /^\{(\d+)(?:,(\d*))?\}/.exec(src.slice(i)) : null;
+    if (repeat && (Number(repeat[1]) > 1000 || Number(repeat[2] || 0) > 1000)) return undefined;
     out += c === "." ? "[^\\n]" : c;
     i++;
   }
@@ -1752,6 +1888,8 @@ interface Local {
   rest: boolean;
   /** For a ServeMux, the method the pattern names; undefined for one that names none. */
   method?: string;
+  /** For a ServeMux, the pattern ends with `{$}`. */
+  end?: true;
 }
 
 const LITERAL = /^[^{}*?]*$/;
@@ -1759,7 +1897,8 @@ const LITERAL = /^[^{}*?]*$/;
 /** A Gin path (tree.go `findWildcard`, `insertChild`): `:name` a segment, `*name` the rest after a `/`. */
 export function ginPath(path: string): Local | { why: string } {
   if (!path.startsWith("/")) return { why: `${JSON.stringify(path)} does not start with a /, which Gin refuses` };
-  const parts = path.split("/").slice(1);
+  // The root `/` has no segment.
+  const parts = path === "/" ? [] : path.split("/").slice(1);
   const slash = path.length > 1 && path.endsWith("/");
   if (slash) parts.pop();
   const segs: string[] = [];
@@ -1865,6 +2004,7 @@ export function muxPattern(pattern: string, legacy: boolean): Local | { why: str
   const names = new Set<string>();
   let slash = false;
   let tail = false;
+  let dollar = false;
   let remaining = rest;
   while (remaining.length) {
     remaining = remaining.slice(1);
@@ -1887,6 +2027,7 @@ export function muxPattern(pattern: string, legacy: boolean): Local | { why: str
     if (name === "$") {
       if (remaining.length) return { why: `${JSON.stringify(pattern)} has {$} before its end, which Go refuses` };
       slash = segs.length > 0;
+      dollar = true;
       break;
     }
     const multi = name.endsWith("...");
@@ -1902,7 +2043,77 @@ export function muxPattern(pattern: string, legacy: boolean): Local | { why: str
   }
   if (segs.length === 1 && segs[0] === "**") slash = false;
   if (tail && segs.length === 1) slash = false;
-  return { segs, patterns: {}, slash, rest: tail, ...(method !== undefined ? { method } : {}) };
+  return { segs, patterns: {}, slash, rest: tail, ...(method !== undefined ? { method } : {}), ...(dollar ? { end: true as const } : {}) };
+}
+
+/** A ServeMux pattern's segments as Go holds them (pattern.go `segment`): a literal, a wildcard, or a remainder. */
+function goSegments(l: Local): Array<{ s: string; wild: boolean; multi: boolean }> {
+  const out = l.segs.map((seg) => (isRest(seg) ? { s: "", wild: true, multi: true } : seg.startsWith("{") ? { s: seg, wild: true, multi: false } : { s: seg, wild: false, multi: false }));
+  if (l.end) out.push({ s: "/", wild: false, multi: false });
+  return out;
+}
+
+const isRest = (seg: string) => seg === "**" || seg.startsWith("{*");
+
+type Relation = "equivalent" | "moreGeneral" | "moreSpecific" | "disjoint" | "overlaps";
+const inverse = (r: Relation): Relation => (r === "moreGeneral" ? "moreSpecific" : r === "moreSpecific" ? "moreGeneral" : r);
+
+/** pattern.go `combineRelationships`. */
+function combine(r1: Relation, r2: Relation): Relation {
+  if (r1 === "equivalent") return r2;
+  if (r1 === "disjoint") return "disjoint";
+  if (r1 === "overlaps") return r2 === "disjoint" ? "disjoint" : "overlaps";
+  if (r2 === "equivalent") return r1;
+  if (r2 === inverse(r1)) return "overlaps";
+  return r2;
+}
+
+/**
+ * Whether two patterns conflict as ServeMux registers them (pattern.go `conflictsWith`, `comparePathsAndMethods`):
+ * they match some request alike and neither matches only requests the other does. Go 1.21's mux refuses only the
+ * same pattern twice.
+ */
+export function muxConflict(a: Local, b: Local, legacy: boolean): boolean {
+  const s1 = goSegments(a);
+  const s2 = goSegments(b);
+  const same = a.method === b.method && JSON.stringify(s1) === JSON.stringify(s2);
+  if (legacy) return same;
+  const m1 = a.method ?? "";
+  const m2 = b.method ?? "";
+  let mrel: Relation;
+  if (m1 === m2) mrel = "equivalent";
+  else if (m1 === "") mrel = "moreGeneral";
+  else if (m2 === "") mrel = "moreSpecific";
+  else if (m1 === "GET" && m2 === "HEAD") mrel = "moreGeneral";
+  else if (m1 === "HEAD" && m2 === "GET") mrel = "moreSpecific";
+  else return false;
+  const last1 = s1[s1.length - 1];
+  const last2 = s2[s2.length - 1];
+  const paths = (): Relation => {
+    if (s1.length !== s2.length && !last1?.multi && !last2?.multi) return "disjoint";
+    let rel: Relation = "equivalent";
+    let i = 0;
+    for (; i < s1.length && i < s2.length; i++) {
+      const x = s1[i]!;
+      const y = s2[i]!;
+      let r: Relation;
+      if (x.multi && y.multi) r = "equivalent";
+      else if (x.multi) r = "moreGeneral";
+      else if (y.multi) r = "moreSpecific";
+      else if (x.wild && y.wild) r = "equivalent";
+      else if (x.wild) r = y.s === "/" ? "disjoint" : "moreGeneral";
+      else if (y.wild) r = x.s === "/" ? "disjoint" : "moreSpecific";
+      else r = x.s === y.s ? "equivalent" : "disjoint";
+      rel = combine(rel, r);
+      if (rel === "disjoint") return rel;
+    }
+    if (i === s1.length && i === s2.length) return rel;
+    if (s1.length < s2.length && last1?.multi) return combine(rel, "moreGeneral");
+    if (s2.length < s1.length && last2?.multi) return combine(rel, "moreSpecific");
+    return "disjoint";
+  };
+  const rel = combine(mrel, paths());
+  return rel === "equivalent" || rel === "overlaps";
 }
 
 /** Where a router's routes are served: the path before them, as the mounts on the way there join it. */
@@ -1918,6 +2129,8 @@ interface Place {
   rewrites: string[];
   /** chi's `middleware.GetHead` is used on the way. */
   headByGet: boolean;
+  /** The segments before each ServeMux subtree on the way (`Dispatch.under`). */
+  under: number[];
 }
 
 /** The most paths one router is read under, a guard against runaway nesting. */
@@ -1969,9 +2182,9 @@ class Assembly {
       }
     }
     if (r.declared !== undefined && !traced) {
-      out = [{ segs: r.declared.split("/").filter(Boolean), patterns: {}, mounted: [], how: "declared", stubs: true, rewrites, headByGet: !!r.headByGet }];
+      out = [{ segs: r.declared.split("/").filter(Boolean), patterns: {}, mounted: [], how: "declared", stubs: true, rewrites, headByGet: !!r.headByGet, under: [] }];
     } else if (!r.mounts.length) {
-      out = [{ segs: [], patterns: {}, mounted: [], how: "root", stubs: false, rewrites, headByGet: !!r.headByGet }];
+      out = [{ segs: [], patterns: {}, mounted: [], how: "root", stubs: false, rewrites, headByGet: !!r.headByGet, under: [] }];
     } else {
       for (const m of r.mounts) {
         if (m.prefix === undefined) continue;
@@ -2002,7 +2215,7 @@ class Assembly {
       const patterns = mergePatterns(p.patterns, local.patterns);
       if (!patterns) return void this.limit(`${where} mounts a router at ${m.prefix}, which names a parameter of its mount again with another regexp; its routes are not read`);
       const segs = [...p.segs, ...local.segs];
-      return { segs, patterns, mounted: [...p.mounted, segs.length], how: "chi", stubs: !m.prefix!.endsWith("/"), rewrites: [...p.rewrites, ...rewrites], headByGet };
+      return { segs, patterns, mounted: [...p.mounted, segs.length], how: "chi", stubs: !m.prefix!.endsWith("/"), rewrites: [...p.rewrites, ...rewrites], headByGet, under: p.under };
     }
     // http.StripPrefix(prefix, router) under a ServeMux subtree `prefix/`: the router sees the path after the prefix.
     const go = this.goOf(m.file);
@@ -2012,7 +2225,8 @@ class Assembly {
     if ("why" in outer || outer.method !== undefined || !outer.rest || outer.segs[outer.segs.length - 1] !== "**" || !lits!.every((s) => LITERAL.test(s) && !s.includes("{")) || `/${lits!.join("/")}` !== m.prefix || !lits!.length) {
       return void this.limit(`${where} serves a router under ${JSON.stringify(m.pattern)} with http.StripPrefix(${JSON.stringify(m.prefix)}); atlas reads such a mount only where the pattern is a subtree with no method and StripPrefix removes its path without the last /, so its routes are not read`);
     }
-    return { segs: [...p.segs, ...lits!], patterns: p.patterns, mounted: [], how: "strip", stubs: false, rewrites, headByGet: !!r.headByGet };
+    const segs = [...p.segs, ...lits!];
+    return { segs, patterns: p.patterns, mounted: [], how: "strip", stubs: false, rewrites, headByGet: !!r.headByGet, under: [...p.under, segs.length] };
   }
 
   /** The Go a file's ServeMux patterns are read with: 1.22's, or 1.21's where go.mod says an earlier one or GODEBUG asks. */
@@ -2026,6 +2240,7 @@ class Assembly {
   add(r: Router): void {
     const places = this.placesOf(r);
     if (!places.length) return;
+    const kept: Array<{ reg: Reg; local: Local; legacy: boolean }> = [];
     for (const reg of r.regs) {
       const where = `${reg.file}:${reg.line}`;
       let local: Local | { why: string };
@@ -2036,6 +2251,16 @@ class Assembly {
           continue;
         }
         local = muxPattern(reg.path, go.legacy);
+        if (!("why" in local)) {
+          // ServeMux refuses a pattern that conflicts with one registered before it: Register panics.
+          const parsed = local;
+          const clash = kept.find((k) => muxConflict(k.local, parsed, go.legacy));
+          if (clash) {
+            this.limit(`${where} registers ${JSON.stringify(reg.path)}, which conflicts with ${JSON.stringify(clash.reg.path)} (${clash.reg.file}:${clash.reg.line}): neither is more specific, and ServeMux panics as it is registered; the route is not read`);
+            continue;
+          }
+          kept.push({ reg, local: parsed, legacy: go.legacy });
+        }
       } else if (r.lib === "gin") local = ginPath(reg.path);
       else local = chiPath(reg.path);
       if ("why" in local) {
@@ -2108,15 +2333,16 @@ class Assembly {
 
   private dispatchOf(r: Router, place: Place, trailing: Dispatch["trailing"]): Dispatch {
     const t = trailing ? { trailing } : {};
+    const under = place.under.length ? { under: place.under } : {};
     if (r.lib === "gin") {
       const slashes = r.unreadSettings || r.tsr === null ? {} : { slashes: r.tsr ? ("tsr" as const) : ("strict" as const) };
-      return { picks: "httprouter", ...slashes, ...t };
+      return { picks: "httprouter", ...slashes, ...t, ...under };
     }
     if (r.lib === "chi") {
       const slashes = place.rewrites.length ? {} : { slashes: "strict" as const };
-      return { picks: "chi", ...slashes, ...t, ...(place.mounted.length ? { mounted: place.mounted } : {}) };
+      return { picks: "chi", ...slashes, ...t, ...(place.mounted.length ? { mounted: place.mounted } : {}), ...under };
     }
-    return { picks: "servemux", slashes: "subtree", ...t };
+    return { picks: "servemux", slashes: "subtree", ...t, ...under };
   }
 }
 

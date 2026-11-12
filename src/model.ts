@@ -108,8 +108,12 @@ export interface Dispatch {
    * by segment, static text before a parameter and a parameter before a catch-all, whatever the order. `chi`: chi's tree
    * tries, from each place in the path, static text, then a parameter with a regexp, then one without, then a catch-all,
    * whatever the order, a mounted router's routes as a catch-all at their mount (`mounted`). `servemux`: Go's ServeMux
-   * (1.22 and later) takes the most specific pattern: a pattern with a method before one without, and segment by segment
-   * a literal before a wildcard before a remainder (`{x...}`, a last `/`).
+   * (1.22 and later) takes the most specific pattern, the one whose requests are a strict subset of the other's (by
+   * method and by path); two patterns that share a request with neither more specific conflict, and ServeMux refuses
+   * the second as it is registered, so atlas leaves it out. Of patterns that do not conflict, the more specific is the
+   * one its tree tries first: a pattern that names the method before one that names none, and segment by segment a
+   * literal before a wildcard before a remainder (`{x...}`, a last `/`). A route of a router a ServeMux serves under a
+   * subtree is first a route of that subtree there (`under`).
    */
   picks?: "registration" | "find-my-way" | "specificity" | "werkzeug" | "precedence" | "httprouter" | "chi" | "servemux";
   /**
@@ -133,6 +137,11 @@ export interface Dispatch {
    * `Route`), from the outermost. chi's tree matches a mount as a catch-all after its path, then the mounted router's tree.
    */
   mounted?: number[];
+  /**
+   * The number of segments of the route's path before each subtree a ServeMux serves the route's router under
+   * (`http.StripPrefix`), from the outermost: that ServeMux picks between its own patterns and the subtree first.
+   */
+  under?: number[];
   /**
    * Where the route is registered, from the router a request enters down to the one that holds the route: each step a
    * sequence of registrations whose order is known (`router`, one router in one function body of one file) and the

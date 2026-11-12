@@ -58,7 +58,7 @@ const boundTo = (code: string, classes: string): Set<string> =>
   new Set([...code.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)[ \\t]*(?::[^=\\n]+)?=[ \\t]*(?:[A-Za-z_][\\w.]*\\.)?(?:${classes})[ \\t]*\\(`, "gm"))].map((m) => m[1]!));
 
 /** The import paths of the Go routers the `go` style reads. */
-const GO_ROUTERS = /"(?:github\.com\/gin-gonic\/gin|github\.com\/go-chi\/chi\/v5|net\/http)"/;
+const GO_ROUTERS = /(["`])(?:github\.com\/gin-gonic\/gin|github\.com\/go-chi\/chi\/v5|net\/http)\1/;
 
 /** Each style only in the files its extractor reads, so a Python decorator is not offered as an Express route. */
 const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (m: RegExpMatchArray) => boolean }> = [
@@ -70,7 +70,12 @@ const ROUTE_STYLES: Array<{ style: string; re: RegExp; files: RegExp; accept?: (
   // Django's `path()` and `re_path()` patterns and DRF's `router.register()`, in a file that imports Django or DRF.
   { style: "django", re: /(?<![\w.])(?:re_)?path\(\s*[rRuU]?["']|(?<![\w.])[A-Za-z_]\w*\.register\(\s*[rRuU]?["']/g, files: /\.py$/ },
   // Gin's, chi's and ServeMux's registrations, in a Go file that imports one of them.
-  { style: "go", re: /\.(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any|Get|Post|Put|Patch|Delete|Head|Options|Handle|HandleFunc|Route|Mount|Group|Static|StaticFile|StaticFS)\(\s*["`](?:[A-Z]+[ \t]+)?\//g, files: /\.go$/ },
+  // A path first, a method before it (Gin's `Handle`, chi's `Method`), or Gin's `Match` list before it.
+  {
+    style: "go",
+    re: /\.(?:(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any|Get|Post|Put|Patch|Delete|Head|Options|Connect|Trace|Query|Handle|HandleFunc|Route|Mount|Group|Static|StaticFile|StaticFS|StaticFileFS)\(|(?:Handle|Method|MethodFunc)\(\s*(?:"[A-Za-z]+"|`[A-Za-z]+`|[\w.]+)\s*,|Match\(\s*\[\]string\{[^{}]*\}\s*,)\s*["`](?:[A-Z]+[ \t]+)?\//g,
+    files: /\.go$/,
+  },
   { style: "spring", re: /@(?:org\.springframework\.web\.bind\.annotation\.)?(?:Get|Post|Put|Delete|Patch|Request)Mapping\b/g, files: /\.(java|kt|kts)$/ },
   // App Router handlers, declared, re-exported by name or re-exported wholesale; Pages Router API routes' default export.
   {

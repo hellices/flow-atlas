@@ -238,7 +238,8 @@ Quart) by the route's `parts`, each segment's static text or its regex and weigh
 routing by the `rank` of its `Order` and each segment's precedence digit, then a route that names the method;
 `httprouter`, Gin's tree, static text before a parameter before a catch-all; `chi`, chi's tree, static text before a
 regexp before a parameter before a catch-all, a router mounted on the way (`mounted`, the segments before each mount) a
-catch-all at its mount; `servemux`, Go's ServeMux, the most specific pattern), `passes`
+catch-all at its mount; `servemux`, Go's ServeMux, the most specific pattern, whose requests are a strict subset of the other's, a router it
+serves under a subtree being that subtree to it first (`under`)), `passes`
 (its handler may pass the request on to a later route), `byPath` (the router picks the route by the path alone and the
 route answers another method with 405, as Django's resolver does, so a later route of that method is not reached),
 `slashes` (`ignored`, `strict`, `redirected` for Starlette, `removed` and `added` for Next.js's `trailingSlash`,

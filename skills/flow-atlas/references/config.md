@@ -620,10 +620,12 @@ registration on a value atlas does not trace, a package-level
 variable that a function other than `init` assigns, read in a function no read code calls (another package may have
 assigned it first), a router handed to a library function whose result the code drops, a recursive call, calls more
 than 32 deep or 20000 in all, a router mounted into itself or at more than 64 paths, `gin.New` options that are not
-function literals, `RedirectTrailingSlash` set in a branch or loop, a ServeMux pattern with a host or one Go refuses, a router a ServeMux or chi serves
-without the path stripped (it sees the whole path), and chi's `middleware.StripSlashes`, `RedirectSlashes`,
+function literals, `RedirectTrailingSlash` set in a branch or loop, a ServeMux pattern with a host, one Go refuses or one that conflicts with one registered
+before it, a router a ServeMux or chi serves without the path stripped (it sees the whole path; it is not read at the
+root either), and chi's `middleware.StripSlashes`, `RedirectSlashes`,
 `URLFormat`, `StripPrefix` and `PathRewrite`, which route a request by another path than it names (chi's
-`middleware.GetHead`, used on a router, makes its GET routes serve HEAD as well, `implicit`). Other Go routers (Echo,
+`middleware.GetHead`, used on a router, makes its GET routes serve HEAD as well, `implicit`, where no HEAD route or
+route for any method takes the path). Other Go routers (Echo,
 Fiber, gorilla/mux and the rest) are not read.
 The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
@@ -820,10 +822,15 @@ it does not, the call joins every route its path fits, and a limit names what is
   request reaches a HEAD route, not a GET one); chi's (tree.go `findRoute`) tries, from each place in the path, static text, then a
   parameter with a regexp, then one without (one ending at a `/` after one ending at another character), then a
   catch-all, going back where a branch finds no route of the request's method, and a router mounted with `Mount` or
-  `Route` as a catch-all after its path, then that router's tree; Go's ServeMux (routing_tree.go) takes a pattern that
-  names the request's method before one that names GET for a HEAD request, before one that names none, and segment by
-  segment a literal before a wildcard before a remainder, which is the most specific pattern, as it refuses patterns
-  that conflict; Spring ranks by specificity and Next.js by its file
+  `Route` as a catch-all after its path, then that router's tree; Go's ServeMux takes the most specific pattern, the one whose
+  requests are a strict subset of the other's by method and by path (pattern.go `comparePathsAndMethods`); two that
+  share a request with neither more specific conflict, and ServeMux panics as the second is registered, which atlas
+  leaves out with a limit. Of patterns that do not conflict, the more specific is the one its tree tries first
+  (routing_tree.go): one that names the request's method, then one that names GET for a HEAD request, then one that
+  names none, and segment by segment a literal before a wildcard before a remainder. A router ServeMux serves under a
+  subtree with `http.StripPrefix` is that subtree to the ServeMux, which picks between it and its own patterns first;
+  chi's tree takes a request under a router's mount to that router for any method, so a route of the parent's its
+  tree tries after the mount is not reached by such a request; Spring ranks by specificity and Next.js by its file
   conventions, as before. Werkzeug (Flask, Quart) walks a request's segments and tries a segment's static text before
   its variables, and the variables by their weight (`Weighting`: more pieces of static text in the segment first, the
   longer first, then more converters, then lower converter weights: `int` and `float` 50, `string`, `any`, `uuid` and a

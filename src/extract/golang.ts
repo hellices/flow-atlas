@@ -30,19 +30,28 @@ const OPERATORS = [
 const IDENT_START = /[\p{L}_]/u;
 const IDENT_PART = /[\p{L}\p{Nd}_]/u;
 
-/** The value of an interpreted string's or rune's escapes, as the spec lists them; undefined for one Go refuses. */
+/**
+ * The value of an interpreted string's escapes, as the spec lists them; undefined for one Go refuses. A string is bytes:
+ * `\xNN` and octal escapes are single bytes, the rest UTF-8 (go.dev/ref/spec, "String literals"), so the value is
+ * those bytes read as UTF-8, and undefined where they are not valid UTF-8, a text no route's path is written as.
+ */
 function unescape(body: string): string | undefined {
-  let out = "";
+  const bytes: number[] = [];
+  const utf8 = new TextEncoder();
+  const text = (t: string) => bytes.push(...utf8.encode(t));
   for (let i = 0; i < body.length; i++) {
     const c = body[i]!;
     if (c !== "\\") {
-      out += c;
+      const cp = body.codePointAt(i)!;
+      const ch = String.fromCodePoint(cp);
+      text(ch);
+      i += ch.length - 1;
       continue;
     }
     const e = body[++i];
     const simple: Record<string, string> = { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"' };
     if (e !== undefined && Object.hasOwn(simple, e)) {
-      out += simple[e];
+      text(simple[e]!);
       continue;
     }
     const hex = (n: number) => {
@@ -54,19 +63,23 @@ function unescape(body: string): string | undefined {
     if (e === "x") {
       const v = hex(2);
       if (v === undefined) return undefined;
-      out += String.fromCharCode(v);
+      bytes.push(v);
     } else if (e === "u" || e === "U") {
       const v = hex(e === "u" ? 4 : 8);
       if (v === undefined || v > 0x10ffff || (v >= 0xd800 && v < 0xe000)) return undefined;
-      out += String.fromCodePoint(v);
+      text(String.fromCodePoint(v));
     } else if (e !== undefined && /[0-7]/.test(e)) {
       const digits = body.slice(i, i + 3);
       if (!/^[0-7]{3}$/.test(digits) || parseInt(digits, 8) > 255) return undefined;
       i += 2;
-      out += String.fromCharCode(parseInt(digits, 8));
+      bytes.push(parseInt(digits, 8));
     } else return undefined;
   }
-  return out;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+  } catch {
+    return undefined;
+  }
 }
 
 /** The tokens of a Go file, with the semicolons the spec inserts after a line's last token where it may end a statement. */
@@ -157,7 +170,8 @@ export type Expr =
   | { k: "sel"; x: Expr; name: string; start: number; end: number }
   | { k: "call"; fn: Expr; args: Expr[]; ellipsis: boolean; start: number; end: number }
   | { k: "index"; x: Expr; indices: Expr[]; start: number; end: number }
-  | { k: "slice"; x: Expr; start: number; end: number }
+  /** `x[low:high:max]`, the bounds given in order. */
+  | { k: "slice"; x: Expr; bounds: Expr[]; start: number; end: number }
   | { k: "assert"; x: Expr; type: Expr | undefined; start: number; end: number }
   | { k: "unary"; op: string; x: Expr; start: number; end: number }
   | { k: "binary"; op: string; x: Expr; y: Expr; start: number; end: number }
@@ -421,8 +435,15 @@ class Parser {
     if (!nx || nx.kind === ";" || nx.kind === "eof") return false;
     if (nx.kind === "op" && [",", ")", "."].includes(nx.text)) return false;
     if (nx.kind === "op" && nx.text === "[") {
-      const after = this.toks[this.p + 2];
-      return after?.text === "]" || after?.kind === "number";
+      // `a [N]T`, `a []T`: a type starts after the `]`; `List[T]` is a type, which a `,` or `)` follows.
+      let depth = 0;
+      for (let j = this.p + 1; j < this.toks.length; j++) {
+        const t = this.toks[j]!;
+        if (t.kind === "eof") return false;
+        if (t.kind === "op" && t.text === "[") depth++;
+        else if (t.kind === "op" && t.text === "]" && --depth === 0) return startsType(this.toks[j + 1]);
+      }
+      return false;
     }
     return true;
   }
@@ -540,7 +561,7 @@ class Parser {
       if (kind === "type") {
         if (this.t.kind !== "ident") return this.skipStatement();
         names.push({ name: this.t.text, start: this.next().start });
-        if (this.is("[") && this.toks[this.p + 1]?.kind === "ident" && this.toks[this.p + 2]?.kind !== "op") this.skipBalanced();
+        if (this.is("[") && typeParameters(this.toks[this.p + 1], this.toks[this.p + 2])) this.skipBalanced();
         this.accept("=");
         specs.push({ names, type: this.type(), values: [], start });
         return;
@@ -743,6 +764,7 @@ class Parser {
   }
 
   private switchStmt(): Stmt {
+    const select = this.is("select");
     const start = this.next().start;
     const { init, tag } = this.header(() => {
       let init: Stmt | undefined;
@@ -767,9 +789,10 @@ class Parser {
       let exprs: Expr[] = [];
       if (this.accept("case")) {
         // A select's case is a statement; a switch's, a list of expressions or types.
-        const s = this.simpleStmt();
-        exprs = s.k === "expr" ? [s.x] : [];
-        while (this.accept(",")) exprs.push(this.expr());
+        if (select) {
+          const s = this.simpleStmt();
+          exprs = s.k === "expr" ? [s.x] : [];
+        } else exprs = this.exprList();
       } else if (!this.accept("default")) {
         this.skipStatement();
         continue;
@@ -903,7 +926,7 @@ class Parser {
         this.exprLev = lev;
         const end = this.t.end;
         this.accept("]");
-        x = sliced ? { k: "slice", x, start: x.start, end } : { k: "index", x, indices, start: x.start, end };
+        x = sliced ? { k: "slice", x, bounds: indices, start: x.start, end } : { k: "index", x, indices, start: x.start, end };
       } else if (this.is("{") && isTypeLike(x) && (this.exprLev >= 0 || !isTypeName(x))) {
         x = this.composite(x);
       } else return x;
@@ -933,6 +956,25 @@ class Parser {
     this.accept("}");
     return { k: "composite", ...(type ? { type } : {}), elts, start, end };
   }
+}
+
+/** Whether a token starts a type: a name, `*T`, `[]T`, `(T)`, `<-chan T`, or a type keyword. */
+function startsType(t: Token | undefined): boolean {
+  if (!t) return false;
+  if (t.kind === "ident") return true;
+  if (t.kind === "keyword") return ["func", "map", "chan", "struct", "interface"].includes(t.text);
+  return t.kind === "op" && ["*", "[", "(", "<-"].includes(t.text);
+}
+
+/**
+ * Whether the `[` after a type declaration's name opens type parameters (`[T any]`, `[K, V any]`, `[T ~int]`) rather
+ * than an array's length (`[N]T`, `[4]T`, `[N+1]T`): a name followed by another parameter or a constraint. The spec
+ * reads `[P *C]` and `[P (C)]` as an array's length ("Type declarations", the parsing ambiguity), and so does this.
+ */
+function typeParameters(first: Token | undefined, second: Token | undefined): boolean {
+  if (first?.kind !== "ident" || !second) return false;
+  if (second.kind === "ident" || second.kind === "keyword") return true;
+  return second.kind === "op" && [",", "~", "["].includes(second.text);
 }
 
 /** Whether an expression may be the type of a composite literal (`T{}`, `pkg.T{}`, `[]T{}`, `T[int]{}`). */

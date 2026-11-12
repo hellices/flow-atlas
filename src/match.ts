@@ -398,6 +398,10 @@ function chiLevels(s: Surface): Array<Array<{ kind: number; key: string }>> {
  * settled: two regexps, or two parameters ending at characters other than `/`, are tried in an order atlas does not read.
  */
 function chiCompare(d: Surface, c: Surface): number {
+  // Under middleware.GetHead, a HEAD request goes to a route that takes HEAD (a HEAD route, or one for any method)
+  // wherever chi's tree finds one for its path, and to a GET route only where it finds none (get_head.go).
+  const byGet = (s: Surface) => s.method === "HEAD" && !!s.implicit;
+  if (byGet(d) !== byGet(c)) return byGet(d) ? 1 : -1;
   const x = chiLevels(d);
   const y = chiLevels(c);
   for (let l = 0; l < Math.min(x.length, y.length); l++) {
@@ -419,7 +423,74 @@ function chiCompare(d: Surface, c: Surface): number {
  * precedence; Werkzeug's; Gin's, chi's or ServeMux's tree; Nest's specificity, then its declaration order; or
  * registration order. A route that may pass the request on comes before none.
  */
+/** Where a chi router is mounted: the mount's path as the parent's tree holds it, a catch-all after it (`Mount`). */
+type Stub = { surface: Surface; at: number; segs: string[] };
+
+/**
+ * The mounts of the chi routers whose routes are read, by component: each `mounted` boundary of a route is a mount,
+ * which chi's parent tree holds as `path/*` (and `path`, `path/`) for every method.
+ */
+function chiStubs(surfaces: Surface[]): Map<string, Stub[]> {
+  const out = new Map<string, Stub[]>();
+  const seen = new Set<string>();
+  for (const s of surfaces) {
+    const d = s.dispatch;
+    if (d?.picks !== "chi" || !d.mounted?.length) continue;
+    const segs = segments(s.path);
+    d.mounted.forEach((at, i) => {
+      const key = `${s.component}|${segs.slice(0, at).join("/")}|${d.mounted!.slice(0, i + 1).join(",")}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const mounted = d.mounted!.slice(0, i);
+      const surface: Surface = { ...s, method: "*", path: joinRoute(...segs.slice(0, at), "**"), dispatch: { picks: "chi", ...(mounted.length ? { mounted } : {}) } };
+      (out.get(s.component) ?? out.set(s.component, []).get(s.component)!).push({ surface, at, segs: segs.slice(0, at) });
+    });
+  }
+  return out;
+}
+
+/**
+ * Whether a mount takes from route `c` every request the call stands for: the call is surely under the mount (past
+ * its path, or at its path with a `/`; a mount whose pattern ends with `/` does not take its path without one), `c`
+ * is not of the mounted router, and chi's tree tries the mount first.
+ */
+function stubTakes(stub: Stub, c: Surface, call: Call): boolean {
+  if (c.dispatch?.picks !== "chi") return false;
+  const n = segments(call.path).length;
+  if (n < stub.at || (n === stub.at && !call.slash)) return false;
+  if (!pathCovers(joinRoute(...stub.segs), joinRoute(...segments(call.path).slice(0, stub.at)), stub.surface.patterns)) return false;
+  const inside = !!c.dispatch.mounted?.includes(stub.at) && segments(c.path).slice(0, stub.at).join("/") === stub.segs.join("/");
+  return !inside && chiCompare(stub.surface, c) < 0;
+}
+
+/**
+ * ServeMux's order of a route it serves itself and one of a router it serves under a subtree (`Dispatch.under`): the
+ * ServeMux picks between its own pattern and the subtree's (`/api/`, which takes any method) first, then the router
+ * between its routes. Below zero where `d` comes first, zero where not settled; undefined where neither is under a
+ * subtree, or both are under the same one, where their own rules decide.
+ */
+function underCompare(d: Surface, c: Surface): number | undefined {
+  const x = d.dispatch?.under;
+  const y = c.dispatch?.under;
+  if (!x?.length && !y?.length) return undefined;
+  const key = (s: Surface, under: number[] | undefined) => {
+    if (under?.length) return { kinds: [...servemuxKinds({ ...s, path: joinRoute(...segments(s.path).slice(0, under[0])), dispatch: {} }), { kind: 2, key: "" }], rank: 2 };
+    if (s.dispatch?.picks !== "servemux") return undefined;
+    return { kinds: servemuxKinds(s), rank: s.method === "*" ? 2 : s.implicit && s.method === "HEAD" ? 1 : 0 };
+  };
+  const a = key(d, x);
+  const b = key(c, y);
+  if (!a || !b) return undefined;
+  const path = kindsCompare(a.kinds, b.kinds);
+  const method = a.rank - b.rank;
+  if (path === 0 && method === 0) return x?.length && y?.length && x[0] === y[0] ? undefined : 0;
+  if (path === 0) return method;
+  return Math.sign(path) === -Math.sign(method) ? 0 : path;
+}
+
 function first(d: Surface, c: Surface): boolean {
+  const outer = underCompare(d, c);
+  if (outer !== undefined) return outer < 0;
   const a = d.dispatch;
   const b = c.dispatch;
   if (!a?.picks || a.picks !== b?.picks) return false;
@@ -542,7 +613,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
   const push = <T>(map: Map<number, T[]>, key: number, value: T) => (map.get(key) ?? map.set(key, []).get(key)!).push(value);
   const appending = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "appended").map((s) => s.component));
   const tsr = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "tsr").map((s) => s.component));
-  const subtree = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "subtree").map((s) => s.component));
+  const subtree = new Set(graph.surfaces.filter((s) => s.dispatch?.slashes === "subtree" || s.dispatch?.under?.length).map((s) => s.component));
+  const stubs = chiStubs(graph.surfaces);
   graph.calls.forEach((call, ci) => {
     // Next.js settles the route by the path first; the method is checked on that route only. Each request a call stands
     // for goes to the most specific path that fits it, so a call with interpolations reaches every path down to the
@@ -589,8 +661,8 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // Gin redirects a request to the path with the `/` added or removed where its tree, walking the request, reaches a
     // route of the other form before any that takes the request as written (tree.go `getValue` sets `tsr` and returns
     // there; gin.go `handleHTTPRequest` redirects with RedirectTrailingSlash). A route of the other form that comes before
-    // a route the request fits, by the tree's order, takes the request from it.
-    if (tsr.has(call.to) && call.path !== "/" && call.method !== "*") {
+    // a route the request fits, by the tree's order, takes the request from it. A CONNECT request is never redirected.
+    if (tsr.has(call.to) && call.path !== "/" && call.method !== "*" && call.method.toUpperCase() !== "CONNECT") {
       const other = candidatesAt(!slash).filter((o) => o.surface.dispatch?.slashes === "tsr" && pathCovers(o.surface.path, call.path, o.surface.patterns));
       if (other.length) {
         const ahead = (d: Candidate) => d.surface.dispatch?.picks === "httprouter" && other.some((o) => kindsCompare(httprouterKinds(o.surface), httprouterKinds(d.surface)) < 0);
@@ -609,16 +681,22 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
     // left for its remainder (a subtree's root, a `{$}`), unless a pattern without a remainder matches the request as
     // written (server.go `matchOrRedirect`, `exactMatch`).
     if (subtree.has(call.to) && !slash && call.path !== "/") {
+      const n = segments(call.path).length;
+      // A router a ServeMux serves under the subtree `call.path/` is matched there with nothing left for it.
+      const mountRoot = (s: Surface) => !!s.dispatch?.under?.includes(n) && pathsMatch(joinRoute(...segments(s.path).slice(0, n)), call.path, s.patterns);
+      const mounted = graph.surfaces.some((s) => s.component === call.to && mountRoot(s));
       const exact = candidatesAt(true).filter((o) => {
         const d = o.surface.dispatch;
+        if (mounted && mountRoot(o.surface)) return true;
         if (d?.slashes !== "subtree" || !pathCovers(o.surface.path, call.path, o.surface.patterns)) return false;
         const r = segments(o.surface.path);
-        return isCatchAll(r[r.length - 1]) ? r.length === segments(call.path).length + 1 : d.trailing === "slash";
+        return isCatchAll(r[r.length - 1]) ? r.length === n + 1 : d.trailing === "slash";
       });
-      const served = candidates.some((c) => c.surface.dispatch?.picks === "servemux" && !isCatchAll(segments(c.surface.path).pop()) && pathCovers(c.surface.path, call.path, c.surface.patterns));
-      if (exact.length && !served) {
-        redirected.set(ci, { path: call.path, slash: true, surfaces: picked({ ...call, slash: true }, exact).map((c) => c.surface) });
-        candidates = candidates.filter((c) => !(c.surface.dispatch?.picks === "servemux" && isCatchAll(segments(c.surface.path).pop())));
+      const served = candidates.some((c) => c.surface.dispatch?.picks === "servemux" && !c.surface.dispatch.under && !isCatchAll(segments(c.surface.path).pop()) && pathCovers(c.surface.path, call.path, c.surface.patterns));
+      if ((exact.length || mounted) && !served) {
+        const to = picked({ ...call, slash: true }, exact).map((c) => c.surface);
+        if (to.length) redirected.set(ci, { path: call.path, slash: true, surfaces: to });
+        candidates = candidates.filter((c) => !(c.surface.dispatch?.picks === "servemux" && isCatchAll(segments(c.surface.path).pop())) && !mountRoot(c.surface));
         if (!candidates.length) return;
       }
     }
@@ -679,6 +757,9 @@ export function matchCalls(graph: Pick<Graph, "surfaces" | "calls">, ranked: Map
       if (reach.length) redirected.set(ci, { path: call.path, slash: !slash, surfaces: reach.map((c) => c.surface) });
       if (!direct.length) return;
     }
+    // chi's tree takes a request under a router's mount to that router for any method (mux.go `Mount` registers the
+    // mount for every method): a route of the parent's that its tree tries after the mount is not reached by it.
+    candidates = candidates.filter((c) => !(stubs.get(call.to) ?? []).some((stub) => stubTakes(stub, c.surface, call)));
     // A route taken only with a header atlas does not read is not a target, nor does it keep another from being one.
     const held = candidates.filter((c) => c.surface.dispatch?.constrained);
     if (held.length) {
