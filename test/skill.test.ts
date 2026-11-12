@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { agentPluginErrors } from "./standards.js";
 
 const skills = new URL("../skills/", import.meta.url);
 
@@ -40,13 +41,16 @@ describe("skills follow the Agent Skills specification", () => {
 describe("the repository is an Agent Plugin", () => {
   const manifest = JSON.parse(readFileSync(new URL("../plugin.json", import.meta.url), "utf8")) as Record<string, unknown>;
   it("has a plugin.json that follows the Agent Plugins 1.0.0 schema", () => {
+    expect(agentPluginErrors(manifest)).toEqual([]);
     expect(manifest.$schema).toBe("https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
-    expect(Object.keys(manifest).filter((k) => !["$schema", "name", "version", "description", "author", "homepage", "repository", "license", "keywords", "extensions"].includes(k))).toEqual([]);
-    expect(manifest.name).toMatch(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/);
-    expect((manifest.name as string).length).toBeLessThanOrEqual(64);
-    for (const key of ["version", "description", "homepage", "repository", "license"]) expect(typeof manifest[key], key).toBe("string");
-    expect(Object.keys(manifest.author as object).filter((k) => !["name", "email", "url"].includes(k))).toEqual([]);
+    // Beyond the schema, the awesome-copilot listing requires these, with keywords lowercase and hyphenated.
+    for (const key of ["version", "description", "repository", "license"]) expect(manifest[key], key).toBeTruthy();
     for (const k of manifest.keywords as string[]) expect(k).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+  it("is told apart from what the schema refuses", () => {
+    expect(agentPluginErrors({ ...manifest, extensions: null })).not.toEqual([]);
+    expect(agentPluginErrors({ ...manifest, skills: ["skills/flow-atlas"] })).not.toEqual([]);
+    expect(agentPluginErrors({ ...manifest, name: "Flow Atlas" })).not.toEqual([]);
   });
   it("names the version the package and the skill name", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string; license: string };

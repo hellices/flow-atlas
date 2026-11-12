@@ -30,6 +30,13 @@ export function sarifErrors(doc: unknown): string[] {
   return validate(doc) ? [] : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`);
 }
 
+/** Violations of the official Agent Plugins 1.0.0 plugin.json schema (2020-12). */
+export function agentPluginErrors(doc: unknown): string[] {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validate = ajv.compile(loadStandard("agent-plugins-plugin-schema-1.0.0.json"));
+  return validate(doc) ? [] : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`);
+}
+
 /** Violations of the official Arazzo 1.0 schema (2020-12), formats included. */
 export function arazzoErrors(doc: unknown): string[] {
   const ajv = withFormats(new Ajv2020({ allErrors: true, strict: false }));
