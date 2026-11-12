@@ -198,7 +198,7 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 
 ## Flows and output
 
-![A flow checked against the code, broken by a renamed route, and exported as an Arazzo workflow](docs/media/flows.gif)
+![A flow checked against the code and exported as an Arazzo workflow](docs/media/flows.gif)
 
 - **Flows.** Besides its steps and their roles, a flow can name the decisions behind it (`sources`), what it produces
   (`produces`) and whether it is planned or going away (`lifecycle`). `atlas flows` also reports `ProducesListed`
