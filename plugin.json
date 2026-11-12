@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "flow-atlas",
+  "version": "0.1.0",
+  "description": "Check that the services in a monorepo still fit together while the code is being written: a deterministic CLI and an agent skill that find calls no service serves, APIs nothing calls, undeclared dependencies and flows the code no longer follows.",
+  "author": {
+    "name": "hellices",
+    "url": "https://github.com/hellices"
+  },
+  "homepage": "https://github.com/hellices/flow-atlas",
+  "repository": "https://github.com/hellices/flow-atlas",
+  "license": "MIT",
+  "keywords": ["monorepo", "microservices", "api", "openapi", "arazzo", "static-analysis", "agent-skills"]
+}

@@ -178,10 +178,12 @@ atlas baseline update                         # accept the current findings as k
 The [agent skill](skills/flow-atlas/SKILL.md) teaches an agent when to run atlas (before it adds a route or a call, and
 before it opens a PR) and how to treat what it finds. It is the [`skills/flow-atlas`](skills/flow-atlas) directory
 and follows the [Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor
-and other hosts load it the same way. With GitHub CLI 2.90 or later:
+and other hosts load it the same way. The repository is also an [Agent Plugin](https://agent-plugins.org)
+(`plugin.json`) that carries the skill.
 
 ```bash
-gh skill install hellices/flow-atlas flow-atlas
+copilot plugin install hellices/flow-atlas       # GitHub Copilot CLI, as a plugin
+gh skill install hellices/flow-atlas flow-atlas  # GitHub CLI 2.90 or later, the skill alone
 ```
 
 Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
