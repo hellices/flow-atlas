@@ -1,13 +1,46 @@
 # flow-atlas
 
-Find where flows that cross components of a monorepo come apart: an API no client calls, a client call no service
-serves, a call across a boundary the manifests do not declare, an artifact nothing produces. Every finding comes with a file and a line, and the same code always gives the same findings: no LLM is
-involved.
+**Find where flows across a monorepo's components come apart, while you are still writing the code.**
 
-It is built for coding agents. An agent works on part of a repository at a time, so it easily adds a second API that
-does what an existing one does, builds the service side and forgets the client, or puts one component's job into
-another. flow-atlas shows those gaps where the work happens, instead of in a later review or audit. The agent skill in
-[`skills/flow-atlas`](skills/flow-atlas/SKILL.md) tells an agent when to run it and how to handle what it finds.
+- an API no client calls
+- a client call no service serves
+- a call across a boundary the manifests do not declare
+- an artifact nothing produces or nothing consumes
+
+Every finding points at a file and a line, and the same code always gives the same findings: no LLM is involved.
+
+flow-atlas is built for coding agents. An agent works on one part of a repository at a time, so it easily adds a second
+API that does what an existing one does, builds the service and forgets the client, or puts one component's job into
+another. flow-atlas shows those gaps where the work happens, instead of in a later review. The
+[agent skill](skills/flow-atlas/SKILL.md) tells an agent when to run it and how to handle what it finds.
+
+```text
+$ atlas check --root fixtures/shop
+8 new, 0 with an expired exception, 0 in the baseline, 0 excepted
+
+FA002 call that no surface serves
+  bff calls POST /orders/{}/refund on orders, which serves no matching route.
+  at services/bff/src/clients/orders.ts:14
+  key FA002|bff->orders|POST /orders/{}/refund
+
+FA003 boundary call or cycle the declarations do not state
+  web calls orders, but no declaration lets web consume what orders provides.
+  at apps/web/src/legacy.ts:2
+  key FA003|undeclared|web->orders
+...
+```
+
+## Contents
+
+- [What it finds](#what-it-finds)
+- [What it reads](#what-it-reads)
+- [Install](#install)
+- [Use](#use)
+- [Day to day](#day-to-day)
+- [Flows and output](#flows-and-output)
+- [Limits](#limits)
+- [Develop](#develop)
+- [Documentation](#documentation)
 
 ## What it finds
 
@@ -19,66 +52,97 @@ another. flow-atlas shows those gaps where the work happens, instead of in a lat
 | FA004 | a registry entry (artifact, tool, event) with no producer or no consumer |
 | FA007 | a flow description that the code does not bear out |
 
-Causes and fixes per rule: [rules.md](skills/flow-atlas/references/rules.md).
+Causes and fixes for each rule are in [rules.md](skills/flow-atlas/references/rules.md).
 
-## Languages and frameworks
+## What it reads
 
-| Reads | From |
-|---|---|
-| routes | TypeScript and JavaScript code (NestJS decorators, `@QueryMethod` included, under the global prefix and URI version the bootstrap sets and the paths `RouterModule` gives their modules, each path written in place or held in a constant of any file the code imports it from: a `const`, an enum member, an `as const` object's property, through relative imports, re-exports, tsconfig `paths` and workspace packages, Express, Fastify and other `app.get("/x")` receivers, Express routers and sub-applications, @koa/router routers, Hono groups and Fastify plugins under their mount paths and prefixes, with the forms each documents: every method the router has and chains of them, Express's `route(path)` and arrays of paths, @koa/router's named routes and `redirect`, Fastify's `route({ method, url })`, Hono's `on` and a method that takes the path before it; each path in its router's syntax (path-to-regexp 8 for Express 5, @koa/router and Nest, Express 4's, find-my-way's with its regexps, Hono's) at the version the package.json gives, the route @fastify/static registers under its `prefix`, Next.js route handlers, pages (GET where Next.js prerenders them, any method where it renders them on each request, and POST where a Server Action may post to them), metadata routes and files, public files, and the build's files and image optimizer it serves itself), FastAPI decorators and `add_api_route` under their routers' prefixes and the applications' mounts, the OpenAPI document, Swagger UI and ReDoc each application serves itself at the paths its `FastAPI(...)` settings give (none where they turn them off, and a limit where they are not spelled out), and Starlette StaticFiles mounts, Flask's and Quart's `route`, its method shortcuts, `add_url_rule` and `View` and `MethodView` classes under the url prefixes of their blueprints' registrations, nested ones included, with Werkzeug's converters, and the static files route each application and blueprint serves, Django's URLconfs from `ROOT_URLCONF` (`path` with its converters and those the files register, `re_path` where its regex's shape is certain, `include` of a module, a list or a router under its prefix, the same URLconf included twice, `static()` while `DEBUG`) with the methods each view takes (a function's unless `require_http_methods` and its kin or DRF's `@api_view` say otherwise, a class-based view's handlers within its `http_method_names`), and Django REST framework's `SimpleRouter` and `DefaultRouter` (each ViewSet's actions and `@action`s, its lookup, `trailing_slash`, the API root and format suffixes, `format_suffix_patterns`), Go's Gin, chi and net/http ServeMux registrations (Gin's method functions, `Handle`, `Any`, `Match` and `Static*` under nested groups, chi's method functions, `Method`, `Handle`, `Route`, `Group` and `Mount` with its regexp parameters, ServeMux's Go 1.22 patterns with methods, wildcards, `{$}` and subtrees at the Go version the go.mod gives, and a router served under `http.StripPrefix`), each router followed through variables, closures, struct fields, methods, constants and the functions of the route files' packages that take or return it, Spring MVC and WebFlux annotations under the prefixes `PathMatchConfigurer.addPathPrefix` gives their types, the `@HttpExchange` interfaces a controller implements and `registerMapping`, with Spring Security's login and logout, Spring's router functions (`RouterFunctions.route()`, the static composition and the Kotlin `router { }` DSL), what Spring Boot 3 and 4 serve themselves (the error page, each file of the static locations, the WebJars where the build brings one in, and the actuator's discovery page and health), ASP.NET Core in C# (minimal APIs mapped on the application, its nested `MapGroup` groups and the methods it passes them to, controllers' attribute routes and the conventional routes `MapControllerRoute` gives the rest, each template in ASP.NET Core's syntax with its constraints, and the OpenAPI document, health checks and `wwwroot` files the code maps with `MapOpenApi`, `MapHealthChecks`, `UseStaticFiles` and `MapStaticAssets`), and the OpenAPI 2.0 or 3.x document of any framework |
-| client calls | TypeScript and JavaScript parsed (literals, template strings, concatenations, followed through constants, arrays, the parameters and results of the repository's functions, across the files that import them, to where they go: a client router's route, a test, a label or a URL on another host is no request; each path joined to the base its client states, as the library joins it: axios's `baseURL` and request interceptors, Ky's `prefix` and `baseUrl` at the version the package.json gives, openapi-fetch's `baseUrl`, RTK Query's `fetchBaseQuery`, and the text a module's helper puts before the path it is given; the method of a `new Request(url, init)` handed to fetch, of Ky's `query` and of openapi-fetch's path-based client; an Angular `environment` property the build's files agree on and an `InjectionToken`'s provided value before a URL, the base a caller gives a function @hey-api/openapi-ts or orval generated); HTML templates (root-relative `href`, `src`, `action`, `formaction` and configured `data-*` URLs, Thymeleaf `@{...}` links, page-relative links and forms with no action against the pages that show them, inline scripts); Kotlin, Python, Dart, C# and other languages as text (an argument of a text test, of an exception, of Flutter's InputDecoration texts or of the paths ASP.NET Core serves is no request; a URL built by `+`, interpolation, formatting (`fmt.Sprintf`, `String.format`, `string.Format`, `str.format`, `%`) or a builder (Go's `url.JoinPath`, OkHttp's `HttpUrl.Builder`, Spring's `UriComponentsBuilder`, Ktor's `appendPathSegments`, Swift's `appendingPathComponent`), with the file's string constants and the base URL in the values `baseValues` names; the method of the calls that send a URL held in a value; resty's client-level path parameters; a path without a leading `/` where Retrofit, HttpClient or a configured client takes it, joined to the configured base by its library's rule; Refit's `[PathPrefix]` and Spring's `@HttpExchange` interfaces; OpenFeign's `@RequestLine`; the method each client library sets through its own API: a call named for it, Retrofit's and Refit's annotations, RestTemplate's methods and an `HttpMethod` argument, RestClient's, WebClient's and OkHttp's builder chains, Ktor's request block, the method given before the URL to net/http, resty, Requests, HTTPX, package:http and HttpRequestMessage, dio's `Options`, a `URLRequest`'s `httpMethod`, Alamofire's `method:`, HttpClient's own methods) |
-| which route a call reaches | the one its framework dispatches the request to: registration order for Express, @koa/router, Hono, Nest on Express and FastAPI (within a router and the mounts it is read under, later routes kept where an earlier one may pass the request on), Nest's `routeResolutionStrategy: 'specificity'`, find-my-way's precedence for Fastify, Werkzeug's for Flask and Quart, Django's first pattern by path, its view refusing another method, the routing trees of Gin, chi and ServeMux, Spring's and Next.js's ranking, ASP.NET Core's `Order` and route precedence (its literals matched whatever their case); a trailing `/` as each treats it (Express's `strict`, Fastify's `ignoreTrailingSlash`, Hono's `strict`, Spring 6, Starlette's `redirect_slashes`, Werkzeug's `strict_slashes`, Django's `APPEND_SLASH`, Gin's `RedirectTrailingSlash`, ServeMux's subtree redirect and Next.js's `trailingSlash` redirects, read where literal); AdonisJS's parameter matchers; where a rule is not read, every route the path fits |
-| what a route's handler calls next | TypeScript and JavaScript; for Spring MVC, the requests in the template a handler's view name renders, and the GET its `redirect:` leads to; for a Next.js page, the links and forms its server components and layouts render |
+| Language | Routes | Client calls |
+|---|---|---|
+| TypeScript, JavaScript | Express, Fastify, Koa (@koa/router), Hono, NestJS, Next.js | fetch, axios, Ky, openapi-fetch, RTK Query, Angular HttpClient, @hey-api/openapi-ts, orval |
+| Python | FastAPI, Flask, Quart, Django and Django REST framework | Requests, HTTPX |
+| Java, Kotlin | Spring MVC, Spring WebFlux, Spring Boot | RestTemplate, RestClient, WebClient, OkHttp, Retrofit, OpenFeign, Ktor client |
+| C# | ASP.NET Core (minimal APIs and controllers) | HttpClient, Refit |
+| Go | Gin, chi, net/http | net/http, resty |
+| Dart, Swift | | package:http, dio, URLSession, Alamofire |
+| Any | the OpenAPI 2.0 or 3.x document of any framework | links and forms in HTML templates, Thymeleaf included |
 
-atlas reads only what a file states for certain: a path written as a literal, with the meaning a standard or the
-framework's documentation gives it. A URL taken from a variable, another template engine, or htmx and Vue attributes
-are not read, and nothing is guessed in their place, so "no caller" means none among what atlas can read.
-[docs/direction.md](docs/direction.md) gives the scope, the research it rests on, and the extensions left open.
+For each route and call, atlas also reads:
 
-For a Spring app, read its annotations (`styles: [spring]`) and give it springdoc's document as well: routes keep their
-controller lines and take the document's operationIds. For a Flask or Quart app, read its code (`styles: [flask]`), and
-give it the document flask-smorest or flasgger generates where it uses one (flask-smorest's own `Blueprint` is read
-from that document only). For a Django app, Django REST framework's included, read its URLconfs (`styles: [django]`)
-from the settings module that sets `ROOT_URLCONF`; the admin site's patterns are left out with a limit. For a Go
-service on Gin, chi or net/http, read its code (`styles: [go]`). For Django Ninja and the rest, give atlas the document
-the framework generates; it finds each operation's handler by the operationId where it can.
-[`fixtures/openapi`](fixtures/openapi/README.md) holds eight documents that seven frameworks actually generate (Fastify in both formats), and
-[openapi.md](skills/flow-atlas/references/openapi.md) how to produce one without serving it.
+- **Paths as the framework writes them:** prefixes, mounts, groups and routers. Each path is read in its router's
+  syntax, at the version the project depends on.
+- **Methods as the library sets them:** `.get(...)`, annotations, builder chains, or a method passed with the URL.
+- **URLs as the code builds them:** template strings, `+`, formatting and URL builders, joined to the client's base
+  URL by the library's own rule.
+- **Which route a request reaches,** as the framework dispatches it: registration order, router precedence, and how
+  it treats a trailing `/`.
+- **What a route's handler calls next,** through functions, imports and ports and adapters (TypeScript and
+  JavaScript), and the links and forms a Spring or Next.js page renders.
 
-## Who does what
+atlas reads only what the code states for certain: a literal path, with the meaning the framework's documentation or
+source gives it. Nothing is guessed in place of what it cannot read. Where it sees something it cannot settle (a path
+in a syntax it does not read, a base held in a value, a prefix it cannot trace), it prints a `limit:` line that says
+what it left out. A URL held entirely in a value, such as one taken from a server response, is not a call atlas can
+see, so it leaves no limit either. "No caller" therefore means none among what atlas can read, and no limit does not
+prove that everything was read.
 
-atlas generates what the code settles: routes, calls, how they connect, operationIds, OpenAPI descriptions and how
-far they agree with the code, flow traces, flow drafts, and the findings above.
+Every rule, per framework and library: [config.md](skills/flow-atlas/references/config.md#what-the-extractors-read).
+How atlas reads each framework and client library is measured against the framework itself in
+[`fixtures/frameworks`](fixtures/frameworks/README.md) and [`fixtures/clients`](fixtures/clients/README.md).
 
-An agent or a person writes what needs intent: a flow's title, what each component does in it, its owner, whether a
-step is planned, why a finding is an accepted exception. atlas does not guess these; it checks that they are written
-and still hold.
+<details>
+<summary>Which style to pick for a framework</summary>
 
-The skill gives the criteria for judgments in between: whether a hop belongs to the component it sits in, whether a
-gap is a defect, a plan or a false positive. See [docs/responsibilities.md](docs/responsibilities.md).
+- **Spring:** read its annotations (`styles: [spring]`) and give atlas springdoc's document as well. Routes keep their
+  controller lines and take the document's operationIds.
+- **Flask or Quart:** read its code (`styles: [flask]`). Where it uses flask-smorest or flasgger, give atlas the
+  document it generates too; flask-smorest's own `Blueprint` is read from that document only.
+- **Django:** read its URLconfs (`styles: [django]`) from the settings module that sets `ROOT_URLCONF`. Django REST
+  framework is included. The admin site's patterns are left out with a limit.
+- **Go on Gin, chi or net/http:** read its code (`styles: [go]`).
+- **Django Ninja and the rest:** give atlas the OpenAPI document the framework generates. atlas finds each operation's
+  handler by its operationId where it can. [`fixtures/openapi`](fixtures/openapi/README.md) holds eight documents that
+  seven frameworks generate, and [openapi.md](skills/flow-atlas/references/openapi.md) shows how to produce one
+  without serving it.
+
+</details>
 
 ## Install
 
-Node.js 20 or later.
+Requires Node.js 20 or later.
 
 ```bash
 npx github:hellices/flow-atlas --help        # run without installing; prepare builds it on install
 npm install -g github:hellices/flow-atlas    # install the atlas command
 ```
 
-Recent npm versions may ask before running install scripts; if `prepare` is blocked, install the packed release
-(`npm install -g <flow-atlas-x.y.z.tgz URL>`).
+Recent npm versions may ask before running install scripts. If `prepare` is blocked, install the packed release
+instead (`npm install -g <flow-atlas-x.y.z.tgz URL>`).
 
-The skill is the `skills/flow-atlas` directory and follows the [Agent Skills](https://agentskills.io) specification,
-so GitHub Copilot, Claude Code, Codex, Cursor and other hosts load it the same way. With GitHub CLI 2.90 or later:
+### The agent skill
+
+The skill is the [`skills/flow-atlas`](skills/flow-atlas) directory and follows the
+[Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor and other hosts
+load it the same way. With GitHub CLI 2.90 or later:
 
 ```bash
 gh skill install hellices/flow-atlas flow-atlas
 ```
 
-or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
+Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
 
 ## Use
+
+Start from what atlas finds, write the configuration, then scan until it reads what it should:
+
+1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
+2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that list: the components, where each serves routes, and which
+   files call others. [config.md](skills/flow-atlas/references/config.md) describes every key.
+3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
+   expect two or three rounds before the findings are worth trusting.
+4. `atlas check --root <repo>` prints the findings.
+
+<details>
+<summary>All commands</summary>
 
 ```bash
 atlas inventory --root <repo>                 # candidate components, routes, client calls
@@ -97,65 +161,70 @@ atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
 ```
 
-`--ref <commit>` reads a commit without checking it out, and every write goes to `--out` (`export` prints to stdout), so a repository you must not
-change can be analysed with `--out` outside it. Writing the configuration: [config.md](skills/flow-atlas/references/config.md);
-expect two or three rounds of `scan` and correction before the findings are worth trusting.
+</details>
 
-Every command exits 0 when it is done and 2 on an error. `check --fail-on-new` exits 1 when there are new findings, and
-`export arazzo` exits 1 when there is nothing to export: no active flow, none of the name `--flow` gives, or no step
-an OpenAPI description names.
+- **Reading without touching the repository.** `--ref <commit>` reads a commit without checking it out, and every
+  write goes to `--out` (`export` prints to stdout). A repository you must not change can be analysed with `--out`
+  outside it.
+- **Exit codes.** Every command exits 0 when it is done and 2 on an error. `check --fail-on-new` exits 1 when there are
+  new findings. `export arazzo` exits 1 when there is nothing to export: no active flow, none of the name `--flow`
+  gives, or no step an OpenAPI description names.
+- **Reading a trace.** How `trace` joins calls to routes and handlers to calls: [docs/traces.md](docs/traces.md).
 
 ## Day to day
 
-Once the configuration reads what it should, record the current findings with `atlas baseline update`. From then on
-only new findings appear: existing debt is reduced on its own schedule, and each change answers only for what it
-introduced.
+1. **Record the debt.** Once the configuration reads what it should, run `atlas baseline update`. From then on only new
+   findings appear. Existing debt is reduced on its own schedule, and each change answers only for what it introduced.
+2. **Handle each new finding.**
+   - Fix it, or record it in the exceptions file with the decision behind it and a date to look again. When the date
+     passes, the finding comes back.
+   - A wrong finding caused by the configuration is fixed there. A misread file is recorded as an exception that says
+     which file was misread and how.
+   - A rule that is mostly wrong for a repository is switched off there (`rules.<id>.enabled: false`), or its extractor
+     is fixed.
+3. **Decide whether CI blocks.** atlas reports and does not block by default. To fail CI on new findings, add
+   `--fail-on-new`.
 
-A new finding is fixed, or recorded in the exceptions file with the decision behind it and a date to look again; when
-the date passes, the finding comes back. A wrong finding is fixed in the configuration when that caused it; a misread
-file is recorded as an exception that says which file was misread and how. A rule that is mostly wrong for a
-repository is switched off there (`rules.<id>.enabled: false`), or its extractor fixed.
+### Who does what
 
-atlas reports and does not block by default. To fail CI on new findings, use `--fail-on-new`.
+| Who | Writes |
+|---|---|
+| atlas | what the code settles: routes, calls, how they connect, operationIds, OpenAPI descriptions and how far they agree with the code, flow traces, flow drafts, and the findings |
+| an agent or a person | what needs intent: a flow's title, what each component does in it, its owner, whether a step is planned, why a finding is an accepted exception. atlas checks that these are written and still hold |
+| the skill | the criteria for judgments in between: whether a hop belongs to the component it sits in, and whether a gap is a defect, a plan or a false positive |
 
-## How traces connect
+More in [docs/responsibilities.md](docs/responsibilities.md).
 
-`trace` joins two kinds of link. A call joins a route when the method and path agree (`=`). A call whose method atlas
-does not read (a project's wrapper around `fetch` that is given none, a `data-*` URL) joins the routes its path fits
-only when they all take one method; where they take several, which one it calls depends on the method, so it joins
-none of them and a `limit:` line names it. A wrapper the configuration names in `calls[].wrappers`, with the method
-it sends by default (GET for one that hands its arguments to `fetch`), is read as `fetch` is. Routes from an OpenAPI 3
-document are joined as the specification says, a concrete path (`/users/me`) before a templated one (`/users/{id}`);
-a call that leaves out the trailing `/` a document's path ends with joins it only by GET or HEAD, since what a server
-does with another method depends on its framework (a `limit:` names it). Routes read from code are joined as their
-framework dispatches: where the router runs them in order, the first registered route a request fits, and the ones
-after it too where it may pass the request on (`next()`, Express's `next('route')`, a handler atlas does not see); the
-most specific where the router ranks them; and a trailing `/` as the framework treats it; a call the framework answers with a redirect (Next.js,
-Starlette) joins none, and a `limit:` names where it is redirected
-([config.md](skills/flow-atlas/references/config.md#which-route-a-request-reaches)). A function of a client @hey-api/openapi-ts
-generated is a call only where another configured file's code names it, or names a generated helper that calls it. Inside a component, a
-route's handler is followed through local functions, relative imports and re-exports, and joins an outbound call
-(`~`) in two ways: the handler's own code runs the request (evidence `static`), or the request sits in a method whose
-name the handler calls (evidence `name`). The second covers ports and adapters: the handler calls
-`deps.backend.getOrder()` and the adapter's `getOrder` makes the HTTP request. Because it joins by name, a link
-through a common name such as `get` or `send` is worth opening. For a Spring page, the requests in the template its
-view name renders are its outbound calls (`via view <name>`); for a Next.js page, the links and forms its server
-components and layouts render (`via view <file>`). Either is a request the page offers next, not part of its own.
-view name renders are its outbound calls (`via view <name>`), and so is the GET its `redirect:` leads to (`via
-redirect`); both are requests the client makes next, not part of the page's own request.
+## Flows and output
 
-## Flows and schemas
+- **Flows.** A flow is written in `flows/*.flow.yaml` as a Kubernetes-style object (`apiVersion`, `kind: Flow`,
+  `metadata`, `spec`), with Arazzo-style steps. Each step names one of the repository's own routes or calls and the
+  role its component plays, and `sources` names the decisions behind the flow. `atlas flows` reports
+  Kubernetes-style conditions for each flow (`Ready`, `Resolved`, `Connected`, `ProducesListed`, `Documented`). A flow
+  file is reviewed like code, in the pull request that changes it.
+- **Output.** Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema),
+  with `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests). There are no
+  timestamps, so the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`).
+- **Standards.** `check --format sarif` prints findings as SARIF 2.1.0, and `export arazzo` prints the flows as an
+  Arazzo 1.0 description. The flow files themselves follow the project's own Kubernetes-style schema, with Arazzo-style
+  steps; they are not Arazzo documents. Why each field is there: [docs/schema.md](docs/schema.md) and
+  [docs/standards.md](docs/standards.md).
 
-A flow is written in `flows/*.flow.yaml` as a Kubernetes-style object (`apiVersion`, `kind: Flow`, `metadata`,
-`spec`), with Arazzo-style steps that name the repository's own routes and calls, each with the role its component
-plays, and `sources` naming the decisions behind it. `atlas flows` reports Kubernetes-style conditions for each flow
-(`Ready`, `Resolved`, `Connected`, `ProducesListed`, `Documented`). A flow file is reviewed like code, in the pull
-request that changes it.
+## Limits
 
-Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema), with
-`apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests) and no timestamps, so
-the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`). Why each field is there:
-[docs/schema.md](docs/schema.md) and [docs/standards.md](docs/standards.md).
+- **Only what is written out is read.** A path assembled across several functions, or a URL taken from a server
+  response, is not seen, and the route it calls shows up as FA001.
+- **Some calls are named, not read.** These are not read as calls, and a `limit:` line names each:
+  - a path handed to a function after its first argument;
+  - an absolute URL to a host that is neither a loopback address nor the target's `origins` entry;
+  - a path given to an exception in code read as text.
+- **Prefixes are applied, not read as requests.** The text a helper puts before the path it is given (the configured
+  base, or a module helper's `` `/api${path}` ``) is applied to the paths passed to the helper.
+- **An unread base leaves its calls out.** A request through a client whose base, interceptor or hook atlas does not
+  read is left out and named in a limit. Set the call source's `base` and `join` (or `prefix`) where the code holds the
+  base in a value.
+- **Only configured files are read,** so no finding does not prove a flow complete.
+- **Field-level contract checks** are not implemented yet.
 
 ## Develop
 
@@ -166,27 +235,20 @@ pnpm build
 pnpm test
 ```
 
-The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests; a pre-push hook of your own in
-`.git/hooks` runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the
-same checks.
+The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests. A pre-push hook of your own in `.git/hooks`
+runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the same checks.
 
-`fixtures/shop` is a small monorepo with eight planted problems; the tests check that exactly those are found, that
-baselines, exceptions and `--since` work, that commits are read without a checkout, that flows trace from a web client
-through a BFF handler's port call to a service, and that SARIF and Arazzo output pass the official schemas.
+| Fixtures | What they check |
+|---|---|
+| [`fixtures/shop`](fixtures/shop) | a small monorepo with eight planted problems: exactly those are found; baselines, exceptions and `--since` work; commits are read without a checkout; flows trace from a web client through a BFF handler's port call to a service; SARIF and Arazzo output pass the official schemas |
+| [`fixtures/scenarios`](fixtures/scenarios/README.md) | small repositories in the shapes of real ones atlas was run on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a scenario before it is fixed |
+| [`fixtures/frameworks`](fixtures/frameworks/README.md) | an application for each of 58 frameworks (Node, Bun, Python, JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart), with the routes the framework itself reports serving. The tests compare atlas's reading with them and list where it still falls short |
+| [`fixtures/clients`](fixtures/clients/README.md) | code on each of 26 client libraries, with the requests it sends when run against a server that records them |
+| [`fixtures/repositories`](fixtures/repositories/README.md) | public repositories pinned at a commit, with what atlas read there |
 
-[`fixtures/scenarios`](fixtures/scenarios/README.md) holds small repositories in the shapes of real ones atlas was run
-on, each with the result that run showed once the reading was right. A misreading found on a real repository becomes a
-scenario there before it is fixed; tests for anything else cover framework rules no scenario reaches.
-
-[`fixtures/frameworks`](fixtures/frameworks/README.md) holds an application for each of 58 frameworks (Node, Bun, Python,
-JVM, .NET, Go, Rust, Elixir, Ruby, PHP, Swift and Dart ones: from Express, Next.js, FastAPI, Django, Spring Boot and
-ASP.NET Core to Phoenix, Rails, Laravel, Axum and Vapor), each with the routes the framework itself reports serving; the tests compare atlas's reading with them, and list where it still falls short.
-[`fixtures/clients`](fixtures/clients/README.md) does the same for calls: code on each client library, with the
-requests it sends when run against a server that records them. The `frameworks` workflow installs each framework and
-library and checks those routes and requests again, weekly on its latest release.
-
-[`fixtures/repositories`](fixtures/repositories/README.md) pins public repositories at a commit with what atlas read
-there; the `repositories` workflow fetches them and fails when a change moves any of it.
+The `frameworks` workflow installs each framework and library and checks their routes and requests again, weekly on
+the latest release. The `repositories` workflow fetches the pinned repositories and fails when a change moves anything
+atlas read there.
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
 
@@ -195,16 +257,19 @@ git config filter.public-registry.clean "node scripts/public-registry.mjs"
 git config filter.public-registry.smudge cat
 ```
 
-## Limits
+## Documentation
 
-Routes and calls are read from string literals. A path assembled across several functions, or a URL taken from a
-server response, is not seen and shows up as FA001. A path handed to a function after its first argument, and an
-absolute URL to a host that is neither a loopback address nor the target's `origins` entry, are not read as calls; a
-`limit:` line names them, as it names a path given to an exception in code read as text, and the text a helper puts
-before the path it is given (the configured base, or a module helper's `` `/api${path}` ``), which is read before the
-paths passed to the helper rather than as a request of its own. A request through a client whose base, interceptor or
-hook atlas does not read is left out and named in a limit too: set the call source's `base` and `join` (or `prefix`)
-where the code holds the base in a value. Only configured files are read, so no finding does not prove a flow complete. Field-level contract checks are not implemented yet.
+| Document | What it covers |
+|---|---|
+| [SKILL.md](skills/flow-atlas/SKILL.md) | how an agent uses atlas |
+| [config.md](skills/flow-atlas/references/config.md) | the configuration, and every rule the extractors follow |
+| [rules.md](skills/flow-atlas/references/rules.md) | each finding's causes and fixes |
+| [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component |
+| [openapi.md](skills/flow-atlas/references/openapi.md) | producing and reading OpenAPI documents |
+| [docs/traces.md](docs/traces.md) | how traces connect calls, routes and handlers |
+| [docs/direction.md](docs/direction.md) | the scope, the research it rests on, and the extensions left open |
+| [docs/responsibilities.md](docs/responsibilities.md) | what atlas, agents and people each decide |
+| [docs/schema.md](docs/schema.md), [docs/standards.md](docs/standards.md) | the output formats and the standards they follow |
 
 ## License
 
