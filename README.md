@@ -2,28 +2,17 @@
 
 **Check that the services in a monorepo still fit together, while the code is being written.**
 
-When a change touches one service, flow-atlas checks it against the others:
+flow-atlas reads the routes each service registers and the requests each client sends, and checks a change against the
+other services. No LLM is involved: the same code always gives the same findings.
 
-- a client calls an API that no service serves (a typo, a route that was never added, one that was removed);
-- a service serves an API that nothing calls any more;
-- a service calls another that it is not meant to depend on;
-- a document or event is produced and never consumed, or the other way round.
-
-It reads the code itself: the routes each service registers and the requests each client sends. Every finding points at
-a file and a line, and the same code always gives the same findings: no LLM is involved.
-
-flow-atlas is built for coding agents. An agent works on one part of a repository at a time, so it easily builds the
-client and forgets the service, adds a second API that does what an existing one does, or puts one service's job into
-another. flow-atlas shows those gaps while the agent works, instead of in a later review. The
-[agent skill](skills/flow-atlas/SKILL.md) tells an agent when to run it and how to handle what it finds.
+It is built for coding agents. An agent works on one part of a repository at a time, so it easily builds the client
+and forgets the service, adds a second API that does what an existing one does, or puts one service's job into another.
+flow-atlas shows those gaps while the agent works, instead of in a later review.
 
 ![A refund call that no service serves, found by atlas check and fixed](docs/media/demo.gif)
 
-The demo runs on [`fixtures/shop`](fixtures/shop), the sample monorepo in this repository: a change makes the BFF call
-`POST /orders/{id}/refund`, which the orders service does not serve. `atlas check --since main` points at the line, the
-route is added, and the check comes back clean. ([MP4](docs/media/demo.mp4))
-
-Try it on the same sample:
+Recorded on [`fixtures/shop`](fixtures/shop), the sample monorepo in this repository ([MP4](docs/media/demo.mp4)). To
+run the check on it yourself:
 
 ```bash
 git clone https://github.com/hellices/flow-atlas && cd flow-atlas
@@ -49,7 +38,7 @@ npx github:hellices/flow-atlas check --root fixtures/shop
 | Finding | Example | Code in the output |
 |---|---|---|
 | An API nobody calls | `orders` serves `GET /orders/{id}/history`, and no client in the repository requests it | FA001 |
-| A call nothing serves | `bff` sends `POST /orders/{id}/refund`, and `orders` has no such route | FA002 |
+| A call nothing serves | the demo above | FA002 |
 | A dependency that is not declared, or a cycle | `web` calls `orders` directly, but its `component.json` declares only that it uses `bff` | FA003 |
 | A document or event with one side missing | a `coupon` document is produced, and nothing consumes it | FA004 |
 | A written flow the code no longer follows | a flow names a route that was renamed, or two steps the code does not connect | FA007 |
@@ -94,12 +83,9 @@ For each route and call, atlas also reads:
 - **What a route's handler calls next,** through functions, imports and ports and adapters (TypeScript and
   JavaScript), and the links and forms a Spring or Next.js page renders.
 
-atlas reads only what the code states for certain: a literal path, with the meaning the framework's documentation or
-source gives it. Nothing is guessed in place of what it cannot read. Where it sees something it cannot settle (a path
-in a syntax it does not read, a base held in a value, a prefix it cannot trace), it prints a `limit:` line that says
-what it left out. A URL held entirely in a value, such as one taken from a server response, is not a call atlas can
-see, so it leaves no limit either. "No caller" therefore means none among what atlas can read, and no limit does not
-prove that everything was read.
+atlas reads only what the code states for certain, with the meaning the framework's documentation or source gives it,
+and guesses nothing. What it cannot read is a `limit:` line or, where it cannot see it at all, one of the
+[limits](#limits) below.
 
 Every rule, per framework and library: [config.md](skills/flow-atlas/references/config.md#what-the-extractors-read).
 How atlas reads each framework and client library is measured against the framework itself in
@@ -140,7 +126,8 @@ Start from what atlas finds, write the configuration, then scan until it reads w
 
 1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
 2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that
-   list: the components, where each serves routes, and which files call others. [config.md](skills/flow-atlas/references/config.md) describes every key.
+   list: the components, where each serves routes, and which files call others.
+   [config.md](skills/flow-atlas/references/config.md) describes every key.
 3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
    expect two or three rounds before the findings are worth trusting.
 4. `atlas check --root <repo>` prints the findings.
@@ -191,12 +178,10 @@ atlas baseline update                         # accept the current findings as k
 
 ## Use with a coding agent
 
-The agent skill teaches an agent when to run atlas (before it adds a route or a call, and before it opens a PR) and
-how to treat what it finds.
-
-The skill is the [`skills/flow-atlas`](skills/flow-atlas) directory and follows the
-[Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor and other hosts
-load it the same way. With GitHub CLI 2.90 or later:
+The [agent skill](skills/flow-atlas/SKILL.md) teaches an agent when to run atlas (before it adds a route or a call, and
+before it opens a PR) and how to treat what it finds. It is the [`skills/flow-atlas`](skills/flow-atlas) directory
+and follows the [Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor
+and other hosts load it the same way. With GitHub CLI 2.90 or later:
 
 ```bash
 gh skill install hellices/flow-atlas flow-atlas
@@ -232,7 +217,8 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 ## Limits
 
 - **Only what is written out is read.** A path assembled across several functions, or a URL taken from a server
-  response, is not seen, and the route it calls shows up as an API nobody calls (FA001).
+  response, is not seen, and the route it calls shows up as an API nobody calls (FA001). Such a URL leaves no `limit:`
+  line either, so no limit does not prove that everything was read.
 - **Some calls are named, not read.** These are not read as calls, and a `limit:` line names each:
   - a path handed to a function after its first argument;
   - an absolute URL to a host that is neither a loopback address nor the target's `origins` entry;
