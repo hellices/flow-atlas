@@ -84,6 +84,26 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
     }
     if (steps.length || conditions.length) changed.push({ name, conditions, steps });
   }
+  // A flow that runs a flow the change reaches is reached through it, at every level; each step is named once.
+  const touched = new Map(changed.map((c) => [c.name, c]));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [name, now] of h) {
+      if (!b.has(name)) continue;
+      for (const s of now.status.steps) {
+        if (s.kind !== "flow" || !touched.has(s.target)) continue;
+        const entry = touched.get(name) ?? { name, conditions: [], steps: [] };
+        if (entry.steps.some((x) => x.stepId === s.stepId)) continue;
+        if (!touched.has(name)) {
+          touched.set(name, entry);
+          changed.push(entry);
+        }
+        entry.steps.push({ stepId: s.stepId, target: s.target, change: "runs" });
+        grew = true;
+      }
+    }
+  }
+  changed.sort((x, y) => x.name.localeCompare(y.name));
   return {
     added: [...h.keys()].filter((n) => !b.has(n)).sort(),
     removed: [...b.keys()].filter((n) => !h.has(n)).sort(),
@@ -165,6 +185,7 @@ export function diffMarkdown(d: GraphDiff): string {
         if (s.change === "added") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is added`;
         if (s.change === "removed") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is removed`;
         if (s.change === "retargeted") return `the flow's step \`${s.stepId}\` now names \`${s.target}\` (was \`${s.was}\`)`;
+        if (s.change === "runs") return `step \`${s.stepId}\` runs \`${s.target}\`, which the change reaches`;
         if (s.change === "built") return `step \`${s.stepId}\` (\`${s.target}\`) is now in the code`;
         if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;
         const reach = [s.added?.length ? `now reaches ${surfaces(s.added)}` : "", s.removed?.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);

@@ -201,9 +201,9 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     return s ? boundaryChain(s, end, depth + 1) : undefined;
   };
 
-  /** Whether a step enters (first) or leaves (last) by a registry entry, looking through sub-flows to their end steps. */
+  /** Whether a step enters (first) or leaves (last) by a registry entry in the code, looking through sub-flows to their end steps. */
   const boundaryEntry = (step: StepSpec, end: "first" | "last", depth = 0): boolean => {
-    if (step.registry) return true;
+    if (step.registry) return produced.has(step.registry);
     const sub = step.flow ? byName.get(step.flow) : undefined;
     if (!sub || depth > 4) return false;
     const steps = sub.spec.steps;

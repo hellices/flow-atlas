@@ -266,9 +266,10 @@
                         "retargeted",
                         "built",
                         "gone",
-                        "reaches"
+                        "reaches",
+                        "runs"
                       ],
-                      "description": "What the flow's text changed: added, removed, retargeted (was: the old target). What the code changed of a step the flow keeps: built (in the code now), gone (no longer), reaches (its chain reaches other surfaces)."
+                      "description": "What the flow's text changed: added, removed, retargeted (was: the old target). What the code changed of a step the flow keeps: built (in the code now), gone (no longer), reaches (its chain reaches other surfaces). runs: the flow the step runs is one the change reaches."
                     },
                     "added": {
                       "type": "array",

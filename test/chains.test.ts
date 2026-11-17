@@ -225,6 +225,27 @@ describe("chains", () => {
     expect(md).not.toContain("`untouched`");
   });
 
+  it("names a flow that runs a flow the change reaches, through every level and once per cycle", () => {
+    const child = flow("child", [{ stepId: "read", chain: "web->bff|GET /screen", role: "reads" }]);
+    const parent = flow("parent", [
+      { stepId: "open", flow: "child" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const top = flow("top", [{ stepId: "all", flow: "parent" }]);
+    const loop = flow("loop", [{ stepId: "self", flow: "loop" }]);
+    const after = scan(memory({ ...shop, "bff/src/routes.ts": shop["bff/src/routes.ts"].replace("  const users = await fetch(`${BACKEND}/users`);\n", "") }), config);
+    const afterChains = deriveChains(after, config);
+    const files = [flowFile(child, parent, top, loop)];
+    const d = diffGraphs(graph, after, [], [], report, afterChains, resolveFlows(graph, files, "2026-11-01T00:00:00Z", report), resolveFlows(after, files, "2026-11-01T00:00:00Z", afterChains));
+    expect(d.flows?.changed.map((f) => `${f.name}: ${f.steps.map((s) => `${s.stepId} ${s.change}`).join(", ")}`)).toEqual([
+      "child: read reaches",
+      "parent: open runs",
+      "top: all runs",
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    expect(diffMarkdown(d)).toContain("- `parent`: step `open` runs `child`, which the change reaches");
+  });
+
   it("names a step a revision of the flow adds, removes or points elsewhere, apart from what the code does", () => {
     const b = flow("journey", [
       { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
@@ -342,6 +363,11 @@ describe("a flow step that names a registry entry", () => {
     const item = resolveFlows(graph, [flowFile(branch, journey)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "journey")!;
     expect(item.status.steps.slice(0, 2).map((s) => s.toNext?.order)).toEqual(["declared", "declared"]);
     expect(item.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "OrderNotInCode" });
+    // An entry at the sub-flow's end that no producer names leaves the link unchecked, not ordered.
+    const unbuilt = flow("branch", [{ stepId: "listed", registry: "tool:listed", role: "listed only" }]);
+    const unchecked = resolveFlows(graph, [flowFile(unbuilt, journey)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "journey")!;
+    expect(unchecked.status.steps[0]!.toNext).toBeUndefined();
+    expect(unchecked.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "StepsUnresolved" });
   });
 });
 
