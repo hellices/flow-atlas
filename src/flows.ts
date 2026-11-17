@@ -277,14 +277,15 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         const edges = index.path(from, to, MAX_HOPS);
         steps[i]!.toNext = { connected: edges !== undefined, edges: edges ?? [] };
       }
-      // A link left unchecked because an active end, read through sub-flows, is not in the code: a step the code lost.
-      const lostLinks = new Set<number>();
-      if (lifecycle !== "planned")
-        for (let i = 0; i + 1 < spec.steps.length; i++) {
-          if (steps[i]!.toNext) continue;
-          const ends = [effectiveEnd(spec.steps[i]!, "last"), effectiveEnd(spec.steps[i + 1]!, "first")];
-          if (ends.some((e) => e.step && !e.planned && !present(e.step))) lostLinks.add(i);
-        }
+      // A link left unchecked, judged by its ends read through sub-flows: an active end not in the code is a step the
+      // code lost; otherwise a planned end, here or in a planned sub-flow, leaves the link pending.
+      const unchecked = new Map<number, "lost" | "pending">();
+      for (let i = 0; i + 1 < spec.steps.length; i++) {
+        if (steps[i]!.toNext) continue;
+        const ends = [effectiveEnd(spec.steps[i]!, "last"), effectiveEnd(spec.steps[i + 1]!, "first")];
+        if (lifecycle !== "planned" && ends.some((e) => e.step && !e.planned && !present(e.step))) unchecked.set(i, "lost");
+        else if (ends.some((e) => e.planned)) unchecked.set(i, "pending");
+      }
       const first = spec.steps[0] ? node(spec.steps[0], "first") : undefined;
       const firstChain = spec.steps[0] ? boundaryChain(spec.steps[0], "first") : undefined;
       // A chain knows who makes its request; a flow that starts with one takes its entry from the code.
@@ -309,7 +310,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
           }
         : undefined;
       const produces = (spec.produces ?? []).map((id) => ({ id, found: registries.has(id) }));
-      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object, lostLinks);
+      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object, unchecked);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
         for (const s of steps) if (s.kind === "chain") for (const id of chainById.get(s.target)?.surfaces ?? []) covered.add(id);
@@ -352,7 +353,7 @@ function deprecatedConditions(): Condition[] {
   );
 }
 
-function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject, lostLinks: Set<number> = new Set()): Condition[] {
+function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject, unchecked: Map<number, "lost" | "pending"> = new Map()): Condition[] {
   const unresolved = steps.filter((s) => !s.resolved);
   const missing = unresolved.filter((s) => s.lifecycle === "active");
   const resolved =
@@ -370,8 +371,9 @@ function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], ob
   const planned = gaps.filter((s) => touchesPlanned(steps, s));
   // A pair is left unchecked when a step is missing: an active one is a step the code lost, whatever its neighbour; a
   // planned one is the plan, not yet built.
-  const lost = (s: StepStatus) => lostLinks.has(steps.indexOf(s)) || [s, steps[steps.indexOf(s) + 1]!].some((x) => !x.resolved && x.lifecycle === "active");
-  const open = pairs.filter((s) => !s.toNext && (lost(s) || !touchesPlanned(steps, s)));
+  const lost = (s: StepStatus) => unchecked.get(steps.indexOf(s)) === "lost" || [s, steps[steps.indexOf(s) + 1]!].some((x) => !x.resolved && x.lifecycle === "active");
+  const plannedEnd = (s: StepStatus) => touchesPlanned(steps, s) || unchecked.get(steps.indexOf(s)) === "pending";
+  const open = pairs.filter((s) => !s.toNext && (lost(s) || !plannedEnd(s)));
   const pending = pairs.filter((s) => planned.includes(s) || (!s.toNext && !open.includes(s)));
   const pairName = (s: StepStatus) => `${s.stepId} -> ${steps[steps.indexOf(s) + 1]!.stepId}`;
   const connected =

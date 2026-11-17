@@ -10,6 +10,7 @@ import { resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { callsFromText } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
 import { extractRegistries } from "../src/extract/registries.js";
+import { evaluate } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
@@ -163,6 +164,10 @@ describe("calls to a component whose routes are not read", () => {
     const graph = scan(memory(files), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
     const limit = "calls web->agent: agent has no route source, so its 2 calls match nothing and FA002 does not check them; configure its routes (routes[] with files, or routes[].openapi for a generated document)";
     expect(graph.limits).toEqual([limit]);
+    // As the limit says: FA002 leaves the calls to agent alone, and still checks the ones to api.
+    const fa002 = (g: typeof graph, c: Config) => evaluate(g, c, g.limits).filter((f) => f.rule === "FA002").map((f) => f.key);
+    const withStray = scan(memory({ ...files, "web/a.ts": `${files["web/a.ts"]} fetch("/orders/stray");` }), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
+    expect(fa002(withStray, normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }))).toEqual(["FA002|web->api|GET /orders/stray"]);
     // The top-level openapi entry chooses a description for export and reads no routes: FA002 still checks nothing there.
     const routes = [{ component: "api", files: ["api/**"], styles: ["express"] }];
     expect(scan(memory(files), normalizeConfig({ components, routes, calls: both, openapi: { agent: "agent/openapi.json" } })).limits).toEqual([limit]);

@@ -204,7 +204,7 @@ export function diffMarkdown(d: GraphDiff): string {
         if (s.change === "runs") return `step \`${s.stepId}\` runs \`${s.target}\`, which the change reaches`;
         if (s.change === "built") return `step \`${s.stepId}\` (\`${s.target}\`) is now in the code`;
         if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;
-        const reach = [s.added?.length ? `now reaches ${surfaces(s.added)}` : "", s.removed?.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);
+        const reach = [s.added.length ? `now reaches ${surfaces(s.added)}` : "", s.removed.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);
         return `step \`${s.stepId}\` ${reach.length ? reach.join(" and ") : "reaches the same surfaces by other edges"}`;
       }));
       // Ready follows from the others; it is named only when nothing else says why it moved.

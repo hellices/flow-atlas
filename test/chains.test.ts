@@ -331,6 +331,7 @@ describe("a flow step that names a registry entry", () => {
     ...shop,
     "agent/tools.json": JSON.stringify([{ name: "quote" }, { name: "refund" }, { name: "listed" }]),
     "backend/src/tools.ts": ['export const QUOTE = "quote";', 'export const REFUND = "refund";'].join("\n"),
+    "web/src/tools.ts": 'export const shown = ["quote"];',
   };
   const withTools = normalizeConfig({
     ...config,
@@ -371,12 +372,13 @@ describe("a flow step that names a registry entry", () => {
     expect(() => query(graph, { kind: "registries", method: "GET" })).toThrow(/--kind registries takes --path only/);
     const doc = query(graph, { kind: "registries", path: "quo" });
     expect(doc.registries?.map((r) => r.id)).toEqual(["tool:quote"]);
+    expect(doc.registries?.[0]?.consumers).toEqual([{ file: "web/src/tools.ts", line: 1 }]);
     expect(doc.surfaces).toEqual([]);
     expect(validate("subgraph", doc)).toEqual([]);
     expect(queryText(query(graph, { kind: "registries" }))).toBe(
       [
         "registry entries (3)",
-        "  tool:quote  agent/tools.json:1  producers 1 (backend/src/tools.ts:1)  consumers 0",
+        "  tool:quote  agent/tools.json:1  producers 1 (backend/src/tools.ts:1)  consumers 1 (web/src/tools.ts:1)",
         "  tool:refund  agent/tools.json:1  producers 1 (backend/src/tools.ts:2)  consumers 0",
         "  tool:listed  agent/tools.json:1  producers 0  consumers 0",
         "",
@@ -444,6 +446,14 @@ describe("a flow step that names a registry entry", () => {
     ]);
     const connected = resolveFlows(graph, [flowFile(gone, beside)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "beside")!.status.conditions.find((c) => c.type === "Connected");
     expect(connected).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: gone -> quote" });
+    // An end inside a planned sub-flow, not built yet, is the plan's: the link is pending, not lost.
+    const later = { ...flow("later", [{ stepId: "listed", registry: "tool:listed", role: "listed only" }]), spec: { lifecycle: "planned" as const, steps: [{ stepId: "listed", registry: "tool:listed", role: "listed only" }] } };
+    const ahead = flow("ahead", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "later", flow: "later" },
+    ]);
+    const aheadConnected = resolveFlows(graph, [flowFile(later, ahead)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "ahead")!.status.conditions.find((c) => c.type === "Connected");
+    expect(aheadConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> later" });
   });
 });
 

@@ -359,8 +359,20 @@ export interface FlowChange {
    * step the flow keeps: `built` (in the code now), `gone` (no longer), `reaches` (its chain reaches other surfaces),
    * `runs` (the flow it runs is one the change reaches).
    */
-  steps: Array<{ stepId: string; target: string; change: "added" | "removed" | "retargeted" | "built" | "gone" | "reaches" | "runs"; was?: string; kind?: string; wasKind?: string; added?: string[]; removed?: string[] }>;
+  steps: FlowStepChange[];
 }
+
+type StepChangeBase = { stepId: string; target: string };
+
+/** One change to a step, by `change`: each carries only its own fields, as diff.schema.json requires. */
+export type FlowStepChange =
+  | (StepChangeBase & { change: "added" })
+  | (StepChangeBase & { change: "removed" })
+  | (StepChangeBase & { change: "built" })
+  | (StepChangeBase & { change: "gone" })
+  | (StepChangeBase & { change: "runs" })
+  | (StepChangeBase & { change: "retargeted"; was: string; kind?: string; wasKind?: string })
+  | (StepChangeBase & { change: "reaches"; added: string[]; removed: string[] });
 
 export interface ComponentEdge {
   from: string;
