@@ -247,6 +247,14 @@ function checkCalls(spec: CallSource): CallSource {
   return { ...spec, wrappers: spec.wrappers.map((w) => ({ name: w.name, defaultMethod: w.defaultMethod.toUpperCase() })) };
 }
 
+/**
+ * Components whose routes the configuration reads, from code or from a generated document (`routes[].openapi`): the
+ * calls to these are checked (FA002). The top-level `openapi` entry chooses a description for export and reads no routes.
+ */
+export function routedComponents(config: Pick<Config, "routes">): Set<string> {
+  return new Set(config.routes.map((r) => r.component));
+}
+
 export function ruleEnabled(config: Config, rule: RuleId): boolean {
   return config.rules[rule]?.enabled !== false;
 }

@@ -1,4 +1,5 @@
-import { parseAllDocuments } from "yaml";
+import { createHash } from "node:crypto";
+import { parseAllDocuments, stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
@@ -267,6 +268,10 @@ describe("chains", () => {
     ]);
     const h = flow("pair", [b.spec.steps[1]!, b.spec.steps[0]!]);
     const parent = flow("parent", [{ stepId: "run", flow: "pair" }]);
+    // Each side's file holds its own text, as a flow file read from disk does.
+    const written = (...flows: FlowObject[]): LoadedFile => ({ ...flowFile(...flows), text: flows.map((f) => stringify(f)).join("---\n") });
+    const before = written(b, parent);
+    const after = written(h, parent);
     const d = diffGraphs(
       graph,
       graph,
@@ -274,11 +279,16 @@ describe("chains", () => {
       [],
       report,
       report,
-      resolveFlows(graph, [flowFile(b, parent)], "2026-11-01T00:00:00Z", report),
-      resolveFlows(graph, [flowFile(h, parent)], "2026-11-01T00:00:00Z", report),
+      resolveFlows(graph, [before], "2026-11-01T00:00:00Z", report),
+      resolveFlows(graph, [after], "2026-11-01T00:00:00Z", report),
     );
-    // The flow files each side read are in the provenance, with digests, wherever they are kept.
-    expect(d.provenance.resolvedDependencies.filter((r) => r.name.endsWith(" flows")).map((r) => `${r.name} ${r.uri}`)).toEqual(["base flows f.flow.yaml", "head flows f.flow.yaml"]);
+    // The flow files each side read are in the provenance with the digest of the text each read, wherever they are kept.
+    const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+    expect(d.provenance.resolvedDependencies.filter((r) => r.name.endsWith(" flows"))).toEqual([
+      { name: "base flows", uri: "f.flow.yaml", digest: { sha256: sha256(before.text) } },
+      { name: "head flows", uri: "f.flow.yaml", digest: { sha256: sha256(after.text) } },
+    ]);
+    expect(sha256(before.text)).not.toBe(sha256(after.text));
     expect(d.flows?.changed).toEqual([
       { name: "pair", conditions: [], steps: [], order: { was: ["read", "stop"], now: ["stop", "read"] } },
       { name: "parent", conditions: [], steps: [{ stepId: "run", target: "pair", change: "runs" }] },
@@ -427,6 +437,13 @@ describe("a flow step that names a registry entry", () => {
       const pair = resolveFlows(graph, [flowFile(unbuilt, gone, flow("pair", steps))], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "pair")!;
       expect(pair.status.steps[0]!.toNext, JSON.stringify(steps)).toBeUndefined();
     }
+    // An active end missing inside a sub-flow is a step the code lost, even beside a planned neighbour.
+    const beside = flow("beside", [
+      { stepId: "gone", flow: "gone" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const connected = resolveFlows(graph, [flowFile(gone, beside)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "beside")!.status.conditions.find((c) => c.type === "Connected");
+    expect(connected).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: gone -> quote" });
   });
 });
 

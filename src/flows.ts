@@ -211,6 +211,16 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     return s ? endStep(s, end, depth + 1) : undefined;
   };
   const present = (s: StepSpec | undefined): boolean => !!s && (s.registry ? produced.has(s.registry) : node(s, "first") !== undefined);
+  /** The step a step enters or leaves by, and whether it is planned there: itself, or a sub-flow on the way, planned. */
+  const effectiveEnd = (step: StepSpec, end: "first" | "last", planned = false, depth = 0): { step?: StepSpec; planned: boolean } => {
+    const p = planned || step.lifecycle === "planned";
+    if (!step.flow) return { step, planned: p };
+    const sub = byName.get(step.flow);
+    if (!sub || depth > 4) return { planned: p };
+    const steps = sub.spec.steps;
+    const s = end === "first" ? steps[0] : steps[steps.length - 1];
+    return s ? effectiveEnd(s, end, p || sub.spec.lifecycle === "planned", depth + 1) : { planned: p };
+  };
 
   const items: FlowReport["items"] = [];
   const covered = new Set<string>();
@@ -267,6 +277,14 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         const edges = index.path(from, to, MAX_HOPS);
         steps[i]!.toNext = { connected: edges !== undefined, edges: edges ?? [] };
       }
+      // A link left unchecked because an active end, read through sub-flows, is not in the code: a step the code lost.
+      const lostLinks = new Set<number>();
+      if (lifecycle !== "planned")
+        for (let i = 0; i + 1 < spec.steps.length; i++) {
+          if (steps[i]!.toNext) continue;
+          const ends = [effectiveEnd(spec.steps[i]!, "last"), effectiveEnd(spec.steps[i + 1]!, "first")];
+          if (ends.some((e) => e.step && !e.planned && !present(e.step))) lostLinks.add(i);
+        }
       const first = spec.steps[0] ? node(spec.steps[0], "first") : undefined;
       const firstChain = spec.steps[0] ? boundaryChain(spec.steps[0], "first") : undefined;
       // A chain knows who makes its request; a flow that starts with one takes its entry from the code.
@@ -291,7 +309,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
           }
         : undefined;
       const produces = (spec.produces ?? []).map((id) => ({ id, found: registries.has(id) }));
-      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object);
+      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object, lostLinks);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
         for (const s of steps) if (s.kind === "chain") for (const id of chainById.get(s.target)?.surfaces ?? []) covered.add(id);
@@ -334,7 +352,7 @@ function deprecatedConditions(): Condition[] {
   );
 }
 
-function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject): Condition[] {
+function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject, lostLinks: Set<number> = new Set()): Condition[] {
   const unresolved = steps.filter((s) => !s.resolved);
   const missing = unresolved.filter((s) => s.lifecycle === "active");
   const resolved =
@@ -352,7 +370,7 @@ function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], ob
   const planned = gaps.filter((s) => touchesPlanned(steps, s));
   // A pair is left unchecked when a step is missing: an active one is a step the code lost, whatever its neighbour; a
   // planned one is the plan, not yet built.
-  const lost = (s: StepStatus) => [s, steps[steps.indexOf(s) + 1]!].some((x) => !x.resolved && x.lifecycle === "active");
+  const lost = (s: StepStatus) => lostLinks.has(steps.indexOf(s)) || [s, steps[steps.indexOf(s) + 1]!].some((x) => !x.resolved && x.lifecycle === "active");
   const open = pairs.filter((s) => !s.toNext && (lost(s) || !touchesPlanned(steps, s)));
   const pending = pairs.filter((s) => planned.includes(s) || (!s.toNext && !open.includes(s)));
   const pairName = (s: StepStatus) => `${s.stepId} -> ${steps[steps.indexOf(s) + 1]!.stepId}`;

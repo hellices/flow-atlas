@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import { ruleEnabled } from "./config.js";
+import { routedComponents, ruleEnabled } from "./config.js";
 import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { isRedirect, surfaceId } from "./model.js";
@@ -63,7 +63,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
 
   if (ruleEnabled(config, "FA002")) {
     // Components whose routes are configured: a call to one is checked even when none of its routes is left.
-    const served = new Set(config.routes.map((r) => r.component));
+    const served = routedComponents(config);
     graph.calls.forEach((c, i) => {
       if (!unmatched(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
       out.push(
