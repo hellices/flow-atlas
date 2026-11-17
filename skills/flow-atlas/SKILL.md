@@ -1,6 +1,6 @@
 ---
 name: flow-atlas
-description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event), checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
+description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event), checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, walking a customer journey or scenario against the code to see which steps are built, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
 license: MIT
 compatibility: Requires Node.js 20+ and the atlas CLI from this repository (npx github:hellices/flow-atlas, or npm install -g github:hellices/flow-atlas). Reads git; writes only to --out.
 metadata:
@@ -51,10 +51,11 @@ agent see it.
 | surfaces and calls by path, method or component | `query` |
 | a surface's callers upstream and the services it reaches downstream | `trace` |
 | chains: each request, everything it reaches, who makes it, what may follow it, and whether any edge is joined only by name | `chains` |
+| registry entries (tools, events, artifacts) with where each is listed, produced and consumed | `query --kind registries` |
 | a Flow draft per chain no flow names, with its chain, entry and the requests that may follow | `draft flows` |
 | whether a Flow holds in code, and whether its author fields are written | `flows` (conditions) |
 | findings with locations and nearby paths | `check`, `explain` |
-| what changed between revisions, including chains that appear, disappear or reach other surfaces | `diff` |
+| what changed between revisions, including chains that appear, disappear or reach other surfaces, and the flows that reaches: a step built or lost, a condition that moved | `diff` |
 | configuration candidates and how much the configuration covers | `inventory`, `scan` |
 | each component's OpenAPI descriptions, how far committed ones agree with the code, and which one is the component's when the code decides it | `scan`, `inventory` |
 
@@ -66,6 +67,7 @@ Do not grep `graph.json`, guess callers from text search, or type surface ids fr
 |---|---|
 | a Flow's `title` and each step's `role` | `Documented` (present, not true) |
 | a journey: which chains, in which order, picked from atlas output | `Resolved`; `Connected` from `next`, else Unknown |
+| a journey step that is no request (a tool an agent calls within one request, an event): a `registry` step, its id copied from `query --kind registries` | `Resolved` where a producer names the entry; its order is Unknown |
 | `owner`, `labels`, `sources`, `lifecycle` (planned when a step is not built) | schema; `Resolved` counts planned steps apart |
 | `produces` | `ProducesListed` |
 | exceptions: reason, `decidedBy`, `reviewBy` | expiry brings the finding back |
@@ -137,14 +139,37 @@ conditions into the file; atlas computes them each run. A surface or call step, 
 `atlas query`, is still accepted for a plan that names a route not called yet. The format is `schema/flow.schema.json` in the flow-atlas
 package, whose `docs/schema.md` and `docs/responsibilities.md` explain it.
 
+## Walking a journey against the code
+
+A journey, scenario or user story written outside the code (an issue, a product document) names what a customer does,
+step by step, with branches. Walking it tells which steps the code has and which it does not; it does not tell whether
+the customer gets the result the journey describes.
+
+1. For each step, find what carries it out, from atlas output only: the request (`atlas chains`, `atlas query`), or,
+   for what happens inside one request, such as a tool an agent calls in a conversation turn or an event a handler
+   emits, the registry entry (`atlas query --kind registries`). If neither lists it, the step is not built.
+2. Write one flow per path of the journey: its steps in the journey's order, `chain` for a request and `registry` for
+   an entry, `lifecycle: planned` on a step nothing carries out yet, `sources` naming the journey, and a role per step.
+   A branch that takes another request or entry is a flow of its own, reusing the shared steps through a `flow` step; a
+   branch that differs only in the data or the reply is not structure and stays out of the flows.
+3. `atlas flows` gives each step its place in the code, `planned`, or `NOT FOUND`. Report them as the journey's
+   gaps: a planned step is work the journey still needs; an active step not found was built and is gone. A step found
+   is a step the code has, not a step that works: a result the customer does not get is found by running it (tests,
+   end-to-end runs, a person walking it), not by atlas. Say which steps you could not place and why.
+4. The order of registry steps, and of requests the code does not link, stays Unknown. Do not add steps or edges to
+   make it True.
+
+`atlas export arazzo` gives a runner the journey's requests; registry steps are left out, each with its reason.
+
 ## Before finishing
 
 1. `atlas check --since <revision you started from>`. Only findings your change introduced appear.
 2. For each: `atlas explain <key>` shows the locations and similar paths. Then fix it, correct the configuration, or
    record an exception. See "Handling a finding".
 3. Put `atlas diff <base>..WORKTREE --format markdown` (or `<base>..HEAD`) and the `trace` of each new surface in
-   the PR description or hand-off note. Its chain section says which requests now reach other surfaces; each such
-   change is something a reviewer should see, intended or not.
+   the PR description or hand-off note. Its chain section says which requests now reach other surfaces, and "Flows the
+   change reaches" which flows' steps it builds, loses or sends elsewhere; each is something a reviewer should see,
+   intended or not.
 4. `atlas chains --unnamed`: a request your change added that no flow names is a candidate for `atlas draft flows`.
 
 ## When the configuration has fallen behind

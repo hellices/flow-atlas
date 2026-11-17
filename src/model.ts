@@ -317,6 +317,8 @@ export interface Subgraph extends Document<"Trace" | "Query"> {
   surfaces: Surface[];
   calls: Call[];
   edges: Edge[];
+  /** `query --kind registries`: the registry entries whose id contains `--path`. */
+  registries?: RegistryEntry[];
 }
 
 export type RuleId = "FA001" | "FA002" | "FA003" | "FA004" | "FA007";
@@ -343,6 +345,15 @@ export interface GraphDiff extends Document<"Diff"> {
   findings: { new: Finding[]; resolved: Finding[] };
   /** Chains that appear, disappear, or reach different surfaces: what a change does to the requests the code makes. */
   chains: { added: string[]; removed: string[]; changed: Array<{ id: string; added: string[]; removed: string[] }> };
+  /** Flows the change reaches: a step it builds or loses, a chain step reaching other surfaces, a condition that moves. */
+  flows?: { added: string[]; removed: string[]; changed: FlowChange[] };
+}
+
+export interface FlowChange {
+  name: string;
+  conditions: Array<{ type: string; was: { status: string; reason: string }; now: { status: string; reason: string } }>;
+  /** `built`: the step is in the code now; `gone`: it no longer is; `reaches`: its chain reaches other surfaces. */
+  steps: Array<{ stepId: string; target: string; change: "built" | "gone" | "reaches"; added?: string[]; removed?: string[] }>;
 }
 
 export interface ComponentEdge {

@@ -148,6 +148,23 @@ describe("registry coverage", () => {
   });
 });
 
+describe("calls to a component whose routes are not read", () => {
+  it("says the calls are matched to nothing and not checked, until its routes or its description are configured", () => {
+    const files = { "web/a.ts": 'fetch("/v1/sessions", { method: "POST" }); fetch("/orders");', "api/app.ts": 'app.get("/orders", h);' };
+    const both = [
+      { from: "web", to: "agent", files: ["web/**"] },
+      { from: "web", to: "api", files: ["web/**"] },
+    ];
+    const components = [
+      { name: "web", path: "web" },
+      { name: "api", path: "api" },
+      { name: "agent", path: "agent" },
+    ];
+    const graph = scan(memory(files), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
+    expect(graph.limits).toEqual(["calls web->agent: agent has no route source, so its 2 calls match nothing and FA002 does not check them; configure its routes or its OpenAPI document"]);
+  });
+});
+
 describe("routes", () => {
   it("reads a quoted path key in Nest options", () => {
     const text = '@Controller({ "path": "users" })\nclass C {\n  @Get(":id") a() {}\n}';

@@ -123,7 +123,7 @@
       "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "step": {
-      "description": "A hop the flow must pass through; Arazzo's Step with surface, call, chain or flow in place of operationId, operationPath or workflowId. Hops between listed steps may be left out.",
+      "description": "A hop the flow must pass through; Arazzo's Step with surface, call, chain or flow in place of operationId, operationPath or workflowId, or a registry entry, which Arazzo has no step for. Hops between listed steps may be left out.",
       "type": "object",
       "required": [
         "stepId"
@@ -150,6 +150,10 @@
         "flow": {
           "$ref": "#/$defs/name",
           "description": "author: the name of another Flow used as one step."
+        },
+        "registry": {
+          "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntryId",
+          "description": "from atlas: a registry entry as registry:key, such as a tool an agent calls or an event a step emits. Built where a producer names it; nothing in the code orders it with the steps around it."
         },
         "role": {
           "description": "author. What this component does in the flow, and what it leaves to others. Required for Documented=True on surface and call steps.",
@@ -183,6 +187,11 @@
         {
           "required": [
             "flow"
+          ]
+        },
+        {
+          "required": [
+            "registry"
           ]
         }
       ]

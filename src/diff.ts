@@ -1,5 +1,6 @@
 import type { ChainReport } from "./chains.js";
-import { API_VERSION, isRedirect, type ComponentEdge, type Finding, type Graph, type GraphDiff } from "./model.js";
+import type { FlowReport } from "./flows.js";
+import { API_VERSION, isRedirect, type ComponentEdge, type Finding, type FlowChange, type Graph, type GraphDiff } from "./model.js";
 import { provenance } from "./provenance.js";
 
 function componentEdges(graph: Graph): Map<string, ComponentEdge> {
@@ -37,6 +38,49 @@ function chainDiff(base: ChainReport | undefined, head: ChainReport | undefined)
   };
 }
 
+/**
+ * The flows a change reaches, matched by name and their steps by stepId: what a reviewer of the change should read
+ * against each flow's intent. A flow's own text changing is not reported; what the code makes of it is.
+ */
+function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"]): NonNullable<GraphDiff["flows"]> {
+  const first = (r: FlowReport) => {
+    const m = new Map<string, FlowReport["items"][number]>();
+    for (const i of r.items) if (!m.has(i.metadata.name)) m.set(i.metadata.name, i);
+    return m;
+  };
+  const b = first(base);
+  const h = first(head);
+  const reach = new Map(chains.changed.map((c) => [c.id, c]));
+  const changed: FlowChange[] = [];
+  for (const [name, now] of [...h.entries()].sort(([x], [y]) => x.localeCompare(y))) {
+    const was = b.get(name);
+    if (!was) continue;
+    const before = new Map(was.status.steps.map((s) => [s.stepId, s]));
+    const steps: FlowChange["steps"] = [];
+    for (const s of now.status.steps) {
+      const old = before.get(s.stepId);
+      if (!old || old.target !== s.target) continue;
+      if (s.resolved !== old.resolved) steps.push({ stepId: s.stepId, target: s.target, change: s.resolved ? "built" : "gone" });
+      else if (s.kind === "chain" && reach.has(s.target)) {
+        const c = reach.get(s.target)!;
+        steps.push({ stepId: s.stepId, target: s.target, change: "reaches", added: c.added, removed: c.removed });
+      }
+    }
+    const conditions: FlowChange["conditions"] = [];
+    for (const c of now.status.conditions) {
+      const o = was.status.conditions.find((x) => x.type === c.type);
+      if (o && (o.status !== c.status || o.reason !== c.reason))
+        conditions.push({ type: c.type, was: { status: o.status, reason: o.reason }, now: { status: c.status, reason: c.reason } });
+    }
+    if (steps.length || conditions.length) changed.push({ name, conditions, steps });
+  }
+  return {
+    added: [...h.keys()].filter((n) => !b.has(n)).sort(),
+    removed: [...b.keys()].filter((n) => !h.has(n)).sort(),
+    changed,
+  };
+}
+
 export function diffGraphs(
   base: Graph,
   head: Graph,
@@ -44,6 +88,8 @@ export function diffGraphs(
   headFindings: Finding[],
   baseChains?: ChainReport,
   headChains?: ChainReport,
+  baseFlows?: FlowReport,
+  headFlows?: FlowReport,
 ): GraphDiff {
   const bs = new Map(base.surfaces.map((s) => [s.id, s]));
   const hs = new Map(head.surfaces.map((s) => [s.id, s]));
@@ -51,6 +97,7 @@ export function diffGraphs(
   const he = componentEdges(head);
   const bk = new Set(baseFindings.map((f) => f.key));
   const hk = new Set(headFindings.map((f) => f.key));
+  const chains = chainDiff(baseChains, headChains);
   return {
     apiVersion: API_VERSION,
     kind: "Diff",
@@ -65,7 +112,8 @@ export function diffGraphs(
     surfaces: { added: minus(hs, bs), removed: minus(bs, hs) },
     componentEdges: { added: minus(he, be), removed: minus(be, he) },
     findings: { new: headFindings.filter((f) => !bk.has(f.key)), resolved: baseFindings.filter((f) => !hk.has(f.key)) },
-    chains: chainDiff(baseChains, headChains),
+    chains,
+    ...(baseFlows && headFlows ? { flows: flowDiff(baseFlows, headFlows, chains) } : {}),
   };
 }
 
@@ -96,6 +144,26 @@ export function diffMarkdown(d: GraphDiff): string {
       ].filter(Boolean);
       lines.push(`- \`${c.id}\`: ${reach.length ? reach.join("; ") : "same surfaces, edges between them changed"}`);
     }
+    lines.push("");
+  }
+  const flows = d.flows;
+  if (flows && (flows.changed.length || flows.added.length || flows.removed.length)) {
+    lines.push("**Flows the change reaches**");
+    const surfaces = (ids: string[]) => ids.map((s) => `\`${s}\``).join(", ");
+    for (const f of flows.changed) {
+      const parts = f.steps.map((s) => {
+        if (s.change === "built") return `step \`${s.stepId}\` (\`${s.target}\`) is now in the code`;
+        if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;
+        const reach = [s.added?.length ? `now reaches ${surfaces(s.added)}` : "", s.removed?.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);
+        return `step \`${s.stepId}\` ${reach.length ? reach.join(" and ") : "reaches the same surfaces by other edges"}`;
+      });
+      // Ready follows from the others; it is named only when nothing else says why it moved.
+      const moved = f.conditions.filter((c) => c.type !== "Ready" || f.conditions.length === 1);
+      parts.push(...moved.map((c) => `${c.type} ${c.was.status} (${c.was.reason}) → ${c.now.status} (${c.now.reason})`));
+      lines.push(`- \`${f.name}\`: ${parts.join("; ")}`);
+    }
+    for (const n of flows.added) lines.push(`- \`${n}\`: added`);
+    for (const n of flows.removed) lines.push(`- \`${n}\`: removed`);
     lines.push("");
   }
   if (d.findings.new.length) lines.push("**New findings**", ...d.findings.new.map((f) => `- ${f.rule} ${f.message}`), "");

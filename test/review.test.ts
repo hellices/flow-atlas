@@ -72,6 +72,18 @@ describe("Arazzo export", () => {
     expect(limits).toContain("parent.run: flow child is not in this export");
     expect((workflows[0] as unknown as { "x-flow-atlas": { omitted: unknown } })["x-flow-atlas"].omitted).toEqual([{ stepId: "run", reason: "flow child is not in this export" }]);
   });
+
+  it("leaves out a registry step, which no operation stands for, and says so", () => {
+    const journey = flow("journey", [
+      { stepId: "screen", surface: "bff|GET /screens/home" },
+      { stepId: "quote", registry: "tool:quote" },
+    ]);
+    const { document, limits } = toArazzo(graph, [file(journey)], { ...config, openapi: { bff: "openapi/bff.json" } }, { title: "t" });
+    const workflows = document.workflows as Array<{ workflowId: string; steps: Array<{ stepId: string }>; "x-flow-atlas": { omitted: unknown } }>;
+    expect(workflows[0]!.steps.map((s) => s.stepId)).toEqual(["screen"]);
+    expect(limits).toContain("journey.quote: tool:quote is a registry entry, which no operation stands for");
+    expect(workflows[0]!["x-flow-atlas"].omitted).toEqual([{ stepId: "quote", reason: "tool:quote is a registry entry, which no operation stands for" }]);
+  });
 });
 
 describe("commands", () => {

@@ -315,11 +315,12 @@
             "surface",
             "call",
             "chain",
-            "flow"
+            "flow",
+            "registry"
           ]
         },
         "target": {
-          "description": "The surface id, call id, chain id or flow name the step names.",
+          "description": "The surface id, call id, chain id, flow name or registry entry the step names.",
           "type": "string"
         },
         "lifecycle": {

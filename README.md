@@ -136,6 +136,7 @@ Start from what atlas finds, write the configuration, then scan until it reads w
 atlas inventory --root <repo>                 # candidate components, routes, client calls
 atlas scan --root <repo>                      # what each configured source yielded
 atlas query --path /orders                    # surfaces and calls by path or component
+atlas query --kind registries                 # registry entries (tools, events) a flow step can name
 atlas trace "bff|GET /screens/order/{id}"     # callers upstream and services downstream
 atlas chains --unnamed                        # each request and everything it reaches, that no flow names yet
 atlas draft flows                             # a flow draft per such chain; only the author's fields are left
@@ -143,7 +144,7 @@ atlas flows                                   # flow descriptions held against t
 atlas check --root <repo>                     # findings new since the baseline
 atlas check --since main                      # findings the current change introduced
 atlas check --format sarif > atlas.sarif      # findings as SARIF 2.1.0 (code scanning, IDE viewers)
-atlas diff main..WORKTREE --format markdown   # flow changes and new findings for a PR description
+atlas diff main..WORKTREE --format markdown   # flow changes, the flows they reach, and new findings for a PR description
 atlas export arazzo > flows.arazzo.yaml       # flows as Arazzo 1.0 (stdout; keep it at the repository root)
 atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
@@ -205,8 +206,11 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 - **Flows.** Besides its steps and their roles, a flow can name the decisions behind it (`sources`), what it produces
   (`produces`) and whether it is planned or going away (`lifecycle`). `atlas flows` also reports `ProducesListed`
   (each `produces` entry is in a registry) and `Documented` (the title and every role are written). `atlas draft
-  flows` drafts a flow for each chain no flow names yet, leaving only the title and roles to write. A flow file is
-  reviewed like code, in the pull request that changes it.
+  flows` drafts a flow for each chain no flow names yet, leaving only the title and roles to write. A step that is no
+  request, such as a tool an agent calls within a conversation turn, names a registry entry (`registry: tool:quote`),
+  so a customer journey can be walked against the code step by step: each step is placed in the code, planned, or not
+  found. `atlas diff` names the flows a change reaches. A flow file is reviewed like code, in the pull request that
+  changes it.
 - **Output.** Everything printed with `--format json` or `--format yaml` follows the JSON Schemas in [`schema/`](schema),
   with `apiVersion`, `kind` and an SLSA-shaped `provenance` (the commit and files read, with digests). There are no
   timestamps, so the same inputs give the same document. Route paths are OpenAPI path templates (`{id}`).

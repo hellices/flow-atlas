@@ -142,6 +142,150 @@
           }
         }
       }
+    },
+    "flows": {
+      "description": "Flows the change reaches, matched by name and their steps by stepId: a step it builds or loses, a chain step reaching other surfaces, a condition that moves. Present when the flows of both revisions were read.",
+      "type": "object",
+      "required": [
+        "added",
+        "removed",
+        "changed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "conditions",
+              "steps"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "conditions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "was",
+                    "now"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "Ready",
+                        "Resolved",
+                        "Connected",
+                        "ProducesListed",
+                        "Documented"
+                      ]
+                    },
+                    "was": {
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "reason"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "True",
+                            "False",
+                            "Unknown"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "now": {
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "reason"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "True",
+                            "False",
+                            "Unknown"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "stepId",
+                    "target",
+                    "change"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "stepId": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "change": {
+                      "enum": [
+                        "built",
+                        "gone",
+                        "reaches"
+                      ],
+                      "description": "built: the step is in the code now; gone: it no longer is; reaches: its chain reaches other surfaces."
+                    },
+                    "added": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+                      }
+                    },
+                    "removed": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/surfaceId"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
