@@ -359,7 +359,7 @@ export interface FlowChange {
    * step the flow keeps: `built` (in the code now), `gone` (no longer), `reaches` (its chain reaches other surfaces),
    * `runs` (the flow it runs is one the change reaches).
    */
-  steps: Array<{ stepId: string; target: string; change: "added" | "removed" | "retargeted" | "built" | "gone" | "reaches" | "runs"; was?: string; added?: string[]; removed?: string[] }>;
+  steps: Array<{ stepId: string; target: string; change: "added" | "removed" | "retargeted" | "built" | "gone" | "reaches" | "runs"; was?: string; kind?: string; wasKind?: string; added?: string[]; removed?: string[] }>;
 }
 
 export interface ComponentEdge {

@@ -86,7 +86,10 @@ False `Documented` means a field the author writes is empty.
 ## What keeps the line in place
 
 The structure of a flow is atlas's: a chain step carries no surfaces, edges or entry written by hand, and a journey
-can only order chains and registry entries atlas lists. The structural conditions (`Resolved`, `Connected`) fail only on a fact from the code. What
+can only order chains and registry entries atlas lists. The structural conditions (`Resolved`, `Connected`) fail only on a fact from the code as
+the configuration reads it; for a registry step that fact is whether a file the registry's `producers` select names
+the entry, so a producer glob that selects too little or too much moves it, and the configuration is the place to
+correct it. What
 the author writes is checked for presence and validity, not for meaning: `Documented` and FA007 fail on an empty title
 or role, the schema check on an invalid field; none of those says the code is wrong. A person reviews the intent in
 the pull request that changes the flow file. The flow schema says in each field's description who

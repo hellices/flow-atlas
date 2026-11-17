@@ -62,7 +62,7 @@ Options
   --component <name>  query: only this component
   --path <path>       query: surfaces whose route matches the path, or whose path contains it
   --method <m>        query: only this method
-  --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids)
+  --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids; --component and --method do not apply)
   --flow <name>       export: only this flow
   --unnamed           chains: only the chains no flow names
 
@@ -330,6 +330,7 @@ function matchesFilter(n: Graph["surfaces"][number] | Graph["calls"][number], f:
 export function query(graph: Graph, filter: QueryFilter): Subgraph {
   const kept = Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined));
   if (filter.kind === "registries") {
+    if (filter.component || filter.method) throw new Error("--kind registries takes --path only: registry entries belong to no component and have no method");
     const registries = graph.registries.filter((r) => !filter.path || r.id.includes(filter.path));
     return { apiVersion: API_VERSION, kind: "Query", provenance: derived(graph.provenance, "Query", kept), filter: kept, surfaces: [], calls: [], edges: [], registries };
   }

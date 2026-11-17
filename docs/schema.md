@@ -100,8 +100,10 @@ conversation request, or an event a step emits. It counts as in the code where t
 `producers` select, as FA004 reads it: a text match, which shows neither that the entry is registered nor that it
 works. Producer globs that also select the consumer side, the active list or tests, and keys that are common words,
 make that match say little; an entry only listed, or a registry whose producers select no file, gives a step atlas
-cannot place. Nothing in the code orders it with the steps around it, so the order is the author's
-(`Connected: Unknown`, `OrderNotInCode`), and `export arazzo` leaves it out with its reason. `role` is what the component does in that
+cannot place: an active one leaves `Resolved` False and its links unchecked (`Connected: Unknown`,
+`StepsUnresolved`), a planned one pending. Nothing in the code orders a placed entry with the steps around it, so once
+both ends of a link are in the code (read through sub-flows) the order is the author's (`Connected: Unknown`,
+`OrderNotInCode`). `export arazzo` leaves a registry step out with its reason. `role` is what the component does in that
 step; keeping modules' responsibilities from mixing needs this written down. Not every hop between surface steps has to
 be listed: atlas finds the shortest path along the graph's edges to the next step. Between two chain steps the link is
 a request the first chain's result offers (`next`); with none, two chains one component starts are in the author's
@@ -332,7 +334,8 @@ chains added, removed, and changed with the surfaces they now reach or no longer
 reaches (`flows`): matched by name and their steps by `stepId`, each step the change builds (`built`) or loses
 (`gone`), each chain step whose chain reaches other surfaces (`reaches`), and each condition whose status or reason
 moved. Flow files in the repository are read at each revision, so a step the flow itself adds (`added`), removes
-(`removed`), points at another target (`retargeted`, with the old one in `was`) or puts in another order (`order`) is named apart from what the code
+(`removed`), points at another target (`retargeted`, with the old one in `was`, and `kind` and `wasKind` where the kind of
+step changed too) or puts in another order (`order`) is named apart from what the code
 does to the steps it keeps, and a flow that runs a flow the change reaches is named through it (`runs`), at every
 level; flows kept outside the repository are the same at both revisions.
 

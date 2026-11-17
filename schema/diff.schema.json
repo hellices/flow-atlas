@@ -286,7 +286,71 @@
                     "was": {
                       "type": "string",
                       "description": "retargeted: the target the step named before."
+                    },
+                    "kind": {
+                      "enum": [
+                        "surface",
+                        "call",
+                        "chain",
+                        "flow",
+                        "registry"
+                      ],
+                      "description": "retargeted, where the kind of step changed: the kind it is now."
+                    },
+                    "wasKind": {
+                      "enum": [
+                        "surface",
+                        "call",
+                        "chain",
+                        "flow",
+                        "registry"
+                      ],
+                      "description": "retargeted, where the kind of step changed: the kind it was."
                     }
+                  },
+                  "if": {
+                    "required": [
+                      "change"
+                    ],
+                    "properties": {
+                      "change": {
+                        "const": "retargeted"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "was"
+                    ]
+                  },
+                  "else": {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "was"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "wasKind"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "dependentRequired": {
+                    "kind": [
+                      "wasKind"
+                    ],
+                    "wasKind": [
+                      "kind"
+                    ]
                   }
                 }
               },

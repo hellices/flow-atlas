@@ -64,7 +64,8 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
     for (const s of now.status.steps) {
       const old = before.get(s.stepId);
       if (!old) steps.push({ stepId: s.stepId, target: s.target, change: "added" });
-      else if (old.target !== s.target) steps.push({ stepId: s.stepId, target: s.target, change: "retargeted", was: old.target });
+      else if (old.target !== s.target || old.kind !== s.kind)
+        steps.push({ stepId: s.stepId, target: s.target, change: "retargeted", was: old.target, ...(old.kind !== s.kind ? { kind: s.kind, wasKind: old.kind } : {}) });
     }
     for (const s of was.status.steps) if (!after.has(s.stepId)) steps.push({ stepId: s.stepId, target: s.target, change: "removed" });
     // The order of the steps both revisions keep is the author's journey; a new order is a change of its own.
@@ -72,7 +73,7 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
     const order = kept.was.join("\n") !== kept.now.join("\n") ? kept : undefined;
     for (const s of now.status.steps) {
       const old = before.get(s.stepId);
-      if (!old || old.target !== s.target) continue;
+      if (!old || old.target !== s.target || old.kind !== s.kind) continue;
       if (s.resolved !== old.resolved) steps.push({ stepId: s.stepId, target: s.target, change: s.resolved ? "built" : "gone" });
       else if (s.kind === "chain" && reach.has(s.target)) {
         const c = reach.get(s.target)!;
@@ -196,7 +197,10 @@ export function diffMarkdown(d: GraphDiff): string {
       parts.push(...f.steps.map((s) => {
         if (s.change === "added") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is added`;
         if (s.change === "removed") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is removed`;
-        if (s.change === "retargeted") return `the flow's step \`${s.stepId}\` now names \`${s.target}\` (was \`${s.was}\`)`;
+        if (s.change === "retargeted")
+          return s.wasKind
+            ? `the flow's step \`${s.stepId}\` now names ${s.kind} \`${s.target}\` (was ${s.wasKind} \`${s.was}\`)`
+            : `the flow's step \`${s.stepId}\` now names \`${s.target}\` (was \`${s.was}\`)`;
         if (s.change === "runs") return `step \`${s.stepId}\` runs \`${s.target}\`, which the change reaches`;
         if (s.change === "built") return `step \`${s.stepId}\` (\`${s.target}\`) is now in the code`;
         if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;

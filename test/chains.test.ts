@@ -230,20 +230,34 @@ describe("chains", () => {
     const parent = flow("parent", [
       { stepId: "open", flow: "child" },
       { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+      { stepId: "again", flow: "top" },
     ]);
     const top = flow("top", [{ stepId: "all", flow: "parent" }]);
-    const loop = flow("loop", [{ stepId: "self", flow: "loop" }]);
+    const loop = flow("loop", [
+      { stepId: "read", flow: "child" },
+      { stepId: "self", flow: "loop" },
+    ]);
     const after = scan(memory({ ...shop, "bff/src/routes.ts": shop["bff/src/routes.ts"].replace("  const users = await fetch(`${BACKEND}/users`);\n", "") }), config);
     const afterChains = deriveChains(after, config);
     const files = [flowFile(child, parent, top, loop)];
     const d = diffGraphs(graph, after, [], [], report, afterChains, resolveFlows(graph, files, "2026-11-01T00:00:00Z", report), resolveFlows(after, files, "2026-11-01T00:00:00Z", afterChains));
+    // parent and top run each other, and loop runs itself: each flow and each step is named once.
     expect(d.flows?.changed.map((f) => `${f.name}: ${f.steps.map((s) => `${s.stepId} ${s.change}`).join(", ")}`)).toEqual([
       "child: read reaches",
-      "parent: open runs",
+      "loop: read runs, self runs",
+      "parent: open runs, again runs",
       "top: all runs",
     ]);
     expect(validate("diff", d)).toEqual([]);
     expect(diffMarkdown(d)).toContain("- `parent`: step `open` runs `child`, which the change reaches");
+  });
+
+  it("names a step whose kind changes while its target reads the same", () => {
+    const b = flow("kinds", [{ stepId: "x", chain: "same", role: "r" }]);
+    const h = flow("kinds", [{ stepId: "x", flow: "same" }]);
+    const d = diffGraphs(graph, graph, [], [], report, report, resolveFlows(graph, [flowFile(b)], "2026-11-01T00:00:00Z", report), resolveFlows(graph, [flowFile(h)], "2026-11-01T00:00:00Z", report));
+    expect(d.flows?.changed[0]?.steps).toEqual([{ stepId: "x", target: "same", change: "retargeted", was: "same", kind: "flow", wasKind: "chain" }]);
+    expect(diffMarkdown(d)).toContain("the flow's step `x` now names flow `same` (was chain `same`)");
   });
 
   it("names a flow whose steps change order, and the flows that run it", () => {
@@ -291,6 +305,11 @@ describe("chains", () => {
       { stepId: "stop", target: "web->bff|POST /stop", change: "removed" },
     ]);
     expect(validate("diff", d)).toEqual([]);
+    // A retargeted step without the target it named before does not follow the schema; another change carries none.
+    const step = d.flows!.changed[0]!.steps[0]!;
+    const withStep = (s: object) => ({ ...d, flows: { ...d.flows!, changed: [{ ...d.flows!.changed[0]!, steps: [s] }] } });
+    expect(validate("diff", withStep({ ...step, was: undefined }))).not.toEqual([]);
+    expect(validate("diff", withStep({ stepId: "admin", target: "x", change: "added", was: "y" }))).not.toEqual([]);
     expect(diffMarkdown(d)).toContain(
       "- `journey`: the flow's step `read` now names `web->bff|POST /stop` (was `web->bff|GET /screen`); the flow's step `admin` (`outside->backend|GET /admin/report`) is added; the flow's step `stop` (`web->bff|POST /stop`) is removed",
     );
@@ -337,6 +356,9 @@ describe("a flow step that names a registry entry", () => {
   });
 
   it("lists the registry entries a step can name, each with where it is listed, produced and consumed", () => {
+    // Registry entries belong to no component and have no method: those filters are refused, not ignored.
+    expect(() => query(graph, { kind: "registries", component: "web" })).toThrow(/--kind registries takes --path only/);
+    expect(() => query(graph, { kind: "registries", method: "GET" })).toThrow(/--kind registries takes --path only/);
     const doc = query(graph, { kind: "registries", path: "quo" });
     expect(doc.registries?.map((r) => r.id)).toEqual(["tool:quote"]);
     expect(doc.surfaces).toEqual([]);
