@@ -224,6 +224,29 @@ describe("chains", () => {
     );
     expect(md).not.toContain("`untouched`");
   });
+
+  it("names a step a revision of the flow adds, removes or points elsewhere, apart from what the code does", () => {
+    const b = flow("journey", [
+      { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const h = flow("journey", [
+      { stepId: "read", chain: "web->bff|POST /stop", role: "stops instead" },
+      { stepId: "admin", chain: "outside->backend|GET /admin/report", role: "reports" },
+    ]);
+    const before = resolveFlows(graph, [flowFile(b)], "2026-11-01T00:00:00Z", report);
+    const after = resolveFlows(graph, [flowFile(h)], "2026-11-01T00:00:00Z", report);
+    const d = diffGraphs(graph, graph, [], [], report, report, before, after);
+    expect(d.flows?.changed[0]?.steps).toEqual([
+      { stepId: "read", target: "web->bff|POST /stop", change: "retargeted", was: "web->bff|GET /screen" },
+      { stepId: "admin", target: "outside->backend|GET /admin/report", change: "added" },
+      { stepId: "stop", target: "web->bff|POST /stop", change: "removed" },
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    expect(diffMarkdown(d)).toContain(
+      "- `journey`: the flow's step `read` now names `web->bff|POST /stop` (was `web->bff|GET /screen`); the flow's step `admin` (`outside->backend|GET /admin/report`) is added; the flow's step `stop` (`web->bff|POST /stop`) is removed",
+    );
+  });
 });
 
 describe("a flow step that names a registry entry", () => {

@@ -153,7 +153,7 @@
         },
         "registry": {
           "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntryId",
-          "description": "from atlas: a registry entry as registry:key, such as a tool an agent calls or an event a step emits. Built where a producer names it; nothing in the code orders it with the steps around it."
+          "description": "from atlas: a registry entry as registry:key, such as a tool an agent calls or an event a step emits. Counted as in the code where the key occurs in a file the registry's producers select (a text match, as FA004 reads it); nothing in the code orders it with the steps around it."
         },
         "role": {
           "description": "author. What this component does in the flow, and what it leaves to others. Required for Documented=True on surface and call steps.",

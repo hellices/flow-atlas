@@ -147,15 +147,20 @@ the customer gets the result the journey describes.
 
 1. For each step, find what carries it out, from atlas output only: the request (`atlas chains`, `atlas query`), or,
    for what happens inside one request, such as a tool an agent calls in a conversation turn or an event a handler
-   emits, the registry entry (`atlas query --kind registries`). If neither lists it, the step is not built.
+   emits, the registry entry (`atlas query --kind registries`). If neither lists it, atlas does not observe it in the
+   configured sources: read the `limit:` lines and the coverage, and open the code, before you call the step missing.
 2. Write one flow per path of the journey: its steps in the journey's order, `chain` for a request and `registry` for
-   an entry, `lifecycle: planned` on a step nothing carries out yet, `sources` naming the journey, and a role per step.
+   an entry, `sources` naming the journey, and a role per step. A step nothing carries out yet is yours to name, as
+   intent and not as a fact from the code: a `surface` (the route you mean to add) or a `registry` entry (the tool you
+   mean to add) with `lifecycle: planned`; never a chain id atlas did not list.
    A branch that takes another request or entry is a flow of its own, reusing the shared steps through a `flow` step; a
    branch that differs only in the data or the reply is not structure and stays out of the flows.
 3. `atlas flows` gives each step its place in the code, `planned`, or `NOT FOUND`. Report them as the journey's
-   gaps: a planned step is work the journey still needs; an active step not found was built and is gone. A step found
-   is a step the code has, not a step that works: a result the customer does not get is found by running it (tests,
-   end-to-end runs, a person walking it), not by atlas. Say which steps you could not place and why.
+   gaps: a planned step is work the journey still needs; an active step not found is one the flow expects and atlas
+   does not place, which `atlas diff` shows as `gone` only where a change removed it. A step found is a step the code
+   has, not a step that works: a registry step is found by its key occurring in a producer file, and a result the
+   customer does not get is found by running it (tests, end-to-end runs, a person walking it), not by atlas. Say which
+   steps you could not place and why.
 4. The order of registry steps, and of requests the code does not link, stays Unknown. Do not add steps or edges to
    make it True.
 

@@ -46,8 +46,11 @@ reaches (the tools an agent calls), not the request, which every step shares.
 
 Walking a journey sorts each step one of three ways, and atlas settles only the first two:
 
-- Missing: nothing in the code carries the step out (`planned`, or `NOT FOUND`). This is work to build.
-- Present: atlas places it in the code. This says the code has it, not that it gives the result the journey states.
+- Missing: atlas does not place the step (`planned`, or `NOT FOUND`), and the `limit:` lines, the coverage and the
+  code do not show it either. This is work to build. A step only atlas cannot read is a configuration or extractor
+  gap: report that instead.
+- Present: atlas places it in the code. This says the code has it, not that it gives the result the journey states;
+  for a registry step, only that a producer file names the entry.
 - Not as expected: the step is present and the customer still does not get the result. Only running it shows this;
   report it with what was run, not from atlas output.
 

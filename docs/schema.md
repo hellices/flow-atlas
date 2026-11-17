@@ -96,8 +96,11 @@ for. A `chain` step is one request and everything
 it reaches (see Chains); it is the form to write, since its structure comes from the code. `surface` and `call` steps
 are kept for plans that name a route not called yet and for flows written before chains. A `registry` step names a
 registry entry (`tool:quote`): what a step does that is no request, such as a tool an agent calls in the middle of one
-conversation request, or an event a step emits. It is in the code where a producer of the registry names it; an entry
-only listed is not built yet. Nothing in the code orders it with the steps around it, so the order is the author's
+conversation request, or an event a step emits. It counts as in the code where the key occurs in a file the registry's
+`producers` select, as FA004 reads it: a text match, which shows neither that the entry is registered nor that it
+works. Producer globs that also select the consumer side, the active list or tests, and keys that are common words,
+make that match say little; an entry only listed, or a registry whose producers select no file, gives a step atlas
+cannot place. Nothing in the code orders it with the steps around it, so the order is the author's
 (`Connected: Unknown`, `OrderNotInCode`), and `export arazzo` leaves it out with its reason. `role` is what the component does in that
 step; keeping modules' responsibilities from mixing needs this written down. Not every hop between surface steps has to
 be listed: atlas finds the shortest path along the graph's edges to the next step. Between two chain steps the link is
@@ -328,7 +331,9 @@ both surfaces unchained. `atlas diff` reports
 chains added, removed, and changed with the surfaces they now reach or no longer reach, and the flows the change
 reaches (`flows`): matched by name and their steps by `stepId`, each step the change builds (`built`) or loses
 (`gone`), each chain step whose chain reaches other surfaces (`reaches`), and each condition whose status or reason
-moved. A flow whose own text changed is not reported for that; what the code makes of it is.
+moved. Flow files in the repository are read at each revision, so a step the flow itself adds (`added`), removes
+(`removed`) or points at another target (`retargeted`, with the old one in `was`) is named apart from what the code
+does to the steps it keeps; flows kept outside the repository are the same at both revisions.
 
 ## FlowReport and conditions
 

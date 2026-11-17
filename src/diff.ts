@@ -40,7 +40,9 @@ function chainDiff(base: ChainReport | undefined, head: ChainReport | undefined)
 
 /**
  * The flows a change reaches, matched by name and their steps by stepId: what a reviewer of the change should read
- * against each flow's intent. A flow's own text changing is not reported; what the code makes of it is.
+ * against each flow's intent. Flow files in the repository are read at each revision, so a step the flow itself adds,
+ * removes or points elsewhere is named apart from what the code does to the steps it keeps; flows kept outside the
+ * repository are the same at both.
  */
 function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"]): NonNullable<GraphDiff["flows"]> {
   const first = (r: FlowReport) => {
@@ -56,7 +58,15 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
     const was = b.get(name);
     if (!was) continue;
     const before = new Map(was.status.steps.map((s) => [s.stepId, s]));
+    const after = new Set(now.status.steps.map((s) => s.stepId));
     const steps: FlowChange["steps"] = [];
+    // What the flow's own text changed comes first: a step it adds, points elsewhere or removes.
+    for (const s of now.status.steps) {
+      const old = before.get(s.stepId);
+      if (!old) steps.push({ stepId: s.stepId, target: s.target, change: "added" });
+      else if (old.target !== s.target) steps.push({ stepId: s.stepId, target: s.target, change: "retargeted", was: old.target });
+    }
+    for (const s of was.status.steps) if (!after.has(s.stepId)) steps.push({ stepId: s.stepId, target: s.target, change: "removed" });
     for (const s of now.status.steps) {
       const old = before.get(s.stepId);
       if (!old || old.target !== s.target) continue;
@@ -152,6 +162,9 @@ export function diffMarkdown(d: GraphDiff): string {
     const surfaces = (ids: string[]) => ids.map((s) => `\`${s}\``).join(", ");
     for (const f of flows.changed) {
       const parts = f.steps.map((s) => {
+        if (s.change === "added") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is added`;
+        if (s.change === "removed") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is removed`;
+        if (s.change === "retargeted") return `the flow's step \`${s.stepId}\` now names \`${s.target}\` (was \`${s.was}\`)`;
         if (s.change === "built") return `step \`${s.stepId}\` (\`${s.target}\`) is now in the code`;
         if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;
         const reach = [s.added?.length ? `now reaches ${surfaces(s.added)}` : "", s.removed?.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);

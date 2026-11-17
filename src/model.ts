@@ -352,8 +352,11 @@ export interface GraphDiff extends Document<"Diff"> {
 export interface FlowChange {
   name: string;
   conditions: Array<{ type: string; was: { status: string; reason: string }; now: { status: string; reason: string } }>;
-  /** `built`: the step is in the code now; `gone`: it no longer is; `reaches`: its chain reaches other surfaces. */
-  steps: Array<{ stepId: string; target: string; change: "built" | "gone" | "reaches"; added?: string[]; removed?: string[] }>;
+  /**
+   * What the flow's text changed: `added`, `removed`, `retargeted` (`was` the old target). What the code changed of a
+   * step the flow keeps: `built` (in the code now), `gone` (no longer), `reaches` (its chain reaches other surfaces).
+   */
+  steps: Array<{ stepId: string; target: string; change: "added" | "removed" | "retargeted" | "built" | "gone" | "reaches"; was?: string; added?: string[]; removed?: string[] }>;
 }
 
 export interface ComponentEdge {
