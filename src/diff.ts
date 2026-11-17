@@ -140,6 +140,13 @@ export function diffGraphs(
       [
         ...base.provenance.resolvedDependencies.map((d) => ({ ...d, name: `base ${d.name}` })),
         ...head.provenance.resolvedDependencies.map((d) => ({ ...d, name: `head ${d.name}` })),
+        // The flow files read on each side, also those kept outside the repository, which no commit pins.
+        ...(baseFlows && headFlows
+          ? [
+              ...baseFlows.provenance.resolvedDependencies.filter((d) => d.name === "flows").map((d) => ({ ...d, name: "base flows" })),
+              ...headFlows.provenance.resolvedDependencies.filter((d) => d.name === "flows").map((d) => ({ ...d, name: "head flows" })),
+            ]
+          : []),
       ],
     ),
     surfaces: { added: minus(hs, bs), removed: minus(bs, hs) },

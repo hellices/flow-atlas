@@ -263,6 +263,8 @@ describe("chains", () => {
       resolveFlows(graph, [flowFile(b, parent)], "2026-11-01T00:00:00Z", report),
       resolveFlows(graph, [flowFile(h, parent)], "2026-11-01T00:00:00Z", report),
     );
+    // The flow files each side read are in the provenance, with digests, wherever they are kept.
+    expect(d.provenance.resolvedDependencies.filter((r) => r.name.endsWith(" flows")).map((r) => `${r.name} ${r.uri}`)).toEqual(["base flows f.flow.yaml", "head flows f.flow.yaml"]);
     expect(d.flows?.changed).toEqual([
       { name: "pair", conditions: [], steps: [], order: { was: ["read", "stop"], now: ["stop", "read"] } },
       { name: "parent", conditions: [], steps: [{ stepId: "run", target: "pair", change: "runs" }] },
