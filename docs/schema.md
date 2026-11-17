@@ -332,7 +332,7 @@ chains added, removed, and changed with the surfaces they now reach or no longer
 reaches (`flows`): matched by name and their steps by `stepId`, each step the change builds (`built`) or loses
 (`gone`), each chain step whose chain reaches other surfaces (`reaches`), and each condition whose status or reason
 moved. Flow files in the repository are read at each revision, so a step the flow itself adds (`added`), removes
-(`removed`) or points at another target (`retargeted`, with the old one in `was`) is named apart from what the code
+(`removed`), points at another target (`retargeted`, with the old one in `was`) or puts in another order (`order`) is named apart from what the code
 does to the steps it keeps, and a flow that runs a flow the change reaches is named through it (`runs`), at every
 level; flows kept outside the repository are the same at both revisions.
 

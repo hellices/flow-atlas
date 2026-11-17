@@ -246,6 +246,31 @@ describe("chains", () => {
     expect(diffMarkdown(d)).toContain("- `parent`: step `open` runs `child`, which the change reaches");
   });
 
+  it("names a flow whose steps change order, and the flows that run it", () => {
+    const b = flow("pair", [
+      { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const h = flow("pair", [b.spec.steps[1]!, b.spec.steps[0]!]);
+    const parent = flow("parent", [{ stepId: "run", flow: "pair" }]);
+    const d = diffGraphs(
+      graph,
+      graph,
+      [],
+      [],
+      report,
+      report,
+      resolveFlows(graph, [flowFile(b, parent)], "2026-11-01T00:00:00Z", report),
+      resolveFlows(graph, [flowFile(h, parent)], "2026-11-01T00:00:00Z", report),
+    );
+    expect(d.flows?.changed).toEqual([
+      { name: "pair", conditions: [], steps: [], order: { was: ["read", "stop"], now: ["stop", "read"] } },
+      { name: "parent", conditions: [], steps: [{ stepId: "run", target: "pair", change: "runs" }] },
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    expect(diffMarkdown(d)).toContain("- `pair`: the flow's steps are in another order: `read`, `stop` → `stop`, `read`");
+  });
+
   it("names a step a revision of the flow adds, removes or points elsewhere, apart from what the code does", () => {
     const b = flow("journey", [
       { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },

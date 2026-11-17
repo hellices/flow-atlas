@@ -351,6 +351,8 @@ export interface GraphDiff extends Document<"Diff"> {
 
 export interface FlowChange {
   name: string;
+  /** The steps both revisions keep, in each revision's order, where that order changed. */
+  order?: { was: string[]; now: string[] };
   conditions: Array<{ type: string; was: { status: string; reason: string }; now: { status: string; reason: string } }>;
   /**
    * What the flow's text changed: `added`, `removed`, `retargeted` (`was` the old target). What the code changed of a

@@ -289,6 +289,29 @@
                     }
                   }
                 }
+              },
+              "order": {
+                "description": "The stepIds both revisions keep, in each revision's order, where that order changed.",
+                "type": "object",
+                "required": [
+                  "was",
+                  "now"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "was": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "now": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
               }
             }
           }

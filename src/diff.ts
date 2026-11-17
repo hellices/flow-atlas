@@ -67,6 +67,9 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
       else if (old.target !== s.target) steps.push({ stepId: s.stepId, target: s.target, change: "retargeted", was: old.target });
     }
     for (const s of was.status.steps) if (!after.has(s.stepId)) steps.push({ stepId: s.stepId, target: s.target, change: "removed" });
+    // The order of the steps both revisions keep is the author's journey; a new order is a change of its own.
+    const kept = { was: was.status.steps.map((s) => s.stepId).filter((id) => after.has(id)), now: now.status.steps.map((s) => s.stepId).filter((id) => before.has(id)) };
+    const order = kept.was.join("\n") !== kept.now.join("\n") ? kept : undefined;
     for (const s of now.status.steps) {
       const old = before.get(s.stepId);
       if (!old || old.target !== s.target) continue;
@@ -82,7 +85,7 @@ function flowDiff(base: FlowReport, head: FlowReport, chains: GraphDiff["chains"
       if (o && (o.status !== c.status || o.reason !== c.reason))
         conditions.push({ type: c.type, was: { status: o.status, reason: o.reason }, now: { status: c.status, reason: c.reason } });
     }
-    if (steps.length || conditions.length) changed.push({ name, conditions, steps });
+    if (steps.length || conditions.length || order) changed.push({ name, conditions, steps, ...(order ? { order } : {}) });
   }
   // A flow that runs a flow the change reaches is reached through it, at every level; each step is named once.
   const touched = new Map(changed.map((c) => [c.name, c]));
@@ -181,7 +184,9 @@ export function diffMarkdown(d: GraphDiff): string {
     lines.push("**Flows the change reaches**");
     const surfaces = (ids: string[]) => ids.map((s) => `\`${s}\``).join(", ");
     for (const f of flows.changed) {
-      const parts = f.steps.map((s) => {
+      const ids = (xs: string[]) => xs.map((x) => `\`${x}\``).join(", ");
+      const parts = f.order ? [`the flow's steps are in another order: ${ids(f.order.was)} → ${ids(f.order.now)}`] : [];
+      parts.push(...f.steps.map((s) => {
         if (s.change === "added") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is added`;
         if (s.change === "removed") return `the flow's step \`${s.stepId}\` (\`${s.target}\`) is removed`;
         if (s.change === "retargeted") return `the flow's step \`${s.stepId}\` now names \`${s.target}\` (was \`${s.was}\`)`;
@@ -190,7 +195,7 @@ export function diffMarkdown(d: GraphDiff): string {
         if (s.change === "gone") return `step \`${s.stepId}\` (\`${s.target}\`) is no longer in the code`;
         const reach = [s.added?.length ? `now reaches ${surfaces(s.added)}` : "", s.removed?.length ? `no longer reaches ${surfaces(s.removed)}` : ""].filter(Boolean);
         return `step \`${s.stepId}\` ${reach.length ? reach.join(" and ") : "reaches the same surfaces by other edges"}`;
-      });
+      }));
       // Ready follows from the others; it is named only when nothing else says why it moved.
       const moved = f.conditions.filter((c) => c.type !== "Ready" || f.conditions.length === 1);
       parts.push(...moved.map((c) => `${c.type} ${c.was.status} (${c.was.reason}) → ${c.now.status} (${c.now.reason})`));
