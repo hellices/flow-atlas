@@ -201,15 +201,16 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     return s ? boundaryChain(s, end, depth + 1) : undefined;
   };
 
-  /** Whether a step enters (first) or leaves (last) by a registry entry in the code, looking through sub-flows to their end steps. */
-  const boundaryEntry = (step: StepSpec, end: "first" | "last", depth = 0): boolean => {
-    if (step.registry) return produced.has(step.registry);
-    const sub = step.flow ? byName.get(step.flow) : undefined;
-    if (!sub || depth > 4) return false;
+  /** The step a step enters by (first) or leaves by (last), looking through sub-flows to their end steps. */
+  const endStep = (step: StepSpec, end: "first" | "last", depth = 0): StepSpec | undefined => {
+    if (!step.flow) return step;
+    const sub = byName.get(step.flow);
+    if (!sub || depth > 4) return undefined;
     const steps = sub.spec.steps;
     const s = end === "first" ? steps[0] : steps[steps.length - 1];
-    return s ? boundaryEntry(s, end, depth + 1) : false;
+    return s ? endStep(s, end, depth + 1) : undefined;
   };
+  const present = (s: StepSpec | undefined): boolean => !!s && (s.registry ? produced.has(s.registry) : node(s, "first") !== undefined);
 
   const items: FlowReport["items"] = [];
   const covered = new Set<string>();
@@ -242,9 +243,12 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         };
       });
       for (let i = 0; i + 1 < spec.steps.length; i++) {
-        // A registry entry is no request: nothing in the code orders it with the steps around it.
-        if (steps[i]!.resolved && steps[i + 1]!.resolved && (boundaryEntry(spec.steps[i]!, "last") || boundaryEntry(spec.steps[i + 1]!, "first"))) {
-          steps[i]!.toNext = { connected: false, edges: [], order: "declared" };
+        // A registry entry is no request: nothing in the code orders it with the steps around it. The order is the
+        // author's once both ends are in the code; otherwise the link is left unchecked.
+        const last = endStep(spec.steps[i]!, "last");
+        const first = endStep(spec.steps[i + 1]!, "first");
+        if (last?.registry || first?.registry) {
+          if (present(last) && present(first)) steps[i]!.toNext = { connected: false, edges: [], order: "declared" };
           continue;
         }
         const a = boundaryChain(spec.steps[i]!, "last");

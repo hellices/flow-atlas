@@ -368,6 +368,16 @@ describe("a flow step that names a registry entry", () => {
     const unchecked = resolveFlows(graph, [flowFile(unbuilt, journey)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "journey")!;
     expect(unchecked.status.steps[0]!.toNext).toBeUndefined();
     expect(unchecked.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "StepsUnresolved" });
+    // A built entry on one side does not order a link whose other end, inside a sub-flow, is not in the code.
+    const gone = flow("gone", [{ stepId: "missing", chain: "web->bff|GET /gone", role: "gone" }]);
+    for (const steps of [
+      [{ stepId: "quote", registry: "tool:quote", role: "quotes" }, { stepId: "branch", flow: "branch" }],
+      [{ stepId: "quote", registry: "tool:quote", role: "quotes" }, { stepId: "gone", flow: "gone" }],
+      [{ stepId: "gone", flow: "gone" }, { stepId: "quote", registry: "tool:quote", role: "quotes" }],
+    ]) {
+      const pair = resolveFlows(graph, [flowFile(unbuilt, gone, flow("pair", steps))], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "pair")!;
+      expect(pair.status.steps[0]!.toNext, JSON.stringify(steps)).toBeUndefined();
+    }
   });
 });
 
