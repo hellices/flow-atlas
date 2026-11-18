@@ -56,13 +56,21 @@ jobs:
           RUNS: ${{ inputs.runs || '3' }}
         run: |
           case "$RUNS" in ''|*[!0-9]*|0) echo "runs is a positive integer, not '$RUNS'" >&2; exit 2;; esac
+          # vally exits non-zero on any trial error; the verdict step reads the trials instead.
           npx -y @microsoft/vally-cli@0.21.0 eval \
             --eval-spec evals/flow-atlas/eval.yaml \
             --runs "$RUNS" \
             --workers 2 \
-            --require-pass \
             --junit \
-            --output-dir eval-results
+            --output-dir eval-results || true
+      # A trial whose agent session dropped or timed out (status error) is no evidence either way. Every graded trial
+      # must pass, and every stimulus of the spec needs at least one.
+      - name: verdict
+        run: |
+          results=$(ls eval-results/*/results.jsonl)
+          stimuli=$(grep -cE '^  - name: ' evals/flow-atlas/eval.yaml)
+          jq -rs '[.[] | select(.stimulus)] | group_by(.stimulus)[] | "\(.[0].stimulus): \([.[] | select(.status == "success" and .gradeResult.passed == true)] | length) passed, \([.[] | select(.status == "success" and .gradeResult.passed != true)] | length) failed, \([.[] | select(.status != "success")] | length) errored"' $results | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -se --argjson stimuli "$stimuli" '[.[] | select(.stimulus)] | group_by(.stimulus) | length == $stimuli and all(any(.[]; .status == "success") and all(.[]; .status != "success" or .gradeResult.passed == true))' $results > /dev/null
       - name: upload trajectories
         if: always()
         uses: actions/upload-artifact@v4

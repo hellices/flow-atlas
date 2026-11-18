@@ -33,9 +33,11 @@ atlas read there.
 also runs `vally lint` on `skills/`, the check skill listings use.
 
 [`evals/flow-atlas/eval.yaml`](evals/flow-atlas/eval.yaml) runs the skill with a coding agent on `fixtures/shop`:
-whether the agent loads it when a change crosses components and leaves it alone otherwise, runs atlas instead of
-reading the code by hand, finds and fixes a planted finding, and stops before recording a baseline nobody approved.
-Its graders are deterministic. It costs model requests, so the `skill-eval` workflow runs it on demand, weekly and
+whether the agent loads it when a change crosses components and leaves it alone otherwise, checks its own change
+with atlas before finishing, and stops before recording a baseline nobody approved. Its graders are deterministic, and
+each stimulus grades what the skill adds: every one but the negative trigger fails when run without the skill (the
+file's header says how to check that for a new one). A trial whose agent session drops is reported but not counted;
+every graded trial must pass. It costs model requests, so the `skill-eval` workflow runs it on demand, weekly and
 after a change to the skill lands on `main`. To run it locally with GitHub Copilot:
 
 ```bash

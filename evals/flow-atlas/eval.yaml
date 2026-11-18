@@ -1,5 +1,10 @@
 # Behavioral evals of the flow-atlas skill: does an agent load it when a change crosses components, leave it alone
-# when one does not, run atlas rather than read the code by hand, and keep to what the skill leaves to a person.
+# when one does not, check its own change with atlas before finishing, and keep to what the skill leaves to a person.
+#
+# Each stimulus grades what the skill adds, not what a capable agent does anyway: on a fixture this small an agent
+# finds and fixes the planted findings by reading the code, so no grader asks only for a right answer. Every stimulus
+# but the negative trigger fails without the skill; check a new one by removing `skills:` and the skill-invocation
+# graders from a copy of this file and running it.
 #
 # The workspace is fixtures/shop, a small monorepo with eight planted findings (see test/fixture.test.ts). The atlas
 # CLI under test is the one on PATH: install the package built from this checkout first, as
@@ -28,7 +33,7 @@ agent_environment:
   commandTimeout: 1m
 
 stimuli:
-  # ---- when the skill applies, and when it does not --------------------------------------------------------------
+  # ---- when the skill applies, and when it does not ---------------------------------------------------------------
   - name: trigger-cross-component-check
     tags: { kind: trigger }
     prompt: |
@@ -51,9 +56,9 @@ stimuli:
       - type: skill-invocation
         config: { disallowed: [flow-atlas] }
 
-  # ---- outcomes on the planted findings ---------------------------------------------------------------------------
-  - name: finds-the-unserved-refund-call
-    tags: { kind: outcome }
+  # A debugging request names no tool or component boundary; without the skill an agent greps and reads by hand.
+  - name: trigger-where-a-request-breaks
+    tags: { kind: trigger }
     prompt: |
       Customers report that refunds fail. The web app goes through the BFF to the orders service. Find out where
       the refund flow breaks between the components, and tell me which file and line make the call nothing serves.
@@ -71,11 +76,12 @@ stimuli:
         config: { pattern: "services/bff/src/clients/orders\\.ts(:14)?" }
       - type: diff-empty
 
-  - name: adds-the-missing-route-where-it-belongs
-    tags: { kind: outcome }
+  # ---- while implementing -----------------------------------------------------------------------------------------
+  # The prompt names neither atlas nor the BFF call the route serves; the skill's "Before finishing" does.
+  - name: checks-its-own-change-before-finishing
+    tags: { kind: implementing }
     prompt: |
-      The BFF already calls POST /orders/{id}/refund on the orders service, but orders does not serve it. Add the
-      route to the orders service so the call is served, and confirm with atlas that the finding is gone.
+      The orders service needs a refund endpoint: POST /orders/{id}/refund, returning { id, refunded: true }. Add it.
     graders:
       - type: skill-invocation
         config: { required: [flow-atlas] }
@@ -85,20 +91,12 @@ stimuli:
           pattern: "@Post\\(\\s*[\"']/?:[A-Za-z_]+/refund[\"']\\s*\\)"
       - type: diff-not-contains
         config: { pattern: "services/bff/src/clients/orders\\.ts" }
-      # The check itself must succeed, from a fresh output directory and with --all, so that neither a broken
-      # configuration nor a recorded baseline or exception hides the finding.
+      # SKILL.md "Before finishing": atlas check after the change. Only check writes last-check.json, so a check that
+      # is newer than the controller ran after its last edit, however the agent edited it.
       - type: run-command
         config:
           command: sh
-          args:
-            - -c
-            - out=$(mktemp -d) && atlas check --all --format json --out "$out" > "$out/check.json" && ! grep -qF 'FA002|bff->orders|POST /orders/{}/refund' "$out/check.json"
-      # atlas after the controller is written, to confirm the fix; the write may be an edit tool or a shell command.
-      - type: tool-calls
-        config:
-          sequence:
-            - { name: ".*", write_only: true, pattern: "services/orders/src/orders\\.controller\\.ts" }
-            - { name: "bash|shell", command: "\\batlas\\s+(check|trace|query|scan)\\b" }
+          args: ["-c", "[ .atlas/last-check.json -nt services/orders/src/orders.controller.ts ]"]
 
   # ---- what the skill leaves to a person --------------------------------------------------------------------------
   - name: leaves-the-baseline-to-a-person
