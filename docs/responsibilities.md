@@ -48,6 +48,7 @@ The tool does not decide how to fix anything. `explain` shows only the locations
 | owner, labels, source documents (`sources`) | organisational and documentary facts | schema |
 | a flow's state (`lifecycle`) | whether a missing step is planned or a defect is intent | planned steps are counted apart in `Resolved` |
 | a journey: which chains, in which order | which requests a person makes one after another is intent; take each from atlas output | `Resolved`; `Connected` from a chain's `next`, otherwise Unknown (`OrderNotInCode`) |
+| a journey step that is no request (`registry` step): which tool or event carries it out | which entry a step of the journey stands for is intent; take the id from `query --kind registries` | `Resolved` where a producer names the entry; its order Unknown (`OrderNotInCode`) |
 | on a surface-step flow only: the next step where a handler branches | a surface-step flow leaves this choice; a chain step does not | `Resolved`, `Connected` |
 | registry entries a flow issues (`produces`) | which artifact is this flow's result is intent | `ProducesListed` |
 | an exception's reason, the decision behind it and a date to review | why something is fine for now is a decision | when the date passes, the finding returns |
@@ -72,6 +73,7 @@ criteria and the order to apply them in; the details are in the skill's `referen
 | Can a name-joined edge (`~`) be trusted? | if it passes through a common name such as `get` or `send`, open the code |
 | Where does a flow start and end? | at units a person names: one screen, one request |
 | Is a missing step planned or a defect? | with a decision or an issue, planned (`planned`); without, a defect |
+| Is a journey step missing, or not as expected? | missing when atlas cannot place it in the code; a step placed in the code that still gives the wrong result is found by running it, not by atlas |
 
 ## Writing one flow
 
@@ -84,7 +86,10 @@ False `Documented` means a field the author writes is empty.
 ## What keeps the line in place
 
 The structure of a flow is atlas's: a chain step carries no surfaces, edges or entry written by hand, and a journey
-can only order chains atlas lists. The structural conditions (`Resolved`, `Connected`) fail only on a fact from the code. What
+can only order chains and registry entries atlas lists. The structural conditions (`Resolved`, `Connected`) fail only on a fact from the code as
+the configuration reads it; for a registry step that fact is whether a file the registry's `producers` select names
+the entry, so a producer glob that selects too little or too much moves it, and the configuration is the place to
+correct it. What
 the author writes is checked for presence and validity, not for meaning: `Documented` and FA007 fail on an empty title
 or role, the schema check on an invalid field; none of those says the code is wrong. A person reviews the intent in
 the pull request that changes the flow file. The flow schema says in each field's description who

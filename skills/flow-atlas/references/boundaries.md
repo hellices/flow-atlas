@@ -37,6 +37,23 @@ included, so you do not choose among the services a handler calls. A journey acr
 steps are chains in order; take each following chain from the previous chain's `next` where atlas lists one. Do not
 split a chain into steps by hand to tell a story the code does not hold.
 
+A journey written outside the code (an issue, a product document) is cut the same way: one flow per path a customer
+takes, a branch being a path of its own only where it takes another request or registry entry. In a product where one
+request carries a whole conversation turn, the steps that tell a journey apart are the registry entries the turn
+reaches (the tools an agent calls), not the request, which every step shares.
+
+## Missing, or not as expected?
+
+Walking a journey sorts each step one of three ways, and atlas settles only the first two:
+
+- Missing: atlas does not place the step (`planned`, or `NOT FOUND`), and the `limit:` lines, the coverage and the
+  code do not show it either. This is work to build. A step only atlas cannot read is a configuration or extractor
+  gap: report that instead.
+- Present: atlas places it in the code. This says the code has it, not that it gives the result the journey states;
+  for a registry step, only that a producer file names the entry.
+- Not as expected: the step is present and the customer still does not get the result. Only running it shows this;
+  report it with what was run, not from atlas output.
+
 ## Defect, plan, or false positive?
 
 - Defect: the code differs from an agreement, and nothing records why. An agreement is a repository rule or design

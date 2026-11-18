@@ -55,6 +55,13 @@
       "items": {
         "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/edge"
       }
+    },
+    "registries": {
+      "description": "query --kind registries: the registry entries whose id contains the path filter.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/registryEntry"
+      }
     }
   },
   "if": {

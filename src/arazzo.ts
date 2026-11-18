@@ -304,7 +304,7 @@ export function toArazzo(
       } else if (s.call) {
         const reached = targets.get(s.call) ?? [];
         target = reached.length === 1 ? operation(reached[0]!) : { reason: `call ${s.call} reaches ${reached.length} surfaces; name the surface instead` };
-      }
+      } else if (s.registry) target = { reason: `${s.registry} is a registry entry, which no operation stands for` };
       if (!target) return [];
       if ("reason" in target) {
         limits.push(`${where}: ${target.limit ?? target.reason}`);

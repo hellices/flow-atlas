@@ -10,6 +10,7 @@ import { resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { callsFromText } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
 import { extractRegistries } from "../src/extract/registries.js";
+import { evaluate } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
 import { traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
@@ -145,6 +146,49 @@ describe("registry coverage", () => {
   });
   it("does not warn against a baseline recorded before registries had coverage", () => {
     expect(coverageDrops(graph, {})).toEqual([]);
+  });
+});
+
+describe("calls to a component whose routes are not read", () => {
+  it("says the calls are matched to nothing and not checked, until its routes or its description are configured", () => {
+    const files = { "web/a.ts": 'fetch("/v1/sessions", { method: "POST" }); fetch("/orders");', "api/app.ts": 'app.get("/orders", h);' };
+    const stray = { ...files, "web/a.ts": `${files["web/a.ts"]} fetch("/v1/runs", { method: "POST" });` };
+    const both = [
+      { from: "web", to: "agent", files: ["web/**"] },
+      { from: "web", to: "api", files: ["web/**"] },
+    ];
+    const components = [
+      { name: "web", path: "web" },
+      { name: "api", path: "api" },
+      { name: "agent", path: "agent" },
+    ];
+    const graph = scan(memory(files), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
+    const limit = "calls web->agent: agent has no route source, so its 2 calls match nothing and FA002 does not check them; configure its routes (routes[] with files, or routes[].openapi for a generated document)";
+    expect(graph.limits).toEqual([limit]);
+    expect(graph.edges.filter((e) => e.kind === "match" && e.to.startsWith("agent|"))).toEqual([]);
+    // As the limit says: FA002 leaves the calls to agent alone, and still checks the ones to api.
+    const fa002 = (g: typeof graph, c: Config) => evaluate(g, c, g.limits).filter((f) => f.rule === "FA002").map((f) => f.key);
+    const withStray = scan(memory({ ...files, "web/a.ts": `${files["web/a.ts"]} fetch("/orders/stray");` }), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
+    expect(fa002(withStray, normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }))).toEqual(["FA002|web->api|GET /orders/stray"]);
+    // The top-level openapi entry chooses a description for export and reads no routes: FA002 still checks nothing there.
+    const routes = [{ component: "api", files: ["api/**"], styles: ["express"] }];
+    const exported = normalizeConfig({ components, routes, calls: both, openapi: { agent: "agent/openapi.json" } });
+    const exportedGraph = scan(memory(files), exported);
+    expect(exportedGraph.limits).toEqual([limit]);
+    expect(fa002(exportedGraph, exported).filter((k) => k.includes("->agent|"))).toEqual([]);
+    // A route source from a generated document is a route source.
+    const documented = { ...files, "agent/openapi.json": JSON.stringify({ openapi: "3.1.0", info: { title: "a", version: "1" }, paths: { "/v1/sessions": { post: {} } } }) };
+    const readConfig = normalizeConfig({ components, routes: [...routes, { component: "agent", openapi: "agent/openapi.json" }], calls: both });
+    const read = scan(memory(documented), readConfig);
+    expect(read.limits.filter((l) => l.includes("no route source"))).toEqual([]);
+    // Its route is read and the call to it is matched. GET /orders, which the same call files send to api, is not
+    // reported against agent: FA002 reports only a request clearly on the target (a first segment it serves).
+    const matched = read.edges.filter((e) => e.kind === "match" && e.to.startsWith("agent|")).map((e) => `${e.from.split("@")[0]} = ${e.to}`);
+    expect(matched).toEqual(["web->agent|POST /v1/sessions = agent|POST /v1/sessions"]);
+    expect(fa002(read, readConfig).filter((k) => k.includes("->agent|"))).toEqual([]);
+    // A request on a path agent serves and no route of agent takes is now reported.
+    const strayGraph = scan(memory({ ...stray, "agent/openapi.json": documented["agent/openapi.json"] }), readConfig);
+    expect(fa002(strayGraph, readConfig).filter((k) => k.includes("->agent|"))).toEqual(["FA002|web->agent|POST /v1/runs"]);
   });
 });
 

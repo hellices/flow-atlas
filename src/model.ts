@@ -317,6 +317,8 @@ export interface Subgraph extends Document<"Trace" | "Query"> {
   surfaces: Surface[];
   calls: Call[];
   edges: Edge[];
+  /** `query --kind registries`: the registry entries whose id contains `--path`. */
+  registries?: RegistryEntry[];
 }
 
 export type RuleId = "FA001" | "FA002" | "FA003" | "FA004" | "FA007";
@@ -343,7 +345,34 @@ export interface GraphDiff extends Document<"Diff"> {
   findings: { new: Finding[]; resolved: Finding[] };
   /** Chains that appear, disappear, or reach different surfaces: what a change does to the requests the code makes. */
   chains: { added: string[]; removed: string[]; changed: Array<{ id: string; added: string[]; removed: string[] }> };
+  /** Flows the change reaches: a step it builds or loses, a chain step reaching other surfaces, a condition that moves. */
+  flows?: { added: string[]; removed: string[]; changed: FlowChange[] };
 }
+
+export interface FlowChange {
+  name: string;
+  /** The steps both revisions keep, in each revision's order, where that order changed. */
+  order?: { was: string[]; now: string[] };
+  conditions: Array<{ type: string; was: { status: string; reason: string }; now: { status: string; reason: string } }>;
+  /**
+   * What the flow's text changed: `added`, `removed`, `retargeted` (`was` the old target). What the code changed of a
+   * step the flow keeps: `built` (in the code now), `gone` (no longer), `reaches` (its chain reaches other surfaces),
+   * `runs` (the flow it runs is one the change reaches).
+   */
+  steps: FlowStepChange[];
+}
+
+type StepChangeBase = { stepId: string; target: string };
+
+/** One change to a step, by `change`: each carries only its own fields, as diff.schema.json requires. */
+export type FlowStepChange =
+  | (StepChangeBase & { change: "added" })
+  | (StepChangeBase & { change: "removed" })
+  | (StepChangeBase & { change: "built" })
+  | (StepChangeBase & { change: "gone" })
+  | (StepChangeBase & { change: "runs" })
+  | (StepChangeBase & { change: "retargeted"; was: string; kind?: string; wasKind?: string })
+  | (StepChangeBase & { change: "reaches"; added: string[]; removed: string[] });
 
 export interface ComponentEdge {
   from: string;

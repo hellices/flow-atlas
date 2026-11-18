@@ -1,4 +1,4 @@
-import type { Config } from "./config.js";
+import { routedComponents, type Config } from "./config.js";
 import { extractApiDocuments, resolveApiDescriptions } from "./extract/apidocs.js";
 import { extractCalls, serves, withoutSpan, type ReadCall } from "./extract/calls.js";
 import { extractComponents } from "./extract/components.js";
@@ -178,6 +178,14 @@ export function scan(source: Source, config: Config, context: { root?: string; r
   for (const entry of coverage) {
     if (entry.files === 0) limits.push(`${entry.source}: the configured files match nothing`);
     else if (entry.items === 0) limits.push(`${entry.source}: ${entry.files} files read, nothing extracted`);
+    else if (entry.source.startsWith("calls ")) {
+      // FA002 checks only calls to a component whose routes are read; without them the calls are neither matched nor checked.
+      const to = entry.source.slice("calls ".length).split("->")[1]!;
+      if (!routedComponents(config).has(to))
+        limits.push(
+          `${entry.source}: ${to} has no route source, so its ${entry.items} calls match nothing and FA002 does not check them; configure its routes (routes[] with files, or routes[].openapi for a generated document)`,
+        );
+    }
   }
   return graph;
 }

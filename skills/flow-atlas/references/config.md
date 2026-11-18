@@ -96,7 +96,9 @@ rules:
 4. Registries, if the repository has a list whose entries both a producer and a consumer name literally in code
    (artifact kinds a backend issues and an app renders, tools an agent registers and calls). Leave out lists whose
    entries live in data rows, are served by one generic route, or are rendered generically: every entry then comes
-   back as FA004 with nothing to fix.
+   back as FA004 with nothing to fix. A registry is also what lets a flow step name what happens inside one request
+   (`registry: tool:quote`): the tools an agent may call, listed in its tool manifests (`active: { files, field: name
+   }`), with the server that implements them as producers. `atlas query --kind registries` lists the entries.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
    continue through. A registry's line counts the active files read and the entries they list; one that reads no file

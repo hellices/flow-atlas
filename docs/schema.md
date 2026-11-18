@@ -91,9 +91,19 @@ A file may hold several flows separated by `---`, as KRM manifests do.
 | `produces` | registry entries the flow issues (`registry:key`) | added |
 
 A step follows Arazzo's Step: it has a `stepId` and points at its target with one of `chain`, `surface`, `call` or
-`flow`, where Arazzo has `operationId`, `operationPath` or `workflowId`. A `chain` step is one request and everything
+`flow`, where Arazzo has `operationId`, `operationPath` or `workflowId`, or with `registry`, which Arazzo has no step
+for. A `chain` step is one request and everything
 it reaches (see Chains); it is the form to write, since its structure comes from the code. `surface` and `call` steps
-are kept for plans that name a route not called yet and for flows written before chains. `role` is what the component does in that
+are kept for plans that name a route not called yet and for flows written before chains. A `registry` step names a
+registry entry (`tool:quote`): what a step does that is no request, such as a tool an agent calls in the middle of one
+conversation request, or an event a step emits. It counts as in the code where the key occurs in a file the registry's
+`producers` select, as FA004 reads it: a text match, which shows neither that the entry is registered nor that it
+works. Producer globs that also select the consumer side, the active list or tests, and keys that are common words,
+make that match say little; an entry only listed, or a registry whose producers select no file, gives a step atlas
+cannot place: an active one leaves `Resolved` False and its links unchecked (`Connected: Unknown`,
+`StepsUnresolved`), a planned one pending. Nothing in the code orders a placed entry with the steps around it, so once
+both ends of a link are in the code (read through sub-flows) the order is the author's (`Connected: Unknown`,
+`OrderNotInCode`). `export arazzo` leaves a registry step out with its reason. `role` is what the component does in that
 step; keeping modules' responsibilities from mixing needs this written down. Not every hop between surface steps has to
 be listed: atlas finds the shortest path along the graph's edges to the next step. Between two chain steps the link is
 a request the first chain's result offers (`next`); with none, two chains one component starts are in the author's
@@ -180,7 +190,7 @@ tree, `code` has no digest.
 | `Query` | `query` | the routes and calls that match, with their neighbours one edge away |
 | `FlowReport` | `flows` | each flow's metadata and status |
 | `Findings` | `check` | findings and their state (new, baseline, excepted, expired-exception) |
-| `Diff` | `diff` | routes, component links and findings that changed between two revisions |
+| `Diff` | `diff` | routes, component links, chains, the flows they reach and findings that changed between two revisions |
 | `Inventory` | `inventory` | candidates to look at when writing the configuration |
 
 `Trace` and `Query` share `Graph`'s node and edge shape (`subgraph.schema.json`), so a renderer needs to know one shape.
@@ -320,7 +330,14 @@ it, so public routes that only redirect to each other are chained.
 `unchained` lists surfaces no chain reaches: no path of calls leads to them from a call that starts a request, and
 they are not declared public. Two handlers that only call each other, with nothing calling either from outside, leave
 both surfaces unchained. `atlas diff` reports
-chains added, removed, and changed with the surfaces they now reach or no longer reach.
+chains added, removed, and changed with the surfaces they now reach or no longer reach, and the flows the change
+reaches (`flows`): matched by name and their steps by `stepId`, each step the change builds (`built`) or loses
+(`gone`), each chain step whose chain reaches other surfaces (`reaches`), and each condition whose status or reason
+moved. Flow files in the repository are read at each revision, so a step the flow itself adds (`added`), removes
+(`removed`), points at another target (`retargeted`, with the old one in `was`, and `kind` and `wasKind` where the kind of
+step changed too) or puts in another order (`order`) is named apart from what the code
+does to the steps it keeps, and a flow that runs a flow the change reaches is named through it (`runs`), at every
+level; flows kept outside the repository are the same at both revisions.
 
 ## FlowReport and conditions
 
@@ -331,7 +348,7 @@ it was held against, KRM's `observedGeneration`. `conditions` always has the sam
 |---|---|---|---|
 | `Ready` | no condition failed (`NoConditionFailed`) | any is False (`ConditionsFailed`) | planned steps are not built yet (`PlannedStepsPending`), the flow orders chains the code does not link (`OrderNotInCode`), deprecated (`Deprecated`) |
 | `Resolved` | every step is in the code (`AllStepsResolved`; `PlannedStepsPending` when only planned steps are missing) | a step is missing (`StepNotFound`) | |
-| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`); between two chain steps (a sub-flow counts as the chains at its ends), the first chain's `next` offers the second | a pair of active surface or call steps has no path (`NoPathBetweenSteps`) | not checked because a step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`); two chains with no link in the code from the first to the second, ordered by the author, whoever makes the requests (`OrderNotInCode`) |
+| `Connected` | every pair of neighbouring steps connects (`AllStepsConnected`); between two chain steps (a sub-flow counts as the chains at its ends), the first chain's `next` offers the second | a pair of active surface or call steps has no path (`NoPathBetweenSteps`) | not checked because an active step is unresolved (`StepsUnresolved`); the link to a planned step is not built yet (`PlannedStepsPending`); two chains with no link in the code from the first to the second, ordered by the author, whoever makes the requests, or a registry entry and its neighbour once both ends of the link, read through sub-flows, are in the code (`OrderNotInCode`); an unresolved active step comes first (`StepsUnresolved`) |
 | `ProducesListed` | every listed registry entry exists (`AllListed`) | some does not (`NotInRegistry`) | none listed (`NotDeclared`) |
 | `Documented` | a title and each step's role are written (`TitleAndRolesWritten`) | no title (`TitleMissing`), a step without a role (`RoleMissing`) | |
 
@@ -342,7 +359,7 @@ what is set out in
 `reason` is a stable CamelCase code tools can branch on; `message` is for people. A viewer colours a flow by `Ready`
 and shows where the problem is from the other conditions. KRM's `lastTransitionTime` is left out, since a timestamp
 would make the same input give a different document; when a condition changed is seen by comparing two revisions'
-reports with `diff`.
+reports with `diff`, whose `flows` names each condition that moved.
 
 FA007 in `check` comes from these conditions and the step details: what is False in an `active` flow becomes a
 finding. A `planned` flow treats all its steps as planned; its conditions are computed but produce no findings.

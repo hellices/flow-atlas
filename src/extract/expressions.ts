@@ -386,12 +386,14 @@ export class StringExpressions {
     let resolved = false;
     let onBase = false;
     let separated = false;
+    let afterBase = false;
     const consts: number[] = [];
     pieces.forEach((p, i) => {
       if ("sep" in p) {
         out = out.replace(/\/+$/, "");
         out += "/";
         separated = true;
+        afterBase = false;
         return;
       }
       let text: string;
@@ -408,8 +410,10 @@ export class StringExpressions {
           onBase = true;
         } else text = out.endsWith(HOLE) ? "" : HOLE;
       }
-      if (separated) text = text.replace(/^\/+/, "");
+      // A base whose path ends in `/` (the root, `/api/`) is joined to a path written after it with one `/`.
+      if (separated || (afterBase && out.endsWith("/"))) text = text.replace(/^\/+/, "");
       separated = false;
+      afterBase = onBase && i === 0;
       out += text;
     });
     if (sanitize) out = cleanPath(out);

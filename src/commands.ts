@@ -62,7 +62,7 @@ Options
   --component <name>  query: only this component
   --path <path>       query: surfaces whose route matches the path, or whose path contains it
   --method <m>        query: only this method
-  --kind <k>          query: surfaces, calls or both (default)
+  --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids; cannot be combined with --component or --method)
   --flow <name>       export: only this flow
   --unnamed           chains: only the chains no flow names
 
@@ -86,7 +86,7 @@ interface Options {
   component?: string;
   path?: string;
   method?: string;
-  kind?: "surfaces" | "calls" | "both";
+  kind?: "surfaces" | "calls" | "both" | "registries";
   flow?: string;
   unnamed?: boolean;
   args: string[];
@@ -114,7 +114,7 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--method") o.method = value().toUpperCase();
     else if (a === "--kind") {
       const kind = value();
-      if (kind !== "surfaces" && kind !== "calls" && kind !== "both") throw new Error(`--kind is surfaces, calls or both, not ${kind}`);
+      if (kind !== "surfaces" && kind !== "calls" && kind !== "both" && kind !== "registries") throw new Error(`--kind is surfaces, calls, both or registries, not ${kind}`);
       o.kind = kind;
     }
     else if (a === "--flow") o.flow = value();
@@ -260,7 +260,7 @@ function cmdDiff(o: Options): number {
   const config = configFor(o);
   const b = analyze(o, config, base);
   const h = analyze(o, config, head || "WORKTREE");
-  const d = diffGraphs(b.graph, h.graph, b.findings, h.findings, b.chains, h.chains);
+  const d = diffGraphs(b.graph, h.graph, b.findings, h.findings, b.chains, h.chains, b.flows, h.flows);
   if (!emit(o, d)) process.stdout.write(`${diffMarkdown(d)}\n`);
   return 0;
 }
@@ -328,14 +328,20 @@ function matchesFilter(n: Graph["surfaces"][number] | Graph["calls"][number], f:
 
 /** The surfaces and calls matching the filter, with their neighbours one edge away and the edges that join them. */
 export function query(graph: Graph, filter: QueryFilter): Subgraph {
+  const kept = Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined));
+  if (filter.kind === "registries") {
+    if (filter.component !== undefined || filter.method !== undefined) throw new Error("--kind registries takes --path only: registry entries belong to no component and have no method");
+    const registries = graph.registries.filter((r) => !filter.path || r.id.includes(filter.path));
+    return { apiVersion: API_VERSION, kind: "Query", provenance: derived(graph.provenance, "Query", kept), filter: kept, surfaces: [], calls: [], edges: [], registries };
+  }
   const picked = new Set([...graph.surfaces, ...graph.calls].filter((n) => matchesFilter(n, filter)).map((n) => n.id));
   const edges = graph.edges.filter((e) => picked.has(e.from) || picked.has(e.to));
   const nodes = new Set([...picked, ...edges.flatMap((e) => [e.from, e.to])]);
   return {
     apiVersion: API_VERSION,
     kind: "Query",
-    provenance: derived(graph.provenance, "Query", Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined))),
-    filter: Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined)),
+    provenance: derived(graph.provenance, "Query", kept),
+    filter: kept,
     surfaces: graph.surfaces.filter((s) => nodes.has(s.id)),
     calls: graph.calls.filter((c) => nodes.has(c.id)),
     edges,
@@ -345,6 +351,11 @@ export function query(graph: Graph, filter: QueryFilter): Subgraph {
 /** Renders a query document: the nodes that match its filter, each with what it connects to. Reads nothing but the document. */
 export function queryText(doc: Subgraph): string {
   const filter = doc.filter ?? {};
+  if (filter.kind === "registries") {
+    const places = (ps: Array<{ file: string; line: number }>) => (ps.length ? ` (${ps.map((p) => `${p.file}:${p.line}`).join(", ")})` : "");
+    const rows = (doc.registries ?? []).map((r) => `  ${r.id}  ${r.at.file}:${r.at.line}  producers ${r.producers.length}${places(r.producers)}  consumers ${r.consumers.length}${places(r.consumers)}`);
+    return `${[`registry entries (${rows.length})`, ...rows].join("\n")}\n`;
+  }
   const index = new FlowIndex(doc);
   const lines: string[] = [];
   const surfaces = doc.surfaces.filter((s) => matchesFilter(s, filter));

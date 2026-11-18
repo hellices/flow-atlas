@@ -199,6 +199,18 @@ describe("a URL that starts with a value", () => {
     expect(() => read({ "web/A.kt": kotlin }, { baseValues: ["base"] })).toThrow(/baseValues needs base \(with join\) or prefix/);
   });
 
+  it("joins a base whose path ends in / to the path after it with one /", () => {
+    const kotlin = lines('suspend fun a() = http.get("$baseUrl/orders")', 'suspend fun b() = http.post("$baseUrl/carts") {}');
+    const calls = { calls: ["GET /orders based @1", "POST /carts based @2"], limits: [] };
+    expect(read({ "web/A.kt": kotlin }, { base: "/", join: "append", receivers: ["http"], baseValues: ["baseUrl"] })).toEqual(calls);
+    expect(read({ "web/A.kt": kotlin }, { base: "/", join: "resolve", receivers: ["http"], baseValues: ["baseUrl"] })).toEqual(calls);
+    for (const join of ["append", "resolve"])
+      expect(read({ "web/A.kt": kotlin }, { base: "/api/", join, receivers: ["http"], baseValues: ["baseUrl"] }), join).toEqual({
+        calls: ["GET /api/orders based @1", "POST /api/carts based @2"],
+        limits: [],
+      });
+  });
+
   it("takes the text of a string constant of the file, and of none that may hold another value", () => {
     const cs = lines(
       "class C {",

@@ -1,9 +1,10 @@
-import { parseAllDocuments } from "yaml";
+import { createHash } from "node:crypto";
+import { parseAllDocuments, stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { deriveChains } from "../src/chains.js";
 import { normalizeConfig } from "../src/config.js";
-import { flowsText } from "../src/commands.js";
-import { diffGraphs } from "../src/diff.js";
+import { flowsText, query, queryText } from "../src/commands.js";
+import { diffGraphs, diffMarkdown } from "../src/diff.js";
 import { draftChainFlows } from "../src/draft.js";
 import { seedsFor, trace, traceText } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
@@ -175,6 +176,318 @@ describe("chains", () => {
     const d = diffGraphs(graph, after, [], [], report, deriveChains(after, config));
     expect(d.chains).toEqual({ added: [], removed: [], changed: [{ id: "web->bff|GET /screen", added: [], removed: ["backend|GET /users"] }] });
     expect(validate("diff", d)).toEqual([]);
+  });
+
+  it("names the flows a change reaches: a step built or gone, a chain reaching other surfaces, a condition that moved", () => {
+    const journey = flow("journey", [
+      { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+      { stepId: "export", chain: "web->bff|GET /export", role: "exports", lifecycle: "planned" },
+    ]);
+    const untouched = flow("untouched", [{ stepId: "stop", chain: "web->bff|POST /stop", role: "stops" }]);
+    const before = { ...shop, "bff/src/routes.ts": `${shop["bff/src/routes.ts"]}\napp.get("/export", (req, res) => res.send({}));` };
+    const after = {
+      ...before,
+      "web/src/api.ts": `${shop["web/src/api.ts"]}\nexport const exp = () => fetch("/export");`,
+      "bff/src/routes.ts": before["bff/src/routes.ts"].replace("  const users = await fetch(`${BACKEND}/users`);\n", ""),
+    };
+    const run = (files: Record<string, string>) => {
+      const g = scan(memory(files), config);
+      const c = deriveChains(g, config);
+      return { g, c, f: resolveFlows(g, [flowFile(journey, untouched)], "2026-11-01T00:00:00Z", c) };
+    };
+    const b = run(before);
+    const h = run(after);
+    const d = diffGraphs(b.g, h.g, [], [], b.c, h.c, b.f, h.f);
+    expect(d.flows).toEqual({
+      added: [],
+      removed: [],
+      changed: [
+        {
+          name: "journey",
+          conditions: [
+            { type: "Ready", was: { status: "Unknown", reason: "PlannedStepsPending" }, now: { status: "Unknown", reason: "OrderNotInCode" } },
+            { type: "Resolved", was: { status: "True", reason: "PlannedStepsPending" }, now: { status: "True", reason: "AllStepsResolved" } },
+            { type: "Connected", was: { status: "Unknown", reason: "PlannedStepsPending" }, now: { status: "Unknown", reason: "OrderNotInCode" } },
+          ],
+          steps: [
+            { stepId: "read", target: "web->bff|GET /screen", change: "reaches", added: [], removed: ["backend|GET /users"] },
+            { stepId: "export", target: "web->bff|GET /export", change: "built" },
+          ],
+        },
+      ],
+    });
+    expect(validate("diff", d)).toEqual([]);
+    const md = diffMarkdown(d);
+    expect(md).toContain("**Flows the change reaches**");
+    expect(md).toContain(
+      "- `journey`: step `read` no longer reaches `backend|GET /users`; step `export` (`web->bff|GET /export`) is now in the code; Resolved True (PlannedStepsPending) → True (AllStepsResolved); Connected Unknown (PlannedStepsPending) → Unknown (OrderNotInCode)",
+    );
+    expect(md).not.toContain("`untouched`");
+  });
+
+  it("names a flow that runs a flow the change reaches, through every level and once per cycle", () => {
+    const child = flow("child", [{ stepId: "read", chain: "web->bff|GET /screen", role: "reads" }]);
+    const parent = flow("parent", [
+      { stepId: "open", flow: "child" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+      { stepId: "again", flow: "top" },
+    ]);
+    const top = flow("top", [{ stepId: "all", flow: "parent" }]);
+    const loop = flow("loop", [
+      { stepId: "read", flow: "child" },
+      { stepId: "self", flow: "loop" },
+    ]);
+    const after = scan(memory({ ...shop, "bff/src/routes.ts": shop["bff/src/routes.ts"].replace("  const users = await fetch(`${BACKEND}/users`);\n", "") }), config);
+    const afterChains = deriveChains(after, config);
+    const files = [flowFile(child, parent, top, loop)];
+    const d = diffGraphs(graph, after, [], [], report, afterChains, resolveFlows(graph, files, "2026-11-01T00:00:00Z", report), resolveFlows(after, files, "2026-11-01T00:00:00Z", afterChains));
+    // parent and top run each other, and loop runs itself: each flow and each step is named once.
+    expect(d.flows?.changed.map((f) => `${f.name}: ${f.steps.map((s) => `${s.stepId} ${s.change}`).join(", ")}`)).toEqual([
+      "child: read reaches",
+      "loop: read runs, self runs",
+      "parent: open runs, again runs",
+      "top: all runs",
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    expect(diffMarkdown(d)).toContain("- `parent`: step `open` runs `child`, which the change reaches");
+  });
+
+  it("names a step whose kind changes while its target reads the same", () => {
+    const b = flow("kinds", [{ stepId: "x", chain: "same", role: "r" }]);
+    const h = flow("kinds", [{ stepId: "x", flow: "same" }]);
+    const d = diffGraphs(graph, graph, [], [], report, report, resolveFlows(graph, [flowFile(b)], "2026-11-01T00:00:00Z", report), resolveFlows(graph, [flowFile(h)], "2026-11-01T00:00:00Z", report));
+    expect(d.flows?.changed.map((f) => ({ name: f.name, steps: f.steps }))).toEqual([
+      { name: "kinds", steps: [{ stepId: "x", target: "same", change: "retargeted", was: "same", kind: "flow", wasKind: "chain" }] },
+    ]);
+    expect(diffMarkdown(d)).toContain("- `kinds`: the flow's step `x` now names flow `same` (was chain `same`)");
+  });
+
+  it("names a flow whose steps change order, and the flows that run it", () => {
+    const b = flow("pair", [
+      { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const h = flow("pair", [b.spec.steps[1]!, b.spec.steps[0]!]);
+    const parent = flow("parent", [{ stepId: "run", flow: "pair" }]);
+    // Each side's file holds its own text, as a flow file read from disk does.
+    const written = (...flows: FlowObject[]): LoadedFile => ({ ...flowFile(...flows), text: flows.map((f) => stringify(f)).join("---\n") });
+    const before = written(b, parent);
+    const after = written(h, parent);
+    const d = diffGraphs(
+      graph,
+      graph,
+      [],
+      [],
+      report,
+      report,
+      resolveFlows(graph, [before], "2026-11-01T00:00:00Z", report),
+      resolveFlows(graph, [after], "2026-11-01T00:00:00Z", report),
+    );
+    // The flow files each side read are in the provenance with the digest of the text each read, wherever they are kept.
+    const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+    expect(d.provenance.resolvedDependencies.filter((r) => r.name.endsWith(" flows"))).toEqual([
+      { name: "base flows", uri: "f.flow.yaml", digest: { sha256: sha256(before.text) } },
+      { name: "head flows", uri: "f.flow.yaml", digest: { sha256: sha256(after.text) } },
+    ]);
+    expect(sha256(before.text)).not.toBe(sha256(after.text));
+    expect(d.flows?.changed).toEqual([
+      { name: "pair", conditions: [], steps: [], order: { was: ["read", "stop"], now: ["stop", "read"] } },
+      { name: "parent", conditions: [], steps: [{ stepId: "run", target: "pair", change: "runs" }] },
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    expect(diffMarkdown(d)).toContain("- `pair`: the flow's steps are in another order: `read`, `stop` → `stop`, `read`");
+  });
+
+  it("names a step a revision of the flow adds, removes or points elsewhere, apart from what the code does", () => {
+    const b = flow("journey", [
+      { stepId: "read", chain: "web->bff|GET /screen", role: "reads" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const h = flow("journey", [
+      { stepId: "read", chain: "web->bff|POST /stop", role: "stops instead" },
+      { stepId: "admin", chain: "outside->backend|GET /admin/report", role: "reports" },
+    ]);
+    const before = resolveFlows(graph, [flowFile(b)], "2026-11-01T00:00:00Z", report);
+    const after = resolveFlows(graph, [flowFile(h)], "2026-11-01T00:00:00Z", report);
+    const d = diffGraphs(graph, graph, [], [], report, report, before, after);
+    expect(d.flows?.changed[0]?.steps).toEqual([
+      { stepId: "read", target: "web->bff|POST /stop", change: "retargeted", was: "web->bff|GET /screen" },
+      { stepId: "admin", target: "outside->backend|GET /admin/report", change: "added" },
+      { stepId: "stop", target: "web->bff|POST /stop", change: "removed" },
+    ]);
+    expect(validate("diff", d)).toEqual([]);
+    // A retargeted step without the target it named before does not follow the schema; another change carries none.
+    const step = d.flows!.changed[0]!.steps[0]!;
+    const withStep = (s: object) => ({ ...d, flows: { ...d.flows!, changed: [{ ...d.flows!.changed[0]!, steps: [s] }] } });
+    expect(validate("diff", withStep({ ...step, was: undefined }))).not.toEqual([]);
+    expect(validate("diff", withStep({ stepId: "admin", target: "x", change: "added", was: "y" }))).not.toEqual([]);
+    expect(diffMarkdown(d)).toContain(
+      "- `journey`: the flow's step `read` now names `web->bff|POST /stop` (was `web->bff|GET /screen`); the flow's step `admin` (`outside->backend|GET /admin/report`) is added; the flow's step `stop` (`web->bff|POST /stop`) is removed",
+    );
+  });
+});
+
+describe("a flow step that names a registry entry", () => {
+  const files = {
+    ...shop,
+    "agent/tools.json": JSON.stringify([{ name: "quote" }, { name: "refund" }, { name: "listed" }]),
+    "backend/src/tools.ts": ['export const QUOTE = "quote";', 'export const REFUND = "refund";'].join("\n"),
+    "web/src/tools.ts": 'export const shown = ["quote"];',
+  };
+  const withTools = normalizeConfig({
+    ...config,
+    registries: [{ name: "tool", active: { files: "agent/tools.json", field: "name" }, producers: ["backend/src/**"], consumers: ["web/src/**"] }],
+  });
+  const graph = scan(memory(files), withTools);
+  const chains = deriveChains(graph, withTools);
+
+  it("resolves an entry a producer names, and leaves its order with the requests around it to the author", () => {
+    const journey = flow("journey", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens the screen" },
+      { stepId: "quote", registry: "tool:quote", role: "the assistant quotes a price" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const flows = resolveFlows(graph, [flowFile(journey)], "2026-11-01T00:00:00Z", chains);
+    const item = flows.items[0]!;
+    expect(item.status.steps.map((s) => `${s.kind} ${s.resolved} ${s.at?.file ?? ""}:${s.at?.line ?? ""}`)).toEqual([
+      "chain true bff/src/routes.ts:1",
+      "registry true backend/src/tools.ts:1",
+      "chain true bff/src/routes.ts:6",
+    ]);
+    expect(item.status.steps.slice(0, 2).map((s) => s.toNext?.order)).toEqual(["declared", "declared"]);
+    expect(item.status.conditions.map((c) => `${c.type}=${c.status} ${c.reason}`)).toEqual([
+      "Ready=Unknown OrderNotInCode",
+      "Resolved=True AllStepsResolved",
+      "Connected=Unknown OrderNotInCode",
+      "ProducesListed=Unknown NotDeclared",
+      "Documented=True TitleAndRolesWritten",
+    ]);
+    expect(flowFindings(flows)).toEqual([]);
+    expect(validate("flow", journey)).toEqual([]);
+    expect(validate("flow-report", flows)).toEqual([]);
+  });
+
+  it("lists the registry entries a step can name, each with where it is listed, produced and consumed", () => {
+    // Registry entries belong to no component and have no method: those filters are refused, not ignored.
+    expect(() => query(graph, { kind: "registries", component: "web" })).toThrow(/--kind registries takes --path only/);
+    expect(() => query(graph, { kind: "registries", method: "GET" })).toThrow(/--kind registries takes --path only/);
+    // Given at all, even empty, they are refused.
+    expect(() => query(graph, { kind: "registries", component: "" })).toThrow(/--kind registries takes --path only/);
+    expect(() => query(graph, { kind: "registries", method: "" })).toThrow(/--kind registries takes --path only/);
+    const doc = query(graph, { kind: "registries", path: "quo" });
+    expect(doc.registries?.map((r) => r.id)).toEqual(["tool:quote"]);
+    expect(doc.registries?.[0]?.consumers).toEqual([{ file: "web/src/tools.ts", line: 1 }]);
+    expect(doc.surfaces).toEqual([]);
+    expect(validate("subgraph", doc)).toEqual([]);
+    expect(queryText(query(graph, { kind: "registries" }))).toBe(
+      [
+        "registry entries (3)",
+        "  tool:quote  agent/tools.json:1  producers 1 (backend/src/tools.ts:1)  consumers 1 (web/src/tools.ts:1)",
+        "  tool:refund  agent/tools.json:1  producers 1 (backend/src/tools.ts:2)  consumers 0",
+        "  tool:listed  agent/tools.json:1  producers 0  consumers 0",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("counts an entry no producer names, or none lists, as not built: planned it is pending, active it is missing", () => {
+    const journey = flow("journey", [
+      { stepId: "listed", registry: "tool:listed", role: "listed, produced nowhere" },
+      { stepId: "cancel", registry: "tool:cancel", role: "not listed yet", lifecycle: "planned" },
+    ]);
+    const flows = resolveFlows(graph, [flowFile(journey)], "2026-11-01T00:00:00Z", chains);
+    expect(flows.items[0]!.status.steps.map((s) => s.resolved)).toEqual([false, false]);
+    expect(flows.items[0]!.status.conditions.find((c) => c.type === "Resolved")).toMatchObject({ status: "False", reason: "StepNotFound", message: "not in the code: listed (tool:listed)" });
+    expect(flowFindings(flows).map((f) => f.key)).toEqual(["FA007|journey|listed|unresolved"]);
+    // Next to a step not built yet, the link is the plan's, not one the code fails to show.
+    const plan = flow("plan", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "cancel", registry: "tool:cancel", role: "not listed yet", lifecycle: "planned" },
+    ]);
+    const planned = resolveFlows(graph, [flowFile(plan)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions;
+    expect(planned.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> cancel" });
+    // An active step missing beside a planned one is still a step the code lost, whatever its neighbour.
+    const lost = flow("lost", [
+      { stepId: "listed", registry: "tool:listed", role: "listed, produced nowhere" },
+      { stepId: "cancel", registry: "tool:cancel", role: "not listed yet", lifecycle: "planned" },
+    ]);
+    const lostConditions = resolveFlows(graph, [flowFile(lost)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions;
+    expect(lostConditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: listed -> cancel" });
+  });
+
+  it("reads a registry entry at a sub-flow's end as an order the author states", () => {
+    const branch = flow("branch", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "refund", registry: "tool:refund", role: "refunds" },
+    ]);
+    const journey = flow("journey", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens" },
+      { stepId: "branch", flow: "branch" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops" },
+    ]);
+    const item = resolveFlows(graph, [flowFile(branch, journey)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "journey")!;
+    expect(item.status.steps.slice(0, 2).map((s) => s.toNext?.order)).toEqual(["declared", "declared"]);
+    expect(item.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "OrderNotInCode" });
+    // An entry at the sub-flow's end that no producer names leaves the link unchecked, not ordered.
+    const unbuilt = flow("branch", [{ stepId: "listed", registry: "tool:listed", role: "listed only" }]);
+    const unchecked = resolveFlows(graph, [flowFile(unbuilt, journey)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "journey")!;
+    expect(unchecked.status.steps[0]!.toNext).toBeUndefined();
+    expect(unchecked.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ status: "Unknown", reason: "StepsUnresolved" });
+    // A built entry on one side does not order a link whose other end, inside a sub-flow, is not in the code.
+    const gone = flow("gone", [{ stepId: "missing", chain: "web->bff|GET /gone", role: "gone" }]);
+    for (const steps of [
+      [{ stepId: "quote", registry: "tool:quote", role: "quotes" }, { stepId: "branch", flow: "branch" }],
+      [{ stepId: "quote", registry: "tool:quote", role: "quotes" }, { stepId: "gone", flow: "gone" }],
+      [{ stepId: "gone", flow: "gone" }, { stepId: "quote", registry: "tool:quote", role: "quotes" }],
+    ]) {
+      const pair = resolveFlows(graph, [flowFile(unbuilt, gone, flow("pair", steps))], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "pair")!;
+      expect(pair.status.steps[0]!.toNext, JSON.stringify(steps)).toBeUndefined();
+    }
+    // An active end missing inside a sub-flow is a step the code lost, even beside a planned neighbour.
+    const beside = flow("beside", [
+      { stepId: "gone", flow: "gone" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const connected = resolveFlows(graph, [flowFile(gone, beside)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "beside")!.status.conditions.find((c) => c.type === "Connected");
+    expect(connected).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: gone -> quote" });
+    // Also where the sub-flow's end is itself a flow no file defines.
+    const wraps = flow("wraps", [{ stepId: "missing", flow: "missing" }]);
+    const around = flow("around", [
+      { stepId: "wraps", flow: "wraps" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const nested = resolveFlows(graph, [flowFile(wraps, around)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "around")!.status.conditions.find((c) => c.type === "Connected");
+    expect(nested).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: wraps -> quote" });
+    // An end inside a planned sub-flow, not built yet, is the plan's: the link is pending, not lost.
+    const later = { ...flow("later", [{ stepId: "listed", registry: "tool:listed", role: "listed only" }]), spec: { lifecycle: "planned" as const, steps: [{ stepId: "listed", registry: "tool:listed", role: "listed only" }] } };
+    const ahead = flow("ahead", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "later", flow: "later" },
+    ]);
+    const aheadConnected = resolveFlows(graph, [flowFile(later, ahead)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "ahead")!.status.conditions.find((c) => c.type === "Connected");
+    expect(aheadConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> later" });
+    // Both ends built, one of them marked planned: the order is still the author's, as between two built chains,
+    // since building nothing more would put the link in the code.
+    const builtPlanned = flow("built-planned", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const builtConnected = resolveFlows(graph, [flowFile(builtPlanned)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions.find((c) => c.type === "Connected");
+    expect(builtConnected).toMatchObject({ status: "Unknown", reason: "OrderNotInCode" });
+    const builtChains = flow("built-chains", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops", lifecycle: "planned" },
+    ]);
+    expect(resolveFlows(graph, [flowFile(builtChains)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ reason: "OrderNotInCode" });
+    // So is a planned sub-flow with no steps written yet.
+    const empty = { ...flow("empty", []), spec: { lifecycle: "planned" as const, steps: [] } };
+    const toEmpty = flow("to-empty", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "empty", flow: "empty" },
+    ]);
+    const emptyConnected = resolveFlows(graph, [flowFile(empty, toEmpty)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "to-empty")!.status.conditions.find((c) => c.type === "Connected");
+    expect(emptyConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> empty" });
   });
 });
 

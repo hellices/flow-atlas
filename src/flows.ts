@@ -40,6 +40,8 @@ export interface StepSpec {
   /** A chain atlas derives (`atlas chains`): one request and every surface it reaches. */
   chain?: string;
   flow?: string;
+  /** A registry entry (`registry:key`), such as a tool an agent calls or an event a step emits. */
+  registry?: string;
   role?: string;
   lifecycle?: "active" | "planned";
 }
@@ -65,7 +67,7 @@ export interface Condition {
 export interface StepStatus {
   stepId: string;
   line: number;
-  kind: "surface" | "call" | "chain" | "flow";
+  kind: "surface" | "call" | "chain" | "flow" | "registry";
   target: string;
   lifecycle: "active" | "planned";
   resolved: boolean;
@@ -171,6 +173,8 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
   const index = new FlowIndex(graph);
   const chainById = new Map<string, Chain>(chains.chains.map((c) => [c.id, c]));
   const registries = new Set(graph.registries.map((r) => r.id));
+  // An entry is built where a producer names it; one only listed is a plan.
+  const produced = new Map(graph.registries.filter((r) => r.producers.length).map((r) => [r.id, r.producers[0]!]));
   const byName = new Map<string, FlowObject>();
   for (const f of files) for (const { object } of f.flows) if (!byName.has(object.metadata.name)) byName.set(object.metadata.name, object);
   const commit = graph.provenance.resolvedDependencies.find((d) => d.name === "code")?.digest?.gitCommit ?? "WORKTREE";
@@ -197,6 +201,30 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     return s ? boundaryChain(s, end, depth + 1) : undefined;
   };
 
+  /** The step a step enters by (first) or leaves by (last), looking through sub-flows to their end steps. */
+  const endStep = (step: StepSpec, end: "first" | "last", depth = 0): StepSpec | undefined => {
+    if (!step.flow) return step;
+    const sub = byName.get(step.flow);
+    if (!sub || depth > 4) return undefined;
+    const steps = sub.spec.steps;
+    const s = end === "first" ? steps[0] : steps[steps.length - 1];
+    return s ? endStep(s, end, depth + 1) : undefined;
+  };
+  const present = (s: StepSpec | undefined): boolean => !!s && (s.registry ? produced.has(s.registry) : node(s, "first") !== undefined);
+  /** The step a step enters or leaves by, and whether it is planned there: itself, or a sub-flow on the way, planned. */
+  const effectiveEnd = (step: StepSpec, end: "first" | "last", planned = false, depth = 0): { step?: StepSpec; planned: boolean } => {
+    const p = planned || step.lifecycle === "planned";
+    if (!step.flow) return { step, planned: p };
+    const sub = byName.get(step.flow);
+    // A flow no file defines is its own end: not in the code, so an active one is lost.
+    if (!sub) return { step, planned: p };
+    if (depth > 4) return { planned: p };
+    const steps = sub.spec.steps;
+    const s = end === "first" ? steps[0] : steps[steps.length - 1];
+    const inner = p || sub.spec.lifecycle === "planned";
+    return s ? effectiveEnd(s, end, inner, depth + 1) : { planned: inner };
+  };
+
   const items: FlowReport["items"] = [];
   const covered = new Set<string>();
   for (const f of files) {
@@ -204,21 +232,38 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
       const { spec } = object;
       const lifecycle = spec.lifecycle ?? "active";
       const steps: StepStatus[] = spec.steps.map((s, i) => {
-        const kind = s.surface ? "surface" : s.call ? "call" : s.chain ? "chain" : "flow";
-        const target = (s.surface ?? s.call ?? s.chain ?? s.flow)!;
+        const kind = s.surface ? "surface" : s.call ? "call" : s.chain ? "chain" : s.registry ? "registry" : "flow";
+        const target = (s.surface ?? s.call ?? s.chain ?? s.registry ?? s.flow)!;
         const root = s.chain ? chainById.get(s.chain)?.root : undefined;
-        const at = s.surface ? index.surfaces.get(s.surface)?.at : s.call ? index.calls.get(s.call)?.at : root ? index.surfaces.get(root)?.at : undefined;
+        const at = s.surface
+          ? index.surfaces.get(s.surface)?.at
+          : s.call
+            ? index.calls.get(s.call)?.at
+            : s.registry
+              ? produced.get(s.registry)
+              : root
+                ? index.surfaces.get(root)?.at
+                : undefined;
         return {
           stepId: s.stepId,
           line: stepLine(i),
           kind,
           target,
           lifecycle: lifecycle === "planned" ? "planned" : (s.lifecycle ?? "active"),
-          resolved: kind === "flow" ? byName.has(target) : kind === "chain" ? chainById.has(target) : node(s, "first") !== undefined,
+          resolved:
+            kind === "flow" ? byName.has(target) : kind === "chain" ? chainById.has(target) : kind === "registry" ? produced.has(target) : node(s, "first") !== undefined,
           ...(at ? { at } : {}),
         };
       });
       for (let i = 0; i + 1 < spec.steps.length; i++) {
+        // A registry entry is no request: nothing in the code orders it with the steps around it. The order is the
+        // author's once both ends are in the code; otherwise the link is left unchecked.
+        const last = endStep(spec.steps[i]!, "last");
+        const first = endStep(spec.steps[i + 1]!, "first");
+        if (last?.registry || first?.registry) {
+          if (present(last) && present(first)) steps[i]!.toNext = { connected: false, edges: [], order: "declared" };
+          continue;
+        }
         const a = boundaryChain(spec.steps[i]!, "last");
         const b = boundaryChain(spec.steps[i + 1]!, "first");
         if (a && b) {
@@ -234,6 +279,15 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
         if (!from || !to) continue;
         const edges = index.path(from, to, MAX_HOPS);
         steps[i]!.toNext = { connected: edges !== undefined, edges: edges ?? [] };
+      }
+      // A link left unchecked, judged by its ends read through sub-flows: an active end not in the code is a step the
+      // code lost; otherwise a planned end, here or in a planned sub-flow, leaves the link pending.
+      const unchecked = new Map<number, "lost" | "pending">();
+      for (let i = 0; i + 1 < spec.steps.length; i++) {
+        if (steps[i]!.toNext) continue;
+        const ends = [effectiveEnd(spec.steps[i]!, "last"), effectiveEnd(spec.steps[i + 1]!, "first")];
+        if (lifecycle !== "planned" && ends.some((e) => e.step && !e.planned && !present(e.step))) unchecked.set(i, "lost");
+        else if (ends.some((e) => e.planned)) unchecked.set(i, "pending");
       }
       const first = spec.steps[0] ? node(spec.steps[0], "first") : undefined;
       const firstChain = spec.steps[0] ? boundaryChain(spec.steps[0], "first") : undefined;
@@ -259,7 +313,7 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
           }
         : undefined;
       const produces = (spec.produces ?? []).map((id) => ({ id, found: registries.has(id) }));
-      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object);
+      const conditions = lifecycle === "deprecated" ? deprecatedConditions() : conditionsFor(steps, produces, object, unchecked);
       if (lifecycle !== "deprecated") {
         for (const s of steps) if (s.kind === "surface" && s.resolved) covered.add(s.target);
         for (const s of steps) if (s.kind === "chain") for (const id of chainById.get(s.target)?.surfaces ?? []) covered.add(id);
@@ -302,7 +356,7 @@ function deprecatedConditions(): Condition[] {
   );
 }
 
-function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject): Condition[] {
+function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], object: FlowObject, unchecked: Map<number, "lost" | "pending"> = new Map()): Condition[] {
   const unresolved = steps.filter((s) => !s.resolved);
   const missing = unresolved.filter((s) => s.lifecycle === "active");
   const resolved =
@@ -318,15 +372,20 @@ function conditionsFor(steps: StepStatus[], produces: FlowStatus["produces"], ob
   // A gap next to a planned step is the plan, not yet built; only a gap between two active steps is a fault.
   const broken = gaps.filter((s) => !touchesPlanned(steps, s));
   const planned = gaps.filter((s) => touchesPlanned(steps, s));
-  const open = pairs.filter((s) => !s.toNext);
+  // A pair is left unchecked when a step is missing: an active one is a step the code lost, whatever its neighbour; a
+  // planned one is the plan, not yet built.
+  const lost = (s: StepStatus) => unchecked.get(steps.indexOf(s)) === "lost" || [s, steps[steps.indexOf(s) + 1]!].some((x) => !x.resolved && x.lifecycle === "active");
+  const plannedEnd = (s: StepStatus) => touchesPlanned(steps, s) || unchecked.get(steps.indexOf(s)) === "pending";
+  const open = pairs.filter((s) => !s.toNext && (lost(s) || !plannedEnd(s)));
+  const pending = pairs.filter((s) => planned.includes(s) || (!s.toNext && !open.includes(s)));
   const pairName = (s: StepStatus) => `${s.stepId} -> ${steps[steps.indexOf(s) + 1]!.stepId}`;
   const connected =
     broken.length > 0
       ? condition("Connected", "False", "NoPathBetweenSteps", broken.map(pairName).join(", "))
       : open.length > 0
         ? condition("Connected", "Unknown", "StepsUnresolved", `not checked: ${open.map(pairName).join(", ")}`)
-        : planned.length > 0
-          ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${planned.map(pairName).join(", ")}`)
+        : pending.length > 0
+          ? condition("Connected", "Unknown", "PlannedStepsPending", `planned: ${pending.map(pairName).join(", ")}`)
           : declared.length > 0
             ? condition("Connected", "Unknown", "OrderNotInCode", `the code shows no link from one request to the next: ${declared.map(pairName).join(", ")}`)
             : condition("Connected", "True", "AllStepsConnected");
