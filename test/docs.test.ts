@@ -108,7 +108,10 @@ describe("the commands the documents name are the CLI's", () => {
   const unique = [...new Map(commands.map((c) => [c.command, c])).values()];
   for (const { file, command } of unique) {
     it(`${command}  (${file})`, () => {
-      const args = argv(command).slice(1);
+      // A revision the documents name (main) may be missing from a shallow checkout; HEAD is always there.
+      const args = argv(command)
+        .slice(1)
+        .map((a, i, all) => (all[i - 1] === "--since" ? "HEAD" : all[0] === "diff" && i === 1 ? a.replace(/^[^.]*\.\./, "HEAD..") : a));
       const rooted = args.includes("--root") ? args.map((a, i) => (args[i - 1] === "--root" ? shop : a)) : [...args, "--root", shop];
       const out = mkdtempSync(join(tmpdir(), "atlas-docs-"));
       if (args[0] === "explain") expect(run(["check", "--root", shop, "--out", out]).status).toBe(0);
