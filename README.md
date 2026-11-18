@@ -234,6 +234,10 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
   read is left out and named in a limit. Set the call source's `base` and `join` (or `prefix`) where the code holds the
   base in a value.
 - **Only configured files are read,** so no finding does not prove a flow complete.
+- **A chain ends where the request does.** Work a handler queues for a worker, or hands to an object injected from
+  another package, is not followed: the calls the worker makes are read and checked, but no chain from the user's
+  request reaches them, and `diff` names no flow when they change. Design documents, tests and runtime traces cover
+  that part.
 - **Field-level contract checks** are not implemented yet.
 
 ## Documentation

@@ -113,7 +113,10 @@ criteria.
 
 After adding a route or a client call, run `atlas trace <surface>`. Upstream should show the caller you intended and
 downstream the calls you intended. An empty side means either not wired yet, or wired in a way the tool cannot read
-(a path built far from the call, a handler in another language); open the code and say which.
+(a path built far from the call, a handler in another language, work the handler queues for a worker to run later,
+an object injected from another package); open the code and say which. Past such a hand-off, say that atlas stops
+there and what continues it, from the repository's design documents, its tests or runtime traces; do not write
+steps or edges to carry the chain on.
 
 When you add, remove or change a route of a component whose routes come from a generated OpenAPI document, regenerate
 the document in the same change. A client call alone does not change it.
