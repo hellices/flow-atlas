@@ -59,7 +59,7 @@ Options
   --format <f>        text (default), json, yaml; markdown for check and diff; sarif (SARIF 2.1.0) for check
   --all               also show baseline and excepted findings
   --fail-on-new       exit 1 when there are new findings
-  --component <name>  query: only this component
+  --component <name>  query, chains, draft flows: only this component
   --path <path>       query: surfaces whose route matches the path, or whose path contains it
   --method <m>        query: only this method
   --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids; cannot be combined with --component or --method)

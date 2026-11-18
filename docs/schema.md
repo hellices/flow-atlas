@@ -187,7 +187,7 @@ tree, `code` has no digest.
 |---|---|---|
 | `Graph` | `scan` | components, routes, calls, edges, registry entries, what each configured source read |
 | `Trace` | `trace` | the subgraph upstream and downstream of a starting route |
-| `Query` | `query` | the routes and calls that match, with their neighbours one edge away |
+| `Query` | `query` | the routes and calls that match, with their neighbours one edge away; with `--kind registries`, the registry entries whose id contains `--path` |
 | `FlowReport` | `flows` | each flow's metadata and status |
 | `Findings` | `check` | findings and their state (new, baseline, excepted, expired-exception) |
 | `Diff` | `diff` | routes, component links, chains, the flows they reach and findings that changed between two revisions |

@@ -22,9 +22,8 @@ npx github:hellices/flow-atlas check --root fixtures/shop
 - [Key terms](#key-terms)
 - [What it reads](#what-it-reads)
 - [Install](#install)
-- [Use](#use)
-- [Day to day](#day-to-day)
 - [Use with a coding agent](#use-with-a-coding-agent)
+- [Step by step](#step-by-step)
 - [Flows and output](#flows-and-output)
 - [Limits](#limits)
 - [Documentation](#documentation)
@@ -53,6 +52,7 @@ The code is how a finding is named everywhere: in the output, in the exceptions 
 | call | a request one component sends to another (`bff -> orders  POST /orders`) |
 | chain | one request and everything it reaches in turn |
 | flow | a journey you describe in a file (`flows/*.flow.yaml`), built from chains, with what each component does in it |
+| registry | a list whose entries one component produces and another consumes (artifact kinds, events, the tools an agent calls); a flow step can name an entry |
 | limit | a `limit:` line: something atlas saw but could not read for certain, so it left it out rather than guess |
 | baseline | the findings you accepted as known debt; `check` shows only findings new since then |
 
@@ -117,20 +117,118 @@ npm install -g github:hellices/flow-atlas    # install the atlas command
 Recent npm versions may ask before running install scripts. If `prepare` is blocked, install the packed release
 instead (`npm install -g <flow-atlas-x.y.z.tgz URL>`).
 
-## Use
+## Use with a coding agent
 
-Start from what atlas finds, write the configuration, then scan until it reads what it should:
+The [agent skill](skills/flow-atlas/SKILL.md) teaches an agent when to run atlas (before it adds a route or a call, and
+before it opens a PR) and how to treat what it finds. It is the [`skills/flow-atlas`](skills/flow-atlas) directory
+and follows the [Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor
+and other hosts load it the same way. The repository is also an [Agent Plugin](https://agent-plugins.org)
+(`plugin.json`) that carries the skill.
 
-1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
-2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that
-   list: the components, where each serves routes, and which files call others.
-   [config.md](skills/flow-atlas/references/config.md) describes every key.
-3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
-   expect two or three rounds before the findings are worth trusting.
-4. `atlas check --root <repo>` prints the findings.
+```bash
+copilot plugin install hellices/flow-atlas       # GitHub Copilot CLI, as a plugin
+gh skill install hellices/flow-atlas flow-atlas  # GitHub CLI 2.90 or later, the skill alone
+```
+
+Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
+The agent runs the `atlas` command [installed above](#install), or through `npx github:hellices/flow-atlas` when it
+is not installed.
+
+### Who does what
+
+| Who | Writes |
+|---|---|
+| atlas | what the code settles: routes, calls, how they connect, operationIds, OpenAPI descriptions and how far they agree with the code, flow traces, flow drafts, and the findings |
+| an agent or a person | what needs intent: a flow's title, what each component does in it, its owner, whether a step is planned, why a finding is an accepted exception. atlas checks that these are written and still hold |
+| the skill | the criteria for judgments in between: whether a hop belongs to the component it sits in, and whether a gap is a defect, a plan or a false positive |
+
+More in [docs/responsibilities.md](docs/responsibilities.md).
+
+## Step by step
+
+flow-atlas is meant to be run by your coding agent, through the skill installed above. You ask for an
+outcome; the agent runs atlas, reads its output and reports back; you make the decisions the skill leaves to a person.
+The skill also starts on its own whenever a change crosses components, so steps 3 and 5 usually need no request.
+
+**The files.** atlas writes the structure (routes, calls, chains, findings) on every run. The agent drafts three
+files, and you review them like code:
+
+| File | What the agent writes | What you decide |
+|---|---|---|
+| `atlas.config.yaml` | the components, routes and call files, from what atlas finds | whether it covers what you care about |
+| `flows/*.flow.yaml` | a journey's steps from atlas output, with a title and each step's role | whether the title and roles say what each component owns |
+| `flows/atlas-exceptions.yaml` | an entry for a finding that is right on purpose | the reason, who decided, and when to look again |
+
+### 1. Set it up (once)
+
+> *"Set up flow-atlas for this repository."*  ·  *"... and keep everything outside it"* for a repository you must not change
+
+The agent runs `atlas inventory`, writes `atlas.config.yaml` from it ([config.md](skills/flow-atlas/references/config.md)),
+and runs `atlas scan` again and again until every source reads what it should, fixing the configuration each round.
+With `--out <dir>` it writes nothing into the repository. Every later command takes the same `--root` and `--out`:
+`explain` and `baseline update` read what the last `check` wrote there.
+
+**You:** check that the components listed are the services you mean, and read the `limit:` lines it reports: each is
+something atlas could not read, and why.
+
+### 2. Accept what is already there
+
+> *"Run atlas check and go through the findings with me."*
+
+The agent runs `atlas check` and `atlas explain` on a sample, opens the code, and sorts each finding: a real problem,
+the configuration's mistake (it fixes the configuration), a route served outside the repository (`publicSurfaces`), or
+a misread file.
+
+**You:** agree on the result, then say *"record the baseline"*. The skill never runs `atlas baseline update` on its
+own. From then on only new findings show up.
+
+### 3. While changing code (automatic)
+
+> *"Add a refund endpoint to orders and call it from the web app."*
+
+Before it writes code, the agent runs `atlas query` and `atlas trace` to see whether something already does the job
+and which component should own each hop. After it writes code, it traces the new route to confirm the caller and the
+calls it intended, and says so when a side is empty and why.
+
+**You:** settle the plan when the agent reports an existing route that does the same job, or two components that
+would end up doing the same step.
+
+### 4. Describe the journeys you want kept (optional)
+
+> *"Write flows for the checkout journey"*  ·  *"Walk issue #123's journey against the code."*
+
+The agent drafts flows with `atlas draft flows`, takes each step from `atlas chains` or, for a tool an agent calls
+inside one request, from `atlas query --kind registries`, and marks steps that are not built yet as planned. `atlas
+flows` then places each step in the code, or reports it planned or not found; the agent reports those as the
+journey's gaps.
+
+**You:** review the flow files in the pull request. A step atlas places is in the code; whether it gives the customer
+the right result is for tests and people to check, not atlas.
+
+### 5. Before opening a pull request (automatic)
+
+> *"Open a PR."*
+
+The agent runs `atlas check --since <base>` and fixes, or explains, each new finding. It puts `atlas diff
+<base>..WORKTREE --format markdown` in the description: the routes, chains and flows the change reaches.
+
+**You:** decide each exception the agent proposes (a reason, who decided, a review date), and switching a rule off
+(`rules.<id>.enabled: false`), which the skill does only with a person's agreement.
+
+### 6. In CI (optional, without an agent)
+
+Run from the repository root, or pass the same `--root` and `--out` to each command.
+
+```bash
+atlas check --fail-on-new                       # exit 1 when there are new findings
+atlas check --format sarif > atlas.sarif        # findings for code scanning
+atlas export arazzo > flows.arazzo.yaml         # flows as Arazzo 1.0, for an API workflow runner
+```
+
+atlas reports and does not block by default; `--fail-on-new` makes CI fail on new findings.
 
 <details>
-<summary>All commands</summary>
+<summary>All commands and options</summary>
 
 ```bash
 atlas inventory --root <repo>                 # candidate components, routes, client calls
@@ -150,54 +248,14 @@ atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
 ```
 
-</details>
-
 - **Reading without touching the repository.** `--ref <commit>` reads a commit without checking it out, and every
   write goes to `--out` (`export` prints to stdout). A repository you must not change can be analysed with `--out`
   outside it.
 - **Exit codes.** Every command exits 0 when it is done and 2 on an error. `check --fail-on-new` exits 1 when there are
   new findings. `export arazzo` exits 1 when there is nothing to export: no active flow, none of the name `--flow`
   gives, or no step an OpenAPI description names.
-- **Reading a trace.** How `trace` joins calls to routes and handlers to calls: [docs/traces.md](docs/traces.md).
 
-## Day to day
-
-1. **Record the debt.** Once the configuration reads what it should, run `atlas baseline update`. From then on only new
-   findings appear. Existing debt is reduced on its own schedule, and each change answers only for what it introduced.
-2. **Handle each new finding.**
-   - Fix it, or record it in the exceptions file (`flows/atlas-exceptions.yaml`) with the decision behind it and a
-     date to look again. When the date passes, the finding comes back.
-   - A wrong finding caused by the configuration is fixed there. A misread file is recorded as an exception that says
-     which file was misread and how.
-   - A rule that is mostly wrong for a repository is switched off there (`rules.<id>.enabled: false`), or its extractor
-     is fixed.
-3. **Decide whether CI blocks.** atlas reports and does not block by default. To fail CI on new findings, add
-   `--fail-on-new`.
-
-## Use with a coding agent
-
-The [agent skill](skills/flow-atlas/SKILL.md) teaches an agent when to run atlas (before it adds a route or a call, and
-before it opens a PR) and how to treat what it finds. It is the [`skills/flow-atlas`](skills/flow-atlas) directory
-and follows the [Agent Skills](https://agentskills.io) specification, so GitHub Copilot, Claude Code, Codex, Cursor
-and other hosts load it the same way. The repository is also an [Agent Plugin](https://agent-plugins.org)
-(`plugin.json`) that carries the skill.
-
-```bash
-copilot plugin install hellices/flow-atlas       # GitHub Copilot CLI, as a plugin
-gh skill install hellices/flow-atlas flow-atlas  # GitHub CLI 2.90 or later, the skill alone
-```
-
-Or copy the directory into your host's skills directory (for example `.github/skills/` or `.agents/skills/`).
-
-### Who does what
-
-| Who | Writes |
-|---|---|
-| atlas | what the code settles: routes, calls, how they connect, operationIds, OpenAPI descriptions and how far they agree with the code, flow traces, flow drafts, and the findings |
-| an agent or a person | what needs intent: a flow's title, what each component does in it, its owner, whether a step is planned, why a finding is an accepted exception. atlas checks that these are written and still hold |
-| the skill | the criteria for judgments in between: whether a hop belongs to the component it sits in, and whether a gap is a defect, a plan or a false positive |
-
-More in [docs/responsibilities.md](docs/responsibilities.md).
+</details>
 
 ## Flows and output
 
@@ -234,6 +292,10 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
   read is left out and named in a limit. Set the call source's `base` and `join` (or `prefix`) where the code holds the
   base in a value.
 - **Only configured files are read,** so no finding does not prove a flow complete.
+- **A chain ends where the request does.** Work a handler queues for a worker, or hands to an object injected from
+  another package, is not followed: the calls the worker makes are read and checked, and start chains of their own,
+  but no chain from the user's request reaches them. When they change, `diff` names the flows that name those chains,
+  not the flows of the request that handed the work over. Design documents, tests and runtime traces cover that link.
 - **Field-level contract checks** are not implemented yet.
 
 ## Documentation
@@ -243,7 +305,7 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 | [SKILL.md](skills/flow-atlas/SKILL.md) | how an agent uses atlas |
 | [config.md](skills/flow-atlas/references/config.md) | the configuration, and every rule the extractors follow |
 | [rules.md](skills/flow-atlas/references/rules.md) | each finding's causes and fixes |
-| [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component |
+| [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component, and whether a journey's step is missing |
 | [openapi.md](skills/flow-atlas/references/openapi.md) | producing and reading OpenAPI documents |
 | [docs/traces.md](docs/traces.md) | how traces connect calls, routes and handlers |
 | [docs/direction.md](docs/direction.md) | the scope, the research it rests on, and the extensions left open |

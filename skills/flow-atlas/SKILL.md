@@ -113,7 +113,10 @@ criteria.
 
 After adding a route or a client call, run `atlas trace <surface>`. Upstream should show the caller you intended and
 downstream the calls you intended. An empty side means either not wired yet, or wired in a way the tool cannot read
-(a path built far from the call, a handler in another language); open the code and say which.
+(a path built far from the call, a handler in another language, work the handler queues for a worker to run later,
+an object injected from another package); open the code and say which. Past such a hand-off, say that atlas stops
+there and what continues it, from the repository's design documents, its tests or runtime traces; do not write
+steps or edges to carry the chain on.
 
 When you add, remove or change a route of a component whose routes come from a generated OpenAPI document, regenerate
 the document in the same change. A client call alone does not change it.
@@ -129,7 +132,8 @@ the document in the same change. A client call alone does not change it.
    chains, in order. Take each following chain from the previous chain's `next` when atlas lists one; then `Connected`
    is True from the code. Two requests with nothing in the code linking them, whether one component makes both or
    one client hands off to another, give `Connected` and `Ready` `Unknown (OrderNotInCode)`: the order is yours, and
-   it stays Unknown.
+   it stays Unknown. A step that happens within one request (a tool an agent calls) is a `registry` step; see
+   "Walking a journey against the code".
 4. `atlas flows` until each flow is `Ready=True` or deliberately Unknown. A False `Resolved` or `Connected` means
    the code or the flow is wrong: decide which with `references/boundaries.md`. A False
    `Documented` means an author field is empty.
