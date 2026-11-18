@@ -14,7 +14,9 @@ function linkDestinations(body: string): string[] {
   const out: string[] = [];
   for (let i = body.indexOf("]("); i >= 0; i = body.indexOf("](", i + 2)) {
     let j = i + 2;
+    // Spaces, tabs and at most one line ending may come before the destination.
     while (body[j] === " " || body[j] === "\t") j++;
+    if (body[j] === "\n") for (j++; body[j] === " " || body[j] === "\t"; ) j++;
     if (body[j] === "<") {
       const close = body.indexOf(">", j);
       if (close > j && !body.slice(j, close).includes("\n")) out.push(body.slice(j + 1, close));

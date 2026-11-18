@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: trials per stimulus
+        description: trials per stimulus (1 to 10)
         default: "3"
   schedule:
     - cron: "41 5 * * 2"
@@ -55,7 +55,7 @@ jobs:
           # The dispatch input reaches the shell as a variable, never as source.
           RUNS: ${{ inputs.runs || '3' }}
         run: |
-          case "$RUNS" in ''|*[!0-9]*|0) echo "runs is a positive integer, not '$RUNS'" >&2; exit 2;; esac
+          case "$RUNS" in [1-9]|10) ;; *) echo "runs is 1 to 10, not '$RUNS'" >&2; exit 2;; esac
           # vally exits non-zero on any trial error; the verdict step reads the trials instead.
           npx -y @microsoft/vally-cli@0.21.0 eval \
             --eval-spec evals/flow-atlas/eval.yaml \

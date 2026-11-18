@@ -73,7 +73,7 @@ stimuli:
       - type: transcript-matches
         config: { pattern: "POST /orders/(\\{\\}|\\{[a-zA-Z]+\\}|:id)/refund" }
       - type: transcript-matches
-        config: { pattern: "services/bff/src/clients/orders\\.ts(:14)?" }
+        config: { pattern: "services/bff/src/clients/orders\\.ts(:14\\b|`?,? (on )?line 14\\b)" }
       - type: diff-empty
 
   # ---- while implementing -----------------------------------------------------------------------------------------
