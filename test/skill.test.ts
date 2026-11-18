@@ -35,7 +35,7 @@ function linkDestinations(body: string): string[] {
     }
     if (destination) out.push(destination);
   }
-  for (const m of body.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm)) out.push(m[1] ?? m[2]!);
+  for (const m of body.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:\n[ \t]*)?(?:<([^>\n]+)>|(\S+))/gm)) out.push(m[1] ?? m[2]!);
   return out;
 }
 
