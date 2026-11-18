@@ -170,7 +170,10 @@ describe("calls to a component whose routes are not read", () => {
     expect(fa002(withStray, normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }))).toEqual(["FA002|web->api|GET /orders/stray"]);
     // The top-level openapi entry chooses a description for export and reads no routes: FA002 still checks nothing there.
     const routes = [{ component: "api", files: ["api/**"], styles: ["express"] }];
-    expect(scan(memory(files), normalizeConfig({ components, routes, calls: both, openapi: { agent: "agent/openapi.json" } })).limits).toEqual([limit]);
+    const exported = normalizeConfig({ components, routes, calls: both, openapi: { agent: "agent/openapi.json" } });
+    const exportedGraph = scan(memory(files), exported);
+    expect(exportedGraph.limits).toEqual([limit]);
+    expect(fa002(exportedGraph, exported).filter((k) => k.includes("->agent|"))).toEqual([]);
     // A route source from a generated document is a route source.
     const documented = { ...files, "agent/openapi.json": JSON.stringify({ openapi: "3.1.0", info: { title: "a", version: "1" }, paths: { "/v1/sessions": { post: {} } } }) };
     const read = scan(memory(documented), normalizeConfig({ components, routes: [...routes, { component: "agent", openapi: "agent/openapi.json" }], calls: both }));
