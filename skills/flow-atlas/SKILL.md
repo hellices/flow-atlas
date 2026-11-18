@@ -1,6 +1,6 @@
 ---
 name: flow-atlas
-description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event), checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, walking a customer journey or scenario against the code to see which steps are built, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
+description: Use in a monorepo when a change crosses components — designing or adding an HTTP route, a client call, a registry entry (artifact, tool, event), checking whether something that does the job already exists, following or documenting a flow from the app through the BFF to the services, finding where a request breaks between components (a call nothing serves, a route nothing calls), walking a customer journey or scenario against the code to see which steps are built, and before finishing such work or opening a PR. The deterministic `atlas` CLI derives the structure — routes, calls, and each request with everything it reaches (chains) — and drafts flows from it; you write only the intent (titles, roles, which chains make a journey, decisions) and interpret component boundaries, and atlas checks what you wrote against the code.
 license: MIT
 compatibility: Requires Node.js 20+ and the atlas CLI from this repository (npx github:hellices/flow-atlas, or npm install -g github:hellices/flow-atlas). Reads git; writes only to --out.
 metadata:
@@ -232,7 +232,9 @@ Decide first whether it is a defect, a plan or a false positive (`references/bou
   and report the misreading so the extractor can be fixed. A rule that is mostly wrong for the repository is switched
   off there (`rules.<id>.enabled: false`) with a person's agreement.
 
-Never run `atlas baseline update` unless a person asks for it. Never edit generated code to satisfy a finding.
+Never run `atlas baseline update` unless a person asks for it after seeing the findings it would accept. A request
+for the outcome ("only show new problems from now on") is not that: show the findings, say which you think are debt,
+defects or misreadings, and stop for the person to say "record the baseline". Never edit generated code to satisfy a finding.
 
 ## Machine-readable output
 

@@ -54,3 +54,17 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/try" ./package/flow-atlas-*.tgz
           "$RUNNER_TEMP/try/node_modules/.bin/atlas" check --root fixtures/shop --out "$RUNNER_TEMP/out" | tee "$RUNNER_TEMP/check.txt"
           grep -q "^8 new" "$RUNNER_TEMP/check.txt"
+
+  # The static checks a skill listing runs (awesome-copilot gates on vally lint): the Agent Skills specification and
+  # every file reference. Warnings fail too. The version is pinned so a new rule arrives through a change here.
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: vally lint
+        env:
+          VALLY_TELEMETRY_OPTOUT: "1"
+        run: npx -y @microsoft/vally-cli@0.21.0 lint skills --strict --verbose

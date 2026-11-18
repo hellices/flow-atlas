@@ -1,5 +1,7 @@
 # Contributing
 
+Pull requests are open to the repository's collaborators. To propose a change or report a problem, open an issue.
+
 ## Build and test
 
 ```bash
@@ -25,6 +27,12 @@ runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` s
 The `frameworks` workflow installs each framework and library and checks their routes and requests again, weekly on
 the latest release. The `repositories` workflow fetches the pinned repositories and fails when a change moves anything
 atlas read there.
+
+## The skill
+
+`test/skill.test.ts` checks the skill against the Agent Skills specification, and `test/docs.test.ts` runs every
+`atlas` command the README, the skill and its references name, so a renamed command or option fails the tests. CI
+also runs `vally lint` on `skills/`, the check skill listings use.
 
 ## Registry mirrors
 

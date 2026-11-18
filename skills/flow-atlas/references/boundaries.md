@@ -106,7 +106,7 @@ fit equally. Then choose, and write the choice as `openapi.<component>` with a c
   and compare its paths before taking it as the component's. Modules of one application may each take a different
   group.
 - Several served documents (`SeveralServedDocuments`), such as `/v1` and `/v2`: take the one whose paths the flow's
-  clients call; `atlas query --path` shows which version the calls use.
+  clients call; `atlas query --path <fragment>` shows which version the calls use.
 - Several complete files (`SeveralCompleteFiles`): usually one is a copy (in `docs/`, a build output, another
   package). Take the source and add the copy's directory to `exclude`.
 - Only partial files (`SeveralPartialFiles`, `OnlyPartialFile`): they are stale snapshots. Say so to a person; do not

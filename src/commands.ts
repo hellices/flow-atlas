@@ -99,7 +99,7 @@ function parseArgs(argv: string[]): Options {
     const a = argv[i]!;
     const value = () => {
       const v = argv[++i];
-      if (v === undefined) throw new Error(`${a} needs a value`);
+      if (v === undefined || v.startsWith("--")) throw new Error(`${a} needs a value`);
       return v;
     };
     if (a === "--root") o.root = value();

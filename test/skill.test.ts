@@ -5,6 +5,46 @@ import { agentPluginErrors } from "./standards.js";
 
 const skills = new URL("../skills/", import.meta.url);
 
+/**
+ * The destinations of a Markdown body's inline links and reference definitions, read as CommonMark reads them: in
+ * angle brackets (spaces allowed), or bare up to whitespace or the parenthesis that closes the link, with balanced
+ * parentheses and backslash escapes inside.
+ */
+function linkDestinations(markdown: string): string[] {
+  const out: string[] = [];
+  // Code is not Markdown: blank out fenced blocks and code spans (keeping line breaks) before looking for links.
+  const body = markdown
+    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, (m) => m.replace(/[^\n]/g, " "));
+  for (let i = body.indexOf("]("); i >= 0; i = body.indexOf("](", i + 2)) {
+    let j = i + 2;
+    // Spaces, tabs and at most one line ending may come before the destination.
+    while (body[j] === " " || body[j] === "\t") j++;
+    if (body[j] === "\n") for (j++; body[j] === " " || body[j] === "\t"; ) j++;
+    if (body[j] === "<") {
+      const close = body.indexOf(">", j);
+      if (close > j && !body.slice(j, close).includes("\n")) out.push(body.slice(j + 1, close));
+      continue;
+    }
+    let depth = 0;
+    let destination = "";
+    for (; j < body.length; j++) {
+      const ch = body[j]!;
+      if (ch === "\\" && j + 1 < body.length) destination += body[++j];
+      else if (/\s/.test(ch)) break;
+      else if (ch === ")" && depth === 0) break;
+      else {
+        if (ch === "(") depth++;
+        if (ch === ")") depth--;
+        destination += ch;
+      }
+    }
+    if (destination) out.push(destination);
+  }
+  for (const m of body.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:\n[ \t]*)?(?:<([^>\n]+)>|(\S+))/gm)) out.push(m[1] ?? m[2]!);
+  return out;
+}
+
 /** The Agent Skills specification (agentskills.io): what a host relies on when it loads a skill directory. */
 describe("skills follow the Agent Skills specification", () => {
   for (const dir of readdirSync(skills)) {
@@ -29,6 +69,17 @@ describe("skills follow the Agent Skills specification", () => {
       for (const ref of text.matchAll(/`(references\/[^`]+\.md)`/g)) {
         expect(() => readFileSync(new URL(`${dir}/${ref[1]}`, skills)), `${ref[1]} exists`).not.toThrow();
       }
+      // A relative Markdown link a host follows from the skill's directory, in SKILL.md or a reference.
+      for (const file of [`${dir}/SKILL.md`, ...readdirSync(new URL(`${dir}/references/`, skills)).map((f) => `${dir}/references/${f}`)]) {
+        const body = readFileSync(new URL(file, skills), "utf8");
+        for (const link of linkDestinations(body)) {
+          const target = link.replace(/#.*$/, "");
+          if (!target || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) || target.startsWith("//")) continue;
+          expect(() => readFileSync(new URL(target, new URL(file, skills))), `${file} links ${target}`).not.toThrow();
+        }
+      }
+      // The specification asks to keep SKILL.md under 500 lines, with details in references a host loads on demand.
+      expect(text.replace(/\n$/, "").split("\n").length, "SKILL.md lines").toBeLessThan(500);
     });
   }
 });
