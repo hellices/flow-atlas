@@ -446,6 +446,14 @@ describe("a flow step that names a registry entry", () => {
     ]);
     const connected = resolveFlows(graph, [flowFile(gone, beside)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "beside")!.status.conditions.find((c) => c.type === "Connected");
     expect(connected).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: gone -> quote" });
+    // Also where the sub-flow's end is itself a flow no file defines.
+    const wraps = flow("wraps", [{ stepId: "missing", flow: "missing" }]);
+    const around = flow("around", [
+      { stepId: "wraps", flow: "wraps" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const nested = resolveFlows(graph, [flowFile(wraps, around)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "around")!.status.conditions.find((c) => c.type === "Connected");
+    expect(nested).toMatchObject({ status: "Unknown", reason: "StepsUnresolved", message: "not checked: wraps -> quote" });
     // An end inside a planned sub-flow, not built yet, is the plan's: the link is pending, not lost.
     const later = { ...flow("later", [{ stepId: "listed", registry: "tool:listed", role: "listed only" }]), spec: { lifecycle: "planned" as const, steps: [{ stepId: "listed", registry: "tool:listed", role: "listed only" }] } };
     const ahead = flow("ahead", [

@@ -176,8 +176,13 @@ describe("calls to a component whose routes are not read", () => {
     expect(fa002(exportedGraph, exported).filter((k) => k.includes("->agent|"))).toEqual([]);
     // A route source from a generated document is a route source.
     const documented = { ...files, "agent/openapi.json": JSON.stringify({ openapi: "3.1.0", info: { title: "a", version: "1" }, paths: { "/v1/sessions": { post: {} } } }) };
-    const read = scan(memory(documented), normalizeConfig({ components, routes: [...routes, { component: "agent", openapi: "agent/openapi.json" }], calls: both }));
+    const readConfig = normalizeConfig({ components, routes: [...routes, { component: "agent", openapi: "agent/openapi.json" }], calls: both });
+    const read = scan(memory(documented), readConfig);
     expect(read.limits.filter((l) => l.includes("no route source"))).toEqual([]);
+    // Its route is read and the call to it is matched; FA002 now checks the calls to agent and finds none unserved.
+    const matched = read.edges.filter((e) => e.kind === "match" && e.to.startsWith("agent|")).map((e) => `${e.from.split("@")[0]} = ${e.to}`);
+    expect(matched).toEqual(["web->agent|POST /v1/sessions = agent|POST /v1/sessions"]);
+    expect(fa002(read, readConfig).filter((k) => k.includes("->agent|"))).toEqual([]);
   });
 });
 

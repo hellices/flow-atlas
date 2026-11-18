@@ -216,7 +216,9 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     const p = planned || step.lifecycle === "planned";
     if (!step.flow) return { step, planned: p };
     const sub = byName.get(step.flow);
-    if (!sub || depth > 4) return { planned: p };
+    // A flow no file defines is its own end: not in the code, so an active one is lost.
+    if (!sub) return { step, planned: p };
+    if (depth > 4) return { planned: p };
     const steps = sub.spec.steps;
     const s = end === "first" ? steps[0] : steps[steps.length - 1];
     return s ? effectiveEnd(s, end, p || sub.spec.lifecycle === "planned", depth + 1) : { planned: p };
