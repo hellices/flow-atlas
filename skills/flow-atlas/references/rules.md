@@ -37,7 +37,8 @@ Key `FA002|<from>-><to>|<METHOD> <path>`.
 
 A configured call site whose request matches no route of its target. Reported only when the target has route
 sources in the configuration (even if none of its routes is left) and the request is clearly a path on that target:
-it starts from a base address, or its first segment is one the target serves.
+it starts from a base address, or its first segment is one the target serves. When no call of a `from->to` entry is
+such a path, a `limit:` line says FA002 checked none of them: a prefix or base left out of the configuration does that.
 
 A call of unread method whose path fits routes of several methods is not reported either: it may reach any of them,
 so atlas leaves it unmatched rather than link it to one, and a `limit:` line names it. The same holds for a call

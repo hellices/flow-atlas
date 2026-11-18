@@ -50,6 +50,101 @@
           }
         }
       }
+    },
+    "calls": {
+      "description": "How far check saw the calls: which it checked against routes, and which it could not.",
+      "type": "object",
+      "required": [
+        "read",
+        "checked",
+        "matched",
+        "unserved",
+        "undecided",
+        "notRequests",
+        "unchecked",
+        "documentOnly"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checked": {
+          "description": "Calls to a component whose routes are read; FA002 checks them.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Of those, the calls that reach a route.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unserved": {
+          "description": "Of those, the calls FA002 reports: they reach no route.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "undecided": {
+          "description": "Of those, the calls neither matched nor reported, as a limit line says why.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "notRequests": {
+          "description": "Of those, strings not taken for requests to their target: no base address, and a first segment the target does not serve.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchecked": {
+          "description": "Calls FA002 does not check: their target has no route source, or the rule is off.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "documentOnly": {
+          "description": "Calls that reach only routes their component's OpenAPI document declares with no handler in its route files.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "call",
+              "from",
+              "to",
+              "method",
+              "path",
+              "at",
+              "surface",
+              "described"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "call": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "at": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
+              },
+              "surface": {
+                "type": "string"
+              },
+              "described": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

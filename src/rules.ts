@@ -31,6 +31,26 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
   return (id) => patterns.some((p) => p.test(id));
 }
 
+/**
+ * What FA002 made of each call, by its index in `graph.calls`: it reaches a route (`matched`), FA002 reports it
+ * (`unserved`), a `limit:` says why it is matched to none (`undecided`: an unread method fitting several routes, a
+ * trailing slash, a redirect, a header constraint), it is not taken for a request to its target (`notRequest`), or
+ * FA002 does not check it (`unchecked`: the target has no route source, or the rule is off).
+ */
+export type CallOutcome = "matched" | "unserved" | "undecided" | "notRequest" | "unchecked";
+
+export function callOutcomes(graph: Graph, config: Config): CallOutcome[] {
+  const { targetsOf, unsettled, slashless, redirected, constrained } = matchCalls(graph, rankedComponents(config));
+  const served = routedComponents(config);
+  const on = ruleEnabled(config, "FA002");
+  return graph.calls.map((c, i) => {
+    if (!on || !served.has(c.to)) return "unchecked";
+    if (targetsOf.has(i)) return "matched";
+    if (unsettled.has(i) || slashless.has(i) || redirected.has(i) || constrained.has(i)) return "undecided";
+    return plausibleRequest(graph, c) ? "unserved" : "notRequest";
+  });
+}
+
 /** Findings for a graph. What the rules could not settle completely is added to `limits`. */
 export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];
@@ -64,12 +84,24 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
   if (ruleEnabled(config, "FA002")) {
     // Components whose routes are configured: a call to one is checked even when none of its routes is left.
     const served = routedComponents(config);
+    // An edge none of whose calls is taken for a request to its target is more likely configured wrong (a prefix or
+    // base left out, the wrong target) than written wrong everywhere; FA002 checks none of them, so a limit says so.
+    const taken = new Map<string, { calls: number; taken: number }>();
     graph.calls.forEach((c, i) => {
-      if (!unmatched(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
+      if (!served.has(c.to)) return;
+      const edge = taken.get(`${c.from}->${c.to}`) ?? taken.set(`${c.from}->${c.to}`, { calls: 0, taken: 0 }).get(`${c.from}->${c.to}`)!;
+      edge.calls++;
+      if (!unmatched(i) || plausibleRequest(graph, c)) edge.taken++;
+      if (!unmatched(i) || !plausibleRequest(graph, c)) return;
       out.push(
         finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.`, [c.at]),
       );
     });
+    for (const [edge, n] of taken)
+      if (n.calls > 0 && n.taken === 0)
+        limits.push(
+          `calls ${edge}: none of its ${n.calls} calls joins a base address or starts with a first segment ${edge.split("->")[1]} serves, so FA002 checks none of them; if they are requests, a prefix or base is missing from the configuration`,
+        );
   }
 
   if (ruleEnabled(config, "FA003")) {

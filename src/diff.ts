@@ -216,7 +216,7 @@ export function diffMarkdown(d: GraphDiff): string {
     for (const n of flows.removed) lines.push(`- \`${n}\`: removed`);
     lines.push("");
   }
-  if (d.findings.new.length) lines.push("**New findings**", ...d.findings.new.map((f) => `- ${f.rule} ${f.message}`), "");
+  if (d.findings.new.length) lines.push("**New findings**", ...d.findings.new.map((f) => `- ${f.rule} ${f.message} \`${f.key}\``), "");
   if (d.findings.resolved.length) lines.push("**Resolved findings**", ...d.findings.resolved.map((f) => `- ${f.rule} ${f.message}`), "");
   if (lines.length === 2) lines.push("No flow changes.");
   return lines.join("\n");

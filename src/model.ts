@@ -75,6 +75,12 @@ export interface Surface {
    */
   implicit?: boolean;
   /**
+   * Only the component's OpenAPI document declares it: atlas read routes of the component from its code, and neither
+   * those routes nor its route files hold this one or its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose
+   * handler atlas does not find, so this is a fact to look at, not a finding.
+   */
+  unhandled?: true;
+  /**
    * The rule of the framework that serves the route where no code of the application handles it, with `at` the place
    * that brings it in: `fastapi docs_url`, `spring-boot error`, `next public`, `@fastify/static`.
    */
@@ -337,6 +343,26 @@ export type FindingStatus = "new" | "baseline" | "excepted" | "expired-exception
 export interface Findings extends Document<"Findings"> {
   since?: string;
   items: Array<{ finding: Finding; status: FindingStatus; note?: string }>;
+  calls?: CallSummary;
+}
+
+/** How far `check` saw the calls: which it checked against routes, and which it could not. */
+export interface CallSummary {
+  read: number;
+  /** Calls to a component whose routes are read; FA002 checks them. */
+  checked: number;
+  /** Of those, the calls that reach a route. */
+  matched: number;
+  /** Of those, the calls FA002 reports: they reach no route. */
+  unserved: number;
+  /** Of those, the calls neither matched nor reported, as a `limit:` line says why (an unread method fitting several routes, a redirect, a header constraint). */
+  undecided: number;
+  /** Of those, strings not taken for requests to their target: no base address, and a first segment the target does not serve. */
+  notRequests: number;
+  /** Calls FA002 does not check: their target has no route source, or the rule is off. */
+  unchecked: number;
+  /** Calls that reach only routes their component's document declares with no handler in its route files (`Surface.unhandled`). */
+  documentOnly: Array<{ call: string; from: string; to: string; method: string; path: string; at: Place; surface: string; described: Place }>;
 }
 
 export interface GraphDiff extends Document<"Diff"> {

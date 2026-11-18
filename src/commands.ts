@@ -12,8 +12,8 @@ import { inventory, inventoryText } from "./inventory.js";
 import { API_VERSION, type Finding, type Findings, type Graph, type Subgraph } from "./model.js";
 import { nearby } from "./nearby.js";
 import { methodsMatch, pathsMatch } from "./paths.js";
-import { markdownReport, textReport, type Classified } from "./report.js";
-import { evaluate, RULES } from "./rules.js";
+import { callSummary, markdownReport, textReport, type Classified } from "./report.js";
+import { callOutcomes, evaluate, RULES } from "./rules.js";
 import { toSarif } from "./sarif.js";
 import { scan } from "./scan.js";
 import { openSource } from "./source.js";
@@ -46,7 +46,7 @@ Commands
   diff <base>..<head>       compare the flow graph and findings of two revisions (head may be WORKTREE)
   export arazzo             print the flows as an Arazzo 1.0 description (YAML; --format json), --flow for one;
                             file URLs in it are relative to the repository root, so save it there
-  explain <key>             show one finding from the last check with nearby calls or surfaces
+  explain <key>             show one finding (from the last check in --out, else the code now) with nearby calls or surfaces
   baseline update           record the current findings as the accepted baseline
 
 Options
@@ -218,13 +218,15 @@ function cmdCheck(o: Options): number {
     provenance: derived(graph.provenance, "Findings", o.since ? { since: o.since } : {}, flowFiles),
     ...(o.since ? { since: o.since } : {}),
     items: classify(findings, o, sinceKeys),
+    calls: callSummary(graph, callOutcomes(graph, config)),
   };
   writeGraph(o.out, graph);
   writeLastCheck(o.out, doc);
   const baseline = new Set(readBaseline(o.out)?.keys ?? []);
+  const limits = [...graph.limits, ...coverageDrops(graph, readBaseline(o.out)?.coverage)];
   if (o.format === "sarif") process.stdout.write(`${JSON.stringify(toSarif(doc, (f) => baseline.has(f.key) || !!sinceKeys?.has(f.key)), null, 2)}\n`);
-  else if (!emit(o, doc)) process.stdout.write(o.format === "markdown" ? markdownReport(doc.items) : textReport(doc.items, o.all));
-  for (const l of [...graph.limits, ...coverageDrops(graph, readBaseline(o.out)?.coverage)]) process.stderr.write(`limit: ${l}\n`);
+  else if (!emit(o, doc)) process.stdout.write(o.format === "markdown" ? markdownReport(doc.items, doc.calls) : textReport(doc.items, o.all, doc.calls, limits.length));
+  for (const l of limits) process.stderr.write(`limit: ${l}\n`);
   const fresh = doc.items.filter((i) => i.status === "new" || i.status === "expired-exception").length;
   return o.failOnNew && fresh > 0 ? 1 : 0;
 }
@@ -268,14 +270,17 @@ function cmdDiff(o: Options): number {
 function cmdExplain(o: Options): number {
   const key = o.args[0];
   if (!key) throw new Error("explain needs a finding key");
+  // The last check in --out, or the code as it is now when that check has no such finding (or there is none): each
+  // shell an agent runs may use its own --out, and diff reports findings without writing a check.
+  const pick = (findings: Finding[]) => findings.find((x) => x.key === key) ?? findings.find((x) => x.key.includes(key));
   const last = readLastCheck(o.out);
-  if (!last) throw new Error("no previous check; run `atlas check` first");
-  const findings = last.items.map((i) => i.finding);
-  const f = findings.find((x) => x.key === key) ?? findings.find((x) => x.key.includes(key));
+  const cached = last && pick(last.items.map((i) => i.finding));
+  const now = cached ? undefined : analyze(o, configFor(o), o.ref);
+  const f = cached ?? pick(now!.findings);
   if (!f) throw new Error(`no finding matches ${key}`);
   console.log(`${f.rule} ${f.title}\n\n${f.message}\n`);
   for (const p of f.at) console.log(`  ${p.file}:${p.line}`);
-  const graph = readGraph<Graph>(o.out);
+  const graph = cached ? readGraph<Graph>(o.out) : now!.graph;
   const near = graph ? nearby(graph, f) : [];
   if (near.length) {
     console.log(`\n${f.rule === "FA001" ? "Calls to this component with a similar path" : "Surfaces of the target with a similar path"}:`);

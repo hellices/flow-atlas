@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/commands.js";
 import { loadConfig } from "../src/config.js";
 import { evaluate } from "../src/rules.js";
@@ -16,7 +16,7 @@ import { query } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { documentUrl, repositoryPath, toArazzo } from "../src/arazzo.js";
 import { parse as parseYaml } from "yaml";
-import type { Subgraph } from "../src/model.js";
+import type { Findings, Subgraph } from "../src/model.js";
 import { inventory } from "../src/inventory.js";
 import { DEFAULT_EXCLUDE } from "../src/config.js";
 
@@ -161,6 +161,151 @@ describe("check, baseline and exceptions", () => {
     expect(byKey.get("FA004|document|coupon|no-consumer")).toBe("expired-exception");
   });
 
+});
+
+describe("how far check saw the calls", () => {
+  const made: string[] = [];
+  const temp = (prefix: string) => {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    made.push(dir);
+    return dir;
+  };
+  afterAll(() => {
+    for (const dir of made) rmSync(dir, { recursive: true, force: true });
+  });
+  let stderr = "";
+  const capture = (args: string[]): string => {
+    let text = "";
+    stderr = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((text += String(chunk)), true));
+    const log = vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => void (text += `${parts.join(" ")}\n`));
+    const err = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => ((stderr += String(chunk)), true));
+    try {
+      main(args);
+    } finally {
+      spy.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+    return text;
+  };
+  /** The shop with POST /orders/{id}/refund in the orders document only, read as a route source as given. */
+  const withContract = (entry: (yaml: string) => string): string => {
+    const dir = temp("atlas-contract-");
+    cpSync(root, dir, { recursive: true });
+    const doc = join(dir, "services/orders/openapi.json");
+    const api = JSON.parse(readFileSync(doc, "utf8")) as { paths: Record<string, unknown> };
+    api.paths["/orders/{id}/refund"] = { post: { operationId: "refundOrder", responses: { "200": { description: "ok" } } } };
+    writeFileSync(doc, JSON.stringify(api, null, 2));
+    const file = join(dir, "atlas.config.yaml");
+    writeFileSync(file, entry(readFileSync(file, "utf8")));
+    return dir;
+  };
+  const check = (dir: string, ...args: string[]) => capture(["check", "--root", dir, "--out", temp("atlas-"), ...args]);
+
+  it("ends with the counts, and says how many calls it checked", () => {
+    const lines = check(root).trimEnd().split("\n");
+    expect(lines[0]).toBe("8 new, 0 with an expired exception, 0 in the baseline, 0 excepted");
+    expect(lines.slice(-2)).toEqual([lines[0], "calls: 10 read, 10 checked against routes: 9 matched, 1 unserved (FA002)"]);
+  });
+
+  it("lists a call that reaches a route only the document declares, where the code is read too", () => {
+    const dir = withContract((yaml) => yaml.replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"));
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
+    expect(doc.calls?.documentOnly.map((d) => [d.at.file, d.surface])).toEqual([["services/bff/src/clients/orders.ts", "orders|POST /orders/{id}/refund"]]);
+    expect(validate(schemaForKind("Findings")!, doc)).toEqual([]);
+    const text = check(dir);
+    expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
+    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes: 10 matched (1 only by a document); stderr has 1 limit line on what was not read");
+    expect(stderr.split("\n").filter((l) => l.startsWith("limit: "))).toHaveLength(1);
+  });
+
+  it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
+    const lines = check(root).trimEnd().split("\n");
+    expect(lines.at(-4)).toMatch(/^Before deciding what to change: atlas explain <key>/);
+    const fresh = temp("atlas-");
+    const text = capture(["explain", "POST /orders/{}/refund", "--root", root, "--out", fresh]);
+    expect(text).toContain("bff calls POST /orders/{}/refund on orders, which serves no matching route.");
+    expect(text).toContain("Surfaces of the target with a similar path:");
+    expect(readdirSync(fresh)).toEqual([]);
+  });
+
+  it("does not list it where the document is the component's only route source", () => {
+    const dir = withContract((yaml) => yaml.replace(/ {2}- component: orders\n {4}files:[^\n]*\n( {4}[^\n]*\n)*? {4}operationIds: nest-swagger\n/, "  - component: orders\n    openapi: services/orders/openapi.json\n"));
+    expect(readFileSync(join(dir, "atlas.config.yaml"), "utf8")).not.toContain("styles: [nest]\n    constants");
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.calls?.documentOnly.map((d) => d.surface)).not.toContain("orders|POST /orders/{id}/refund");
+    expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
+    // The refund call is matched to the document's route and counted so; the other calls to orders the document lacks are FA002.
+    expect(doc.calls).toMatchObject({ read: 10, checked: 10, matched: 8, unserved: 2, undecided: 0, notRequests: 0, documentOnly: [] });
+  });
+
+  it("does not list it where route files only locate handlers, and tells the calls it did not decide from the ones it did not take", () => {
+    // A generated document read with Python files that hold its handlers: no route is read from the code, so a
+    // handler atlas does not find is not a route the code lacks.
+    const dir = fileURLToPath(new URL("../fixtures/scenarios/drf-openapi-client", import.meta.url));
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.calls).toMatchObject({ read: 5, checked: 5, matched: 3, unserved: 0, undecided: 1, notRequests: 1, documentOnly: [] });
+  });
+
+  it("does not list an operation whose handler may be one of several methods, as springdoc's numbered ids", () => {
+    const dir = withContract((yaml) => yaml.replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"));
+    const doc = join(dir, "services/orders/openapi.json");
+    const api = JSON.parse(readFileSync(doc, "utf8")) as { paths: Record<string, Record<string, { operationId: string }>> };
+    api.paths["/orders/{id}/refund"]!.post!.operationId = "create_1";
+    writeFileSync(doc, JSON.stringify(api, null, 2));
+    const found = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(found.calls?.documentOnly).toEqual([]);
+  });
+
+  it("says so when no call of an edge is taken for a request to its target", () => {
+    const dir = temp("atlas-prefix-");
+    cpSync(root, dir, { recursive: true });
+    const file = join(dir, "atlas.config.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace("  - component: bff\n", "  - component: bff\n    prefix: /v9\n"));
+    let stderr = "";
+    const err = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => ((stderr += String(chunk)), true));
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      main(["check", "--root", dir, "--out", temp("atlas-")]);
+      expect(stderr).toContain("limit: calls web->bff: none of its 2 calls joins a base address or starts with a first segment bff serves, so FA002 checks none of them");
+      stderr = "";
+      main(["check", "--root", root, "--out", temp("atlas-")]);
+      expect(stderr).not.toContain("none of its");
+    } finally {
+      err.mockRestore();
+      out.mockRestore();
+    }
+  });
+
+  it("counts each call by what FA002 made of it, not by the key it shares with others", () => {
+    const dir = temp("atlas-outcomes-");
+    cpSync(root, dir, { recursive: true });
+    const client = join(dir, "services/bff/src/clients/orders.ts");
+    // Two calls of one request shape: based, which FA002 reports, and a bare string, which is not taken for a request.
+    writeFileSync(client, readFileSync(client, "utf8") + 'export const a = (b: string) => fetch(`${b}/missing`);\nexport const label = "/missing";\nexport const c = () => fetch(label);\n');
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.items.map((i) => i.finding.key)).toContain("FA002|bff->orders|GET /missing");
+    const calls = doc.calls!;
+    expect([calls.unserved, calls.notRequests]).toEqual([2, 1]);
+    expect(calls.matched + calls.unserved + calls.undecided + calls.notRequests).toBe(calls.checked);
+    const off = temp("atlas-off-");
+    cpSync(dir, off, { recursive: true });
+    writeFileSync(join(off, "atlas.config.yaml"), readFileSync(join(off, "atlas.config.yaml"), "utf8") + "\nrules:\n  FA002: { enabled: false }\n");
+    const quiet = JSON.parse(check(off, "--format", "json")) as Findings;
+    expect(quiet.calls).toMatchObject({ checked: 0, unserved: 0, undecided: 0, unchecked: quiet.calls!.read });
+  });
+
+  it("explains a finding the check in --out does not have, from the code as it is now", () => {
+    const dir = temp("atlas-explain-");
+    cpSync(root, dir, { recursive: true });
+    const out = temp("atlas-");
+    capture(["check", "--root", dir, "--out", out]);
+    const client = join(dir, "services/bff/src/clients/orders.ts");
+    writeFileSync(client, readFileSync(client, "utf8") + "export const notes = (baseUrl: string, id: string) => fetch(`${baseUrl}/orders/${id}/notes`, { method: \"POST\" });\n");
+    expect(capture(["explain", "POST /orders/{}/notes", "--root", dir, "--out", out])).toContain("bff calls POST /orders/{}/notes on orders, which serves no matching route.");
+  });
 });
 
 describe("trace", () => {

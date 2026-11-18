@@ -1678,6 +1678,19 @@ function handlerPlace(
 }
 
 /**
+ * Whether the route files may hold an operation's handler though no single place was found: a definition by a name its
+ * operationId derives, more than one of them, a quoted id, or the same for the id without springdoc's `_<n>`, which it
+ * gives the later methods sharing a name. Such an operation is not one the code is shown to lack.
+ */
+function handlerMaybe(texts: Map<string, string>, operationId: string, method: string, key: string, parsed: Map<string, Map<string, Definition[]>>): boolean {
+  for (const id of new Set([operationId, operationId.replace(/_\d+$/, "")])) {
+    for (const name of handlerNames(id, method, key)) for (const [f, t] of texts) if (definitions(f, t, name, parsed).length) return true;
+    if (literalLines(texts, id).length) return true;
+  }
+  return false;
+}
+
+/**
  * Surfaces from a component's OpenAPI document. An operation the code also registers keeps the code's location and
  * gains the document's operationId and place; the others are new surfaces, placed on their handler when the code gives
  * it away. `code` holds every route read so far, of every component.
@@ -1690,6 +1703,8 @@ function documentedSurfaces(
   limits: string[],
   reach?: Reach,
   executed?: Map<string, Set<string>>,
+  // atlas read routes of the component from its code: an operation with no handler found there is then `unhandled`.
+  codeRouted = false,
 ): Surface[] {
   const file = spec.openapi!;
   let text: string | undefined;
@@ -1741,6 +1756,7 @@ function documentedSurfaces(
       path: op.path,
       at: place ? { file: place.at.file, line: place.at.line } : op.at,
       evidence: place?.evidence ?? "declared",
+      ...(!place && codeRouted && !(op.operationId && handlerMaybe(texts, op.operationId, op.method, op.key, parsed)) ? { unhandled: true as const } : {}),
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
@@ -2178,12 +2194,13 @@ export function extractRoutes(
   out.length = 0;
   out.push(...code);
   // The document the configuration chooses for a component goes first, so its operationIds and places win.
+  const fromCode = new Set(out.map((s) => s.component));
   const documents = config.routes
     .filter((r) => r.openapi)
     .sort((a, b) => Number(config.openapi[b.component] === b.openapi) - Number(config.openapi[a.component] === a.openapi));
   for (const spec of documents) {
     const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
-    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
+    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed, fromCode.has(spec.component));
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
   }
