@@ -80,7 +80,8 @@ criteria and the order to apply them in; the details are in the skill's `referen
 
 Take the drafts from `atlas draft flows`: each is one chain, with its entry from the code. Fill only the fields marked
 `agent:`. For a journey, list chains in order, each following one taken from the previous chain's `next` where atlas
-lists one; a step that is no request names a registry entry taken from `atlas query --kind registries`. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`
+lists one; a step that is no request names a registry entry taken from `atlas query --kind registries`. Repeat `atlas flows` until it reports `Ready=True`, or `Ready=Unknown` only for orders the code cannot show
+(`OrderNotInCode`: chains the code does not link, registry steps), which stay Unknown. A False `Resolved`
 or `Connected` means the code or the flow is wrong; which one is decided with the boundary criteria. A
 False `Documented` means a field the author writes is empty.
 
