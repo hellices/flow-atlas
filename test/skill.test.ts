@@ -32,8 +32,9 @@ describe("skills follow the Agent Skills specification", () => {
       // A relative Markdown link a host follows from the skill's directory, in SKILL.md or a reference.
       for (const file of [`${dir}/SKILL.md`, ...readdirSync(new URL(`${dir}/references/`, skills)).map((f) => `${dir}/references/${f}`)]) {
         const body = readFileSync(new URL(file, skills), "utf8");
-        // A destination is bare or in angle brackets (which may hold spaces), with an optional title after it.
-        for (const link of body.matchAll(/\]\((?:<([^>\n]+)>|([^)\s<]+))(?:\s+"[^"]*")?\)/g)) {
+        // A destination is bare or in angle brackets (which may hold spaces), with an optional "title", 'title' or
+        // (title) after it.
+        for (const link of body.matchAll(/\]\((?:<([^>\n]+)>|([^)\s<]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g)) {
           const target = (link[1] ?? link[2]!).replace(/#.*$/, "");
           if (!target || /^[a-z]+:/.test(target)) continue;
           expect(() => readFileSync(new URL(target, new URL(file, skills))), `${file} links ${target}`).not.toThrow();
