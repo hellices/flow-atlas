@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { stringify } from "yaml";
-import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
+import { DEFAULT_EXCLUDE, loadConfig, routedComponents, ruleEnabled, type Config } from "./config.js";
 import { NothingToExport, toArazzo, type ArazzoExport } from "./arazzo.js";
 import { chainsText, deriveChains, type ChainReport } from "./chains.js";
 import { draftChainFlows } from "./draft.js";
@@ -12,7 +12,7 @@ import { inventory, inventoryText } from "./inventory.js";
 import { API_VERSION, type Finding, type Findings, type Graph, type Subgraph } from "./model.js";
 import { nearby } from "./nearby.js";
 import { methodsMatch, pathsMatch } from "./paths.js";
-import { markdownReport, textReport, type Classified } from "./report.js";
+import { callSummary, markdownReport, textReport, type Classified } from "./report.js";
 import { evaluate, RULES } from "./rules.js";
 import { toSarif } from "./sarif.js";
 import { scan } from "./scan.js";
@@ -218,13 +218,15 @@ function cmdCheck(o: Options): number {
     provenance: derived(graph.provenance, "Findings", o.since ? { since: o.since } : {}, flowFiles),
     ...(o.since ? { since: o.since } : {}),
     items: classify(findings, o, sinceKeys),
+    calls: callSummary(graph, routedComponents(config)),
   };
   writeGraph(o.out, graph);
   writeLastCheck(o.out, doc);
   const baseline = new Set(readBaseline(o.out)?.keys ?? []);
+  const limits = [...graph.limits, ...coverageDrops(graph, readBaseline(o.out)?.coverage)];
   if (o.format === "sarif") process.stdout.write(`${JSON.stringify(toSarif(doc, (f) => baseline.has(f.key) || !!sinceKeys?.has(f.key)), null, 2)}\n`);
-  else if (!emit(o, doc)) process.stdout.write(o.format === "markdown" ? markdownReport(doc.items) : textReport(doc.items, o.all));
-  for (const l of [...graph.limits, ...coverageDrops(graph, readBaseline(o.out)?.coverage)]) process.stderr.write(`limit: ${l}\n`);
+  else if (!emit(o, doc)) process.stdout.write(o.format === "markdown" ? markdownReport(doc.items, doc.calls) : textReport(doc.items, o.all, doc.calls, limits.length));
+  for (const l of limits) process.stderr.write(`limit: ${l}\n`);
   const fresh = doc.items.filter((i) => i.status === "new" || i.status === "expired-exception").length;
   return o.failOnNew && fresh > 0 ? 1 : 0;
 }

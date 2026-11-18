@@ -75,6 +75,12 @@ export interface Surface {
    */
   implicit?: boolean;
   /**
+   * Only the component's OpenAPI document declares it: the component's route files are configured and none of them
+   * holds its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose
+   * handler atlas does not find, so this is a fact to look at, not a finding.
+   */
+  unhandled?: true;
+  /**
    * The rule of the framework that serves the route where no code of the application handles it, with `at` the place
    * that brings it in: `fastapi docs_url`, `spring-boot error`, `next public`, `@fastify/static`.
    */
@@ -337,6 +343,20 @@ export type FindingStatus = "new" | "baseline" | "excepted" | "expired-exception
 export interface Findings extends Document<"Findings"> {
   since?: string;
   items: Array<{ finding: Finding; status: FindingStatus; note?: string }>;
+  calls?: CallSummary;
+}
+
+/** How far `check` saw the calls: which it checked against routes, and which it could not. */
+export interface CallSummary {
+  read: number;
+  /** Calls to a component whose routes are read; FA002 checks them. */
+  checked: number;
+  /** Of those, the calls that reach a route. */
+  matched: number;
+  /** Calls to a component with no route source, which nothing checks. */
+  unchecked: number;
+  /** Calls that reach only routes their component's document declares with no handler in its route files (`Surface.unhandled`). */
+  documentOnly: Array<{ call: string; at: Place; surface: string; described: Place }>;
 }
 
 export interface GraphDiff extends Document<"Diff"> {

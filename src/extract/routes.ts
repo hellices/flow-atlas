@@ -1741,6 +1741,7 @@ function documentedSurfaces(
       path: op.path,
       at: place ? { file: place.at.file, line: place.at.line } : op.at,
       evidence: place?.evidence ?? "declared",
+      ...(!place && texts.size ? { unhandled: true as const } : {}),
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,

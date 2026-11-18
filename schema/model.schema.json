@@ -154,6 +154,10 @@
           "description": "Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS with an Allow header and serves the files of public/, FastAPI its OpenAPI document and Spring Boot its error page; requested by convention from outside the code, as crawlers fetch Next.js's robots.txt and sitemaps; or by the framework's own client, as a Next.js Server Action posts to its page. No rule expects a caller for it.",
           "const": true
         },
+        "unhandled": {
+          "description": "Only the component's OpenAPI document declares it: the component's route files are configured and none of them holds its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose handler atlas does not find, so this is a fact, not a finding.",
+          "const": true
+        },
         "convention": {
           "description": "The rule of the framework that serves the route where no code of the application handles it, with at the place that brings it in: fastapi docs_url, spring-boot error, next public, @fastify/static.",
           "type": "string",

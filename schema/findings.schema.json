@@ -50,6 +50,67 @@
           }
         }
       }
+    },
+    "calls": {
+      "description": "How far check saw the calls: which it checked against routes, and which it could not.",
+      "type": "object",
+      "required": [
+        "read",
+        "checked",
+        "matched",
+        "unchecked",
+        "documentOnly"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checked": {
+          "description": "Calls to a component whose routes are read; FA002 checks them.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Of those, the calls that reach a route.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchecked": {
+          "description": "Calls to a component with no route source, which nothing checks.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "documentOnly": {
+          "description": "Calls that reach only routes their component's OpenAPI document declares with no handler in its route files.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "call",
+              "at",
+              "surface",
+              "described"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "call": {
+                "type": "string"
+              },
+              "at": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
+              },
+              "surface": {
+                "type": "string"
+              },
+              "described": {
+                "$ref": "urn:flow-atlas:schema:v1alpha1:model#/$defs/place"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

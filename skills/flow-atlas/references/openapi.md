@@ -33,9 +33,11 @@ routes:
   Else, when no name or several match, exactly one place in the component's
   route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
-  exactly one place, the surface stays at the document, evidence `declared`, and a `limit:` in `atlas scan` lists those
+  exactly one place, the surface stays at the document, evidence `declared` (and `unhandled` where the component's route
+  files are configured), and a `limit:` in `atlas scan` lists those
   operations: an operationId that carries no handler's name (drf-spectacular's `users_list`, a FastAPI app's own
-  `generate_unique_id_function`) or none at all is found by no rule, and `trace` says no handler was found. A TypeScript
+  `generate_unique_id_function`) or none at all is found by no rule, `trace` says no handler was found, and `atlas check`
+  lists the calls that reach an `unhandled` one. A TypeScript
   or JavaScript handler found this way is followed like a code route's (`reaches`), so a trace continues through it.
 - When any route entry of the component registers the same route in code (same method and path, whatever the
   parameters are named), the code's location stays and the document adds its operationId and place.

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,7 @@ import { query } from "../src/commands.js";
 import { diffGraphs } from "../src/diff.js";
 import { documentUrl, repositoryPath, toArazzo } from "../src/arazzo.js";
 import { parse as parseYaml } from "yaml";
-import type { Subgraph } from "../src/model.js";
+import type { Findings, Subgraph } from "../src/model.js";
 import { inventory } from "../src/inventory.js";
 import { DEFAULT_EXCLUDE } from "../src/config.js";
 
@@ -161,6 +161,58 @@ describe("check, baseline and exceptions", () => {
     expect(byKey.get("FA004|document|coupon|no-consumer")).toBe("expired-exception");
   });
 
+});
+
+describe("how far check saw the calls", () => {
+  const capture = (args: string[]): string => {
+    let text = "";
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((text += String(chunk)), true));
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      main(args);
+    } finally {
+      spy.mockRestore();
+      err.mockRestore();
+    }
+    return text;
+  };
+  /** The shop with POST /orders/{id}/refund in the orders document only, read as a route source as given. */
+  const withContract = (entry: (yaml: string) => string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "atlas-contract-"));
+    cpSync(root, dir, { recursive: true });
+    const doc = join(dir, "services/orders/openapi.json");
+    const api = JSON.parse(readFileSync(doc, "utf8")) as { paths: Record<string, unknown> };
+    api.paths["/orders/{id}/refund"] = { post: { operationId: "refundOrder", responses: { "200": { description: "ok" } } } };
+    writeFileSync(doc, JSON.stringify(api, null, 2));
+    const file = join(dir, "atlas.config.yaml");
+    writeFileSync(file, entry(readFileSync(file, "utf8")));
+    return dir;
+  };
+  const check = (dir: string, ...args: string[]) => capture(["check", "--root", dir, "--out", mkdtempSync(join(tmpdir(), "atlas-")), ...args]);
+
+  it("ends with the counts, and says how many calls it checked", () => {
+    const lines = check(root).trimEnd().split("\n");
+    expect(lines[0]).toBe("8 new, 0 with an expired exception, 0 in the baseline, 0 excepted");
+    expect(lines.slice(-2)).toEqual([lines[0], "calls: 10 read, 10 checked against routes, 9 matched"]);
+  });
+
+  it("lists a call that reaches a route only the document declares, where the code is read too", () => {
+    const dir = withContract((yaml) => yaml.replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"));
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
+    expect(doc.calls?.documentOnly.map((d) => [d.at.file, d.surface])).toEqual([["services/bff/src/clients/orders.ts", "orders|POST /orders/{id}/refund"]]);
+    expect(validate(schemaForKind("Findings")!, doc)).toEqual([]);
+    const text = check(dir);
+    expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
+    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes, 10 matched (1 only by a document); 1 limit line on stderr");
+  });
+
+  it("does not list it where the document is the component's only route source", () => {
+    const dir = withContract((yaml) => yaml.replace(/ {2}- component: orders\n {4}files:[^\n]*\n( {4}[^\n]*\n)*? {4}operationIds: nest-swagger\n/, "  - component: orders\n    openapi: services/orders/openapi.json\n"));
+    expect(readFileSync(join(dir, "atlas.config.yaml"), "utf8")).not.toContain("styles: [nest]\n    constants");
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.calls?.documentOnly.map((d) => d.surface)).not.toContain("orders|POST /orders/{id}/refund");
+  });
 });
 
 describe("trace", () => {
