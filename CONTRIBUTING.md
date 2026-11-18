@@ -1,5 +1,7 @@
 # Contributing
 
+Pull requests are open to the repository's collaborators. To propose a change or report a problem, open an issue.
+
 ## Build and test
 
 ```bash
@@ -31,19 +33,6 @@ atlas read there.
 `test/skill.test.ts` checks the skill against the Agent Skills specification, and `test/docs.test.ts` runs every
 `atlas` command the README, the skill and its references name, so a renamed command or option fails the tests. CI
 also runs `vally lint` on `skills/`, the check skill listings use.
-
-[`evals/flow-atlas/eval.yaml`](evals/flow-atlas/eval.yaml) runs the skill with a coding agent on `fixtures/shop`:
-whether the agent loads it when a change crosses components and leaves it alone otherwise, checks its own change
-with atlas before finishing, and stops before recording a baseline nobody approved. Its graders are deterministic, and
-each stimulus grades what the skill adds: every one but the negative trigger fails when run without the skill (the
-file's header says how to check that for a new one). A trial whose agent session drops is reported but not counted;
-every graded trial must pass. It costs model requests, so the `skill-eval` workflow runs it on demand, weekly and
-after a change to the skill lands on `main`. To run it locally with GitHub Copilot:
-
-```bash
-pnpm build && pack=$(mktemp -d) && npm pack --pack-destination "$pack" && npm install -g "$pack"/flow-atlas-*.tgz
-GITHUB_TOKEN=$(gh auth token) npx @microsoft/vally-cli eval -e evals/flow-atlas/eval.yaml --runs 1
-```
 
 ## Registry mirrors
 

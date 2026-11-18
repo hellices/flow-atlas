@@ -10,8 +10,12 @@ const skills = new URL("../skills/", import.meta.url);
  * angle brackets (spaces allowed), or bare up to whitespace or the parenthesis that closes the link, with balanced
  * parentheses and backslash escapes inside.
  */
-function linkDestinations(body: string): string[] {
+function linkDestinations(markdown: string): string[] {
   const out: string[] = [];
+  // Code is not Markdown: blank out fenced blocks and code spans (keeping line breaks) before looking for links.
+  const body = markdown
+    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, (m) => m.replace(/[^\n]/g, " "));
   for (let i = body.indexOf("]("); i >= 0; i = body.indexOf("](", i + 2)) {
     let j = i + 2;
     // Spaces, tabs and at most one line ending may come before the destination.
@@ -70,7 +74,7 @@ describe("skills follow the Agent Skills specification", () => {
         const body = readFileSync(new URL(file, skills), "utf8");
         for (const link of linkDestinations(body)) {
           const target = link.replace(/#.*$/, "");
-          if (!target || /^[a-z]+:/.test(target)) continue;
+          if (!target || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) || target.startsWith("//")) continue;
           expect(() => readFileSync(new URL(target, new URL(file, skills))), `${file} links ${target}`).not.toThrow();
         }
       }
