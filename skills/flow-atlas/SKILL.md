@@ -251,7 +251,7 @@ names in the repository are relative to the root.
 ## Reading the output
 
 - `atlas check` starts and ends with the counts. Its last line splits the calls: matched, unserved (FA002), not
-  decided (a `limit:` line says why), not taken for requests, and to components with no route source (not checked).
+  decided (a `limit:` line says why), not taken for requests, and not checked (no route source for the target, or FA002 off).
   Only "unserved" is a finding. Calls listed as reaching a route only an OpenAPI document declares go to a route the
   code was not found to have: a hand-written contract given as a route source, or a handler atlas did not find. Open
   the code before calling either built.

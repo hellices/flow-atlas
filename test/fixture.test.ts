@@ -173,11 +173,13 @@ describe("how far check saw the calls", () => {
   afterAll(() => {
     for (const dir of made) rmSync(dir, { recursive: true, force: true });
   });
+  let stderr = "";
   const capture = (args: string[]): string => {
     let text = "";
+    stderr = "";
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((text += String(chunk)), true));
     const log = vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => void (text += `${parts.join(" ")}\n`));
-    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const err = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => ((stderr += String(chunk)), true));
     try {
       main(args);
     } finally {
@@ -216,6 +218,7 @@ describe("how far check saw the calls", () => {
     const text = check(dir);
     expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
     expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes: 10 matched (1 only by a document); stderr has 1 limit line on what was not read");
+    expect(stderr.split("\n").filter((l) => l.startsWith("limit: "))).toHaveLength(1);
   });
 
   it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
@@ -272,6 +275,24 @@ describe("how far check saw the calls", () => {
       err.mockRestore();
       out.mockRestore();
     }
+  });
+
+  it("counts each call by what FA002 made of it, not by the key it shares with others", () => {
+    const dir = temp("atlas-outcomes-");
+    cpSync(root, dir, { recursive: true });
+    const client = join(dir, "services/bff/src/clients/orders.ts");
+    // Two calls of one request shape: based, which FA002 reports, and a bare string, which is not taken for a request.
+    writeFileSync(client, readFileSync(client, "utf8") + 'export const a = (b: string) => fetch(`${b}/missing`);\nexport const label = "/missing";\nexport const c = () => fetch(label);\n');
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.items.map((i) => i.finding.key)).toContain("FA002|bff->orders|GET /missing");
+    const calls = doc.calls!;
+    expect([calls.unserved, calls.notRequests]).toEqual([2, 1]);
+    expect(calls.matched + calls.unserved + calls.undecided + calls.notRequests).toBe(calls.checked);
+    const off = temp("atlas-off-");
+    cpSync(dir, off, { recursive: true });
+    writeFileSync(join(off, "atlas.config.yaml"), readFileSync(join(off, "atlas.config.yaml"), "utf8") + "\nrules:\n  FA002: { enabled: false }\n");
+    const quiet = JSON.parse(check(off, "--format", "json")) as Findings;
+    expect(quiet.calls).toMatchObject({ checked: 0, unserved: 0, undecided: 0, unchecked: quiet.calls!.read });
   });
 
   it("explains a finding the check in --out does not have, from the code as it is now", () => {

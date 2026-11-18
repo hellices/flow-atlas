@@ -189,7 +189,7 @@ tree, `code` has no digest.
 | `Trace` | `trace` | the subgraph upstream and downstream of a starting route |
 | `Query` | `query` | the routes and calls that match, with their neighbours one edge away; with `--kind registries`, the registry entries whose id contains `--path` |
 | `FlowReport` | `flows` | each flow's metadata and status |
-| `Findings` | `check` | findings and their state (new, baseline, excepted, expired-exception), and `calls`: how many calls were read, checked against routes, matched, reported unserved (FA002), left undecided (a `limit:` line says why) or not taken for requests, how many go to a component with no route source, and the calls that reach only a route a document declares with no handler in the code (`documentOnly`) |
+| `Findings` | `check` | findings and their state (new, baseline, excepted, expired-exception), and `calls`: how many calls were read, checked against routes, matched, reported unserved (FA002), left undecided (a `limit:` line says why) or not taken for requests, how many FA002 does not check (no route source for the target, or the rule off), and the calls that reach only a route a document declares with no handler in the code (`documentOnly`) |
 | `Diff` | `diff` | routes, component links, chains, the flows they reach and findings that changed between two revisions |
 | `Inventory` | `inventory` | candidates to look at when writing the configuration |
 

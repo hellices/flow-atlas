@@ -359,10 +359,10 @@ export interface CallSummary {
   undecided: number;
   /** Of those, strings not taken for requests to their target: no base address, and a first segment the target does not serve. */
   notRequests: number;
-  /** Calls to a component with no route source, which nothing checks. */
+  /** Calls FA002 does not check: their target has no route source, or the rule is off. */
   unchecked: number;
   /** Calls that reach only routes their component's document declares with no handler in its route files (`Surface.unhandled`). */
-  documentOnly: Array<{ call: string; at: Place; surface: string; described: Place }>;
+  documentOnly: Array<{ call: string; from: string; to: string; method: string; path: string; at: Place; surface: string; described: Place }>;
 }
 
 export interface GraphDiff extends Document<"Diff"> {

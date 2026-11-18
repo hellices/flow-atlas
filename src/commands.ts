@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { stringify } from "yaml";
-import { DEFAULT_EXCLUDE, loadConfig, routedComponents, ruleEnabled, type Config } from "./config.js";
+import { DEFAULT_EXCLUDE, loadConfig, ruleEnabled, type Config } from "./config.js";
 import { NothingToExport, toArazzo, type ArazzoExport } from "./arazzo.js";
 import { chainsText, deriveChains, type ChainReport } from "./chains.js";
 import { draftChainFlows } from "./draft.js";
@@ -13,7 +13,7 @@ import { API_VERSION, type Finding, type Findings, type Graph, type Subgraph } f
 import { nearby } from "./nearby.js";
 import { methodsMatch, pathsMatch } from "./paths.js";
 import { callSummary, markdownReport, textReport, type Classified } from "./report.js";
-import { evaluate, RULES } from "./rules.js";
+import { callOutcomes, evaluate, RULES } from "./rules.js";
 import { toSarif } from "./sarif.js";
 import { scan } from "./scan.js";
 import { openSource } from "./source.js";
@@ -218,7 +218,7 @@ function cmdCheck(o: Options): number {
     provenance: derived(graph.provenance, "Findings", o.since ? { since: o.since } : {}, flowFiles),
     ...(o.since ? { since: o.since } : {}),
     items: classify(findings, o, sinceKeys),
-    calls: callSummary(graph, routedComponents(config), findings),
+    calls: callSummary(graph, callOutcomes(graph, config)),
   };
   writeGraph(o.out, graph);
   writeLastCheck(o.out, doc);

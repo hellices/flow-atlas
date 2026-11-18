@@ -31,6 +31,26 @@ export function surfacePattern(entries: string[]): (id: string) => boolean {
   return (id) => patterns.some((p) => p.test(id));
 }
 
+/**
+ * What FA002 made of each call, by its index in `graph.calls`: it reaches a route (`matched`), FA002 reports it
+ * (`unserved`), a `limit:` says why it is matched to none (`undecided`: an unread method fitting several routes, a
+ * trailing slash, a redirect, a header constraint), it is not taken for a request to its target (`notRequest`), or
+ * FA002 does not check it (`unchecked`: the target has no route source, or the rule is off).
+ */
+export type CallOutcome = "matched" | "unserved" | "undecided" | "notRequest" | "unchecked";
+
+export function callOutcomes(graph: Graph, config: Config): CallOutcome[] {
+  const { targetsOf, unsettled, slashless, redirected, constrained } = matchCalls(graph, rankedComponents(config));
+  const served = routedComponents(config);
+  const on = ruleEnabled(config, "FA002");
+  return graph.calls.map((c, i) => {
+    if (!on || !served.has(c.to)) return "unchecked";
+    if (targetsOf.has(i)) return "matched";
+    if (unsettled.has(i) || slashless.has(i) || redirected.has(i) || constrained.has(i)) return "undecided";
+    return plausibleRequest(graph, c) ? "unserved" : "notRequest";
+  });
+}
+
 /** Findings for a graph. What the rules could not settle completely is added to `limits`. */
 export function evaluate(graph: Graph, config: Config, limits: string[] = []): Finding[] {
   const out: Finding[] = [];

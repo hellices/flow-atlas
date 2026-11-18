@@ -96,7 +96,7 @@
           "minimum": 0
         },
         "unchecked": {
-          "description": "Calls to a component with no route source, which nothing checks.",
+          "description": "Calls FA002 does not check: their target has no route source, or the rule is off.",
           "type": "integer",
           "minimum": 0
         },
@@ -107,6 +107,10 @@
             "type": "object",
             "required": [
               "call",
+              "from",
+              "to",
+              "method",
+              "path",
               "at",
               "surface",
               "described"
@@ -114,6 +118,18 @@
             "additionalProperties": false,
             "properties": {
               "call": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string"
+              },
+              "path": {
                 "type": "string"
               },
               "at": {

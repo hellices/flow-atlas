@@ -1,55 +1,47 @@
-import { plausibleRequest } from "./match.js";
 import type { CallSummary, Finding, Findings, Graph } from "./model.js";
+import type { CallOutcome } from "./rules.js";
 
 export type Classified = Findings["items"][number];
 
 const place = (f: Finding): string => f.at.map((p) => `${p.file}:${p.line}`).join(", ");
 
-/** How far the calls were checked, from the graph: which reach a route, which only a document's, which go unchecked. */
-export function callSummary(graph: Graph, routed: Set<string>, findings: Finding[]): CallSummary {
+/** How far the calls were checked, from what FA002 made of each (`callOutcomes`) and the routes each reaches. */
+export function callSummary(graph: Pick<Graph, "calls" | "surfaces" | "edges">, outcomes: CallOutcome[]): CallSummary {
   const surfaces = new Map(graph.surfaces.map((s) => [s.id, s]));
   const targets = new Map<string, string[]>();
   for (const e of graph.edges) if (e.kind === "match") targets.set(e.from, [...(targets.get(e.from) ?? []), e.to]);
-  const checked = graph.calls.filter((c) => routed.has(c.to));
+  const count = (o: CallOutcome) => outcomes.filter((x) => x === o).length;
   const documentOnly: CallSummary["documentOnly"] = [];
-  for (const c of checked) {
+  graph.calls.forEach((c, i) => {
+    if (outcomes[i] !== "matched") return;
     const reached = (targets.get(c.id) ?? []).map((id) => surfaces.get(id)).filter((s) => s !== undefined);
     if (reached.length && reached.every((s) => s.unhandled && s.described))
-      documentOnly.push({ call: c.id, at: c.at, surface: reached[0]!.id, described: reached[0]!.described! });
-  }
-  const reported = new Set(findings.filter((f) => f.rule === "FA002").map((f) => f.key));
-  const matched = checked.filter((c) => targets.has(c.id)).length;
-  const open = checked.filter((c) => !targets.has(c.id) && !reported.has(`FA002|${c.from}->${c.to}|${c.method} ${c.path}`));
-  const notRequests = open.filter((c) => !plausibleRequest(graph, c)).length;
-  const unserved = checked.length - matched - open.length;
+      documentOnly.push({ call: c.id, from: c.from, to: c.to, method: c.method, path: c.path, at: c.at, surface: reached[0]!.id, described: reached[0]!.described! });
+  });
   return {
     read: graph.calls.length,
-    checked: checked.length,
-    matched,
-    unserved,
-    undecided: open.length - notRequests,
-    notRequests,
-    unchecked: graph.calls.length - checked.length,
+    checked: graph.calls.length - count("unchecked"),
+    matched: count("matched"),
+    unserved: count("unserved"),
+    undecided: count("undecided"),
+    notRequests: count("notRequest"),
+    unchecked: count("unchecked"),
     documentOnly,
   };
 }
 
-const callWhat = (id: string): string => {
-  const [edge, request] = id.replace(/@.*$/, "").split("|") as [string, string];
-  const [from, to] = edge.split("->") as [string, string];
-  return `${from} calls ${request} on ${to}`;
-};
+const callWhat = (d: CallSummary["documentOnly"][number]): string => `${d.from} calls ${d.method} ${d.path} on ${d.to}`;
 
 function documentOnlyLines(calls: CallSummary): string[] {
   if (!calls.documentOnly.length) return [];
   const lines = ["Calls that reach a route only an OpenAPI document declares; no handler for it was found in the route files:"];
-  for (const d of calls.documentOnly) lines.push(`  ${callWhat(d.call)}  ${d.at.file}:${d.at.line}`, `    -> ${d.surface}  ${d.described.file}:${d.described.line}`);
+  for (const d of calls.documentOnly) lines.push(`  ${callWhat(d)}  ${d.at.file}:${d.at.line}`, `    -> ${d.surface}  ${d.described.file}:${d.described.line}`);
   return [...lines, ""];
 }
 
 function callsLine(calls: CallSummary, limits: number): string {
   const only = calls.documentOnly.length ? ` (${calls.documentOnly.length} only by a document)` : "";
-  const unchecked = calls.unchecked ? `, ${calls.unchecked} to components with no route source, not checked` : "";
+  const unchecked = calls.unchecked ? `, ${calls.unchecked} not checked (no route source for the target, or FA002 off)` : "";
   const notes = limits ? `; stderr has ${limits} limit line${limits === 1 ? "" : "s"} on what was not read` : "";
   const unserved = calls.unserved ? `, ${calls.unserved} unserved (FA002)` : "";
   const undecided = calls.undecided ? `, ${calls.undecided} not decided (the limit lines say why)` : "";
@@ -89,7 +81,7 @@ export function markdownReport(items: Classified[], calls?: CallSummary): string
         "",
         "Calls that reach a route only an OpenAPI document declares (no handler in the route files):",
         "",
-        ...calls.documentOnly.map((d) => `- ${callWhat(d.call)} (${d.at.file}:${d.at.line}) → ${d.surface} (${d.described.file}:${d.described.line})`),
+        ...calls.documentOnly.map((d) => `- ${callWhat(d)} (${d.at.file}:${d.at.line}) → ${d.surface} (${d.described.file}:${d.described.line})`),
         "",
       ]
     : [];
