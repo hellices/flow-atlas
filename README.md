@@ -165,7 +165,8 @@ files, and you review them like code:
 
 The agent runs `atlas inventory`, writes `atlas.config.yaml` from it ([config.md](skills/flow-atlas/references/config.md)),
 and runs `atlas scan` again and again until every source reads what it should, fixing the configuration each round.
-With `--out <dir>` it writes nothing into the repository.
+With `--out <dir>` it writes nothing into the repository. Every later command takes the same `--root` and `--out`:
+`explain` and `baseline update` read what the last `check` wrote there.
 
 **You:** check that the components listed are the services you mean, and read the `limit:` lines it reports: each is
 something atlas could not read, and why.
@@ -215,6 +216,8 @@ The agent runs `atlas check --since <base>` and fixes, or explains, each new fin
 (`rules.<id>.enabled: false`), which the skill does only with a person's agreement.
 
 ### 6. In CI (optional, without an agent)
+
+Run from the repository root, or pass the same `--root` and `--out` to each command.
 
 ```bash
 atlas check --fail-on-new                       # exit 1 when there are new findings
