@@ -53,6 +53,7 @@ The code is how a finding is named everywhere: in the output, in the exceptions 
 | call | a request one component sends to another (`bff -> orders  POST /orders`) |
 | chain | one request and everything it reaches in turn |
 | flow | a journey you describe in a file (`flows/*.flow.yaml`), built from chains, with what each component does in it |
+| registry | a list whose entries one component produces and another consumes (artifact kinds, events, the tools an agent calls); a flow step can name an entry |
 | limit | a `limit:` line: something atlas saw but could not read for certain, so it left it out rather than guess |
 | baseline | the findings you accepted as known debt; `check` shows only findings new since then |
 
@@ -128,6 +129,9 @@ Start from what atlas finds, write the configuration, then scan until it reads w
 3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
    expect two or three rounds before the findings are worth trusting.
 4. `atlas check --root <repo>` prints the findings.
+
+You write three files: the configuration, the flows (from drafts atlas prints, filling only the title and each
+step's role) and the exceptions file. Everything else comes from the commands below, each run.
 
 <details>
 <summary>All commands</summary>
@@ -247,7 +251,7 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
 | [SKILL.md](skills/flow-atlas/SKILL.md) | how an agent uses atlas |
 | [config.md](skills/flow-atlas/references/config.md) | the configuration, and every rule the extractors follow |
 | [rules.md](skills/flow-atlas/references/rules.md) | each finding's causes and fixes |
-| [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component |
+| [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component, and whether a journey's step is missing |
 | [openapi.md](skills/flow-atlas/references/openapi.md) | producing and reading OpenAPI documents |
 | [docs/traces.md](docs/traces.md) | how traces connect calls, routes and handlers |
 | [docs/direction.md](docs/direction.md) | the scope, the research it rests on, and the extensions left open |

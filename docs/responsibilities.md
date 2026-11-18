@@ -29,10 +29,11 @@ alone show whether a value came from the code or from a person.
 | what leads to a route and what it leads to | `trace` | graph edges |
 | chains: each request, everything it reaches in that request, who makes it, what may follow it | `chains` | graph edges; a page's template links and forms are what may follow, not part of the request |
 | a flow draft per chain: name, step, chain and entry | `draft flows` | the chains |
+| registry entries a step can name, with where each is listed, produced and consumed | `query --kind registries` | the configured registries |
 | whether a flow holds in the code | `flows` | steps resolved, paths between steps (between chains, a `next` the code offers), registry lists |
 | whether the author's fields are written | `flows` (`Documented`) | a title and each step's role present |
 | findings FA001, FA002, FA003, FA004 and FA007 | `check` | the facts above |
-| routes, links, chains and findings that changed | `diff` | the graphs of two revisions |
+| routes, links, chains, the flows they reach and findings that changed | `diff` | the graphs and flow reports of two revisions |
 | configuration candidates | `inventory` | manifests and file shapes |
 | how much of the code the configuration covers | `scan`, `check` | what each configured source read, and drops against the baseline |
 | SARIF and Arazzo skeletons | `check --format sarif`, `export arazzo` | the results above, converted |
@@ -79,7 +80,7 @@ criteria and the order to apply them in; the details are in the skill's `referen
 
 Take the drafts from `atlas draft flows`: each is one chain, with its entry from the code. Fill only the fields marked
 `agent:`. For a journey, list chains in order, each following one taken from the previous chain's `next` where atlas
-lists one. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`
+lists one; a step that is no request names a registry entry taken from `atlas query --kind registries`. Repeat `atlas flows` until it reports `Ready=True`. A False `Resolved`
 or `Connected` means the code or the flow is wrong; which one is decided with the boundary criteria. A
 False `Documented` means a field the author writes is empty.
 

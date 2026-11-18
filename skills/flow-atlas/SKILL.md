@@ -132,7 +132,8 @@ the document in the same change. A client call alone does not change it.
    chains, in order. Take each following chain from the previous chain's `next` when atlas lists one; then `Connected`
    is True from the code. Two requests with nothing in the code linking them, whether one component makes both or
    one client hands off to another, give `Connected` and `Ready` `Unknown (OrderNotInCode)`: the order is yours, and
-   it stays Unknown.
+   it stays Unknown. A step that happens within one request (a tool an agent calls) is a `registry` step; see
+   "Walking a journey against the code".
 4. `atlas flows` until each flow is `Ready=True` or deliberately Unknown. A False `Resolved` or `Connected` means
    the code or the flow is wrong: decide which with `references/boundaries.md`. A False
    `Documented` means an author field is empty.
