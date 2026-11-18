@@ -33,8 +33,8 @@ routes:
   Else, when no name or several match, exactly one place in the component's
   route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
-  exactly one place, the surface stays at the document, evidence `declared` (and `unhandled` where the component's route
-  files are configured), and a `limit:` in `atlas scan` lists those
+  exactly one place, the surface stays at the document, evidence `declared` (and `unhandled` where atlas reads routes of
+  the component from its code too), and a `limit:` in `atlas scan` lists those
   operations: an operationId that carries no handler's name (drf-spectacular's `users_list`, a FastAPI app's own
   `generate_unique_id_function`) or none at all is found by no rule, `trace` says no handler was found, and `atlas check`
   lists the calls that reach an `unhandled` one. A TypeScript

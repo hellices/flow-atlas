@@ -218,7 +218,7 @@ function cmdCheck(o: Options): number {
     provenance: derived(graph.provenance, "Findings", o.since ? { since: o.since } : {}, flowFiles),
     ...(o.since ? { since: o.since } : {}),
     items: classify(findings, o, sinceKeys),
-    calls: callSummary(graph, routedComponents(config)),
+    calls: callSummary(graph, routedComponents(config), findings),
   };
   writeGraph(o.out, graph);
   writeLastCheck(o.out, doc);

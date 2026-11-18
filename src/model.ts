@@ -75,8 +75,8 @@ export interface Surface {
    */
   implicit?: boolean;
   /**
-   * Only the component's OpenAPI document declares it: the component's route files are configured and none of them
-   * holds its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose
+   * Only the component's OpenAPI document declares it: atlas read routes of the component from its code, and neither
+   * those routes nor its route files hold this one or its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose
    * handler atlas does not find, so this is a fact to look at, not a finding.
    */
   unhandled?: true;
@@ -353,6 +353,12 @@ export interface CallSummary {
   checked: number;
   /** Of those, the calls that reach a route. */
   matched: number;
+  /** Of those, the calls FA002 reports: they reach no route. */
+  unserved: number;
+  /** Of those, the calls neither matched nor reported, as a `limit:` line says why (an unread method fitting several routes, a redirect, a header constraint). */
+  undecided: number;
+  /** Of those, strings not taken for requests to their target: no base address, and a first segment the target does not serve. */
+  notRequests: number;
   /** Calls to a component with no route source, which nothing checks. */
   unchecked: number;
   /** Calls that reach only routes their component's document declares with no handler in its route files (`Surface.unhandled`). */

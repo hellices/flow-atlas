@@ -58,6 +58,9 @@
         "read",
         "checked",
         "matched",
+        "unserved",
+        "undecided",
+        "notRequests",
         "unchecked",
         "documentOnly"
       ],
@@ -74,6 +77,21 @@
         },
         "matched": {
           "description": "Of those, the calls that reach a route.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unserved": {
+          "description": "Of those, the calls FA002 reports: they reach no route.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "undecided": {
+          "description": "Of those, the calls neither matched nor reported, as a limit line says why.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "notRequests": {
+          "description": "Of those, strings not taken for requests to their target: no base address, and a first segment the target does not serve.",
           "type": "integer",
           "minimum": 0
         },

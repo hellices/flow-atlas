@@ -155,7 +155,7 @@
           "const": true
         },
         "unhandled": {
-          "description": "Only the component's OpenAPI document declares it: the component's route files are configured and none of them holds its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose handler atlas does not find, so this is a fact, not a finding.",
+          "description": "Only the component's OpenAPI document declares it: atlas read routes of the component from its code, and neither those routes nor its route files hold this one or its handler. A hand-written contract's operation not built yet looks the same as a generated document's whose handler atlas does not find, so this is a fact, not a finding.",
           "const": true
         },
         "convention": {

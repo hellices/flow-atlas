@@ -1690,8 +1690,8 @@ function documentedSurfaces(
   limits: string[],
   reach?: Reach,
   executed?: Map<string, Set<string>>,
-  // Route files are configured for the component, matched or not: an operation with no handler found is then `unhandled`.
-  codeRouted = texts.size > 0,
+  // atlas read routes of the component from its code: an operation with no handler found there is then `unhandled`.
+  codeRouted = false,
 ): Surface[] {
   const file = spec.openapi!;
   let text: string | undefined;
@@ -2181,13 +2181,13 @@ export function extractRoutes(
   out.length = 0;
   out.push(...code);
   // The document the configuration chooses for a component goes first, so its operationIds and places win.
+  const fromCode = new Set(out.map((s) => s.component));
   const documents = config.routes
     .filter((r) => r.openapi)
     .sort((a, b) => Number(config.openapi[b.component] === b.openapi) - Number(config.openapi[a.component] === a.openapi));
   for (const spec of documents) {
     const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
-    const codeRouted = config.routes.some((r) => r.component === spec.component && r.files.length > 0);
-    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed, codeRouted);
+    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed, fromCode.has(spec.component));
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
   }

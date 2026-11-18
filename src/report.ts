@@ -1,3 +1,4 @@
+import { plausibleRequest } from "./match.js";
 import type { CallSummary, Finding, Findings, Graph } from "./model.js";
 
 export type Classified = Findings["items"][number];
@@ -5,7 +6,7 @@ export type Classified = Findings["items"][number];
 const place = (f: Finding): string => f.at.map((p) => `${p.file}:${p.line}`).join(", ");
 
 /** How far the calls were checked, from the graph: which reach a route, which only a document's, which go unchecked. */
-export function callSummary(graph: Pick<Graph, "calls" | "surfaces" | "edges">, routed: Set<string>): CallSummary {
+export function callSummary(graph: Graph, routed: Set<string>, findings: Finding[]): CallSummary {
   const surfaces = new Map(graph.surfaces.map((s) => [s.id, s]));
   const targets = new Map<string, string[]>();
   for (const e of graph.edges) if (e.kind === "match") targets.set(e.from, [...(targets.get(e.from) ?? []), e.to]);
@@ -16,10 +17,18 @@ export function callSummary(graph: Pick<Graph, "calls" | "surfaces" | "edges">, 
     if (reached.length && reached.every((s) => s.unhandled && s.described))
       documentOnly.push({ call: c.id, at: c.at, surface: reached[0]!.id, described: reached[0]!.described! });
   }
+  const reported = new Set(findings.filter((f) => f.rule === "FA002").map((f) => f.key));
+  const matched = checked.filter((c) => targets.has(c.id)).length;
+  const open = checked.filter((c) => !targets.has(c.id) && !reported.has(`FA002|${c.from}->${c.to}|${c.method} ${c.path}`));
+  const notRequests = open.filter((c) => !plausibleRequest(graph, c)).length;
+  const unserved = checked.length - matched - open.length;
   return {
     read: graph.calls.length,
     checked: checked.length,
-    matched: checked.filter((c) => targets.has(c.id)).length,
+    matched,
+    unserved,
+    undecided: open.length - notRequests,
+    notRequests,
     unchecked: graph.calls.length - checked.length,
     documentOnly,
   };
@@ -42,7 +51,10 @@ function callsLine(calls: CallSummary, limits: number): string {
   const only = calls.documentOnly.length ? ` (${calls.documentOnly.length} only by a document)` : "";
   const unchecked = calls.unchecked ? `, ${calls.unchecked} to components with no route source, not checked` : "";
   const notes = limits ? `; ${limits} limit line${limits === 1 ? "" : "s"} on stderr` : "";
-  return `calls: ${calls.read} read, ${calls.checked} checked against routes, ${calls.matched} matched${only}${unchecked}${notes}`;
+  const unserved = calls.unserved ? `, ${calls.unserved} unserved (FA002)` : "";
+  const undecided = calls.undecided ? `, ${calls.undecided} not decided (the limit lines say why)` : "";
+  const strings = calls.notRequests ? `, ${calls.notRequests} not taken for requests (no base address, a first segment the target does not serve)` : "";
+  return `calls: ${calls.read} read, ${calls.checked} checked against routes: ${calls.matched} matched${only}${unserved}${undecided}${strings}${unchecked}${notes}`;
 }
 
 export function textReport(items: Classified[], showAll: boolean, calls?: CallSummary, limits = 0): string {

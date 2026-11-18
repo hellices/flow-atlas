@@ -204,7 +204,7 @@ describe("how far check saw the calls", () => {
   it("ends with the counts, and says how many calls it checked", () => {
     const lines = check(root).trimEnd().split("\n");
     expect(lines[0]).toBe("8 new, 0 with an expired exception, 0 in the baseline, 0 excepted");
-    expect(lines.slice(-2)).toEqual([lines[0], "calls: 10 read, 10 checked against routes, 9 matched"]);
+    expect(lines.slice(-2)).toEqual([lines[0], "calls: 10 read, 10 checked against routes: 9 matched, 1 unserved (FA002)"]);
   });
 
   it("lists a call that reaches a route only the document declares, where the code is read too", () => {
@@ -215,7 +215,7 @@ describe("how far check saw the calls", () => {
     expect(validate(schemaForKind("Findings")!, doc)).toEqual([]);
     const text = check(dir);
     expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
-    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes, 10 matched (1 only by a document); 1 limit line on stderr");
+    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes: 10 matched (1 only by a document); 1 limit line on stderr");
   });
 
   it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
@@ -236,12 +236,12 @@ describe("how far check saw the calls", () => {
     expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
   });
 
-  it("lists it where route files are configured but match nothing", () => {
-    const dir = withContract((yaml) =>
-      yaml.replace('files: ["services/orders/src/**/*.ts"]', 'files: ["services/orders/gone/**/*.ts"]').replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"),
-    );
+  it("does not list it where route files only locate handlers, and tells the calls it did not decide from the ones it did not take", () => {
+    // A generated document read with Python files that hold its handlers: no route is read from the code, so a
+    // handler atlas does not find is not a route the code lacks.
+    const dir = fileURLToPath(new URL("../fixtures/scenarios/drf-openapi-client", import.meta.url));
     const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
-    expect(doc.calls?.documentOnly.map((d) => d.surface)).toContain("orders|POST /orders/{id}/refund");
+    expect(doc.calls).toMatchObject({ read: 5, checked: 5, matched: 3, unserved: 0, undecided: 1, notRequests: 1, documentOnly: [] });
   });
 
   it("explains a finding the check in --out does not have, from the code as it is now", () => {

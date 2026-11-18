@@ -250,10 +250,11 @@ names in the repository are relative to the root.
 
 ## Reading the output
 
-- `atlas check` starts and ends with the counts. Its last line says how many calls it checked against routes and how
-  many it could not (calls to a component with no route source). Calls listed as reaching a route only an OpenAPI
-  document declares go to a route the code was not found to have: a hand-written contract given as a route source,
-  or a handler atlas did not find. Open the code before calling either built.
+- `atlas check` starts and ends with the counts. Its last line splits the calls: matched, unserved (FA002), not
+  decided (a `limit:` line says why), not taken for requests, and to components with no route source (not checked).
+  Only "unserved" is a finding. Calls listed as reaching a route only an OpenAPI document declares go to a route the
+  code was not found to have: a hand-written contract given as a route source, or a handler atlas did not find. Open
+  the code before calling either built.
 - Finding status: `new` is yours; `baseline` is accepted debt; `excepted` is covered; `expired-exception` needs a person.
 - In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
