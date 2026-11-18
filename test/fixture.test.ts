@@ -237,6 +237,8 @@ describe("how far check saw the calls", () => {
     const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
     expect(doc.calls?.documentOnly.map((d) => d.surface)).not.toContain("orders|POST /orders/{id}/refund");
     expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
+    // The refund call is matched to the document's route and counted so; the other calls to orders the document lacks are FA002.
+    expect(doc.calls).toMatchObject({ read: 10, checked: 10, matched: 8, unserved: 2, undecided: 0, notRequests: 0, documentOnly: [] });
   });
 
   it("does not list it where route files only locate handlers, and tells the calls it did not decide from the ones it did not take", () => {
