@@ -211,8 +211,9 @@ through a sample of findings with a person. Only then record the baseline.
 
 Run `atlas explain <key>` before deciding: it shows the calls or surfaces of a similar path. A candidate whose handler
 does the same work under another path means one side was renamed; fix the side the contract or the other callers
-disagree with. No such candidate means the route or the caller is missing; do not point a call at a candidate because
-its path is close. Then decide whether it is a defect, a plan or a false positive (`references/boundaries.md`):
+disagree with. With no such candidate, the route or the caller is missing, or atlas does not read it (see `limit:`
+lines and "Reading the output"): open the code to tell which. Do not point a call at a candidate because its path is
+close. Then decide whether it is a defect, a plan or a false positive (`references/boundaries.md`):
 
 - Fix it when the finding is the bug: wire the missing caller, remove the dead route, add the producer, point the
   call at the served path. `references/rules.md` lists the usual causes per rule.

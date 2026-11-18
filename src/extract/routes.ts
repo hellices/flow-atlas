@@ -1690,6 +1690,8 @@ function documentedSurfaces(
   limits: string[],
   reach?: Reach,
   executed?: Map<string, Set<string>>,
+  // Route files are configured for the component, matched or not: an operation with no handler found is then `unhandled`.
+  codeRouted = texts.size > 0,
 ): Surface[] {
   const file = spec.openapi!;
   let text: string | undefined;
@@ -1741,7 +1743,7 @@ function documentedSurfaces(
       path: op.path,
       at: place ? { file: place.at.file, line: place.at.line } : op.at,
       evidence: place?.evidence ?? "declared",
-      ...(!place && texts.size ? { unhandled: true as const } : {}),
+      ...(!place && codeRouted ? { unhandled: true as const } : {}),
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
@@ -2184,7 +2186,8 @@ export function extractRoutes(
     .sort((a, b) => Number(config.openapi[b.component] === b.openapi) - Number(config.openapi[a.component] === a.openapi));
   for (const spec of documents) {
     const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
-    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed);
+    const codeRouted = config.routes.some((r) => r.component === spec.component && r.files.length > 0);
+    const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed, codeRouted);
     out.push(...added);
     addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
   }

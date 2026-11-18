@@ -270,15 +270,17 @@ function cmdDiff(o: Options): number {
 function cmdExplain(o: Options): number {
   const key = o.args[0];
   if (!key) throw new Error("explain needs a finding key");
-  // The last check in --out, or, with none there, the code as it is now: each shell an agent runs may use its own --out.
+  // The last check in --out, or the code as it is now when that check has no such finding (or there is none): each
+  // shell an agent runs may use its own --out, and diff reports findings without writing a check.
+  const pick = (findings: Finding[]) => findings.find((x) => x.key === key) ?? findings.find((x) => x.key.includes(key));
   const last = readLastCheck(o.out);
-  const now = last ? undefined : analyze(o, configFor(o), o.ref);
-  const findings = last ? last.items.map((i) => i.finding) : now!.findings;
-  const f = findings.find((x) => x.key === key) ?? findings.find((x) => x.key.includes(key));
+  const cached = last && pick(last.items.map((i) => i.finding));
+  const now = cached ? undefined : analyze(o, configFor(o), o.ref);
+  const f = cached ?? pick(now!.findings);
   if (!f) throw new Error(`no finding matches ${key}`);
   console.log(`${f.rule} ${f.title}\n\n${f.message}\n`);
   for (const p of f.at) console.log(`  ${p.file}:${p.line}`);
-  const graph = last ? readGraph<Graph>(o.out) : now!.graph;
+  const graph = cached ? readGraph<Graph>(o.out) : now!.graph;
   const near = graph ? nearby(graph, f) : [];
   if (near.length) {
     console.log(`\n${f.rule === "FA001" ? "Calls to this component with a similar path" : "Surfaces of the target with a similar path"}:`);

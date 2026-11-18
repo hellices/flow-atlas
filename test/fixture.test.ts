@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { main } from "../src/commands.js";
 import { loadConfig } from "../src/config.js";
 import { evaluate } from "../src/rules.js";
@@ -164,6 +164,15 @@ describe("check, baseline and exceptions", () => {
 });
 
 describe("how far check saw the calls", () => {
+  const made: string[] = [];
+  const temp = (prefix: string) => {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    made.push(dir);
+    return dir;
+  };
+  afterAll(() => {
+    for (const dir of made) rmSync(dir, { recursive: true, force: true });
+  });
   const capture = (args: string[]): string => {
     let text = "";
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((text += String(chunk)), true));
@@ -180,7 +189,7 @@ describe("how far check saw the calls", () => {
   };
   /** The shop with POST /orders/{id}/refund in the orders document only, read as a route source as given. */
   const withContract = (entry: (yaml: string) => string): string => {
-    const dir = mkdtempSync(join(tmpdir(), "atlas-contract-"));
+    const dir = temp("atlas-contract-");
     cpSync(root, dir, { recursive: true });
     const doc = join(dir, "services/orders/openapi.json");
     const api = JSON.parse(readFileSync(doc, "utf8")) as { paths: Record<string, unknown> };
@@ -190,7 +199,7 @@ describe("how far check saw the calls", () => {
     writeFileSync(file, entry(readFileSync(file, "utf8")));
     return dir;
   };
-  const check = (dir: string, ...args: string[]) => capture(["check", "--root", dir, "--out", mkdtempSync(join(tmpdir(), "atlas-")), ...args]);
+  const check = (dir: string, ...args: string[]) => capture(["check", "--root", dir, "--out", temp("atlas-"), ...args]);
 
   it("ends with the counts, and says how many calls it checked", () => {
     const lines = check(root).trimEnd().split("\n");
@@ -212,7 +221,7 @@ describe("how far check saw the calls", () => {
   it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
     const lines = check(root).trimEnd().split("\n");
     expect(lines.at(-4)).toMatch(/^Before deciding what to change: atlas explain <key>/);
-    const fresh = mkdtempSync(join(tmpdir(), "atlas-"));
+    const fresh = temp("atlas-");
     const text = capture(["explain", "POST /orders/{}/refund", "--root", root, "--out", fresh]);
     expect(text).toContain("bff calls POST /orders/{}/refund on orders, which serves no matching route.");
     expect(text).toContain("Surfaces of the target with a similar path:");
@@ -224,6 +233,25 @@ describe("how far check saw the calls", () => {
     expect(readFileSync(join(dir, "atlas.config.yaml"), "utf8")).not.toContain("styles: [nest]\n    constants");
     const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
     expect(doc.calls?.documentOnly.map((d) => d.surface)).not.toContain("orders|POST /orders/{id}/refund");
+    expect(doc.items.map((i) => i.finding.key)).not.toContain("FA002|bff->orders|POST /orders/{}/refund");
+  });
+
+  it("lists it where route files are configured but match nothing", () => {
+    const dir = withContract((yaml) =>
+      yaml.replace('files: ["services/orders/src/**/*.ts"]', 'files: ["services/orders/gone/**/*.ts"]').replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"),
+    );
+    const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(doc.calls?.documentOnly.map((d) => d.surface)).toContain("orders|POST /orders/{id}/refund");
+  });
+
+  it("explains a finding the check in --out does not have, from the code as it is now", () => {
+    const dir = temp("atlas-explain-");
+    cpSync(root, dir, { recursive: true });
+    const out = temp("atlas-");
+    capture(["check", "--root", dir, "--out", out]);
+    const client = join(dir, "services/bff/src/clients/orders.ts");
+    writeFileSync(client, readFileSync(client, "utf8") + "export const notes = (baseUrl: string, id: string) => fetch(`${baseUrl}/orders/${id}/notes`, { method: \"POST\" });\n");
+    expect(capture(["explain", "POST /orders/{}/notes", "--root", dir, "--out", out])).toContain("bff calls POST /orders/{}/notes on orders, which serves no matching route.");
   });
 });
 
