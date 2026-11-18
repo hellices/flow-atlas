@@ -215,7 +215,7 @@ describe("how far check saw the calls", () => {
     expect(validate(schemaForKind("Findings")!, doc)).toEqual([]);
     const text = check(dir);
     expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
-    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes: 10 matched (1 only by a document); 1 limit line on stderr");
+    expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes: 10 matched (1 only by a document); stderr has 1 limit line on what was not read");
   });
 
   it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
@@ -242,6 +242,36 @@ describe("how far check saw the calls", () => {
     const dir = fileURLToPath(new URL("../fixtures/scenarios/drf-openapi-client", import.meta.url));
     const doc = JSON.parse(check(dir, "--format", "json")) as Findings;
     expect(doc.calls).toMatchObject({ read: 5, checked: 5, matched: 3, unserved: 0, undecided: 1, notRequests: 1, documentOnly: [] });
+  });
+
+  it("does not list an operation whose handler may be one of several methods, as springdoc's numbered ids", () => {
+    const dir = withContract((yaml) => yaml.replace("    operationIds: nest-swagger\n", "    operationIds: nest-swagger\n    openapi: services/orders/openapi.json\n"));
+    const doc = join(dir, "services/orders/openapi.json");
+    const api = JSON.parse(readFileSync(doc, "utf8")) as { paths: Record<string, Record<string, { operationId: string }>> };
+    api.paths["/orders/{id}/refund"]!.post!.operationId = "create_1";
+    writeFileSync(doc, JSON.stringify(api, null, 2));
+    const found = JSON.parse(check(dir, "--format", "json")) as Findings;
+    expect(found.calls?.documentOnly).toEqual([]);
+  });
+
+  it("says so when no call of an edge is taken for a request to its target", () => {
+    const dir = temp("atlas-prefix-");
+    cpSync(root, dir, { recursive: true });
+    const file = join(dir, "atlas.config.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace("  - component: bff\n", "  - component: bff\n    prefix: /v9\n"));
+    let stderr = "";
+    const err = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => ((stderr += String(chunk)), true));
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      main(["check", "--root", dir, "--out", temp("atlas-")]);
+      expect(stderr).toContain("limit: calls web->bff: none of its 2 calls joins a base address or starts with a first segment bff serves, so FA002 checks none of them");
+      stderr = "";
+      main(["check", "--root", root, "--out", temp("atlas-")]);
+      expect(stderr).not.toContain("none of its");
+    } finally {
+      err.mockRestore();
+      out.mockRestore();
+    }
   });
 
   it("explains a finding the check in --out does not have, from the code as it is now", () => {

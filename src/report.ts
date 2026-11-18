@@ -50,7 +50,7 @@ function documentOnlyLines(calls: CallSummary): string[] {
 function callsLine(calls: CallSummary, limits: number): string {
   const only = calls.documentOnly.length ? ` (${calls.documentOnly.length} only by a document)` : "";
   const unchecked = calls.unchecked ? `, ${calls.unchecked} to components with no route source, not checked` : "";
-  const notes = limits ? `; ${limits} limit line${limits === 1 ? "" : "s"} on stderr` : "";
+  const notes = limits ? `; stderr has ${limits} limit line${limits === 1 ? "" : "s"} on what was not read` : "";
   const unserved = calls.unserved ? `, ${calls.unserved} unserved (FA002)` : "";
   const undecided = calls.undecided ? `, ${calls.undecided} not decided (the limit lines say why)` : "";
   const strings = calls.notRequests ? `, ${calls.notRequests} not taken for requests (no base address, a first segment the target does not serve)` : "";

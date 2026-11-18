@@ -64,12 +64,24 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
   if (ruleEnabled(config, "FA002")) {
     // Components whose routes are configured: a call to one is checked even when none of its routes is left.
     const served = routedComponents(config);
+    // An edge none of whose calls is taken for a request to its target is more likely configured wrong (a prefix or
+    // base left out, the wrong target) than written wrong everywhere; FA002 checks none of them, so a limit says so.
+    const taken = new Map<string, { calls: number; taken: number }>();
     graph.calls.forEach((c, i) => {
-      if (!unmatched(i) || !served.has(c.to) || !plausibleRequest(graph, c)) return;
+      if (!served.has(c.to)) return;
+      const edge = taken.get(`${c.from}->${c.to}`) ?? taken.set(`${c.from}->${c.to}`, { calls: 0, taken: 0 }).get(`${c.from}->${c.to}`)!;
+      edge.calls++;
+      if (!unmatched(i) || plausibleRequest(graph, c)) edge.taken++;
+      if (!unmatched(i) || !plausibleRequest(graph, c)) return;
       out.push(
         finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.`, [c.at]),
       );
     });
+    for (const [edge, n] of taken)
+      if (n.calls > 0 && n.taken === 0)
+        limits.push(
+          `calls ${edge}: none of its ${n.calls} calls joins a base address or starts with a first segment ${edge.split("->")[1]} serves, so FA002 checks none of them; if they are requests, a prefix or base is missing from the configuration`,
+        );
   }
 
   if (ruleEnabled(config, "FA003")) {

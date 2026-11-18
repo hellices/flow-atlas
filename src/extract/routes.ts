@@ -1678,6 +1678,19 @@ function handlerPlace(
 }
 
 /**
+ * Whether the route files may hold an operation's handler though no single place was found: a definition by a name its
+ * operationId derives, more than one of them, a quoted id, or the same for the id without springdoc's `_<n>`, which it
+ * gives the later methods sharing a name. Such an operation is not one the code is shown to lack.
+ */
+function handlerMaybe(texts: Map<string, string>, operationId: string, method: string, key: string, parsed: Map<string, Map<string, Definition[]>>): boolean {
+  for (const id of new Set([operationId, operationId.replace(/_\d+$/, "")])) {
+    for (const name of handlerNames(id, method, key)) for (const [f, t] of texts) if (definitions(f, t, name, parsed).length) return true;
+    if (literalLines(texts, id).length) return true;
+  }
+  return false;
+}
+
+/**
  * Surfaces from a component's OpenAPI document. An operation the code also registers keeps the code's location and
  * gains the document's operationId and place; the others are new surfaces, placed on their handler when the code gives
  * it away. `code` holds every route read so far, of every component.
@@ -1743,7 +1756,7 @@ function documentedSurfaces(
       path: op.path,
       at: place ? { file: place.at.file, line: place.at.line } : op.at,
       evidence: place?.evidence ?? "declared",
-      ...(!place && codeRouted ? { unhandled: true as const } : {}),
+      ...(!place && codeRouted && !(op.operationId && handlerMaybe(texts, op.operationId, op.method, op.key, parsed)) ? { unhandled: true as const } : {}),
       ...(op.operationId ? { operationId: op.operationId } : {}),
       described: op.at,
       describedPath: op.key,
