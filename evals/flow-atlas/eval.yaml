@@ -1,0 +1,112 @@
+# Behavioral evals of the flow-atlas skill: does an agent load it when a change crosses components, leave it alone
+# when one does not, run atlas rather than read the code by hand, and keep to what the skill leaves to a person.
+#
+# The workspace is fixtures/shop, a small monorepo with eight planted findings (see test/fixture.test.ts). The atlas
+# CLI under test is the one on PATH: install the package built from this checkout first, as
+# .github/workflows/skill-eval.yml does. Every grader is deterministic: what the agent ran, what it said and what it
+# changed, never an LLM judge.
+#
+#   npm pack --pack-destination /tmp && npm install -g /tmp/flow-atlas-*.tgz
+#   npx @microsoft/vally-cli eval -e evals/flow-atlas/eval.yaml
+name: flow-atlas
+description: An agent uses the flow-atlas skill and CLI on a small monorepo with known cross-component findings.
+type: capability
+
+defaults:
+  timeout: 10m
+  runs: 3
+
+agent_environment:
+  skills:
+    - ../../skills/flow-atlas
+  files:
+    - src: ../../fixtures/shop
+      dest: .
+  commands:
+    # atlas writes to .atlas/ by default; keep it out of the workspace diff the graders read.
+    - printf '.atlas/\n' > .gitignore && rm -rf .atlas && git init -q && git add -A && git -c user.email=eval@example.com -c user.name=eval commit -qm fixture
+  commandTimeout: 1m
+
+stimuli:
+  # ---- when the skill applies, and when it does not --------------------------------------------------------------
+  - name: trigger-cross-component-check
+    tags: { kind: trigger }
+    prompt: |
+      Before I change anything here: which routes does nothing call, and which calls does nothing serve, across the
+      apps and services in this repository?
+    graders:
+      - type: skill-invocation
+        config: { required: [flow-atlas] }
+      - type: tool-calls
+        config:
+          required:
+            - { name: "bash|shell", command: "atlas (check|scan)" }
+
+  - name: trigger-not-for-a-single-file-edit
+    tags: { kind: trigger }
+    prompt: |
+      Add a one-line docstring to each function in services/pricing/app/main.py saying what it returns.
+      Only touch that file.
+    graders:
+      - type: skill-invocation
+        config: { disallowed: [flow-atlas] }
+
+  # ---- outcomes on the planted findings ---------------------------------------------------------------------------
+  - name: finds-the-unserved-refund-call
+    tags: { kind: outcome }
+    prompt: |
+      Customers report that refunds fail. The web app goes through the BFF to the orders service. Find out where
+      the refund flow breaks between the components, and tell me which file and line make the call nothing serves.
+      Do not change any file.
+    graders:
+      - type: tool-calls
+        config:
+          required:
+            - { name: "bash|shell", command: "atlas (check|trace|query|explain)" }
+      - type: transcript-matches
+        config: { pattern: "POST /orders/(\\{\\}|\\{[a-zA-Z]+\\}|:id)/refund" }
+      - type: transcript-matches
+        config: { pattern: "services/bff/src/clients/orders\\.ts(:14)?" }
+      - type: diff-empty
+
+  - name: adds-the-missing-route-where-it-belongs
+    tags: { kind: outcome }
+    prompt: |
+      The BFF already calls POST /orders/{id}/refund on the orders service, but orders does not serve it. Add the
+      route to the orders service so the call is served, and confirm with atlas that the finding is gone.
+    graders:
+      - type: file-matches
+        config:
+          path: services/orders/src/orders.controller.ts
+          pattern: "@Post\\(\\s*[\"']:id/refund[\"']\\s*\\)"
+      - type: diff-not-contains
+        config: { pattern: "services/bff/src/clients/orders\\.ts" }
+      - type: run-command
+        config:
+          command: sh
+          args: ["-c", "atlas check --out /tmp/atlas-eval | grep -q 'FA002|bff->orders|POST /orders/{}/refund' && exit 1 || exit 0"]
+      # atlas before the edit, to see the gap, and again after it, to confirm; the edit itself may be any tool.
+      - type: tool-calls
+        config:
+          required:
+            - { name: "bash|shell", command: "atlas ", min_count: 2 }
+
+  # ---- what the skill leaves to a person --------------------------------------------------------------------------
+  - name: leaves-the-baseline-to-a-person
+    tags: { kind: boundary }
+    prompt: |
+      Set up flow-atlas checks for this repository so that only new problems show up from now on.
+    graders:
+      - type: skill-invocation
+        config: { required: [flow-atlas] }
+      - type: tool-calls
+        config:
+          disallowed:
+            - { name: "bash|shell", command: "atlas baseline update" }
+      - type: transcript-matches
+        config: { pattern: "(?i)baseline" }
+      - type: file-not-exists
+        config: { path: "**/baseline.json" }
+
+scoring:
+  threshold: 1.0

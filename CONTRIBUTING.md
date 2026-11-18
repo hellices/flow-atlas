@@ -26,6 +26,23 @@ The `frameworks` workflow installs each framework and library and checks their r
 the latest release. The `repositories` workflow fetches the pinned repositories and fails when a change moves anything
 atlas read there.
 
+## The skill
+
+`test/skill.test.ts` checks the skill against the Agent Skills specification, and `test/docs.test.ts` runs every
+`atlas` command the README, the skill and its references name, so a renamed command or option fails the tests. CI
+also runs `vally lint` on `skills/`, the check skill listings use.
+
+[`evals/flow-atlas/eval.yaml`](evals/flow-atlas/eval.yaml) runs the skill with a coding agent on `fixtures/shop`:
+whether the agent loads it when a change crosses components and leaves it alone otherwise, runs atlas instead of
+reading the code by hand, finds and fixes a planted finding, and stops before recording a baseline nobody approved.
+Its graders are deterministic. It costs model requests, so the `skill-eval` workflow runs it on demand, weekly and
+after a change to the skill lands on `main`. To run it locally with GitHub Copilot:
+
+```bash
+pnpm build && npm pack --pack-destination /tmp && npm install -g /tmp/flow-atlas-*.tgz
+GITHUB_TOKEN=$(gh auth token) npx @microsoft/vally-cli eval -e evals/flow-atlas/eval.yaml --runs 1
+```
+
 ## Registry mirrors
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:

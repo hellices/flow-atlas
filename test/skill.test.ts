@@ -29,6 +29,16 @@ describe("skills follow the Agent Skills specification", () => {
       for (const ref of text.matchAll(/`(references\/[^`]+\.md)`/g)) {
         expect(() => readFileSync(new URL(`${dir}/${ref[1]}`, skills)), `${ref[1]} exists`).not.toThrow();
       }
+      // A relative Markdown link a host follows from the skill's directory, in SKILL.md or a reference.
+      for (const file of [`${dir}/SKILL.md`, ...readdirSync(new URL(`${dir}/references/`, skills)).map((f) => `${dir}/references/${f}`)]) {
+        const body = readFileSync(new URL(file, skills), "utf8");
+        for (const link of body.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)) {
+          if (/^[a-z]+:/.test(link[1]!)) continue;
+          expect(() => readFileSync(new URL(link[1]!, new URL(file, skills))), `${file} links ${link[1]}`).not.toThrow();
+        }
+      }
+      // The specification asks to keep SKILL.md under 500 lines, with details in references a host loads on demand.
+      expect(text.split("\n").length, "SKILL.md lines").toBeLessThan(500);
     });
   }
 });
