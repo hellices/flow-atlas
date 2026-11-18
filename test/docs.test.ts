@@ -108,16 +108,20 @@ describe("the commands the documents name are the CLI's", () => {
   const unique = [...new Map(commands.map((c) => [c.command, c])).values()];
   for (const { file, command } of unique) {
     it(`${command}  (${file})`, () => {
-      // A revision the documents name (main) may be missing from a shallow checkout; HEAD is always there.
-      const args = argv(command)
-        .slice(1)
-        .map((a, i, all) => (all[i - 1] === "--since" ? "HEAD" : all[0] === "diff" && i === 1 ? a.replace(/^[^.]*\.\./, "HEAD..") : a));
+      const args = argv(command).slice(1);
       const out = mkdtempSync(join(tmpdir(), "atlas-docs-"));
       try {
-        // The fixture options go right after the command name, so a documented option left without its value at the
-        // end still fails instead of taking one of them.
-        const documentedArgs = args.slice(1).map((a, i, all) => (all[i - 1] === "--root" ? shop : a));
-        const fixture = args.includes("--root") ? ["--out", out] : ["--root", shop, "--out", out];
+        // The fixture's values replace the documented ones: its root, a fresh output directory, and HEAD for a
+        // revision (main may be missing from a shallow checkout). A missing or option-shaped value is left for the
+        // CLI to reject. The fixture options go right after the command name, so a documented option left without
+        // its value at the end still fails instead of taking one of them.
+        const fixtureValue: Record<string, string> = { "--root": shop, "--out": out, "--since": "HEAD" };
+        const documentedArgs = args.slice(1).map((a, i, all) => {
+          const option = all[i - 1];
+          if (option !== undefined && option in fixtureValue && !a.startsWith("--")) return fixtureValue[option]!;
+          return args[0] === "diff" && i === 0 ? a.replace(/^[^.]*\.\./, "HEAD..") : a;
+        });
+        const fixture = ["--root", "--out"].filter((o) => !args.includes(o)).flatMap((o) => [o, fixtureValue[o]!]);
         if (args[0] === "explain") expect(run(["check", "--root", shop, "--out", out]).status).toBe(0);
         const r = run([args[0]!, ...fixture, ...documentedArgs]);
         // A command named alone, as prose does (`atlas explain`), is checked by name; otherwise 2 is a usage or
@@ -129,4 +133,15 @@ describe("the commands the documents name are the CLI's", () => {
       }
     });
   }
+
+  it("rejects an option as the value of the option before it", () => {
+    const out = mkdtempSync(join(tmpdir(), "atlas-docs-"));
+    try {
+      const r = run(["query", "--root", shop, "--out", out, "--path", "--kind", "registries"]);
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("--path needs a value");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
 });
