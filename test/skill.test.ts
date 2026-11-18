@@ -5,6 +5,40 @@ import { agentPluginErrors } from "./standards.js";
 
 const skills = new URL("../skills/", import.meta.url);
 
+/**
+ * The destinations of a Markdown body's inline links and reference definitions, read as CommonMark reads them: in
+ * angle brackets (spaces allowed), or bare up to whitespace or the parenthesis that closes the link, with balanced
+ * parentheses and backslash escapes inside.
+ */
+function linkDestinations(body: string): string[] {
+  const out: string[] = [];
+  for (let i = body.indexOf("]("); i >= 0; i = body.indexOf("](", i + 2)) {
+    let j = i + 2;
+    while (body[j] === " " || body[j] === "\t") j++;
+    if (body[j] === "<") {
+      const close = body.indexOf(">", j);
+      if (close > j && !body.slice(j, close).includes("\n")) out.push(body.slice(j + 1, close));
+      continue;
+    }
+    let depth = 0;
+    let destination = "";
+    for (; j < body.length; j++) {
+      const ch = body[j]!;
+      if (ch === "\\" && j + 1 < body.length) destination += body[++j];
+      else if (/\s/.test(ch)) break;
+      else if (ch === ")" && depth === 0) break;
+      else {
+        if (ch === "(") depth++;
+        if (ch === ")") depth--;
+        destination += ch;
+      }
+    }
+    if (destination) out.push(destination);
+  }
+  for (const m of body.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm)) out.push(m[1] ?? m[2]!);
+  return out;
+}
+
 /** The Agent Skills specification (agentskills.io): what a host relies on when it loads a skill directory. */
 describe("skills follow the Agent Skills specification", () => {
   for (const dir of readdirSync(skills)) {
@@ -32,13 +66,8 @@ describe("skills follow the Agent Skills specification", () => {
       // A relative Markdown link a host follows from the skill's directory, in SKILL.md or a reference.
       for (const file of [`${dir}/SKILL.md`, ...readdirSync(new URL(`${dir}/references/`, skills)).map((f) => `${dir}/references/${f}`)]) {
         const body = readFileSync(new URL(file, skills), "utf8");
-        // A destination is bare or in angle brackets (which may hold spaces), with an optional "title", 'title' or
-        // (title) after it.
-        // A reference definition ([label]: destination) is followed as well.
-        const inline = body.matchAll(/\]\((?:<([^>\n]+)>|([^)\s<]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g);
-        const definitions = body.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm);
-        for (const link of [...inline, ...definitions]) {
-          const target = (link[1] ?? link[2]!).replace(/#.*$/, "");
+        for (const link of linkDestinations(body)) {
+          const target = link.replace(/#.*$/, "");
           if (!target || /^[a-z]+:/.test(target)) continue;
           expect(() => readFileSync(new URL(target, new URL(file, skills))), `${file} links ${target}`).not.toThrow();
         }
