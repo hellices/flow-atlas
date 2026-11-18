@@ -152,6 +152,7 @@ describe("registry coverage", () => {
 describe("calls to a component whose routes are not read", () => {
   it("says the calls are matched to nothing and not checked, until its routes or its description are configured", () => {
     const files = { "web/a.ts": 'fetch("/v1/sessions", { method: "POST" }); fetch("/orders");', "api/app.ts": 'app.get("/orders", h);' };
+    const stray = { ...files, "web/a.ts": `${files["web/a.ts"]} fetch("/v1/runs", { method: "POST" });` };
     const both = [
       { from: "web", to: "agent", files: ["web/**"] },
       { from: "web", to: "api", files: ["web/**"] },
@@ -179,10 +180,14 @@ describe("calls to a component whose routes are not read", () => {
     const readConfig = normalizeConfig({ components, routes: [...routes, { component: "agent", openapi: "agent/openapi.json" }], calls: both });
     const read = scan(memory(documented), readConfig);
     expect(read.limits.filter((l) => l.includes("no route source"))).toEqual([]);
-    // Its route is read and the call to it is matched; FA002 now checks the calls to agent and finds none unserved.
+    // Its route is read and the call to it is matched. GET /orders, which the same call files send to api, is not
+    // reported against agent: FA002 reports only a request clearly on the target (a first segment it serves).
     const matched = read.edges.filter((e) => e.kind === "match" && e.to.startsWith("agent|")).map((e) => `${e.from.split("@")[0]} = ${e.to}`);
     expect(matched).toEqual(["web->agent|POST /v1/sessions = agent|POST /v1/sessions"]);
     expect(fa002(read, readConfig).filter((k) => k.includes("->agent|"))).toEqual([]);
+    // A request on a path agent serves and no route of agent takes is now reported.
+    const strayGraph = scan(memory({ ...stray, "agent/openapi.json": documented["agent/openapi.json"] }), readConfig);
+    expect(fa002(strayGraph, readConfig).filter((k) => k.includes("->agent|"))).toEqual(["FA002|web->agent|POST /v1/runs"]);
   });
 });
 

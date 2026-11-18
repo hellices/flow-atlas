@@ -257,8 +257,10 @@ describe("chains", () => {
     const b = flow("kinds", [{ stepId: "x", chain: "same", role: "r" }]);
     const h = flow("kinds", [{ stepId: "x", flow: "same" }]);
     const d = diffGraphs(graph, graph, [], [], report, report, resolveFlows(graph, [flowFile(b)], "2026-11-01T00:00:00Z", report), resolveFlows(graph, [flowFile(h)], "2026-11-01T00:00:00Z", report));
-    expect(d.flows?.changed[0]?.steps).toEqual([{ stepId: "x", target: "same", change: "retargeted", was: "same", kind: "flow", wasKind: "chain" }]);
-    expect(diffMarkdown(d)).toContain("the flow's step `x` now names flow `same` (was chain `same`)");
+    expect(d.flows?.changed.map((f) => ({ name: f.name, steps: f.steps }))).toEqual([
+      { name: "kinds", steps: [{ stepId: "x", target: "same", change: "retargeted", was: "same", kind: "flow", wasKind: "chain" }] },
+    ]);
+    expect(diffMarkdown(d)).toContain("- `kinds`: the flow's step `x` now names flow `same` (was chain `same`)");
   });
 
   it("names a flow whose steps change order, and the flows that run it", () => {
@@ -462,6 +464,14 @@ describe("a flow step that names a registry entry", () => {
     ]);
     const aheadConnected = resolveFlows(graph, [flowFile(later, ahead)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "ahead")!.status.conditions.find((c) => c.type === "Connected");
     expect(aheadConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> later" });
+    // So is a planned sub-flow with no steps written yet.
+    const empty = { ...flow("empty", []), spec: { lifecycle: "planned" as const, steps: [] } };
+    const toEmpty = flow("to-empty", [
+      { stepId: "quote", registry: "tool:quote", role: "quotes" },
+      { stepId: "empty", flow: "empty" },
+    ]);
+    const emptyConnected = resolveFlows(graph, [flowFile(empty, toEmpty)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "to-empty")!.status.conditions.find((c) => c.type === "Connected");
+    expect(emptyConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> empty" });
   });
 });
 

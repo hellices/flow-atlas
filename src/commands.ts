@@ -62,7 +62,7 @@ Options
   --component <name>  query: only this component
   --path <path>       query: surfaces whose route matches the path, or whose path contains it
   --method <m>        query: only this method
-  --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids; --component and --method do not apply)
+  --kind <k>          query: surfaces, calls or both (default); registries lists registry entries (--path filters ids; cannot be combined with --component or --method)
   --flow <name>       export: only this flow
   --unnamed           chains: only the chains no flow names
 

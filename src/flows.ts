@@ -221,7 +221,8 @@ export function resolveFlows(graph: Graph, files: LoadedFile[], asOf: string, ch
     if (depth > 4) return { planned: p };
     const steps = sub.spec.steps;
     const s = end === "first" ? steps[0] : steps[steps.length - 1];
-    return s ? effectiveEnd(s, end, p || sub.spec.lifecycle === "planned", depth + 1) : { planned: p };
+    const inner = p || sub.spec.lifecycle === "planned";
+    return s ? effectiveEnd(s, end, inner, depth + 1) : { planned: inner };
   };
 
   const items: FlowReport["items"] = [];
