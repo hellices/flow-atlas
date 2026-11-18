@@ -235,9 +235,9 @@ More in [docs/responsibilities.md](docs/responsibilities.md).
   base in a value.
 - **Only configured files are read,** so no finding does not prove a flow complete.
 - **A chain ends where the request does.** Work a handler queues for a worker, or hands to an object injected from
-  another package, is not followed: the calls the worker makes are read and checked, but no chain from the user's
-  request reaches them, and `diff` names no flow when they change. Design documents, tests and runtime traces cover
-  that part.
+  another package, is not followed: the calls the worker makes are read and checked, and start chains of their own,
+  but no chain from the user's request reaches them. When they change, `diff` names the flows that name those chains,
+  not the flows of the request that handed the work over. Design documents, tests and runtime traces cover that link.
 - **Field-level contract checks** are not implemented yet.
 
 ## Documentation
