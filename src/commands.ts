@@ -46,7 +46,7 @@ Commands
   diff <base>..<head>       compare the flow graph and findings of two revisions (head may be WORKTREE)
   export arazzo             print the flows as an Arazzo 1.0 description (YAML; --format json), --flow for one;
                             file URLs in it are relative to the repository root, so save it there
-  explain <key>             show one finding from the last check with nearby calls or surfaces
+  explain <key>             show one finding (from the last check in --out, else the code now) with nearby calls or surfaces
   baseline update           record the current findings as the accepted baseline
 
 Options
@@ -270,14 +270,15 @@ function cmdDiff(o: Options): number {
 function cmdExplain(o: Options): number {
   const key = o.args[0];
   if (!key) throw new Error("explain needs a finding key");
+  // The last check in --out, or, with none there, the code as it is now: each shell an agent runs may use its own --out.
   const last = readLastCheck(o.out);
-  if (!last) throw new Error("no previous check; run `atlas check` first");
-  const findings = last.items.map((i) => i.finding);
+  const now = last ? undefined : analyze(o, configFor(o), o.ref);
+  const findings = last ? last.items.map((i) => i.finding) : now!.findings;
   const f = findings.find((x) => x.key === key) ?? findings.find((x) => x.key.includes(key));
   if (!f) throw new Error(`no finding matches ${key}`);
   console.log(`${f.rule} ${f.title}\n\n${f.message}\n`);
   for (const p of f.at) console.log(`  ${p.file}:${p.line}`);
-  const graph = readGraph<Graph>(o.out);
+  const graph = last ? readGraph<Graph>(o.out) : now!.graph;
   const near = graph ? nearby(graph, f) : [];
   if (near.length) {
     console.log(`\n${f.rule === "FA001" ? "Calls to this component with a similar path" : "Surfaces of the target with a similar path"}:`);

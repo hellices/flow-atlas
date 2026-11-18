@@ -209,8 +209,8 @@ the right result is for tests and people to check, not atlas.
 
 > *"Open a PR."*
 
-The agent runs `atlas check --since <base>` and fixes, or explains, each new finding. It puts `atlas diff
-<base>..WORKTREE --format markdown` in the description: the routes, chains and flows the change reaches.
+The agent runs `atlas diff <base>..WORKTREE --format markdown` and puts it in the description: the new findings, and
+the routes, chains and flows the change reaches. It runs `atlas explain` on each new finding, then fixes or explains it.
 
 **You:** decide each exception the agent proposes (a reason, who decided, a review date), and switching a rule off
 (`rules.<id>.enabled: false`), which the skill does only with a person's agreement.

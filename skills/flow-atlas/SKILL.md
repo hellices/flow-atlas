@@ -172,14 +172,12 @@ the customer gets the result the journey describes.
 
 ## Before finishing
 
-1. `atlas check --since <revision you started from>`. Only findings your change introduced appear.
-2. For each: `atlas explain <key>` shows the locations and similar paths. Then fix it, correct the configuration, or
-   record an exception. See "Handling a finding".
-3. Put `atlas diff <base>..WORKTREE --format markdown` (or `<base>..HEAD`) and the `trace` of each new surface in
-   the PR description or hand-off note. Its chain section says which requests now reach other surfaces, and "Flows the
-   change reaches" which flows' steps it builds, loses or sends elsewhere; each is something a reviewer should see,
+1. `atlas diff <revision you started from>..WORKTREE --format markdown`. It lists only what your change did: new
+   findings with their keys, requests that now reach other surfaces, and "Flows the change reaches" (steps built, lost
+   or sent elsewhere). Put it in the PR description or hand-off note; each item is something a reviewer should see,
    intended or not.
-4. `atlas chains --unnamed`: a request your change added that no flow names is a candidate for `atlas draft flows`.
+2. For each new finding, `atlas explain <key>`, then handle it ("Handling a finding").
+3. A request the diff lists as added that no flow names is a candidate for `atlas draft flows`.
 
 ## When the configuration has fallen behind
 
@@ -211,7 +209,10 @@ through a sample of findings with a person. Only then record the baseline.
 
 ## Handling a finding
 
-Decide first whether it is a defect, a plan or a false positive (`references/boundaries.md`), then:
+Run `atlas explain <key>` before deciding: it shows the calls or surfaces of a similar path. A candidate whose handler
+does the same work under another path means one side was renamed; fix the side the contract or the other callers
+disagree with. No such candidate means the route or the caller is missing; do not point a call at a candidate because
+its path is close. Then decide whether it is a defect, a plan or a false positive (`references/boundaries.md`):
 
 - Fix it when the finding is the bug: wire the missing caller, remove the dead route, add the producer, point the
   call at the served path. `references/rules.md` lists the usual causes per rule.

@@ -56,7 +56,8 @@ export function textReport(items: Classified[], showAll: boolean, calls?: CallSu
   const head = `${counts.new} new, ${counts.expired} with an expired exception, ${counts.baseline} in the baseline, ${counts.excepted} excepted`;
   // Read through head or tail, the output starts and ends with the counts.
   const only = calls ? documentOnlyLines(calls) : [];
-  const tail = calls ? [...only, ...(shown.length || only.length ? [head] : []), callsLine(calls, limits)] : [];
+  const next = calls && shown.length ? ["Before deciding what to change: atlas explain <key> shows a finding with the calls or surfaces of a similar path.", ""] : [];
+  const tail = calls ? [...only, ...next, ...(shown.length || only.length ? [head] : []), callsLine(calls, limits)] : [];
   if (shown.length === 0) return [head, ...(only.length ? [""] : []), ...tail, ""].join("\n");
   const lines = [head, ""];
   for (const i of shown) {

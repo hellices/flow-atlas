@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -167,11 +167,13 @@ describe("how far check saw the calls", () => {
   const capture = (args: string[]): string => {
     let text = "";
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => ((text += String(chunk)), true));
+    const log = vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => void (text += `${parts.join(" ")}\n`));
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       main(args);
     } finally {
       spy.mockRestore();
+      log.mockRestore();
       err.mockRestore();
     }
     return text;
@@ -205,6 +207,16 @@ describe("how far check saw the calls", () => {
     const text = check(dir);
     expect(text).toContain("bff calls POST /orders/{}/refund on orders  services/bff/src/clients/orders.ts:14\n    -> orders|POST /orders/{id}/refund  services/orders/openapi.json:");
     expect(text.trimEnd().split("\n").at(-1)).toBe("calls: 10 read, 10 checked against routes, 10 matched (1 only by a document); 1 limit line on stderr");
+  });
+
+  it("names explain before the closing counts when findings are shown, and explain needs no previous check", () => {
+    const lines = check(root).trimEnd().split("\n");
+    expect(lines.at(-4)).toMatch(/^Before deciding what to change: atlas explain <key>/);
+    const fresh = mkdtempSync(join(tmpdir(), "atlas-"));
+    const text = capture(["explain", "POST /orders/{}/refund", "--root", root, "--out", fresh]);
+    expect(text).toContain("bff calls POST /orders/{}/refund on orders, which serves no matching route.");
+    expect(text).toContain("Surfaces of the target with a similar path:");
+    expect(readdirSync(fresh)).toEqual([]);
   });
 
   it("does not list it where the document is the component's only route source", () => {

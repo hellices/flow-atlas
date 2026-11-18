@@ -71,6 +71,8 @@ describe("reading commits without a checkout", () => {
     }
     expect(text).toContain("New findings");
     expect(text).toContain("DELETE /orders/audit");
+    // The key, so that explain follows from the list.
+    expect(text).toContain("`FA002|bff->orders|DELETE /orders/audit`");
     expect(text).toContain("Resolved findings");
   });
 });
