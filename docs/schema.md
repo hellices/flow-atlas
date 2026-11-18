@@ -160,7 +160,7 @@ Every document atlas writes starts with the same head.
 apiVersion: flow-atlas.dev/v1alpha1
 kind: FlowReport
 provenance:
-  builder: { id: flow-atlas, version: 0.1.0 }
+  builder: { id: flow-atlas, version: 0.2.0 }
   buildType: flow-atlas/FlowReport@v1alpha1
   externalParameters:
     ref: origin/main
