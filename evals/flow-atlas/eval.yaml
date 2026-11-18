@@ -6,7 +6,7 @@
 # .github/workflows/skill-eval.yml does. Every grader is deterministic: what the agent ran, what it said and what it
 # changed, never an LLM judge.
 #
-#   npm pack --pack-destination /tmp && npm install -g /tmp/flow-atlas-*.tgz
+#   pack=$(mktemp -d) && npm pack --pack-destination "$pack" && npm install -g "$pack"/flow-atlas-*.tgz
 #   npx @microsoft/vally-cli eval -e evals/flow-atlas/eval.yaml
 name: flow-atlas
 description: An agent uses the flow-atlas skill and CLI on a small monorepo with known cross-component findings.

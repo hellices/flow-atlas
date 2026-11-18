@@ -39,7 +39,7 @@ Its graders are deterministic. It costs model requests, so the `skill-eval` work
 after a change to the skill lands on `main`. To run it locally with GitHub Copilot:
 
 ```bash
-pnpm build && npm pack --pack-destination /tmp && npm install -g /tmp/flow-atlas-*.tgz
+pnpm build && pack=$(mktemp -d) && npm pack --pack-destination "$pack" && npm install -g "$pack"/flow-atlas-*.tgz
 GITHUB_TOKEN=$(gh auth token) npx @microsoft/vally-cli eval -e evals/flow-atlas/eval.yaml --runs 1
 ```
 
