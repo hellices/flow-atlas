@@ -52,14 +52,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VALLY_TELEMETRY_OPTOUT: "1"
-        run: >
-          npx -y @microsoft/vally-cli@0.21.0 eval
-          --eval-spec evals/flow-atlas/eval.yaml
-          --runs "${{ inputs.runs || '3' }}"
-          --workers 2
-          --require-pass
-          --junit
-          --output-dir eval-results
+          # The dispatch input reaches the shell as a variable, never as source.
+          RUNS: ${{ inputs.runs || '3' }}
+        run: |
+          case "$RUNS" in ''|*[!0-9]*|0) echo "runs is a positive integer, not '$RUNS'" >&2; exit 2;; esac
+          npx -y @microsoft/vally-cli@0.21.0 eval \
+            --eval-spec evals/flow-atlas/eval.yaml \
+            --runs "$RUNS" \
+            --workers 2 \
+            --require-pass \
+            --junit \
+            --output-dir eval-results
       - name: upload trajectories
         if: always()
         uses: actions/upload-artifact@v4

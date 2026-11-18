@@ -19,16 +19,59 @@ const documents = [
   "CONTRIBUTING.md",
 ];
 
+/** What a placeholder in a documented command stands for, on the shop fixture. */
+const placeholders: Record<string, string> = {
+  repo: shop,
+  base: "HEAD",
+  "revision you started from": "HEAD",
+  key: "FA002",
+  path: "/orders",
+  fragment: "/orders",
+  "path or fragment": "/orders",
+  name: "bff",
+  c: "bff",
+  surface: "bff|GET /screens/order/{id}",
+  "closest surface": "bff|GET /screens/order/{id}",
+  chain: "web->bff",
+};
+
 /**
- * Every `atlas ...` the documents write as a command: in inline code, or on a line of a shell block. A
- * placeholder in angle brackets (`<key>`, `<base>`) or a shell redirection ends the command where it starts.
+ * Splits a documented command into its arguments the way a shell would: quotes group, and an unquoted redirection,
+ * pipe or comment ends the command. A placeholder in angle brackets becomes the fixture value it stands for.
  */
+function argv(command: string): string[] {
+  const args: string[] = [];
+  let word: string | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (ch === '"' || ch === "'") {
+      const close = command.indexOf(ch, i + 1);
+      if (close < 0) throw new Error(`unbalanced quote in ${command}`);
+      word = (word ?? "") + command.slice(i + 1, close);
+      i = close;
+    } else if (ch === "<" && command.indexOf(">", i) > i) {
+      const close = command.indexOf(">", i);
+      const name = command.slice(i + 1, close);
+      if (!(name in placeholders)) throw new Error(`no fixture value for <${name}> in ${command}`);
+      word = (word ?? "") + placeholders[name];
+      i = close;
+    } else if (ch === ">" || ch === "|" || ch === "<" || (ch === "#" && word === undefined)) break;
+    else if (/\s/.test(ch)) {
+      if (word !== undefined) args.push(word);
+      word = undefined;
+    } else word = (word ?? "") + ch;
+  }
+  if (word !== undefined) args.push(word);
+  return args;
+}
+
+/** Every `atlas ...` the documents write as a command: in inline code, or on a line of a shell block. */
 function documented(): Array<{ file: string; command: string }> {
   const out: Array<{ file: string; command: string }> = [];
   for (const file of documents) {
     const text = readFileSync(join(root, file), "utf8");
     const take = (raw: string) => {
-      const command = raw.replace(/\s+#.*$/, "").replace(/\s*[<>|].*$/, "").trim();
+      const command = raw.replace(/\s+/g, " ").trim();
       if (/^atlas( |$)/.test(command)) out.push({ file, command });
     };
     for (const m of text.matchAll(/`(atlas [^`]+)`/g)) take(m[1]!);
@@ -59,18 +102,21 @@ describe("the commands the documents name are the CLI's", () => {
       expect(skillCommands, c).toContain(c);
   });
 
-  // Each command runs against the shop fixture, with its output in a fresh directory: what is checked is that the CLI
-  // knows the command and every option the document gives it, not what it prints. `baseline update` is checked by
-  // name only, since it records a baseline.
+  // Each command runs against the shop fixture, with its output in a fresh directory and its placeholders filled
+  // with fixture values: what is checked is that the CLI takes the command and every argument the document gives it,
+  // not what it prints. A command that reads a previous check (explain) gets one first, in the same directory.
   const unique = [...new Map(commands.map((c) => [c.command, c])).values()];
   for (const { file, command } of unique) {
     it(`${command}  (${file})`, () => {
-      const argv = (command.match(/"[^"]*"|\S+/g) ?? []).slice(1).map((a) => a.replace(/^"(.*)"$/, "$1"));
-      if (argv[0] === "baseline") return expect(argv).toEqual(["baseline", "update"]);
-      // A placeholder root is the fixture; every run writes to its own directory.
-      const rooted = argv.includes("--root") ? argv.map((a, i) => (argv[i - 1] === "--root" ? shop : a)) : [...argv, "--root", shop];
-      const r = run([...rooted, "--out", mkdtempSync(join(tmpdir(), "atlas-docs-"))]);
-      expect(r.stderr, r.stderr).not.toMatch(/unknown (command|option)|needs a value|usage:/);
+      const args = argv(command).slice(1);
+      const rooted = args.includes("--root") ? args.map((a, i) => (args[i - 1] === "--root" ? shop : a)) : [...args, "--root", shop];
+      const out = mkdtempSync(join(tmpdir(), "atlas-docs-"));
+      if (args[0] === "explain") expect(run(["check", "--root", shop, "--out", out]).status).toBe(0);
+      const r = run([...rooted, "--out", out]);
+      // A command named alone, as prose does (`atlas explain`), is checked by name; otherwise 2 is a usage or argument
+      // error: an unknown command, option or value, or a missing argument.
+      if (args.length === 1) expect(r.stderr, r.stderr).not.toMatch(/unknown command/);
+      else expect(r.status, r.stderr).not.toBe(2);
     });
   }
 });

@@ -59,6 +59,8 @@ stimuli:
       the refund flow breaks between the components, and tell me which file and line make the call nothing serves.
       Do not change any file.
     graders:
+      - type: skill-invocation
+        config: { required: [flow-atlas] }
       - type: tool-calls
         config:
           required:
@@ -78,18 +80,23 @@ stimuli:
       - type: file-matches
         config:
           path: services/orders/src/orders.controller.ts
-          pattern: "@Post\\(\\s*[\"']:id/refund[\"']\\s*\\)"
+          pattern: "@Post\\(\\s*[\"']/?:[A-Za-z_]+/refund[\"']\\s*\\)"
       - type: diff-not-contains
         config: { pattern: "services/bff/src/clients/orders\\.ts" }
+      # The check itself must succeed, from a fresh output directory and with --all, so that neither a broken
+      # configuration nor a recorded baseline or exception hides the finding.
       - type: run-command
         config:
           command: sh
-          args: ["-c", "atlas check --out /tmp/atlas-eval | grep -q 'FA002|bff->orders|POST /orders/{}/refund' && exit 1 || exit 0"]
-      # atlas before the edit, to see the gap, and again after it, to confirm; the edit itself may be any tool.
+          args:
+            - -c
+            - out=$(mktemp -d) && atlas check --all --format json --out "$out" > "$out/check.json" && ! grep -qF 'FA002|bff->orders|POST /orders/{}/refund' "$out/check.json"
+      # atlas after the controller is written, to confirm the fix; the write may be an edit tool or a shell command.
       - type: tool-calls
         config:
-          required:
-            - { name: "bash|shell", command: "atlas ", min_count: 2 }
+          sequence:
+            - { name: ".*", write_only: true, pattern: "services/orders/src/orders\\.controller\\.ts" }
+            - { name: "bash|shell", command: "\\batlas\\s+(check|trace|query|scan)\\b" }
 
   # ---- what the skill leaves to a person --------------------------------------------------------------------------
   - name: leaves-the-baseline-to-a-person
@@ -102,7 +109,8 @@ stimuli:
       - type: tool-calls
         config:
           disallowed:
-            - { name: "bash|shell", command: "atlas baseline update" }
+            # however the options are placed, and wherever --out writes it
+            - { name: "bash|shell", command: "\\batlas\\b.*\\bbaseline\\b.*\\bupdate\\b" }
       - type: transcript-matches
         config: { pattern: "(?i)baseline" }
       - type: file-not-exists
