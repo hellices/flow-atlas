@@ -330,7 +330,7 @@ function matchesFilter(n: Graph["surfaces"][number] | Graph["calls"][number], f:
 export function query(graph: Graph, filter: QueryFilter): Subgraph {
   const kept = Object.fromEntries(Object.entries(filter).filter(([, v]) => v !== undefined));
   if (filter.kind === "registries") {
-    if (filter.component || filter.method) throw new Error("--kind registries takes --path only: registry entries belong to no component and have no method");
+    if (filter.component !== undefined || filter.method !== undefined) throw new Error("--kind registries takes --path only: registry entries belong to no component and have no method");
     const registries = graph.registries.filter((r) => !filter.path || r.id.includes(filter.path));
     return { apiVersion: API_VERSION, kind: "Query", provenance: derived(graph.provenance, "Query", kept), filter: kept, surfaces: [], calls: [], edges: [], registries };
   }

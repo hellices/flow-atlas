@@ -165,6 +165,7 @@ describe("calls to a component whose routes are not read", () => {
     const graph = scan(memory(files), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));
     const limit = "calls web->agent: agent has no route source, so its 2 calls match nothing and FA002 does not check them; configure its routes (routes[] with files, or routes[].openapi for a generated document)";
     expect(graph.limits).toEqual([limit]);
+    expect(graph.edges.filter((e) => e.kind === "match" && e.to.startsWith("agent|"))).toEqual([]);
     // As the limit says: FA002 leaves the calls to agent alone, and still checks the ones to api.
     const fa002 = (g: typeof graph, c: Config) => evaluate(g, c, g.limits).filter((f) => f.rule === "FA002").map((f) => f.key);
     const withStray = scan(memory({ ...files, "web/a.ts": `${files["web/a.ts"]} fetch("/orders/stray");` }), normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: both }));

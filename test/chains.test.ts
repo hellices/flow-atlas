@@ -372,6 +372,9 @@ describe("a flow step that names a registry entry", () => {
     // Registry entries belong to no component and have no method: those filters are refused, not ignored.
     expect(() => query(graph, { kind: "registries", component: "web" })).toThrow(/--kind registries takes --path only/);
     expect(() => query(graph, { kind: "registries", method: "GET" })).toThrow(/--kind registries takes --path only/);
+    // Given at all, even empty, they are refused.
+    expect(() => query(graph, { kind: "registries", component: "" })).toThrow(/--kind registries takes --path only/);
+    expect(() => query(graph, { kind: "registries", method: "" })).toThrow(/--kind registries takes --path only/);
     const doc = query(graph, { kind: "registries", path: "quo" });
     expect(doc.registries?.map((r) => r.id)).toEqual(["tool:quote"]);
     expect(doc.registries?.[0]?.consumers).toEqual([{ file: "web/src/tools.ts", line: 1 }]);
@@ -464,6 +467,19 @@ describe("a flow step that names a registry entry", () => {
     ]);
     const aheadConnected = resolveFlows(graph, [flowFile(later, ahead)], "2026-11-01T00:00:00Z", chains).items.find((i) => i.metadata.name === "ahead")!.status.conditions.find((c) => c.type === "Connected");
     expect(aheadConnected).toMatchObject({ status: "Unknown", reason: "PlannedStepsPending", message: "planned: quote -> later" });
+    // Both ends built, one of them marked planned: the order is still the author's, as between two built chains,
+    // since building nothing more would put the link in the code.
+    const builtPlanned = flow("built-planned", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens" },
+      { stepId: "quote", registry: "tool:quote", role: "quotes", lifecycle: "planned" },
+    ]);
+    const builtConnected = resolveFlows(graph, [flowFile(builtPlanned)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions.find((c) => c.type === "Connected");
+    expect(builtConnected).toMatchObject({ status: "Unknown", reason: "OrderNotInCode" });
+    const builtChains = flow("built-chains", [
+      { stepId: "open", chain: "web->bff|GET /screen", role: "opens" },
+      { stepId: "stop", chain: "web->bff|POST /stop", role: "stops", lifecycle: "planned" },
+    ]);
+    expect(resolveFlows(graph, [flowFile(builtChains)], "2026-11-01T00:00:00Z", chains).items[0]!.status.conditions.find((c) => c.type === "Connected")).toMatchObject({ reason: "OrderNotInCode" });
     // So is a planned sub-flow with no steps written yet.
     const empty = { ...flow("empty", []), spec: { lifecycle: "planned" as const, steps: [] } };
     const toEmpty = flow("to-empty", [
