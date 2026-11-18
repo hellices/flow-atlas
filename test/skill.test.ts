@@ -32,13 +32,15 @@ describe("skills follow the Agent Skills specification", () => {
       // A relative Markdown link a host follows from the skill's directory, in SKILL.md or a reference.
       for (const file of [`${dir}/SKILL.md`, ...readdirSync(new URL(`${dir}/references/`, skills)).map((f) => `${dir}/references/${f}`)]) {
         const body = readFileSync(new URL(file, skills), "utf8");
-        for (const link of body.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)) {
-          if (/^[a-z]+:/.test(link[1]!)) continue;
-          expect(() => readFileSync(new URL(link[1]!, new URL(file, skills))), `${file} links ${link[1]}`).not.toThrow();
+        // A destination is bare or in angle brackets (which may hold spaces), with an optional title after it.
+        for (const link of body.matchAll(/\]\((?:<([^>\n]+)>|([^)\s<]+))(?:\s+"[^"]*")?\)/g)) {
+          const target = (link[1] ?? link[2]!).replace(/#.*$/, "");
+          if (!target || /^[a-z]+:/.test(target)) continue;
+          expect(() => readFileSync(new URL(target, new URL(file, skills))), `${file} links ${target}`).not.toThrow();
         }
       }
       // The specification asks to keep SKILL.md under 500 lines, with details in references a host loads on demand.
-      expect(text.split("\n").length, "SKILL.md lines").toBeLessThan(500);
+      expect(text.replace(/\n$/, "").split("\n").length, "SKILL.md lines").toBeLessThan(500);
     });
   }
 });

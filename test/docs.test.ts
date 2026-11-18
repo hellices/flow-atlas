@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,14 +112,21 @@ describe("the commands the documents name are the CLI's", () => {
       const args = argv(command)
         .slice(1)
         .map((a, i, all) => (all[i - 1] === "--since" ? "HEAD" : all[0] === "diff" && i === 1 ? a.replace(/^[^.]*\.\./, "HEAD..") : a));
-      const rooted = args.includes("--root") ? args.map((a, i) => (args[i - 1] === "--root" ? shop : a)) : [...args, "--root", shop];
       const out = mkdtempSync(join(tmpdir(), "atlas-docs-"));
-      if (args[0] === "explain") expect(run(["check", "--root", shop, "--out", out]).status).toBe(0);
-      const r = run([...rooted, "--out", out]);
-      // A command named alone, as prose does (`atlas explain`), is checked by name; otherwise 2 is a usage or argument
-      // error: an unknown command, option or value, or a missing argument.
-      if (args.length === 1) expect(r.stderr, r.stderr).not.toMatch(/unknown command/);
-      else expect(r.status, r.stderr).not.toBe(2);
+      try {
+        // The fixture options go right after the command name, so a documented option left without its value at the
+        // end still fails instead of taking one of them.
+        const documentedArgs = args.slice(1).map((a, i, all) => (all[i - 1] === "--root" ? shop : a));
+        const fixture = args.includes("--root") ? ["--out", out] : ["--root", shop, "--out", out];
+        if (args[0] === "explain") expect(run(["check", "--root", shop, "--out", out]).status).toBe(0);
+        const r = run([args[0]!, ...fixture, ...documentedArgs]);
+        // A command named alone, as prose does (`atlas explain`), is checked by name; otherwise 2 is a usage or
+        // argument error: an unknown command, option or value, or a missing argument.
+        if (args.length === 1) expect(r.stderr, r.stderr).not.toMatch(/unknown command/);
+        else expect(r.status, r.stderr).not.toBe(2);
+      } finally {
+        rmSync(out, { recursive: true, force: true });
+      }
     });
   }
 });

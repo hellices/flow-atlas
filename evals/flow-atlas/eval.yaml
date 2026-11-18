@@ -77,6 +77,8 @@ stimuli:
       The BFF already calls POST /orders/{id}/refund on the orders service, but orders does not serve it. Add the
       route to the orders service so the call is served, and confirm with atlas that the finding is gone.
     graders:
+      - type: skill-invocation
+        config: { required: [flow-atlas] }
       - type: file-matches
         config:
           path: services/orders/src/orders.controller.ts
