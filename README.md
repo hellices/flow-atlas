@@ -22,8 +22,7 @@ npx github:hellices/flow-atlas check --root fixtures/shop
 - [Key terms](#key-terms)
 - [What it reads](#what-it-reads)
 - [Install](#install)
-- [Use](#use)
-- [Day to day](#day-to-day)
+- [Step by step](#step-by-step)
 - [Use with a coding agent](#use-with-a-coding-agent)
 - [Flows and output](#flows-and-output)
 - [Limits](#limits)
@@ -118,23 +117,102 @@ npm install -g github:hellices/flow-atlas    # install the atlas command
 Recent npm versions may ask before running install scripts. If `prepare` is blocked, install the packed release
 instead (`npm install -g <flow-atlas-x.y.z.tgz URL>`).
 
-## Use
+## Step by step
 
-Start from what atlas finds, write the configuration, then scan until it reads what it should:
+Each step names the command and what to look at. With the [skill](#use-with-a-coding-agent) installed, a coding agent
+runs the same steps when you ask it to set up flow-atlas or to check a change.
 
-1. `atlas inventory --root <repo>` lists candidate components, routes and client calls. It writes nothing.
-2. Write `atlas.config.yaml` at the repository root (or in `--out`, for a repository you must not change) from that
-   list: the components, where each serves routes, and which files call others.
-   [config.md](skills/flow-atlas/references/config.md) describes every key.
-3. `atlas scan --root <repo>` prints what each configured source yielded. Correct the configuration and scan again;
-   expect two or three rounds before the findings are worth trusting.
-4. `atlas check --root <repo>` prints the findings.
+**What you write, and what atlas writes.** You write three files; everything else comes from a command, each run.
 
-You write three files: the configuration, the flows (from drafts atlas prints, filling only the title and each
-step's role) and the exceptions file. Everything else comes from the commands below, each run.
+| File | When | How |
+|---|---|---|
+| `atlas.config.yaml` | once, then when the code's layout moves | from what `atlas inventory` lists (step 1) |
+| `flows/*.flow.yaml` | for the journeys you want kept | from what `atlas draft flows` prints, filling only the title and each step's role (step 4) |
+| `flows/atlas-exceptions.yaml` | when a finding is right on purpose | a reason, the decision behind it, a date to look again (step 2) |
+
+### 1. Set up (once)
+
+```bash
+atlas inventory --root <repo>    # candidate components, routes and client calls; writes nothing
+```
+
+Write `atlas.config.yaml` at the repository root from that list: the components, where each serves routes, and
+which files call others ([config.md](skills/flow-atlas/references/config.md) describes every key). Leave out tests,
+contract packages and tools; keep each call source to the client adapter files. Then scan until it reads what it should:
+
+```bash
+atlas scan --root <repo>         # what each configured source yielded
+```
+
+Read the `coverage` block (for calls, `matched` close to `items`) and each `limit:` line, correct the configuration,
+and scan again. Expect two or three rounds. For a repository you must not change, keep the configuration and every
+output outside it with `--out <dir>`.
+
+### 2. Record what is already there
+
+```bash
+atlas check --root <repo>        # every finding
+atlas explain <key>              # one finding, with its locations and similar paths
+```
+
+Open a few findings in the code. A finding the configuration caused (a missing call file, prefix or mount) is fixed
+there; a route served to clients outside the repository goes into `publicSurfaces`. Once the findings are what the
+code holds, accept them as known debt, with the person who owns the repository:
+
+```bash
+atlas baseline update
+```
+
+From then on `check` shows only what is new. Existing debt is reduced on its own schedule.
+
+### 3. While changing code
+
+```bash
+atlas query --path /orders                 # does something already do this?
+atlas trace "bff|GET /screens/order/{id}"  # who calls a route, and what it calls next
+```
+
+Before adding a route or a call, look for one that already does the job. After adding it, `trace` should show the
+caller and the calls you intended; an empty side means not wired yet, or wired in a way atlas cannot read
+([docs/traces.md](docs/traces.md) explains the marks).
+
+### 4. Describe the journeys you want kept (optional)
+
+```bash
+atlas chains --unnamed           # each request and everything it reaches, that no flow names yet
+atlas draft flows                # a flow per such chain; fill only the 'agent:' lines
+atlas query --kind registries    # the tools or events a step can name when it is no request
+atlas flows                      # each flow held against the code
+```
+
+Save the drafts under `flows/`. A journey across requests lists chains in order. A step inside one request (a tool
+an agent calls) names a registry entry, and a step not built yet is marked `lifecycle: planned`. `atlas flows` places
+each step in the code, or reports it planned or not found. A flow is reviewed like code, in the pull request that
+changes it.
+
+### 5. Before opening a pull request
+
+```bash
+atlas check --since main                        # only the findings this change introduced
+atlas diff main..WORKTREE --format markdown     # routes, chains and flows the change reaches, for the description
+```
+
+Fix each new finding, or record it in `flows/atlas-exceptions.yaml` with the decision behind it and a date to look
+again; when the date passes, the finding comes back. A misread file is recorded the same way, saying which file was
+misread and how. A rule that is mostly wrong for a repository is switched off there (`rules.<id>.enabled: false`).
+
+### 6. In CI (optional)
+
+```bash
+atlas check --fail-on-new                       # exit 1 when there are new findings
+atlas check --format sarif > atlas.sarif        # findings for code scanning
+atlas export arazzo > flows.arazzo.yaml         # flows as Arazzo 1.0, for an API workflow runner
+```
+
+atlas reports and does not block by default; add `--fail-on-new` to make CI fail on new findings.
 
 <details>
-<summary>All commands</summary>
+<summary>All commands and options</summary>
 
 ```bash
 atlas inventory --root <repo>                 # candidate components, routes, client calls
@@ -154,29 +232,14 @@ atlas explain <key>                           # one finding with nearby paths
 atlas baseline update                         # accept the current findings as known debt
 ```
 
-</details>
-
 - **Reading without touching the repository.** `--ref <commit>` reads a commit without checking it out, and every
   write goes to `--out` (`export` prints to stdout). A repository you must not change can be analysed with `--out`
   outside it.
 - **Exit codes.** Every command exits 0 when it is done and 2 on an error. `check --fail-on-new` exits 1 when there are
   new findings. `export arazzo` exits 1 when there is nothing to export: no active flow, none of the name `--flow`
   gives, or no step an OpenAPI description names.
-- **Reading a trace.** How `trace` joins calls to routes and handlers to calls: [docs/traces.md](docs/traces.md).
 
-## Day to day
-
-1. **Record the debt.** Once the configuration reads what it should, run `atlas baseline update`. From then on only new
-   findings appear. Existing debt is reduced on its own schedule, and each change answers only for what it introduced.
-2. **Handle each new finding.**
-   - Fix it, or record it in the exceptions file (`flows/atlas-exceptions.yaml`) with the decision behind it and a
-     date to look again. When the date passes, the finding comes back.
-   - A wrong finding caused by the configuration is fixed there. A misread file is recorded as an exception that says
-     which file was misread and how.
-   - A rule that is mostly wrong for a repository is switched off there (`rules.<id>.enabled: false`), or its extractor
-     is fixed.
-3. **Decide whether CI blocks.** atlas reports and does not block by default. To fail CI on new findings, add
-   `--fail-on-new`.
+</details>
 
 ## Use with a coding agent
 
