@@ -32,7 +32,8 @@ a journey and in which order, and decisions. atlas checks what you write against
   `npx github:hellices/flow-atlas --help`, or ask the user to install it.
 - The configuration is `<root>/atlas.config.yaml`, `<out>/atlas.config.yaml`, or `--config <file>`. With none, write
   one first (`references/config.md`, "Order of work").
-- For a repository you must not change, pass `--out <dir outside it>`: every write goes there.
+- atlas writes to `<root>/.atlas` by default. When the repository must not change, or the task says not to change
+  files, pass `--out <dir outside it>` to every command: every write goes there.
 
 ## Designing a change
 
@@ -58,7 +59,12 @@ which. Where a component's routes come from a generated OpenAPI document, regene
 2. For each new finding, `atlas explain <key>`, then handle it (`references/rules.md`, "Handling a finding").
 3. A new request no flow names is a candidate for `atlas draft flows`.
 
-A person decides `atlas baseline update`, after seeing the findings it would accept (`references/rules.md`).
+## The baseline is a person's decision
+
+Run `atlas baseline update` only when a person asks for that command after seeing the findings it would accept. A
+request for the outcome ("only show new problems from now on", "set up checks so only new issues fail") is not that
+request: run `atlas check`, show the findings, say which you think are debt, defects or misreadings, and stop for the
+person to say "record the baseline". Leave `baseline.json` unwritten until then, in the repository and in `--out`.
 
 ## Reading the output
 

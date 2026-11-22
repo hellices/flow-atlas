@@ -66,7 +66,9 @@ also runs `vally lint` on `skills/`, the check skill listings use.
 `SKILL.md` holds what every run needs: the rule, the steps, and the core of reading the output. What only some runs
 need goes into a reference, and `SKILL.md` says when to read it. The test holds the description under 80 words, since
 it sits in every turn's context, and the body under 1,500. Where a line would restate `atlas --help`, a schema or the
-configuration, point to it instead. Write the behaviour you want ("copy ids from atlas output") rather than the one you
+configuration, point to it instead. A guardrail on an action that is hard to undo (recording the baseline, writing
+into a repository that must not change) stays in `SKILL.md` in full: moved into a reference, weaker models stopped
+following it. Write the behaviour you want ("copy ids from atlas output") rather than the one you
 forbid.
 
 ## Registry mirrors
