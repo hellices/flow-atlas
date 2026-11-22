@@ -405,6 +405,11 @@ describe("a call that fits a route only by the value of an interpolated segment"
     // Nor a route of another method: a call of unread method may send the one the literal route serves.
     const methods = scan(memory({ "api/app.ts": 'app.post("/api/z/a", h);\napp.get("/api/z/:name", h);', "web/a.ts": "export const f = (id: string, m: string) => fetch(`/api/z/${id}`, { method: m });" }), config);
     expect(evaluate(methods, config, []).filter((f) => f.rule === "FA001" && f.key.includes("/api/z/a"))).toEqual([]);
+    // Nor one its router does not take the call to: under strict routing `/api/z/:name/` takes no path without the `/`.
+    const strict = 'import express from "express";\nconst app = express();\napp.enable("strict routing");\napp.get("/api/z/a", h);\napp.get("/api/z/:name/", h);';
+    const strictGraph = scan(memory({ "api/app.ts": strict, "web/a.ts": "export const f = (id: string) => fetch(`/api/z/${id}`);" }), config);
+    expect(strictGraph.surfaces.find((s) => s.path.startsWith("/api/z/{name}"))?.dispatch?.slashes).toBe("strict");
+    expect(evaluate(strictGraph, config, []).filter((f) => f.rule === "FA001" && f.key.includes("/api/z/a"))).toEqual([]);
   });
 });
 

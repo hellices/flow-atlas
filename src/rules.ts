@@ -1,6 +1,6 @@
 import type { Config } from "./config.js";
 import { routedComponents, ruleEnabled } from "./config.js";
-import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes } from "./match.js";
+import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes, takes } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { isRedirect, surfaceId } from "./model.js";
 import { HOLE, isFixed, methodsMatch, pathCovers, segments } from "./paths.js";
@@ -43,7 +43,9 @@ function coveredElsewhere(surfaces: Graph["surfaces"], s: Graph["surfaces"][numb
       !o.dispatch?.constrained &&
       segments(o.path).length === length &&
       !catchAll(o.path) &&
-      pathCovers(o.path, c.path, o.patterns),
+      pathCovers(o.path, c.path, o.patterns) &&
+      // As its router takes a request, trailing `/` included (strict routing, a path served only with the `/`).
+      (!(o.dispatch?.slashes || o.dispatch?.trailing) || takes(o, c.path, !!c.slash)),
   );
 }
 
