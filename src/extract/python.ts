@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { closingParen, pythonArg, pythonArgStarts, pythonStrings } from "./routes.js";
+import { closingParen, pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
 
 /**
  * What the readers of Python web frameworks (FastAPI, Flask) share: the functions of a file and the names they bind,
@@ -200,7 +200,16 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
   if (!def) return undefined;
   const colon = code.indexOf(":", closingParen(code, at + def[0].length));
   if (colon < 0) return undefined;
-  const body = code.slice(colon + 1, blockEnd(code, colon, def[1]!));
+  const end = blockEnd(code, colon, def[1]!);
+  // A function or class the handler declares runs only where it is called: its header and body are left out, and its
+  // name counts only where the rest of the handler calls it.
+  const body = code.slice(colon + 1, end).split("");
+  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)(?:async[ \t]+)?(?:def|class)[ \t]+[A-Za-z_]\w*/gm)) {
+    const start = colon + 1 + (n.index ?? 0);
+    const header = headerColon(code, start);
+    const stop = header < 0 ? end : Math.min(end, blockEnd(code, header, n[1]!));
+    for (let i = start; i < stop; i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
+  }
   // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
   // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
   // nothing of the component's.
@@ -211,11 +220,41 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
       if (i) local.add(i[2] ?? i[1]!);
     }
   const calls: string[] = [];
-  for (const m of body.matchAll(/(?<![\w.])([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
+  for (const m of body.join("").matchAll(/(?<![\w.])([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
     if (m[2] === undefined) calls.push(m[1]!);
     else if (local.has(m[1]!)) calls.push(m[2]);
   }
   return { name: def[2]!, calls: [...new Set(calls.filter((n) => !NOT_CALLED.has(n)))].sort() };
+}
+
+/** The `:` that ends the block header starting at `from`, outside brackets; -1 where there is none. */
+function headerColon(code: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < code.length; i++) {
+    const c = code[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+    else if (c === ":" && !depth) return i;
+  }
+  return -1;
+}
+
+/**
+ * For Python: the name of the innermost function whose body holds an offset, by indentation, so a statement after a
+ * function's body (a module-level request, a decorator's arguments) belongs to none.
+ */
+export function pythonScopes(text: string): (index: number) => string | undefined {
+  const code = pythonCode(text);
+  const defs: Array<{ start: number; end: number; name: string }> = [];
+  for (const m of code.matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/gm)) {
+    const colon = headerColon(code, (m.index ?? 0) + m[0].length - 1);
+    if (colon >= 0) defs.push({ start: m.index ?? 0, end: blockEnd(code, colon, m[1]!), name: m[2]! });
+  }
+  return (index) => {
+    let found: { start: number; end: number; name: string } | undefined;
+    for (const d of defs) if (d.start <= index && index < d.end && (!found || d.start > found.start)) found = d;
+    return found?.name;
+  };
 }
 
 /** A literal, or the text of an argument the file does not spell out. */

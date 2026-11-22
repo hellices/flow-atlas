@@ -15,6 +15,7 @@ import { Constants } from "./constants.js";
 import { Importers } from "./importers.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
+import { pythonScopes } from "./python.js";
 import { packageRanges } from "./syntax.js";
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
@@ -2688,7 +2689,7 @@ const FEIGN_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT"
 export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean, context: TextContext = {}): ReadCall[] {
   const out: ReadCall[] = exchangeCalls(file, original, spec, context.untyped);
   const text = withoutComments(file, original);
-  const scopeAt = textScopes(text);
+  const scopeAt = /\.pyi?$/.test(file) ? pythonScopes(text) : textScopes(text);
   const scan = textCalls(file, text);
   const args = scan.args;
   const methods = new TextMethods(file, text, scan, spec.receivers);

@@ -37,7 +37,7 @@ export class TextMethods {
   private dots?: Map<number, Frame>;
   private goNames?: Map<string, string>;
   private dartPrefixes?: Map<string, string[]>;
-  private pythonNames?: { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, string> };
+  private pythonNames?: { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, "Request" | "urlopen"> };
 
   constructor(
     file: string,
@@ -562,19 +562,19 @@ export class TextMethods {
    */
   private urllibCall(f: Frame): "Request" | "urlopen" | undefined {
     const name = f.name!;
-    if (name !== "Request" && name !== "urlopen") return undefined;
     const { urllibModules, urllibNames } = this.python();
-    if (!f.method) return urllibNames.get(name) === name ? name : undefined;
+    if (!f.method) return urllibNames.get(name);
+    if (name !== "Request" && name !== "urlopen") return undefined;
     const receiver = f.dot === undefined ? undefined : /([A-Za-z_][\w.]*)\s*$/.exec(this.code().slice(Math.max(0, f.dot - 100), f.dot))?.[1];
     return receiver !== undefined && urllibModules.has(receiver) ? name : undefined;
   }
 
-  private python(): { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, string> } {
+  private python(): { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, "Request" | "urlopen"> } {
     if (!this.pythonNames) {
       const modules = new Map<string, string>();
       const names = new Map<string, string>();
       const urllibModules = new Set<string>();
-      const urllibNames = new Map<string, string>();
+      const urllibNames = new Map<string, "Request" | "urlopen">();
       const code = this.code();
       for (const m of code.matchAll(/(?:^|\n)[ \t]*import[ \t]+([^\n]+)/g))
         for (const item of m[1]!.split(",")) {
@@ -593,7 +593,7 @@ export class TextMethods {
           const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (!i) continue;
           if (!m[1] && i[1] === "request") urllibModules.add(i[2] ?? "request");
-          else if (m[1] && (i[1] === "Request" || i[1] === "urlopen") && !i[2]) urllibNames.set(i[1], i[1]);
+          else if (m[1] && (i[1] === "Request" || i[1] === "urlopen")) urllibNames.set(i[2] ?? i[1], i[1]);
         }
       this.pythonNames = { modules, names, urllibModules, urllibNames };
     }

@@ -184,6 +184,9 @@ describe("the method given as a value before or around the URL", () => {
       calls: ["* /d @7", "GET /b @5", "GET /f @9", "POST /a @4", "POST /c @6", "PUT /e @8"],
       limits: [],
     });
+    // Under the names an import gives them.
+    const aliased = lines("from urllib.request import urlopen as open_url, Request as Req", 'open_url(f"{API}/g")', 'Req(f"{API}/h", data=b"x")');
+    expect(read({ "web/b.py": aliased })).toEqual({ calls: ["GET /g @2", "POST /h @3"], limits: [] });
   });
 
   it("reads net/http's request methods and constants by the name the file imports it under", () => {

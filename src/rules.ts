@@ -33,7 +33,15 @@ function coveredElsewhere(surfaces: Graph["surfaces"], s: Graph["surfaces"][numb
   const length = segments(c.path).length;
   const catchAll = (path: string) => segments(path).some((seg) => seg === "*" || seg === "**" || seg.startsWith("{*") || /:path\}$/.test(seg));
   return surfaces.some(
-    (o) => o !== s && o.component === s.component && methodsMatch(o.method, c.method) && segments(o.path).length === length && !catchAll(o.path) && pathCovers(o.path, c.path, o.patterns),
+    (o) =>
+      o !== s &&
+      o.component === s.component &&
+      methodsMatch(o.method, c.method) &&
+      // A route taken only with headers the call may not send is not shown to take it.
+      !o.dispatch?.constrained &&
+      segments(o.path).length === length &&
+      !catchAll(o.path) &&
+      pathCovers(o.path, c.path, o.patterns),
   );
 }
 

@@ -253,10 +253,13 @@ describe("Python handlers", () => {
     '    return httpx.get("http://localhost:3000/api/other")',
     "",
     'app.add_api_route("/other", other)',
+    'httpx.get("http://localhost:3000/api/other")',
     "",
     "from . import svc as s",
     '@app.get("/params")',
     "def params(q: dict):",
+    "    def never_called():",
+    '        return httpx.get("http://localhost:3000/api/items")',
     '    return q.get("a")',
     "",
     '@app.get("/refunds")',
@@ -283,6 +286,13 @@ describe("Python handlers", () => {
   it("takes no method of another value for a function of the component's (`q.get` is no Client.get)", () => {
     expect(downstream("py|GET /params")).not.toContain("/api/client");
     expect(graph.surfaces.find((s) => s.id === "py|GET /params")?.reaches).toEqual(["params"]);
+  });
+
+  it("follows no function the handler declares and does not call, and no request after a function's body", () => {
+    expect(downstream("py|GET /params")).not.toContain("/api/items");
+    // The module-level request after `def other():` belongs to no function, so no handler named other reaches it.
+    const call = graph.calls.find((c) => c.path === "/api/other" && c.at.line === 21);
+    expect(call?.scope).toBeUndefined();
   });
 
   it("says where a handler registered without a decorator stops", () => {
@@ -340,6 +350,11 @@ describe("a call that fits a route only by the value of an interpolated segment"
     // A catch-all takes every path there is, which says nothing of which one the call means.
     const withFallback = scan(memory({ "api/app.ts": 'app.get("/api/z/a", h);\napp.get("/api/*rest", h);', "web/a.ts": "export const f = (id: string) => fetch(`/api/z/${id}`);" }), config);
     expect(evaluate(withFallback, config, []).filter((f) => f.rule === "FA001").map((f) => f.key)).toEqual([]);
+    // Nor does a route taken only with headers the call may not send (Fastify's constraints).
+    const fastify = 'import Fastify from "fastify";\nconst app = Fastify();\napp.get("/api/z/a", h);\napp.get("/api/z/:name", { constraints: { version: "1.0.0" } }, h);';
+    const constrained = scan(memory({ "api/app.ts": fastify, "web/a.ts": "export const f = (id: string) => fetch(`/api/z/${id}`);" }), config);
+    expect(constrained.surfaces.find((s) => s.path === "/api/z/{name}")?.dispatch?.constrained).toBe(true);
+    expect(evaluate(constrained, config, []).filter((f) => f.rule === "FA001" && f.key.includes("/api/z/a"))).toEqual([]);
   });
 });
 
