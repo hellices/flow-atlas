@@ -455,34 +455,40 @@ describe("Express paths held in constants of other files", () => {
   });
 
   it("follows each route a function registers into the function its call hands it, and no other", () => {
-    const files = {
-      "api/app.js": [
-        "import express from 'express';",
-        "const app = express();",
-        "function route(path, answer) {",
-        "  app.post(path, async (req, res) => res.json(await answer(req.body)));",
-        "}",
-        "async function order(body) { return fetch('http://localhost/store/orders', { method: 'POST', body }); }",
-        "route('/v1/orders', order);",
-        "route('/v1/invoices', (body) => fetch('http://localhost/store/invoices', { method: 'POST', body }));",
-      ].join("\n"),
-      "store/app.js": "import express from 'express';\nconst app = express();\napp.post('/store/orders', h);\napp.post('/store/invoices', h);",
+    const reached = (app: string[]) => {
+      const files = {
+        "api/app.js": ["import express from 'express';", "const app = express();", ...app].join("\n"),
+        "store/app.js": "import express from 'express';\nconst app = express();\napp.post('/store/orders', h);\napp.post('/store/invoices', h);",
+      };
+      const config = normalizeConfig({
+        components: [
+          { name: "api", path: "api" },
+          { name: "store", path: "store" },
+        ],
+        routes: [
+          { component: "api", files: ["api/**"], styles: ["express"] },
+          { component: "store", files: ["store/**"], styles: ["express"] },
+        ],
+        calls: [{ from: "api", to: "store", files: ["api/**"] }],
+      });
+      const graph = scan(memory(files), config);
+      const callTo = (id: string) => graph.calls.find((c) => c.id === id)!;
+      return graph.edges
+        .filter((e) => e.kind === "reach")
+        .map((e) => `${e.from} -> ${callTo(e.to).method} ${callTo(e.to).path}`)
+        .sort();
     };
-    const config = normalizeConfig({
-      components: [
-        { name: "api", path: "api" },
-        { name: "store", path: "store" },
-      ],
-      routes: [
-        { component: "api", files: ["api/**"], styles: ["express"] },
-        { component: "store", files: ["store/**"], styles: ["express"] },
-      ],
-      calls: [{ from: "api", to: "store", files: ["api/**"] }],
-    });
-    const graph = scan(memory(files), config);
-    const callTo = (id: string) => graph.calls.find((c) => c.id === id)!;
-    const reached = graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${callTo(e.to).method} ${callTo(e.to).path}`);
-    expect(reached.sort()).toEqual(["api|POST /v1/invoices -> POST /store/invoices", "api|POST /v1/orders -> POST /store/orders"]);
+    const helper = ["function route(path, answer) {", "  app.post(path, async (req, res) => res.json(await answer(req.body)));", "}"];
+    const order = "async function order(body) { return fetch('http://localhost/store/orders', { method: 'POST', body }); }";
+    expect(reached([...helper, order, "route('/v1/orders', order);", "route('/v1/invoices', (body) => fetch('http://localhost/store/invoices', { method: 'POST', body }));"])).toEqual([
+      "api|POST /v1/invoices -> POST /store/invoices",
+      "api|POST /v1/orders -> POST /store/orders",
+    ]);
+    // A `let` may hold another function by the time the call runs; a key named like the parameter is no use of it.
+    const send = ["let send = (body) => fetch('http://localhost/store/orders', { method: 'POST', body });", "send = (body) => fetch('http://localhost/store/invoices', { method: 'POST', body });"];
+    expect(reached([...helper, ...send, "route('/v1/orders', send);"])).toEqual([]);
+    const keyed = ["function route(path, answer) {", "  app.post(path, (req, res) => res.json({ answer: 'cached' }));", "}"];
+    expect(reached([...keyed, order, "route('/v1/orders', order);"])).toEqual([]);
   });
 
   it("reads an exported helper's routes where every call of it is in its file, and leaves them unread where one is not", () => {

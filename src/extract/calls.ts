@@ -1661,14 +1661,25 @@ export function parameterTexts(parameter: ts.ParameterDeclaration, text: (e: ts.
 
 /**
  * What a call binds the parameters of the function it calls to: the argument at each one's place, for a plain
- * parameter the function does not write to; none from a spread argument on.
+ * parameter the function does not write to; none from a spread argument on. An argument that is a name is bound only
+ * where the name holds one value for certain: an import, a function declaration or a `const` the code does not write
+ * to; a `let` or a parameter may hold another by the time the call runs.
  */
 export function boundArguments(fn: ts.SignatureDeclaration, call: ts.CallExpression): Map<ts.ParameterDeclaration, ts.Expression> {
   const out = new Map<ts.ParameterDeclaration, ts.Expression>();
+  const settled = (a: ts.Expression): boolean => {
+    const u = unwrap(a);
+    if (!ts.isIdentifier(u)) return true;
+    const d = declarationOf(u);
+    if (!d) return false;
+    if (ts.isImportSpecifier(d) || ts.isImportClause(d)) return true;
+    if (ts.isFunctionDeclaration(d)) return !(d.name && reassigned(d.name));
+    return ts.isVariableDeclaration(d) && constDeclaration(d);
+  };
   for (const [i, p] of fn.parameters.entries()) {
     const arg = call.arguments[i];
     if (!arg || ts.isSpreadElement(arg)) break;
-    if (!p.dotDotDotToken && ts.isIdentifier(p.name) && !reassigned(p.name)) out.set(p, arg);
+    if (!p.dotDotDotToken && ts.isIdentifier(p.name) && !reassigned(p.name) && settled(arg)) out.set(p, arg);
   }
   return out;
 }

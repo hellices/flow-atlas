@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { declarationOf, importedFrom, resolveModule, unwrap } from "./binding.js";
+import { declarationOf, importedFrom, isReference, resolveModule, unwrap } from "./binding.js";
 import type { Source } from "../source.js";
 
 const MAX_FUNCTIONS = 400;
@@ -494,7 +494,7 @@ export class Reach {
         if (ts.isIdentifier(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
           const local = localBinding(n);
           // A parameter the call that registered the route binds to a function (`bound`) is that function.
-          const given = local === null && bound ? bound.get(declarationOf(n) as ts.Node) : undefined;
+          const given = local === null && bound && isReference(n) ? bound.get(declarationOf(n) as ts.Node) : undefined;
           const target = given ? functionGiven(given, f, parsed) : named(n, f, parsed, local);
           if (target) {
             if (ts.isCallExpression(n.parent) && n.parent.expression === n) handOn(n.parent, target);
