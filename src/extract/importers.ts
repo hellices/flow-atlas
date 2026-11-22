@@ -11,6 +11,25 @@ const OTHER_CODE = /\.(svelte|vue|astro|mdx|html?)$/;
 /** How many modules passing a binding on are followed. */
 const MAX_MODULES = 20;
 
+/** Space between tokens, comments included. */
+const GAP = String.raw`(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*`;
+const WORD = String.raw`[\w$]+`;
+const QUOTED = String.raw`["'\`]([^"'\`]+)["'\`]`;
+
+/** Text of a module that may import or re-export another whole. */
+const WHOLE = new RegExp(String.raw`\bimport${GAP}(?:${WORD}${GAP},${GAP})?\*|\bimport${GAP}\(|\brequire${GAP}\(|\bexport${GAP}\*`);
+
+/** The specifiers a module imports or re-exports whole from, where it spells them out. */
+const WHOLE_FROM = new RegExp(
+  [
+    String.raw`\bimport${GAP}(?:${WORD}${GAP},${GAP})?\*${GAP}as${GAP}${WORD}${GAP}from${GAP}${QUOTED}`,
+    String.raw`\bimport${GAP}\(${GAP}${QUOTED}`,
+    String.raw`\brequire${GAP}\(${GAP}${QUOTED}`,
+    String.raw`\bexport${GAP}\*(?:${GAP}as${GAP}${WORD})?${GAP}from${GAP}${QUOTED}`,
+  ].join("|"),
+  "g",
+);
+
 /**
  * Where the code of the repository's other files uses a binding a module exports, as imports bind it: each reference of
  * a name an import binds to it (`import { homePath } from "~/utils/routeHelpers"`, through re-exports, by the name it is
@@ -71,9 +90,23 @@ export class Importers {
       seen.add(`${item.module}\0${item.name}`);
       if (seen.size > MAX_MODULES) return null;
       const word = new RegExp(`(?<![\\w$])${item.name.replace(/[$]/g, "\\$")}(?![\\w$])`);
+      // A file may import the module whole (a namespace, `import()`, `require()`) or re-export all of it (`export *`),
+      // under any specifier an alias resolves, and hand the binding on without naming it.
+      const parts = item.module.replace(/\.[^./]+$/, "").split("/");
+      const stem = parts[parts.length - 1] === "index" && parts.length > 1 ? parts[parts.length - 2]! : parts[parts.length - 1]!;
+      const named = new RegExp(`["'\`][^"'\`]*\\b${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\.\\w+)?["'\`]`);
       for (const { file: other, text } of this.all()) {
-        if (other === file || !word.test(text)) continue;
-        if (!SCRIPT.test(other)) return null;
+        if (other === file) continue;
+        const naming = word.test(text);
+        if (!naming && !WHOLE.test(text)) continue;
+        // Code atlas does not parse matters where it names the binding or the module (by file, or by directory for an
+        // index module); text that only imports something whole, a document's example, does not.
+        if (!SCRIPT.test(other)) {
+          if (naming || named.test(text)) return null;
+          continue;
+        }
+        // A file that does not name the binding matters only where what it imports whole resolves to the module.
+        if (!naming && ![...text.matchAll(WHOLE_FROM)].some((m) => modules.has(this.constants.moduleFile(other, (m[1] ?? m[2] ?? m[3] ?? m[4])!) ?? ""))) continue;
         const sf = this.constants.sourceFile(other);
         if (!sf) return null;
         const passed = (name: string) => {
@@ -86,7 +119,12 @@ export class Importers {
           const spec = (ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : undefined;
           if (spec === undefined) continue;
           if (ts.isExportDeclaration(st)) {
-            if (st.isTypeOnly || !st.exportClause) continue;
+            if (st.isTypeOnly) continue;
+            // `export * from` the module hands the name on under itself.
+            if (!st.exportClause) {
+              if (exports(other, spec, item.name) && !passed(item.name)) return null;
+              continue;
+            }
             if (ts.isNamespaceExport(st.exportClause)) {
               if (exports(other, spec, item.name)) return null;
               continue;
@@ -123,8 +161,9 @@ export class Importers {
               const p = ref.parent;
               const m = ts.isPropertyAccessExpression(p) && p.expression === ref ? p.name.text : ts.isElementAccessExpression(p) && p.expression === ref && ts.isStringLiteralLike(p.argumentExpression) ? p.argumentExpression.text : undefined;
               if (m === undefined) {
-                // The namespace used whole may hand the binding anywhere.
-                if (unread || exports(other, spec, item.name)) return null;
+                // The namespace used whole may hand the binding anywhere; one of a module not read may be this one where
+                // the file names the binding.
+                if ((unread && naming) || exports(other, spec, item.name)) return null;
               } else if (exports(other, spec, m)) out.push(p as ts.Expression);
               else if (unread && m === item.name) return null;
             }
@@ -133,7 +172,8 @@ export class Importers {
         if (this.loads(sf, modules)) return null;
       }
     }
-    return out;
+    // A use found through the module and again through a module that re-exports it is one use.
+    return [...new Set(out)];
   }
 
   /** Whether a file loads one of these modules at run time, with `import()` or `require()`, which hands it whole. */

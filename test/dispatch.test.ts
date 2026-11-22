@@ -401,12 +401,27 @@ describe("find-my-way's precedence", () => {
       "const plain = { schema: {} };",
       'app.get("/x", plain, h);',
       'app.get("/y", options, h);',
+      // Options a conditional chooses between: the constraints both give alike.
+      'app.get("/z", limit === undefined ? {} : { bodyLimit: limit }, h);',
+      'app.get("/u", fast ? { constraints: { version: "1.0.0" } } : {}, h);',
     ]);
-    const { reached, matched } = reach(files, express, ["GET /v", "GET /w", "GET /x", "GET /y"]);
-    expect(reached).toEqual({ "GET /v": ["constrained: GET /v"], "GET /w": ["constrained: GET /w"], "GET /x": ["GET /x"], "GET /y": ["constrained: GET /y"] });
+    const { reached, matched } = reach(files, express, ["GET /v", "GET /w", "GET /x", "GET /y", "GET /z", "GET /u"]);
+    expect(reached).toEqual({
+      "GET /v": ["constrained: GET /v"],
+      "GET /w": ["constrained: GET /w"],
+      "GET /x": ["GET /x"],
+      "GET /y": ["constrained: GET /y"],
+      "GET /z": ["GET /z"],
+      "GET /u": ["constrained: GET /u"],
+    });
     const fits = (request: string, line: number, route: string) =>
       `calls web->api: ${request} at x:${line} fits ${route}, which its router takes only where the request's headers meet the constraints the route's options give (or may give, where they are not spelled out); the call's headers are not read, so it is not matched to them`;
-    expect(matched).toEqual([fits("GET /v", 1, "GET /v (api/app.js:3)"), fits("GET /w", 2, "GET /w (api/app.js:4)"), fits("GET /y", 4, "GET /y (api/app.js:7)")]);
+    expect(matched).toEqual([
+      fits("GET /v", 1, "GET /v (api/app.js:3)"),
+      fits("GET /w", 2, "GET /w (api/app.js:4)"),
+      fits("GET /y", 4, "GET /y (api/app.js:7)"),
+      fits("GET /u", 6, "GET /u (api/app.js:9)"),
+    ]);
   });
 });
 

@@ -11,7 +11,7 @@ import { operationShape } from "./apidocs.js";
 import { aspnetcoreRoutes } from "./aspnetcore.js";
 import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, jvmHandler, type Definition } from "./openapi.js";
-import { withoutComments } from "./calls.js";
+import { followUses, parameterTexts, shareImporters, withoutComments } from "./calls.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
@@ -347,6 +347,7 @@ export function routesFromTypeScript(
   };
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
+  followUses(sf, constants);
   const styles = new Set(spec.styles ?? []);
   const receivers = new Set(spec.receivers ?? EXPRESS_RECEIVERS);
   /** Routers whose routes are not read, by name, with why. */
@@ -677,6 +678,13 @@ export function routesFromTypeScript(
     const init = decl && ts.isVariableDeclaration(decl) && decl.parent.flags & ts.NodeFlags.Const && decl.initializer ? unwrap(decl.initializer) : undefined;
     return init && ts.isObjectLiteralExpression(init) ? init : undefined;
   };
+  /** A route's options: an object `fastifyOptions` reads, or one of two such objects a conditional chooses between. */
+  const routeOptions = (e: ts.Expression): FastifyOptions | undefined => {
+    const u = unwrap(e);
+    if (!ts.isConditionalExpression(u)) return fastifyOptions(u);
+    const branches = [fastifyOptions(u.whenTrue), fastifyOptions(u.whenFalse)];
+    return branches.every((b) => b) ? (branches as ts.ObjectLiteralExpression[]) : undefined;
+  };
   /** The name of a receiver that is the first parameter of a callback given to a `group` call, or undefined. */
   const groupParameter = (e: ts.Expression): string | undefined => {
     const x = unwrap(e);
@@ -764,7 +772,7 @@ export function routesFromTypeScript(
    * How the router `inst` dispatches a route registered at `written` under `prefix` (see `Dispatch`): its order from
    * `orderNode`, whether its handlers pass the request on, the `/` the path ends with, and Fastify's options.
    */
-  const dispatchAt = (inst: Instance, written: string, prefix: string, orderNode: ts.Node, handlers: readonly ts.Node[], options?: ts.ObjectLiteralExpression | null): Dispatch | undefined => {
+  const dispatchAt = (inst: Instance, written: string, prefix: string, orderNode: ts.Node, handlers: readonly ts.Node[], options?: FastifyOptions | null): Dispatch | undefined => {
     if (!inst.router) return undefined;
     const base = mounts!.dispatchOf(inst.router);
     const out: Dispatch = {};
@@ -774,12 +782,19 @@ export function routesFromTypeScript(
       if (order) out.order = order;
       if (passesOn(inst, handlers)) out.passes = true;
     }
+    const optionOf = (o: ts.ObjectLiteralExpression, name: string): ts.Expression | null | undefined => {
+      if (o.properties.some((p) => ts.isSpreadAssignment(p) || (p.name && literalKey(p.name) === undefined))) return null;
+      const found = [...o.properties].reverse().find((p) => p.name && literalKey(p.name) === name);
+      return found ? (ts.isPropertyAssignment(found) ? unwrap(found.initializer) : null) : undefined;
+    };
+    // Of options chosen by a conditional, an option is what both branches give alike; one they give otherwise is unread.
     const option = (name: string): ts.Expression | null | undefined => {
       if (options === null) return null;
       if (!options) return undefined;
-      if (options.properties.some((p) => ts.isSpreadAssignment(p) || (p.name && literalKey(p.name) === undefined))) return null;
-      const found = [...options.properties].reverse().find((p) => p.name && literalKey(p.name) === name);
-      return found ? (ts.isPropertyAssignment(found) ? unwrap(found.initializer) : null) : undefined;
+      const each = (Array.isArray(options) ? options : [options]).map((o) => optionOf(o, name));
+      if (each.every((v) => v === undefined)) return undefined;
+      if (each.some((v) => !v)) return null;
+      return each.every((v) => v!.getText(sf) === each[0]!.getText(sf)) ? each[0] : null;
     };
     // The forms a route is written at hold whether or not the router's rule for them is read.
     if (base.slashes) out.slashes = base.slashes;
@@ -809,15 +824,16 @@ export function routesFromTypeScript(
     path: string,
     node: ts.CallExpression,
     handlers: readonly ts.Node[],
-    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string } } = {},
+    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string }; place?: ts.Node } = {},
   ) => {
-    // A route is placed where its method is named, which in a chain is not where the chain starts.
-    const place = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
+    // A route is placed where its method is named, which in a chain is not where the chain starts; one a function
+    // registers at the path its caller passes, at that call.
+    const place = at.place ?? (ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node);
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
     // Fastify's shorthand takes its options between the path and the handler, or as the only argument after the path.
-    const given = inst.pkg === "fastify" && !at.options ? (handlers.length > 1 ? handlers[0] : handlers.find((h) => fastifyOptions(h as ts.Expression))) : undefined;
-    const options = at.options ?? (given ? (fastifyOptions(given as ts.Expression) ?? null) : undefined);
+    const given = inst.pkg === "fastify" && !at.options ? (handlers.length > 1 ? handlers[0] : handlers.find((h) => routeOptions(h as ts.Expression))) : undefined;
+    const options = at.options ?? (given ? (routeOptions(given as ts.Expression) ?? null) : undefined);
     const routeHandlers = given ? handlers.filter((h) => h !== given) : handlers;
     const dispatch = (prefix: string) => dispatchAt(inst, path, prefix, at.order ?? place, routeHandlers, options);
     const matchers = adonisMatchers(node);
@@ -850,18 +866,27 @@ export function routesFromTypeScript(
    * The literal paths an argument gives: a string, or an array of strings on the routers that take one (Express's
    * `Layer` and @koa/router's `register`); undefined where it gives none the file spells out, said in `limits`.
    */
-  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): string[] | undefined => {
+  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): Array<{ path: string; place?: ts.Node }> | undefined => {
     const u = unwrap(arg);
     const one = stringValue(u);
     if (one !== undefined) {
       span(arg);
-      return [one];
+      return [{ path: one }];
     }
     // A path held in a constant the code spells out, of this file or one it imports, as Nest's are read.
     const held = constants.text(u);
     if (held !== undefined) {
       span(arg);
-      return [held];
+      return [{ path: held }];
+    }
+    // A parameter of a function of the code that every call of it fills with a path the code spells out: each call
+    // registers a route, at the path it passes and where it passes it.
+    const decl = ts.isIdentifier(u) ? declarationOf(u) : undefined;
+    // A call in another file would place its route there; it is not read here, and the limit stays.
+    const passed = decl && ts.isParameter(decl) ? parameterTexts(decl, (e) => stringValue(e) ?? constants.text(e)) : undefined;
+    if (passed && passed.every((p) => p.call.getSourceFile() === sf)) {
+      for (const p of passed) span(p.arg);
+      return passed.map((p) => ({ path: p.text, place: p.call }));
     }
     if (ts.isArrayLiteralExpression(u)) {
       const all = u.elements.map((e) => literalText(e) ?? constants.text(e));
@@ -873,7 +898,7 @@ export function routesFromTypeScript(
       }
       if (all.length && all.every((p) => p !== undefined)) {
         span(arg);
-        return all;
+        return all.map((path) => ({ path }));
       }
     }
     unread(arg, method === "all" ? "*" : method, prefixesOf(inst));
@@ -1023,7 +1048,7 @@ export function routesFromTypeScript(
     if (route && on && express(on)) {
       if (!verbsOf("express").has(name) || !args.length) return;
       // The route `route(path)` makes holds its place among the router's registrations, whichever methods it gets later.
-      for (const path of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: (route.expression as ts.PropertyAccessExpression).name });
+      for (const { path, place } of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: place ?? (route.expression as ts.PropertyAccessExpression).name, place });
       return;
     }
     const inst = instanceAt(callee.expression);
@@ -1062,7 +1087,7 @@ export function routesFromTypeScript(
       const second = unwrap(args[1]!);
       const named = koa(inst) && (ts.isStringLiteralLike(second) || ts.isTemplateExpression(second) || ts.isRegularExpressionLiteral(second));
       if (named && args.length < 3) return;
-      for (const path of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1));
+      for (const { path, place } of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1), { place });
       return;
     }
     if (name === "route" && args.length === 1 && inst.pkg === "fastify" && !ts.isObjectLiteralExpression(unwrap(args[0]!))) {
@@ -1976,6 +2001,9 @@ function springSources(source: Source, config: Config, files: string[], root: st
   return new Map(all.map((f) => [f, source.read(f) ?? ""]));
 }
 
+/** A route's options object, or the objects a conditional chooses between. */
+type FastifyOptions = ts.ObjectLiteralExpression | ts.ObjectLiteralExpression[];
+
 /** The GET routes `constants` makes of a constant's value, which give way to a registration read at the same path. */
 const constantRoutes = new WeakSet<Surface>();
 
@@ -2078,6 +2106,7 @@ export function extractRoutes(
   const codeFiles = new Map<string, Set<string>>();
   const ranges = packageRanges(source);
   const constants = new Constants(source);
+  shareImporters(constants, source, config.exclude);
   /** The routes Next.js serves from the files of a next entry, which its `trailingSlash` redirects to. */
   const nextRoutes: Surface[] = [];
   /** The Spring entries' route files by component, and how their routes treat a trailing `/`. */
