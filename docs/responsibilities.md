@@ -17,6 +17,25 @@ What the agent decides goes only into files the tool reads back: flow files, the
 The tool never writes these files; even a draft goes to standard output, and the agent saves it. So the files
 alone show whether a value came from the code or from a person.
 
+## What the tool's output must be
+
+The tool's part is evidence an agent can judge a flow by, not the judgment. Every reading atlas adds or changes keeps
+four properties:
+
+| Property | What it means | How it shows |
+|---|---|---|
+| General | Read by the rule a technology documents (its reference, its source at the version the repository depends on), not by a heuristic one repository fits. Where the rule depends on something atlas does not read, it is not guessed | the rule is written in `references/config.md` with its source, and a test or fixture pins it |
+| Nothing left out silently | What atlas could not read is named where it stopped: the file, line and expression, and why. A route, call or link the code holds but atlas does not read never just disappears, and an empty source is not read as an empty component | a `limit:` line; `trace` says where a handler is not followed |
+| Nothing counted twice | One fact is one surface, one call, one edge, one finding, at one place, whichever sources read it; a call that fits a route only by the value of an interpolated segment is not counted as that route's caller where another route takes every value | `unique` surfaces and keys; the finding names what it did not count |
+| Normalized | Paths as OpenAPI templates, methods upper-cased, keys stable across commits, so outputs of different frameworks and revisions compare | the schemas in `schema/`, the keys in `references/rules.md` |
+
+Within those, a finding states the facts it rests on (the calls that fit only by value, the route that takes every
+request first, a target whose route sources yielded none), so whoever reads it can weigh them. Deciding what they mean
+for the flow is the agent's, or a person's.
+
+When a reading cannot keep these properties, it is not added: a catch-all handler is named in a limit rather than read
+as a route that serves every path, and a path from a value known only at run time stays unread rather than guessed.
+
 ## What the tool generates
 
 | Output | Command | From |

@@ -14,6 +14,25 @@ pnpm test
 The pre-commit hook runs `pnpm check` and the pre-push hook runs the tests. A pre-push hook of your own in `.git/hooks`
 runs before them, with the same refs, and still runs when `ATLAS_SKIP_TESTS=1` skips the tests. CI runs the same checks.
 
+## Changing what atlas reads
+
+atlas produces evidence for an agent or a person to judge flows by; it does not judge them. A change to what it reads
+keeps the four properties in [docs/responsibilities.md](docs/responsibilities.md#what-the-tools-output-must-be):
+
+- **General.** Follow the technology's documented rule or its source, at the version the repository depends on, and
+  cite it in `skills/flow-atlas/references/config.md`. No rule that only one repository's naming makes true.
+- **Nothing left out silently.** Whatever the new reading cannot settle produces a `limit:` line with the file, line
+  and expression; a test asserts the line. Prefer a limit to a guess: an unread value, a handler that routes by its own
+  code, a route registered another way.
+- **Nothing counted twice.** The same route, call or edge read two ways stays one; a finding is not hidden by a match
+  that holds only by chance, and not duplicated by a second source.
+- **Normalized.** Paths, methods and keys as the schemas in `schema/` give them; a key that changes moves every
+  baseline, so it changes only on purpose.
+
+Then: a misreading found on a real repository becomes a scenario under `fixtures/scenarios` first; the reading goes
+into `docs/direction.md` (what is read, what is not and why) and the reference the skill loads; and the snapshots of
+`fixtures/repositories` are written again when the change moves what atlas read there.
+
 ## Fixtures
 
 | Fixtures | What they check |
