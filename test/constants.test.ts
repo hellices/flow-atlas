@@ -500,6 +500,11 @@ describe("Express paths held in constants of other files", () => {
     const direct = ["function route(path, answer) {", "  app.post(path, answer);", "}", "async function send(body) { return fetch('http://localhost/store/orders', { method: 'POST', body }); }"];
     expect(reached([...direct, "route('/v1/orders', (req, res) => res.send('ok'));"])).toEqual([]);
     expect(reached([...direct, "route('/v1/orders', (req, res) => send(req.body));"])).toEqual(["api|POST /v1/orders -> POST /store/orders"]);
+    const wrapped = ["function route(path, answer) {", "  app.post(path, (answer));", "}", direct[3]!];
+    expect(reached([...wrapped, "route('/v1/orders', (req, res) => res.send('ok'));"])).toEqual([]);
+    // A function a module exports by default under the name of a const is that function.
+    const defaulted = { "api/order.js": `${order.replace("async function order(body)", "const order = async (body) =>").replace(/\{ return (.*); \}$/, "$1;")}\nexport default order;` };
+    expect(reached(["import order from './order';", ...helper, "route('/v1/orders', order);"], defaulted)).toEqual(["api|POST /v1/orders -> POST /store/orders"]);
   });
 
   it("reads an exported helper's routes where every call of it is in its file, and leaves them unread where one is not", () => {

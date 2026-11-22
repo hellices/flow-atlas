@@ -374,8 +374,9 @@ export class Reach {
       return ts.isIdentifier(u) ? named(u, f, parsed) : undefined;
     };
     // A handler the route's call binds (`app.post(path, answer)`) is handed the framework's objects too.
-    if (bound && ts.isIdentifier(start) && isReference(start)) {
-      const given = bound.get(declarationOf(start) as ts.Node);
+    const handler = ts.isExpression(start) ? unwrap(start) : start;
+    if (bound && ts.isIdentifier(handler) && isReference(handler)) {
+      const given = bound.get(declarationOf(handler) as ts.Node);
       const parsed = this.parse(file);
       const target = given && parsed ? functionGiven(given, file, parsed) : undefined;
       const fn = target && (ts.isFunctionLike(target.node) ? target.node : ts.isBlock(target.node) && ts.isFunctionLike(target.node.parent) ? target.node.parent : undefined);

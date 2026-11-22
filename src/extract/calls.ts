@@ -1114,11 +1114,14 @@ function functionCalled(callee: ts.Expression): Callable | undefined {
   return callableOf(d);
 }
 
-function callableOf(node: ts.Node): Callable | undefined {
+function callableOf(node: ts.Node, depth = 0): Callable | undefined {
   if (ts.isFunctionDeclaration(node)) return node.body && !(node.name && reassigned(node.name)) ? node : undefined;
   const init = ts.isVariableDeclaration(node) ? (constDeclaration(node) ? node.initializer : undefined) : ts.isExpression(node) ? node : undefined;
   const fn = init && unwrap(init);
-  return fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) ? fn : undefined;
+  if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return fn;
+  // A name of its module (`export default order`, `const send = order`) is the function it holds, where it holds one.
+  const d = fn && ts.isIdentifier(fn) && depth < 4 ? declarationOf(fn) : undefined;
+  return d && (ts.isFunctionDeclaration(d) || ts.isVariableDeclaration(d)) ? callableOf(d, depth + 1) : undefined;
 }
 
 /** Array methods whose test compares each element with the value given, answering with a boolean or an index. */
