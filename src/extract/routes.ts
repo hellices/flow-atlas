@@ -2228,8 +2228,18 @@ export function extractRoutes(
     if ("why" in slashes) limits.push(`routes ${component}: ${slashes.why}; whether Next.js redirects a request with or without a trailing / is not read, so a call is matched to its route either way`);
     else for (const s of nextRoutes) if (s.component === component) s.dispatch = { ...s.dispatch, slashes: slashes.slashes };
   }
-  // A route two entries both register is one surface, so the document enriches the copy that is kept.
-  const code = unique(preferRegistered(out));
+  // A route two entries both register is one surface, so the document enriches the copy that is kept. A GET route
+  // `constants` made that a registration in another file reads too is that registration's, and counted once.
+  const registeredToo = preferRegistered(out);
+  if (registeredToo.length < out.length) {
+    const kept = new Set(registeredToo);
+    for (const s of out) {
+      if (kept.has(s)) continue;
+      const entry = coverage.find((c) => c.source === `routes ${s.component}`);
+      if (entry) entry.items = Math.max(0, entry.items - 1);
+    }
+  }
+  const code = unique(registeredToo);
   out.length = 0;
   out.push(...code);
   // The document the configuration chooses for a component goes first, so its operationIds and places win.

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { Constants } from "../src/extract/constants.js";
 import { extractRoutes } from "../src/extract/routes.js";
+import type { Coverage } from "../src/model.js";
 import type { Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -427,8 +428,10 @@ describe("Express paths held in constants of other files", () => {
   it("keeps the registration, not the constant, where `constants` names a constant another file registers", () => {
     const files = { "api/src/a-paths.ts": "export const itemsPath = '/items';", "api/src/b.ts": "import { itemsPath } from './a-paths';\napp.get(itemsPath, h);" };
     const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"], constants: "Path$" }] });
-    const routes = extractRoutes(memory(files), config, undefined, [], []);
+    const coverage: Coverage[] = [];
+    const routes = extractRoutes(memory(files), config, undefined, coverage, []);
     expect(routes.map((s) => `${s.method} ${s.path} @${s.at.file}:${s.at.line}`)).toEqual(["GET /items @api/src/b.ts:2"]);
+    expect(coverage).toEqual([{ source: "routes api", files: 2, items: 1 }]);
   });
 });
 
