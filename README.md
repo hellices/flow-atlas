@@ -304,9 +304,11 @@ atlas baseline update                         # accept the current findings as k
 |---|---|
 | [SKILL.md](skills/flow-atlas/SKILL.md) | how an agent uses atlas |
 | [config.md](skills/flow-atlas/references/config.md) | the configuration, and every rule the extractors follow |
-| [rules.md](skills/flow-atlas/references/rules.md) | each finding's causes and fixes |
+| [rules.md](skills/flow-atlas/references/rules.md) | handling a finding, and each rule's causes and fixes |
 | [boundaries.md](skills/flow-atlas/references/boundaries.md) | judging whether a hop belongs to its component, and whether a journey's step is missing |
 | [openapi.md](skills/flow-atlas/references/openapi.md) | producing and reading OpenAPI documents |
+| [flows.md](skills/flow-atlas/references/flows.md) | writing flows, and walking a journey against the code |
+| [output.md](skills/flow-atlas/references/output.md) | reading limits, findings, counts and traces; JSON, SARIF and Arazzo output |
 | [docs/traces.md](docs/traces.md) | how traces connect calls, routes and handlers |
 | [docs/direction.md](docs/direction.md) | the scope, the research it rests on, and the extensions left open |
 | [docs/responsibilities.md](docs/responsibilities.md) | what atlas, agents and people each decide |

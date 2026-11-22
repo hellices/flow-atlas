@@ -6,6 +6,39 @@ calls or surfaces with a similar path, which usually tells a typo from a missing
 Each rule reports facts from configured files only. A key identifies a finding across commits, so the
 baseline and exceptions refer to it.
 
+## Handling a finding
+
+Run `atlas explain <key>` before deciding: it shows the calls or surfaces of a similar path. A candidate whose handler
+does the same work under another path means one side was renamed; fix the side the contract or the other callers
+disagree with. With no such candidate, the route or the caller is missing, or atlas does not read it (see the `limit:`
+lines and `output.md`): open the code to tell which. A call is pointed at a candidate only when its handler does the
+same work, not because its path is close. Then decide whether it is a defect, a plan or a false positive
+(`boundaries.md`):
+
+- Fix it when the finding is the bug: wire the missing caller, remove the dead route, add the producer, point the
+  call at the served path. The rules below list the usual causes.
+- When the code is right on purpose, add an exception that names the decision:
+
+  ```yaml
+  # flows/atlas-exceptions.yaml (or <out>/exceptions.yaml)
+  - rule: FA001
+    key: FA001|orders|GET /orders/{id}/history
+    reason: The service ships first; the app screen follows in the next release.
+    decidedBy: docs/orders.md#history
+    reviewBy: 2026-12-31
+  ```
+
+  Surfaces served to clients outside the repository go into `publicSurfaces` in the configuration.
+- When the finding is wrong: if the configuration caused it (a missing call file, prefix or mount), correct the
+  configuration. If atlas misread a file, add an exception whose reason says which file and how it was misread,
+  and report the misreading so the extractor can be fixed. A rule that is mostly wrong for the repository is switched
+  off there (`rules.<id>.enabled: false`) with a person's agreement.
+
+`atlas baseline update` runs only when a person asks for it after seeing the findings it would accept. A request for
+the outcome ("only show new problems from now on") is not that: show the findings, say which you think are debt,
+defects or misreadings, and wait for the person to say "record the baseline". Generated code stays as generated; a
+finding there is fixed in its source or excepted.
+
 ## FA001 surface with no caller in the repository
 
 Key `FA001|<component>|<METHOD> <path>`.
