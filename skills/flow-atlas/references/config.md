@@ -175,12 +175,7 @@ a parameter (`` fetch(`/api${path}`) ``, the text not ending in `/`), hands that
 passed a path from the root wherever the code passes it text, puts that text before each of those paths: its URL is
 read before them, not as a request of its own, and a limit names it. Where it requests that URL through a client
 whose base atlas reads (below), or hands the parameter itself to one (`` (url) => api.get(url) ``), the paths passed to
-it are that client's requests, joined to its base. A value of a URL that is a parameter of a function the code
-declares and names, which every use of the function calls with text the code spells out there (a literal or a
-constant; the function neither handed on as a value nor its parameter written to), is that text: the URL is one
-request per call, placed where the call passes it (`` fetch(`${base}/${route}`) `` with `send("shares")` and
-`send("upload-tickets")`). Where any call passes a value, or a path from the root (read where it is written, as
-above), the value stays a hole. A path with a hole (`` `/orders/${id}` ``), another base, or text after the value is
+it are that client's requests, joined to its base. A path with a hole (`` `/orders/${id}` ``), another base, or text after the value is
 still a request. A path that already starts with the base still gets it, since a service may nest the same segment; the
 base itself, written as a value (`baseUrl: "/api/v1/"`, `this.baseUrl = options.baseUrl || "/api"`, `` `${API}/api/v1` ``),
 is no request, and a limit names where.
@@ -229,11 +224,9 @@ registers nothing, and a limit
 names its file, line and expression; a Nest path held in a constant is read, as below, and so is the path an Express,
 @koa/router or Fastify registration, or a TypeScript registration helper, takes from constants the same way
 (`` app.get(`${C.API_PREFIX}/items`, h) `` with `C` a module that exports `API_PREFIX = "/api"`), while a value only
-known at run time (`process.env.X`) stays unread with the limit. A parameter is read as the path every call of its
-function passes, where the function is one the code declares and names, every use of it is a call in the same file
-that passes a path the code spells out there, and the parameter is not written to: each call registers a route at its path, placed where
-it passes it (`` function route(path, answer) { app.post(path, ...) } `` with `route("/v1/orders", order)`); otherwise
-it stays unread with the limit. A `const` of the file named in
+known at run time (`process.env.X`, a parameter) stays unread with the limit. A path held in a function's parameter
+is its callers' to give, and atlas does not follow them: the limit names the function, to declare in the entry's
+`calls` with the position of its path (`{ name: route, pathArg: 0, method: POST }`), which reads each call of it. A `const` of the file named in
 `constants` is read as a GET route at its value, for a path no registration reads (a server-sent events stream); a GET
 registered at it is that route, kept once at the registration. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
