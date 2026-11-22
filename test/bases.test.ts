@@ -344,9 +344,66 @@ describe("prefixes a type or a helper puts before its paths", () => {
       calls: ["DELETE /api/projects/{} @6", "GET /api/projects @5"],
       limits: ["calls web->api: /api, which a function puts before the path it is given (web/a.js:2), is read before the paths passed to it, not as a request of its own"],
     });
-    // A segment after `/` is no path, and a function given other text is no helper of paths.
+    // A segment after `/` is no path, and a function given other text is no helper of paths: the text its every call
+    // passes is read in its place, as the code sends it.
     expect(read({ "web/a.js": "export const one = (id) => fetch(`/users/${id}`);\none(\"/x\");" })).toEqual({ calls: ["* /x @2", "GET /users/{} @1"], limits: [] });
-    expect(read({ "web/a.js": code('request("projects");') })).toEqual({ calls: ["* /api{} @2"], limits: [] });
+    expect(read({ "web/a.js": code('request("projects");') })).toEqual({ calls: ["* /apiprojects @5"], limits: [] });
+  });
+
+  it("reads a value of a URL as the text every call of its function passes there, one request per call", () => {
+    const code = (callers: string[]) =>
+      [
+        "export function make(baseUrl) {",
+        "  const base = `${baseUrl}/store/v2`;",
+        "  function send(route, body) {",
+        '    return fetch(`${base}/${route}`, { method: "POST", body });',
+        "  }",
+        "  return {",
+        ...callers,
+        "  };",
+        "}",
+      ].join("\n");
+    expect(read({ "web/a.js": code(['    share: (b) => send("shares", b),', '    ticket: (b) => send("upload-tickets", b),']) })).toEqual({
+      calls: ["POST /store/v2/shares based @7", "POST /store/v2/upload-tickets based @8"],
+      limits: [],
+    });
+    // A call that passes a value, or the function handed on, leaves what the parameter holds unread.
+    expect(read({ "web/a.js": code(['    share: (b) => send("shares", b),', "    any: (r, b) => send(r, b),"]) }).calls).toEqual(["POST /store/v2/{} based @4"]);
+    expect(read({ "web/a.js": code(['    share: (b) => send("shares", b),', "    send,"]) }).calls).toEqual(["POST /store/v2/{} based @4"]);
+    expect(read({ "web/a.js": 'const send = function go(seg) {\n  fetch(`/api/${seg}`);\n  later(go);\n};\nsend("a");' }).calls).toEqual(["GET /api/{} @2"]);
+    // A URL with a host is not filled in: the value stays the leading value it was.
+    expect(read({ "web/a.js": 'function get(u) { return fetch(`${u}/items`); }\nget("https://api.example");' }).calls).toEqual(["GET /items based @1"]);
+    // A base filled so is still the base of the URLs built on it, and a URL a const holds takes the method of its uses.
+    expect(read({ "web/a.js": "function make(svc) {\n  const base = `/${svc}/v2`;\n  return fetch(`${base}/x`);\n}\nmake('store');" }).calls).toEqual(["GET /{}/v2/x @3"]);
+    // Branches of a conditional the calls fill are read each on its own.
+    expect(read({ "web/a.js": "function send(a, b) {\n  fetch(flag ? `/api/${a}` : `/api/${b}`);\n}\nsend('shares', 'orders');" }).calls).toEqual(["GET /api/orders @4", "GET /api/shares @4"]);
+    expect(read({ "web/a.js": "function send(kind) {\n  fetch(flag ? `/api/${kind}` : `/api/${kind}`);\n}\nsend('shares');" }).calls).toEqual(["GET /api/shares @4"]);
+    // A module imported whole may hand the function on without naming it.
+    const helper = "export function send(kind) {\n  return fetch(`/api/${kind}`);\n}\nsend('shares');";
+    expect(read({ "web/a.js": helper, "web/b.js": "import * as helpers from './a';\nlater(helpers);" }).calls).toEqual(["GET /api/{} @2"]);
+    expect(read({ "web/a.js": helper, "web/b.js": "later(import('./a'));" }).calls).toEqual(["GET /api/{} @2"]);
+    // Through a tsconfig alias, or a module that re-exports all of it.
+    const tsconfig = JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@net": ["web/a.js"] } } });
+    expect(read({ "tsconfig.json": tsconfig, "web/a.js": helper, "web/b.js": "import * as net from '@net';\nlater(net);" }).calls).toEqual(["GET /api/{} @2"]);
+    expect(read({ "web/a.js": helper, "web/index.js": "export * from './a';", "web/b.js": "import { send } from './index';\nsend(kind);" }).calls).toEqual(["GET /api/{} @2"]);
+    expect(read({ "web/a.js": helper, "web/b.js": "import /* all */ * as helpers from './a';\nlater(helpers);" }).calls).toEqual(["GET /api/{} @2"]);
+    expect(read({ "web/a.js": helper, "web/b.js": "later(require( // the module\n  './a'));" }).calls).toEqual(["GET /api/{} @2"]);
+    // A call found through the module and through a module that re-exports it is one call.
+    expect(read({ "web/a.js": helper, "web/index.js": "export * from './a';", "web/b.js": "import { send } from './index';\nsend('orders');" }).calls).toEqual(["GET /api/orders @2", "GET /api/shares @4"]);
+    // One call that passes the same text to both branches is one request.
+    expect(read({ "web/a.js": "function send(a, b) {\n  fetch(flag ? `/api/${a}` : `/api/${b}`);\n}\nsend('shares', 'shares');" }).calls).toEqual(["GET /api/shares @4"]);
+  });
+
+  it("reads a filled request only where the call that fills it is in the call source's files, and says where it is not", () => {
+    const files = {
+      "web/a.js": "export function send(kind) {\n  return fetch(`/api/${kind}`);\n}\nsend('shares');",
+      "worker/t.js": "import { send } from '../web/a';\nsend('jobs');",
+    };
+    expect(read(files)).toEqual({
+      calls: ["GET /api/shares @4"],
+      limits: ["calls web->api: a function of these files is called from files the call source does not read, which fill its URL; those requests are not read here: worker/t.js:2"],
+    });
+    expect(read({ "web/a.js": "function send(kind) {\n  const url = `/items/${kind}`;\n  return fetch(url, { method: 'POST' });\n}\nsend('a');\nsend('b');" }).calls).toEqual(["POST /items/a @5", "POST /items/b @6"]);
   });
 });
 
