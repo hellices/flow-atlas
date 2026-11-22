@@ -4,7 +4,7 @@ description: Map and check cross-component HTTP flows in a monorepo with the det
 license: MIT
 compatibility: Requires Node.js 20+ and the atlas CLI from this repository (npx github:hellices/flow-atlas, or npm install -g github:hellices/flow-atlas). Reads git; writes only to --out.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   schema: flow-atlas.dev/v1alpha1
 ---
 
