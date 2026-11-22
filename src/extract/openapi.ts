@@ -176,3 +176,49 @@ export function definitions(file: string, text: string, name: string, parsed?: M
   });
   return out;
 }
+
+/**
+ * A method annotation that maps requests, by the names the frameworks atlas reads give them: Spring's
+ * `@RequestMapping`, `@GetMapping` and the like and `@HttpExchange`, `@GetExchange` and the like; JAX-RS's `@GET` and
+ * the like and `@Path`; Micronaut's `@Get` and the like. Another library's `@Mapping` (MapStruct's) is not one.
+ */
+const JVM_MAPPING = /@(?:[\w$]+\.)*(?:(?:Request|Get|Post|Put|Delete|Patch)Mapping|(?:Http|Get|Post|Put|Delete|Patch)Exchange|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Path|Get|Post|Put|Delete|Patch|Head|Options)\b(?![\w$])/;
+/** A type annotation that makes its methods request handlers or prefixes their paths. */
+const JVM_HANDLER_TYPE = /@(?:[\w$]+\.)*(?:Controller|RestController|RequestMapping|HttpExchange|Path)\b(?![\w$])/;
+
+const count = (s: string, c: string): number => s.split(c).length - 1;
+
+/**
+ * Whether the Java or Kotlin method declared at `line` (1-based) is written as a request handler: it carries a mapping
+ * annotation, on its line or the lines of annotations above it, or the nearest type declared before it carries a
+ * controller or mapping annotation. A method of a service or a repository with the operation's name is not.
+ */
+export function jvmHandler(text: string, line: number): boolean {
+  const lines = text.split("\n");
+  // A line's code: string literals emptied and comments taken out, so `// @GetMapping` or "@GetMapping" names nothing.
+  const clean = (l: string) => l.replace(/"""[^]*?"""|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, '""').replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "");
+  const annotations = (at: number): string => {
+    // The declaration's own line and the annotations above it, blank lines between them included, an annotation's
+    // arguments spanning lines followed to its `@`; anything else before them (a statement, another declaration, a
+    // Kotlin function with an expression body) ends them.
+    const own = [clean(lines[at - 1] ?? "")];
+    let open = 0;
+    for (let i = at - 2; i >= 0; i--) {
+      const l = clean(lines[i]!).trim();
+      if (!l) continue;
+      const closes = count(l, ")") - count(l, "(");
+      // A line of annotations followed by a declaration (`@GetMapping("/a") fun a() = ...`) is another declaration's.
+      let rest = l;
+      for (let m = /^@[\w$.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?\s*/.exec(rest); m?.[0]; m = /^@[\w$.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?\s*/.exec(rest)) rest = rest.slice(m[0].length);
+      if (!open && (l.startsWith("@") ? rest !== "" && !rest.startsWith("@") : closes <= 0)) break;
+      own.unshift(l);
+      open = Math.max(0, open + closes);
+    }
+    return own.join("\n");
+  };
+  if (JVM_MAPPING.test(annotations(line))) return true;
+  for (let i = line - 1; i >= 1; i--) {
+    if (/\b(?:class|interface|object)\s+[A-Za-z_$]/.test(clean(lines[i - 1]!))) return JVM_HANDLER_TYPE.test(annotations(i));
+  }
+  return false;
+}

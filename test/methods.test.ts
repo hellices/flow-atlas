@@ -168,6 +168,36 @@ describe("the method given as a value before or around the URL", () => {
     });
   });
 
+  it("reads urllib's Request and urlopen as GET without data and POST with data written out, unless a method is stated", () => {
+    const code = lines(
+      "import urllib.request",
+      "from urllib.request import Request, urlopen",
+      "from urllib import request as ur",
+      'urllib.request.Request(f"{API}/a", data=b"{}")',
+      'Request(f"{API}/b")',
+      'ur.Request(f"{API}/c", json.dumps(body).encode())',
+      'urlopen(f"{API}/d", data=payload)',
+      'urllib.request.Request(f"{API}/e", data=None, method="PUT")',
+      'urlopen(f"{API}/f")',
+    );
+    expect(read({ "web/a.py": code })).toEqual({
+      calls: ["* /d @7", "GET /b @5", "GET /f @9", "POST /a @4", "POST /c @6", "PUT /e @8"],
+      limits: [],
+    });
+    // Under the names an import gives them.
+    const aliased = lines("from urllib.request import urlopen as open_url, Request as Req", 'open_url(f"{API}/g")', 'Req(f"{API}/h", data=b"x")');
+    expect(read({ "web/b.py": aliased })).toEqual({ calls: ["GET /g @2", "POST /h @3"], limits: [] });
+    // Data that may be None, and unpacked arguments that may give data or a method, settle nothing.
+    const unsure = lines("from urllib.request import Request", 'Request(f"{API}/i", data=(payload))', 'Request(f"{API}/j", headers={}, **options)', 'Request(f"{API}/k", build())');
+    expect(read({ "web/c.py": unsure })).toEqual({ calls: ["* /i @2", "* /j @3", "* /k @4"], limits: [] });
+    // urlopen with data written out is POST; a method given in its sixth place is Request's; an import may end in a comment.
+    const more = lines("from urllib.request import Request, urlopen  # stdlib", 'urlopen(f"{API}/l", b"x")', 'Request(f"{API}/m", None, {}, None, False, "DELETE")');
+    expect(read({ "web/d.py": more })).toEqual({ calls: ["DELETE /m @3", "POST /l @2"], limits: [] });
+    // The later import of a name binds it; an import written in a docstring imports nothing.
+    const rebound = lines('"""from urllib.request import urlopen"""', "from urllib.request import Request", "from requests import Request", 'Request("GET", f"{API}/n")', 'urlopen(f"{API}/o")');
+    expect(read({ "web/e.py": rebound })).toEqual({ calls: ["* /o @5", "GET /n @4"], limits: [] });
+  });
+
   it("reads net/http's request methods and constants by the name the file imports it under", () => {
     const code = lines(
       "package users",

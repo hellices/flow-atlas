@@ -250,6 +250,18 @@ names in the repository are relative to the root.
 
 ## Reading the output
 
+atlas reports evidence, not verdicts: what the code settles under each technology's documented rules, and where it
+stopped. Judging what the evidence means for a flow (a defect, a plan, a misreading) is yours, or a person's.
+
+- Every `limit:` line names where reading stopped and why, with the file, line and expression. A chain or a finding
+  ends there, not because nothing follows: open the code at that place before concluding anything, and fix the
+  configuration if it is the cause. Do not write what you read there into a flow file; atlas would not check it.
+- A finding's message carries the facts it rests on: a call that fits a route only by the value of an interpolated
+  segment while another route takes every value, a target whose route sources yielded no route, the earlier route
+  that takes every request. Weigh those facts; a finding is where to look, not what to do.
+- Each fact is reported once, under one key, at one place: the same route read from two sources is one surface, an
+  edge is joined once with its evidence. Count findings and chains as atlas lists them; do not add them up again from
+  `scan`, `query` and `trace` output.
 - `atlas check` starts and ends with the counts. Its last line splits the calls: matched, unserved (FA002), not
   decided (a `limit:` line says why), not taken for requests, and not checked (no route source for the target, or FA002 off).
   Only "unserved" is a finding. Calls listed as reaching a route only an OpenAPI document declares go to a route the
@@ -258,9 +270,11 @@ names in the repository are relative to the root.
 - Finding status: `new` is yours; `baseline` is accepted debt; `excepted` is covered; `expired-exception` needs a person.
 - In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
-  the handler calls (evidence `name`), or, for a Spring page, made by the template its view name renders (`via view
+  the handler calls (evidence `name`; a Python handler a decorator registers joins only so, one call deep), or, for a
+  Spring page, made by the template its view name renders (`via view
   <name>`) or sent by the client that follows its redirect (`via redirect`). A `~` by name through a generic name
-  (`get`, `send`) needs a look at the code.
+  (`get`, `send`) needs a look at the code. Where a trace says a handler is not followed, or a `limit:` says a
+  component's chains stop at its surfaces, what its handlers call is not in atlas's output.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
 - Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a

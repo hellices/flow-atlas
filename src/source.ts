@@ -14,9 +14,18 @@ export interface Source {
 
 const isoSeconds = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, "Z");
 
+/**
+ * A file the globs select: one a pattern matches and no `!` pattern takes out. picomatch alone would match a file
+ * either the plain patterns or a negated one fits, so `!test/**` would select every file outside `test/`.
+ */
 export function matcher(globs: string[]): (path: string) => boolean {
-  if (globs.length === 0) return () => false;
-  return picomatch(globs, { dot: true });
+  const positive = globs.filter((g) => !g.startsWith("!"));
+  const negative = globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1));
+  if (positive.length === 0) return () => false;
+  const include = picomatch(positive, { dot: true });
+  if (negative.length === 0) return include;
+  const exclude = picomatch(negative, { dot: true });
+  return (path) => include(path) && !exclude(path);
 }
 
 function isGitRepo(root: string): boolean {

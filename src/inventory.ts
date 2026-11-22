@@ -401,8 +401,10 @@ export function inventoryText(inv: Inventory): string {
   lines.push("", "client call candidates (paths joined to a base, fetch paths, path: and url: properties, a path then a method, verb calls on Angular's HttpClient and axios)");
   for (const [component, files] of byComponent) {
     const total = files.reduce((n, f) => n + f.count, 0);
-    lines.push(`  ${component}: ${total} in ${files.length} files`);
-    for (const f of [...files].sort((a, b) => b.count - a.count).slice(0, 8)) lines.push(`    ${f.count}  ${f.example}`);
+    const shown = [...files].sort((a, b) => b.count - a.count).slice(0, 8);
+    const rest = files.length - shown.length;
+    lines.push(`  ${component}: ${total} in ${files.length} file${files.length === 1 ? "" : "s"}${rest ? ` (the ${shown.length} with the most below, ${rest} more not listed)` : ""}`);
+    for (const f of shown) lines.push(`    ${f.count}  ${f.example}`);
   }
   lines.push("", "OpenAPI descriptions (component, kind, location, how found)");
   for (const d of inv.apiDocuments) lines.push(`  ${d.component}  ${d.kind}  ${d.location}  ${d.convention}  ${d.at.file}:${d.at.line}`);

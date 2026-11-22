@@ -40,6 +40,14 @@ an outbound call in two ways:
 The second covers ports and adapters: the handler calls `deps.backend.getOrder()` and the adapter's `getOrder` makes
 the HTTP request. Because it joins by name, a link through a common name such as `get` or `send` is worth opening.
 
+A Python handler, where a decorator registers it on its `def` (FastAPI's, Flask's) or a document's operation is placed
+at it, joins by `name` only: the requests in that function and in the functions its body calls, one call deep. What
+the body runs as it runs counts (a class statement's body, a lambda's default arguments); a function or lambda it
+declares counts only where it calls it, and a default argument of its own runs when the module loads. One
+registered another way (`add_api_route`, `add_url_rule`, a URLconf, a class-based view) is not followed, and `trace`
+says so. Handlers in other languages are not followed into their calls; a component none of whose handlers is followed
+gets one `limit:` line saying its chains stop at its surfaces.
+
 ## Requests a page offers next
 
 - **Spring.** For a Spring page, the requests in the template its view name renders are its outbound calls

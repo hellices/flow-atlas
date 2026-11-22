@@ -1,8 +1,9 @@
 import type { Config } from "./config.js";
 import { routedComponents, ruleEnabled } from "./config.js";
-import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes } from "./match.js";
+import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes, takes } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { isRedirect, surfaceId } from "./model.js";
+import { HOLE, isFixed, methodsMatch, pathCovers, segments } from "./paths.js";
 
 /** Titles only. What to do about a finding is decided by whoever reads it; guidance lives with the skill. */
 export const RULES: Record<Finding["rule"], { title: string }> = {
@@ -15,6 +16,37 @@ export const RULES: Record<Finding["rule"], { title: string }> = {
 
 function finding(rule: Finding["rule"], key: string, message: string, at: Finding["at"]): Finding {
   return { rule, key: `${rule}|${key}`, title: RULES[rule].title, message, at };
+}
+
+/** Whether a call fits a route's fixed text only where a whole segment of the call is an interpolated value (`/x/${id}` and `/x/summary`), not where the call writes the text (`/x/summary${query}`). */
+function byValueOnly(routePath: string, call: string): boolean {
+  const r = segments(routePath);
+  return segments(call).some((part, i) => part === HOLE && r[i] !== undefined && isFixed(r[i]));
+}
+
+/**
+ * Whether a route of the same component other than `s`, of a method the call may send and every method `s` serves,
+ * fits every path the call stands for, segment for segment. A catch-all (`*path`, `/**`, an application's fallback)
+ * fits every path there is, so it says nothing of which one the call means. Which of the two a request of the very
+ * text `s` names reaches is its router's order; what is asserted is only that the call does not name `s`'s path.
+ */
+function coveredElsewhere(surfaces: Graph["surfaces"], s: Graph["surfaces"][number], c: Graph["calls"][number]): boolean {
+  const length = segments(c.path).length;
+  const catchAll = (path: string) => segments(path).some((seg) => seg === "*" || seg === "**" || seg.startsWith("{*") || /:path\}$/.test(seg));
+  return surfaces.some(
+    (o) =>
+      o !== s &&
+      o.component === s.component &&
+      methodsMatch(o.method, c.method) &&
+      (o.method === "*" || o.method.toUpperCase() === s.method.toUpperCase()) &&
+      // A route taken only with headers the call may not send is not shown to take it.
+      !o.dispatch?.constrained &&
+      segments(o.path).length === length &&
+      !catchAll(o.path) &&
+      pathCovers(o.path, c.path, o.patterns) &&
+      // As its router takes a request, trailing `/` included (strict routing, a path served only with the `/`).
+      (!(o.dispatch?.slashes || o.dispatch?.trailing) || takes(o, c.path, !!c.slash)),
+  );
 }
 
 /** `component|METHOD /path` entries; `*` matches within one segment, `**` across segments. */
@@ -72,7 +104,25 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
     graph.surfaces.forEach((s, i) => {
       if (s.implicit || !called.has(s.component) || documents.has(`${s.component}|${s.path}`)) return;
       const id = surfaceId(s);
-      if (isPublic(id) || callersOf.has(i) || mayBeCalled.has(s)) return;
+      if (isPublic(id) || mayBeCalled.has(s)) return;
+      const callers = callersOf.get(i);
+      if (callers) {
+        // A call that fits this route only by the value of an interpolated segment, where another route takes every
+        // value of it, names no path of this route: shown as the evidence, not counted as a caller.
+        const byValue = callers.filter((c) => byValueOnly(s.path, c.path) && coveredElsewhere(graph.surfaces, s, c));
+        if (byValue.length < callers.length) return;
+        const list = byValue.slice(0, 3).map((c) => `${c.from} calls ${c.method} ${c.path} (${c.at.file}:${c.at.line})`).join(", ");
+        const more = byValue.length > 3 ? ` and ${byValue.length - 3} more` : "";
+        out.push(
+          finding(
+            "FA001",
+            id,
+            `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and the path of another route fits every value of that segment: ${list}${more}; whether one sends this path is not in the code.`,
+            [s.at, ...byValue.slice(0, 3).map((c) => c.at)],
+          ),
+        );
+        return;
+      }
       const by = shadowed.get(i);
       const why = by
         ? ` No request reaches it: ${by.method === "*" ? "any method" : by.method} ${by.path} (${by.at.file}:${by.at.line}), registered before it, takes every request it fits.`
@@ -82,8 +132,10 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
   }
 
   if (ruleEnabled(config, "FA002")) {
-    // Components whose routes are configured: a call to one is checked even when none of its routes is left.
+    // Components whose routes are configured: a call to one is checked even when none of its routes is left, so a
+    // change that takes them all away shows at its callers. The finding says when none was read.
     const served = routedComponents(config);
+    const read = new Set(graph.surfaces.map((s) => s.component));
     // An edge none of whose calls is taken for a request to its target is more likely configured wrong (a prefix or
     // base left out, the wrong target) than written wrong everywhere; FA002 checks none of them, so a limit says so.
     const taken = new Map<string, { calls: number; taken: number }>();
@@ -93,15 +145,20 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
       edge.calls++;
       if (!unmatched(i) || plausibleRequest(graph, c)) edge.taken++;
       if (!unmatched(i) || !plausibleRequest(graph, c)) return;
+      const none = read.has(c.to) ? "" : ` No route of ${c.to} is read: its route sources yielded none (a limit says what they left out).`;
       out.push(
-        finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.`, [c.at]),
+        finding("FA002", `${c.from}->${c.to}|${c.method} ${c.path}`, `${c.from} calls ${c.method} ${c.path} on ${c.to}, which serves no matching route.${none}`, [c.at]),
       );
     });
-    for (const [edge, n] of taken)
-      if (n.calls > 0 && n.taken === 0)
-        limits.push(
-          `calls ${edge}: none of its ${n.calls} calls joins a base address or starts with a first segment ${edge.split("->")[1]} serves, so FA002 checks none of them; if they are requests, a prefix or base is missing from the configuration`,
-        );
+    for (const [edge, n] of taken) {
+      if (n.calls === 0 || n.taken > 0) continue;
+      const to = edge.split("->")[1];
+      limits.push(
+        n.calls === 1
+          ? `calls ${edge}: its call joins no base address and does not start with a first segment ${to} serves, so FA002 does not check it; if it is a request, a prefix or base is missing from the configuration`
+          : `calls ${edge}: none of its ${n.calls} calls joins a base address or starts with a first segment ${to} serves, so FA002 checks none of them; if they are requests, a prefix or base is missing from the configuration`,
+      );
+    }
   }
 
   if (ruleEnabled(config, "FA003")) {

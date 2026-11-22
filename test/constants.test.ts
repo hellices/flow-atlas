@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { Constants } from "../src/extract/constants.js";
 import { extractRoutes } from "../src/extract/routes.js";
+import type { Coverage } from "../src/model.js";
 import type { Source } from "../src/source.js";
 
 const memory = (files: Record<string, string>): Source => ({
@@ -400,6 +401,37 @@ describe("constants read across files", () => {
       probeIgnored: undefined,
       probeOther: undefined,
     });
+  });
+});
+
+describe("Express paths held in constants of other files", () => {
+  it("reads a registration's path from a constant this file or one it imports spells out, and leaves a run-time value unread", () => {
+    const files = {
+      "api/src/paths.ts": "export const API_PREFIX = '/api';\nexport const ROUTES = { items: '/items' } as const;",
+      "api/src/app.ts": [
+        "import express from 'express';",
+        "import * as C from './paths';",
+        "import { API_PREFIX, ROUTES } from './paths';",
+        "const app = express();",
+        "app.get(`${C.API_PREFIX}/health`, h);",
+        "app.post(API_PREFIX + ROUTES.items, h);",
+        "app.get([`${API_PREFIX}/a`, '/b'], h);",
+        "app.get(process.env.PATH_X, h);",
+      ].join("\n"),
+    };
+    const limits: string[] = [];
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"] }] });
+    expect(extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/health", "POST /api/items", "GET /api/a", "GET /b"]);
+    expect(limits).toEqual(["routes api: api/src/app.ts:8 registers a path the file does not spell out (process.env.PATH_X); its routes are not read"]);
+  });
+
+  it("keeps the registration, not the constant, where `constants` names a constant another file registers", () => {
+    const files = { "api/src/a-paths.ts": "export const itemsPath = '/items';", "api/src/b.ts": "import { itemsPath } from './a-paths';\napp.get(itemsPath, h);" };
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"], constants: "Path$" }] });
+    const coverage: Coverage[] = [];
+    const routes = extractRoutes(memory(files), config, undefined, coverage, []);
+    expect(routes.map((s) => `${s.method} ${s.path} @${s.at.file}:${s.at.line}`)).toEqual(["GET /items @api/src/b.ts:2"]);
+    expect(coverage).toEqual([{ source: "routes api", files: 2, items: 1 }]);
   });
 });
 

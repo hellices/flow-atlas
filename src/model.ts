@@ -64,7 +64,7 @@ export interface Surface {
   describedPath?: string;
   /** That document's version: `2.0` for Swagger, otherwise its `openapi` value. */
   describedVersion?: string;
-  /** Member methods the handler calls, following local and relatively imported functions. */
+  /** Member methods the handler calls, following local and relatively imported functions; for a Python handler, its function and those its body calls, one call deep. */
   reaches?: string[];
   /**
    * Served by the framework with no handler written for it, as Next.js answers HEAD with GET's handler and OPTIONS
@@ -289,6 +289,10 @@ export interface Coverage {
   source: string;
   files: number;
   items: number;
+  /** Of `files`, the OpenAPI documents a routes entry reads (`routes[].openapi`), the rest being code. */
+  documents?: number;
+  /** Of `items`, the routes those documents add beyond the code's. */
+  documented?: number;
   /** Calls that reach a surface of their target. */
   matched?: number;
   /** Calls a surface of the same component leads to, so a trace can continue through them. */

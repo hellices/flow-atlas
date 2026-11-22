@@ -33,7 +33,7 @@ calls:
 limits:
   - "calls app->server: URLs resolved against a base held in a value (new URL(path, base)), whose host the code does not state, are not read: app/utils/license.ts:4"
   - "calls front->server: URLs to docs.example.com (front/src/modules/support/getDocumentationUrl.ts:7) are not read as requests to server"
-  - "calls front->server: none of its 1 calls joins a base address or starts with a first segment server serves, so FA002 checks none of them"
+  - "calls front->server: its call joins no base address and does not start with a first segment server serves, so FA002 does not check it"
 descriptions:
   - server none - NoneFound
 inventory:

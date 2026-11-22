@@ -18,7 +18,12 @@ reaches"), so a route that an earlier one of its router always answers for is re
 route that takes its requests. A route that a call of unread method may reach, among routes of several methods, is not
 reported, nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than
 GET or HEAD, one a call reaches only after its router's trailing-slash redirect, or one taken only with headers that
-meet its constraints (Fastify's); a `limit:` line names that call. A route the framework serves by itself (`implicit`:
+meet its constraints (Fastify's); a `limit:` line names that call. A call whose interpolated segment fits a route's
+fixed text (`/api/x/${id}` and `GET /api/x/summary`), where the path of another route of the target fits every value
+there, its router takes the call there as it ends (with or without a trailing `/`, under strict routing) and it serves
+the same method (`GET /api/x/{name}`; a catch-all, which fits every path, and a route taken only with headers do not
+count), names no path of that route: if no other call does, the route is reported, and the finding lists those calls,
+since whether one sends that value is not in the code. A route the framework serves by itself (`implicit`:
 FastAPI's OpenAPI document, Flask's static files route, the files Gin's `Static*` and net/http's `FileServer` serve,
 Spring Boot's error page and static resources, Next.js's public
 files and build files) is
@@ -36,7 +41,8 @@ Fix: add or wire the caller, or remove the route. If a client outside the reposi
 Key `FA002|<from>-><to>|<METHOD> <path>`.
 
 A configured call site whose request matches no route of its target. Reported only when the target has route
-sources in the configuration (even if none of its routes is left) and the request is clearly a path on that target:
+sources in the configuration (even if none of its routes is left, so a change that takes them all away shows at the
+callers; the finding then says no route of the target was read) and the request is clearly a path on that target:
 it starts from a base address, or its first segment is one the target serves. When no call of a `from->to` entry is
 such a path, a `limit:` line says FA002 checked none of them: a prefix or base left out of the configuration does that.
 

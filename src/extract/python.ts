@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { closingParen, pythonArg, pythonArgStarts, pythonStrings } from "./routes.js";
+import { closingParen, pythonArg, pythonArgStarts, pythonCode, pythonStrings } from "./routes.js";
 
 /**
  * What the readers of Python web frameworks (FastAPI, Flask) share: the functions of a file and the names they bind,
@@ -169,6 +169,136 @@ export function shadowed(scopes: Scope[], name: string, at: number): boolean {
 export function scopeAt(scopes: Scope[], at: number): number {
   const around = scopes.filter((s) => s.start <= at && at < s.end);
   return around.length ? Math.max(...around.map((s) => s.start)) : -1;
+}
+
+const NOT_CALLED = new Set(["if", "elif", "while", "for", "with", "return", "await", "yield", "not", "and", "or", "in", "is", "lambda", "assert", "del", "raise", "except", "def", "class", "async", "print"]);
+
+/**
+ * The function the decorators starting at `line` (1-based) of blanked code put on, or the `def` at that line, as a
+ * request's handler: its name, and the names of the functions its own body calls for certain, one call deep. Undefined
+ * where the line is neither or no `def` follows the decorators.
+ */
+export function decoratedHandler(code: string, line: number): { name: string; calls: string[] } | undefined {
+  const lines = code.split("\n");
+  if (line < 1 || line > lines.length || !/^[ \t]*(?:@|(?:async[ \t]+)?def[ \t])/.test(lines[line - 1]!)) return undefined;
+  let at = lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
+  // Past each decorator, its arguments spanning lines, and the blank lines after it, to the statement they decorate.
+  const blank = /[ \t]*\n/y;
+  for (let decorator = /^[ \t]*@/.exec(code.slice(at)); decorator; decorator = /^[ \t]*@/.exec(code.slice(at))) {
+    let depth = 0;
+    let i = at + decorator[0].length;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+      else if (c === "\n" && !depth) break;
+    }
+    at = i + 1;
+    for (blank.lastIndex = at; blank.exec(code); ) at = blank.lastIndex;
+  }
+  const def = /^([ \t]*)(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/.exec(code.slice(at));
+  if (!def) return undefined;
+  const colon = code.indexOf(":", closingParen(code, at + def[0].length));
+  if (colon < 0) return undefined;
+  const end = blockEnd(code, colon, def[1]!);
+  // A function or lambda the handler declares runs only where it is called: its body is left out, and a function's
+  // name counts only where the rest of the handler calls it. What runs as it is declared stays: a nested def's default
+  // arguments and annotations, a class statement's body (only the functions in it are left out), a lambda's defaults.
+  const body = code.slice(colon + 1, end).split("");
+  const blankOut = (from: number, to: number) => {
+    for (let i = Math.max(from, colon + 1); i < Math.min(to, end); i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
+  };
+  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)((?:async[ \t]+)?def[ \t]+[A-Za-z_]\w*)/gm)) {
+    const start = colon + 1 + (n.index ?? 0) + n[1]!.length;
+    const header = headerColon(code, start);
+    // The `def name` itself is no call; the rest of the header runs now, the body later.
+    blankOut(start, start + n[2]!.length);
+    if (header >= 0) blankOut(header + 1, blockEnd(code, header, n[1]!));
+  }
+  for (const [start, stop] of lambdaRanges(code)) if (start > colon && start <= end) blankOut(start, stop);
+  // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
+  // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
+  // nothing of the component's.
+  const local = new Set(["self", "cls"]);
+  for (const m of code.matchAll(/^[ \t]*from[ \t]+\.[\w.]*[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/gm))
+    for (const item of (m[1] ?? m[2]!).split(",")) {
+      const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
+      if (i) local.add(i[2] ?? i[1]!);
+    }
+  const calls: string[] = [];
+  for (const m of body.join("").matchAll(/(?<![\w.]|\bclass[ \t]+)([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
+    if (m[2] === undefined) calls.push(m[1]!);
+    else if (local.has(m[1]!)) calls.push(m[2]);
+  }
+  return { name: def[2]!, calls: [...new Set(calls.filter((n) => !NOT_CALLED.has(n)))].sort() };
+}
+
+/** The `:` that ends the block header starting at `from`, outside brackets; -1 where there is none. */
+function headerColon(code: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < code.length; i++) {
+    const c = code[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+    else if (c === ":" && !depth) return i;
+  }
+  return -1;
+}
+
+/**
+ * Where the body of each `lambda` of blanked code lies, from past its `:` to the end of its expression (a `,` or a
+ * closing bracket of what holds it, or the end of a line outside brackets), with the name an assignment binds it to
+ * (`callback = lambda: ...`): it runs only when the lambda is called. Its default arguments, before the `:`, run as
+ * it is made.
+ */
+function lambdaRanges(code: string): Array<[number, number, string | undefined]> {
+  // The bracket depth at each offset, so a lambda inside brackets may run over several lines.
+  const depthAt: number[] = [];
+  for (let i = 0, d = 0; i < code.length; i++) {
+    depthAt.push(d);
+    if ("([{".includes(code[i]!)) d++;
+    else if (")]}".includes(code[i]!)) d = Math.max(0, d - 1);
+  }
+  const out: Array<[number, number, string | undefined]> = [];
+  for (const m of code.matchAll(/(?<![\w.])lambda\b/g)) {
+    const colon = headerColon(code, (m.index ?? 0) + m[0].length);
+    if (colon < 0) continue;
+    const inside = (depthAt[m.index ?? 0] ?? 0) > 0;
+    let depth = 0;
+    let i = colon + 1;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) {
+        if (!depth) break;
+        depth--;
+      } else if (!depth && (c === "," || (!inside && c === "\n" && code[i - 1] !== "\\"))) break;
+    }
+    const bound = /(?:^|[\n;])[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*\(?[ \t]*$/.exec(code.slice(Math.max(0, (m.index ?? 0) - 200), m.index ?? 0))?.[1];
+    out.push([colon + 1, i, bound]);
+  }
+  return out;
+}
+
+/**
+ * For Python: the name of the innermost function whose body holds an offset, by indentation, so a statement after a
+ * function's body (a module-level request, a decorator's arguments) belongs to none, and neither does a default
+ * argument, which Python evaluates when it defines the function. A lambda's body is a scope of its own, named as the
+ * assignment that binds it names it (`callback`), else `lambda`, since it runs only when it is called.
+ */
+export function pythonScopes(text: string): (index: number) => string | undefined {
+  const code = pythonCode(text);
+  const defs: Array<{ start: number; end: number; name: string }> = [];
+  for (const m of code.matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/gm)) {
+    const colon = headerColon(code, (m.index ?? 0) + m[0].length - 1);
+    if (colon >= 0) defs.push({ start: colon + 1, end: blockEnd(code, colon, m[1]!), name: m[2]! });
+  }
+  for (const [start, end, name] of lambdaRanges(code)) defs.push({ start, end, name: name ?? "lambda" });
+  return (index) => {
+    let found: { start: number; end: number; name: string } | undefined;
+    for (const d of defs) if (d.start <= index && index < d.end && (!found || d.start > found.start)) found = d;
+    return found?.name;
+  };
 }
 
 /** A literal, or the text of an argument the file does not spell out. */

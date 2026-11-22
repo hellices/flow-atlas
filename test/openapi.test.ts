@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { definitionLines, describedOperations, handlerNames } from "../src/extract/openapi.js";
+import { definitionLines, describedOperations, handlerNames, jvmHandler } from "../src/extract/openapi.js";
 import { documentPathKeys, resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { validate } from "../src/schema.js";
 import { extractRoutes } from "../src/extract/routes.js";
@@ -198,6 +198,42 @@ describe("handler lookup", () => {
     expect(definitionLines("A.kt", kt, "target")).toEqual([6]);
     expect(definitionLines("A.java", "    target(arg)\n", "target")).toEqual([]);
   });
+  it("tells a JVM request handler from a service method of the same name", () => {
+    const memory = (files: Record<string, string>): Source => ({ ref: "WORKTREE", list: () => Object.keys(files), read: (p) => files[p], asOf: () => "2026-01-01T00:00:00Z" });
+    const controller = '@RestController\n@RequestMapping("/results")\npublic class ResultController {\n  @PostMapping\n  @Operation(operationId = "saveResult")\n  public Result save(@RequestBody Result r) {\n    return service.saveResult(r);\n  }\n  public Result helper() { return null; }\n}\n';
+    const service = "@Service\npublic class ResultService {\n  public Result saveResult(Result r) {\n    return repo.save(r);\n  }\n}\n";
+    expect([6, 9].map((line) => jvmHandler(controller, line))).toEqual([true, true]);
+    expect(jvmHandler(service, 3)).toBe(false);
+    expect(jvmHandler("class Routes {\n  @GET\n  @Path(\"/x\")\n  public String x() { return \"\"; }\n}\n", 4)).toBe(true);
+    // Another library's @Mapping is no request mapping; blank lines and arguments over several lines are the
+    // annotation's; a Kotlin function with an expression body before a method ends its annotations.
+    expect(jvmHandler("@Mapper\ninterface M {\n  @Mapping(target = \"a\")\n  @BeanMapping(ignoreByDefault = true)\n  Dto toDto(E e);\n}\n", 5)).toBe(false);
+    expect(jvmHandler("class C {\n  @GetMapping(\n    value = \"/x\"\n  )\n\n  public X x() { return null; }\n}\n", 6)).toBe(true);
+    expect(jvmHandler('class C {\n  @GetMapping("/a") fun a() = service.a()\n  fun helper() = service.helper()\n}\n', 3)).toBe(false);
+    // A name in a comment or a string is no annotation.
+    expect(jvmHandler('class C {\n  void helper() { log("@GetMapping"); } // @GetMapping\n}\n', 2)).toBe(false);
+    const files = {
+      "svc/src/ResultController.java": controller,
+      "svc/src/ResultService.java": service,
+      "svc/openapi.json": JSON.stringify({ openapi: "3.0.1", paths: { "/results": { post: { operationId: "saveResult" } } } }),
+    };
+    const source = memory(files);
+    const config = normalizeConfig({ components: [{ name: "svc", path: "svc" }], routes: [{ component: "svc", files: ["svc/src/**/*.java"], openapi: "svc/openapi.json" }] });
+    expect(extractRoutes(source, config, new Reach(source))[0]).toMatchObject({ evidence: "text", at: { file: "svc/src/ResultController.java", line: 5 } });
+    // With no id written in the code, a method of that name that maps no request is still where the operation is.
+    const plain = { ...files, "svc/src/ResultController.java": "@Component\nclass ResultHandler {\n  Mono<ServerResponse> saveResult(ServerRequest r) { return ok(); }\n}\n" };
+    delete (plain as Record<string, string>)["svc/src/ResultService.java"];
+    const read = memory(plain);
+    expect(extractRoutes(read, config, new Reach(read))[0]).toMatchObject({ evidence: "name", at: { file: "svc/src/ResultController.java", line: 3 } });
+    // A later name the operationId derives still finds the handler when an earlier one names only a method of another type.
+    const later = {
+      "svc/src/Results.java": "@Service\nclass Results {\n  Result Results_save(Result r) { return r; }\n}\n",
+      "svc/src/ResultsController.java": '@RestController\nclass ResultsController {\n  @PostMapping("/results")\n  Result save(@RequestBody Result r) { return r; }\n}\n',
+      "svc/openapi.json": JSON.stringify({ openapi: "3.0.1", paths: { "/results": { post: { operationId: "Results_save" } } } }),
+    };
+    const third = memory(later);
+    expect(extractRoutes(third, config, new Reach(third)).find((s) => s.path === "/results")).toMatchObject({ evidence: "name", at: { file: "svc/src/ResultsController.java", line: 4 } });
+  });
 });
 
 describe("routes from an OpenAPI document", () => {
@@ -391,8 +427,12 @@ describe("routes from an OpenAPI document", () => {
   it("keeps the handlers of the real fixtures followed", () => {
     const graph = scan(new WorktreeSource(root), config);
     expect(graph.surfaces.filter((s) => s.reaches).map((s) => s.id).sort()).toEqual([
+      "fastapi|GET /api/v1/orders/{order_id}",
+      "fastapi|GET /api/v1/orders/{order_id}/history",
+      "fastapi|POST /api/v1/orders",
       "fastify-swagger|GET /api/v1/orders/{orderId}/history",
       "fastify|GET /api/v1/orders/{orderId}/history",
+      "flask-smorest|GET /api/v1/orders/{order_id}/history",
       "nestjs|GET /api/v1/orders/{id}",
       "nestjs|GET /api/v1/orders/{id}/history",
       "nestjs|POST /api/v1/orders",

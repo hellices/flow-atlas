@@ -8,7 +8,9 @@ case: |
   to the URL of the page; handlers name their view in a `static final String` or return it from a private method, and
   answer a post with `redirect:`. Each is now read: a relative URL once for each page its template is rendered on, a
   redirect as a GET the reply leads to. The menu's links come in as fragment parameters (`@{__${link}__}`), and a
-  fragment file wraps its fields in a `<form>` no route renders; neither is read, and limits name both.
+  fragment file wraps its fields in a `<form>` no route renders; neither is read, and limits name both. GET
+  /accounts/find, which only the menu links to, is FA001: the links to `/accounts/{}` fit it only by the value of their
+  last segment, which GET /accounts/{accountId} takes whole, and the finding lists them.
 surfaces:
   - server|GET /accounts/new
   - server|POST /accounts/new
@@ -23,7 +25,8 @@ surfaces:
   - server|POST /accounts/{accountId}/devices/{deviceId}/tickets/new
   - server|GET /catalog.html
   - server|GET /catalog
-findings: []
+findings:
+  - FA001|server|GET /accounts/find
 calls:
   - web->server|GET /catalog.html @ src/main/resources/templates/catalog/list.html:10
   - web->server|GET /catalog.html @ src/main/resources/templates/catalog/list.html:12

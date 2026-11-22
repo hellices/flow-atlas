@@ -1,4 +1,5 @@
 import type { Argument, Frame, TextCalls } from "./calls.js";
+import { pythonCode } from "./routes.js";
 
 /**
  * The method a request read as text is sent with, where a client library sets it through its own API: a call named for
@@ -20,7 +21,8 @@ import type { Argument, Frame, TextCalls } from "./calls.js";
  * - Go: net/http's `NewRequest(method, url, ...)`, `NewRequestWithContext(ctx, method, url, ...)` and `PostForm`;
  *   resty's `Execute(method, url)`; the method a literal or the package's `MethodX` constant.
  * - Python: `request(method, url)` and `build_request(method, url)` on any receiver (Requests, HTTPX, urllib3,
- *   aiohttp and http.client take the method first), and the `Request(method, url)` of Requests and HTTPX.
+ *   aiohttp and http.client take the method first), and the `Request(method, url)` of Requests and HTTPX; urllib's
+ *   `Request(url, data, method=...)` and `urlopen(url, data)`, GET without data and POST with it.
  * - Dart: package:http's `Request(method, url)` (and its multipart and streamed requests), `read` and `readBytes`;
  *   dio's `query` and the method in `request`'s `Options(method: ...)`.
  * - Swift: Alamofire's `AF.request(url, method: .x)`, GET without a method; a `URLRequest(url:)` with the
@@ -36,7 +38,7 @@ export class TextMethods {
   private dots?: Map<number, Frame>;
   private goNames?: Map<string, string>;
   private dartPrefixes?: Map<string, string[]>;
-  private pythonNames?: { modules: Map<string, string>; names: Map<string, string> };
+  private pythonNames?: { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, "Request" | "urlopen"> };
 
   constructor(
     file: string,
@@ -138,6 +140,20 @@ export class TextMethods {
         return undefined;
       }
       case "python": {
+        const urllib = this.urllibCall(f);
+        if (urllib) {
+          if (!(label === "url" || (label === undefined && slot === 0))) return STOP;
+          // `Request(url, data=None, ..., method=None)` and `urlopen(url, data=None)` send `method`, else GET without
+          // data and POST with it (Python, urllib.request.Request.get_method). Unpacked arguments may give either, and
+          // only data written as bytes or text, or encoded on the spot, is surely not None.
+          if (f.parts.some((_, i) => /^\s*\*/.test(this.part(f, i) ?? ""))) return "*";
+          const method = urllib === "Request" ? (this.value(f, "method") ?? (this.label(f, 5) === undefined ? this.part(f, 5) : undefined)) : undefined;
+          if (method !== undefined && method !== "None") return literalMethod(method, false) ?? "*";
+          const data = (this.value(f, "data") ?? (this.label(f, 1) === undefined ? this.part(f, 1) : undefined))?.replace(/^\(\s*([^]*?)\s*\)$/, "$1");
+          if (data === undefined || data === "None") return "GET";
+          const written = /^[rRbBuUfF]{0,2}(["']).*\1$/s.test(data) || /\.encode\([^()]*\)$/.test(data);
+          return written ? "POST" : "*";
+        }
         const known = f.method ? name === "request" || name === "build_request" || (name === "Request" && f.receiver !== undefined && this.pythonModule(f.receiver)) : this.pythonImported(name);
         if (!known) return undefined;
         const url = label === "url" || (label === undefined && slot === 1);
@@ -543,22 +559,49 @@ export class TextMethods {
     return this.python().names.get(name) === "Request";
   }
 
-  private python(): { modules: Map<string, string>; names: Map<string, string> } {
+  /**
+   * Which of urllib.request's `Request` and `urlopen` a Python call is, by the names the file imports: called on the
+   * module (`urllib.request.Request(`, `request.Request(` after `from urllib import request`), or by the name imported
+   * from it (`from urllib.request import Request`).
+   */
+  private urllibCall(f: Frame): "Request" | "urlopen" | undefined {
+    const name = f.name!;
+    const { urllibModules, urllibNames } = this.python();
+    if (!f.method) return urllibNames.get(name);
+    if (name !== "Request" && name !== "urlopen") return undefined;
+    const receiver = f.dot === undefined ? undefined : /([A-Za-z_][\w.]*)\s*$/.exec(this.code().slice(Math.max(0, f.dot - 100), f.dot))?.[1];
+    return receiver !== undefined && urllibModules.has(receiver) ? name : undefined;
+  }
+
+  private python(): { modules: Map<string, string>; names: Map<string, string>; urllibModules: Set<string>; urllibNames: Map<string, "Request" | "urlopen"> } {
     if (!this.pythonNames) {
       const modules = new Map<string, string>();
       const names = new Map<string, string>();
-      const code = this.code();
+      const urllibModules = new Set<string>();
+      const urllibNames = new Map<string, "Request" | "urlopen">();
+      // Python's code with its strings (docstrings included) and comments blanked, so only import statements count.
+      const code = pythonCode(this.text);
       for (const m of code.matchAll(/(?:^|\n)[ \t]*import[ \t]+([^\n]+)/g))
         for (const item of m[1]!.split(",")) {
           const i = /^\s*(requests|httpx)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (i) modules.set(i[2] ?? i[1]!, i[1]!);
+          const u = /^\s*urllib\.request(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
+          if (u) urllibModules.add(u[1] ?? "urllib.request");
         }
-      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
+      // `from ... import` statements in the order they run: a name imported again is bound to the later one.
+      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx|urllib\.request|urllib)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
         for (const item of (m[2] ?? m[3]!).split(",")) {
           const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
-          if (i) names.set(i[2] ?? i[1]!, i[1]!);
+          if (!i) continue;
+          const local = i[2] ?? i[1]!;
+          names.delete(local);
+          urllibNames.delete(local);
+          urllibModules.delete(local);
+          if (m[1] === "requests" || m[1] === "httpx") names.set(local, i[1]!);
+          else if (m[1] === "urllib" && i[1] === "request") urllibModules.add(local);
+          else if (m[1] === "urllib.request" && (i[1] === "Request" || i[1] === "urlopen")) urllibNames.set(local, i[1]);
         }
-      this.pythonNames = { modules, names };
+      this.pythonNames = { modules, names, urllibModules, urllibNames };
     }
     return this.pythonNames;
   }

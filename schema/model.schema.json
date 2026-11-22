@@ -144,7 +144,7 @@
           "minLength": 1
         },
         "reaches": {
-          "description": "Member methods the handler calls, following local and relatively imported functions. Absent when the handler was not read.",
+          "description": "Member methods the handler calls, following local and relatively imported functions; for a Python handler, its function and those its body calls, one call deep. Absent when the handler was not read.",
           "type": "array",
           "items": {
             "type": "string"
@@ -468,6 +468,16 @@
           "minimum": 0
         },
         "items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "documents": {
+          "description": "Of files, the OpenAPI documents a routes entry reads (routes[].openapi), the rest being code.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "documented": {
+          "description": "Of items, the routes those documents add beyond the code's.",
           "type": "integer",
           "minimum": 0
         },

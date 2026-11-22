@@ -6,7 +6,7 @@ components:
   - { name: agent, path: agent }
 routes:
   - { component: bff, files: ["bff/src/**/*.ts"], styles: [express] }
-  # core/src/events.ts registers its event streams on paths held in consts, which atlas does not read
+  # core/src/events.ts registers its event streams on paths held in consts, which atlas reads as their values
   - { component: core, files: ["core/src/routes.ts", "core/src/events.ts"], styles: [express] }
   - { component: store, files: ["store/src/**/*.ts"], styles: [express] }
 calls:

@@ -156,12 +156,21 @@ export function loadConfig(path: string): Config {
 export function normalizeConfig(raw: Record<string, unknown>): Config {
   if (raw.versions !== undefined) throw new Error("versions: contract-version checks (FA006) were removed; delete the versions section");
   const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+  const routes = list<RouteSource>(raw.routes).map(checkRoute);
+  const calls = list<CallSource>(raw.calls).map(checkCalls);
+  const registries = list<RegistrySource>(raw.registries);
+  for (const r of routes) checkGlobs(`routes of ${r.component}: files`, r.files);
+  for (const c of calls) checkGlobs(`calls ${c.from}->${c.to}: files`, c.files);
+  for (const r of registries) {
+    checkGlobs(`registry ${r.name}: producers`, r.producers);
+    checkGlobs(`registry ${r.name}: consumers`, r.consumers);
+  }
   return {
     components: list<Config["components"][number]>(raw.components).map((c) => (typeof c?.path === "string" ? { ...c, path: componentPath(c.path) } : c)),
     manifest: raw.manifest as Config["manifest"],
-    routes: list<RouteSource>(raw.routes).map(checkRoute),
-    calls: list<CallSource>(raw.calls).map(checkCalls),
-    registries: list(raw.registries),
+    routes,
+    calls,
+    registries,
     publicSurfaces: list(raw.publicSurfaces),
     exclude: [...DEFAULT_EXCLUDE, ...list<string>(raw.exclude)],
     flows: raw.flows === undefined ? ["flows/**/*.flow.yaml"] : list(raw.flows),
@@ -169,6 +178,19 @@ export function normalizeConfig(raw: Record<string, unknown>): Config {
     origins: (raw.origins as Record<string, string> | undefined) ?? {},
     rules: (raw.rules as Config["rules"]) ?? {},
   };
+}
+
+/**
+ * A list of globs selects the files its plain patterns match, less those a `!` pattern matches. A list of `!` patterns
+ * alone selects nothing, which is never what was meant.
+ */
+function checkGlobs(where: string, globs: unknown): void {
+  if (!Array.isArray(globs) || globs.length === 0) return;
+  if (globs.every((g) => typeof g === "string" && g.startsWith("!"))) {
+    throw new Error(
+      `${where}: a pattern starting with ! only takes files out of those the other patterns select, and there are none (${JSON.stringify(globs)}); add the files to read, such as "apps/web/**"`,
+    );
+  }
 }
 
 /**

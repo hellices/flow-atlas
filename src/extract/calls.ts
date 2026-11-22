@@ -15,6 +15,7 @@ import { Constants } from "./constants.js";
 import { Importers } from "./importers.js";
 import type { Spans } from "./spans.js";
 import { scopeOf, textScopes } from "./reach.js";
+import { pythonScopes } from "./python.js";
 import { packageRanges } from "./syntax.js";
 
 const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
@@ -132,6 +133,8 @@ function methodNear(node: ts.Node, wrappers: CallSource["wrappers"] = []): strin
       if (wrapper) return wrapperMethod(parent, current, wrapper.defaultMethod);
       const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : "";
       if (VERBS.has(name.toLowerCase())) return name.toUpperCase();
+      // k6's `http.del` and superagent's `del` send DELETE.
+      if (name === "del" && ts.isPropertyAccessExpression(callee) && parent.arguments[0] === current) return "DELETE";
       // Ky's `query` sends QUERY (Ky, readme: ky.query(input, options?)); an instance's is read with its client.
       if (name === "query" && parent.arguments[0] === current && ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && importedFrom(callee.expression, ["ky"]) === "default") return "QUERY";
       // The global fetch (also as window.fetch or globalThis.fetch) defaults to GET; the URL is its first argument.
@@ -2008,28 +2011,69 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   // The request list holds the literal itself, inside any parentheses or assertion around it.
   for (const decl of leads.keys()) if (!usedElsewhere.has(decl)) bases.add(unwrap(decl.initializer!));
   // A URL held in a `const` is requested where the const is used: when every use that requests it states one method,
-  // that is its method. A use that starts or builds another URL is that URL's request.
+  // that is its method. A use that starts or builds another URL is that URL's request; one joined only to values
+  // (`` `${BASE}${path}` ``) builds no URL read of its own, so it is this one's. A property of an object a `const` holds
+  // (`endpoints.items`) is used where the code reads that property of it, in the file.
   const held = new Map<ts.VariableDeclaration, ReadCall>();
+  const heldProperties = new Map<ts.VariableDeclaration, Map<string, ReadCall>>();
   for (const f of found) {
+    if (f.call.method !== "*") continue;
     const decl = valuePlace(f.node).parent;
-    if (f.call.method === "*" && ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const) held.set(decl, f.call);
+    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const) held.set(decl, f.call);
+    else if (ts.isPropertyAssignment(decl) && ts.isObjectLiteralExpression(decl.parent)) {
+      const holder = valuePlace(decl.parent).parent;
+      const key = propertyName(decl.name);
+      // An object the module exports may have its properties read by the files that import it.
+      const exported = ts.isVariableDeclaration(holder) && (ts.getCombinedModifierFlags(holder) & ts.ModifierFlags.Export) !== 0;
+      if (key !== undefined && !exported && ts.isVariableDeclaration(holder) && ts.isIdentifier(holder.name) && holder.parent.flags & ts.NodeFlags.Const)
+        (heldProperties.get(holder) ?? heldProperties.set(holder, new Map()).get(holder)!).set(key, f.call);
+    }
   }
-  if (held.size) {
-    const methods = new Map<ts.VariableDeclaration, string[]>();
-    const names = new Set([...held.keys()].map((d) => (d.name as ts.Identifier).text));
+  // Whether a use joins the value into a URL that has text of its own, which is read as a request of its own.
+  const builds = (n: ts.Node): boolean => {
+    const place = valuePlace(n).parent;
+    if (ts.isTemplateSpan(place)) {
+      const t = place.parent;
+      return !!t.head.text || t.templateSpans.some((s) => !!s.literal.text);
+    }
+    if (!isPlus(place)) return false;
+    let top: ts.Node = place;
+    while (isPlus(top.parent)) top = top.parent;
+    return operands(top as ts.BinaryExpression).some((o) => ts.isStringLiteralLike(unwrap(o)));
+  };
+  if (held.size || heldProperties.size) {
+    const methods = new Map<ReadCall, string[]>();
+    const used = (call: ReadCall, n: ts.Node) => (methods.get(call) ?? methods.set(call, []).get(call)!).push(navigatesWithGet(n) ? "GET" : methodNear(n, spec.wrappers));
+    const names = new Set([...held.keys(), ...heldProperties.keys()].map((d) => (d.name as ts.Identifier).text));
+    const written = new Set<ReadCall>();
+    // An object read whole or by a key the code does not spell out may have its properties read anywhere.
+    const escaped = new Set<ts.VariableDeclaration>();
     const find = (n: ts.Node): void => {
       if (ts.isIdentifier(n) && names.has(n.text)) {
         const decl = declarationOf(n);
-        const place = valuePlace(n).parent;
-        const building = ts.isTemplateSpan(place) || isPlus(place);
-        if (decl && ts.isVariableDeclaration(decl) && held.has(decl) && n !== decl.name && !building && !leads.get(decl)?.has(n)) {
-          (methods.get(decl) ?? methods.set(decl, []).get(decl)!).push(navigatesWithGet(n) ? "GET" : methodNear(n, spec.wrappers));
+        if (decl && ts.isVariableDeclaration(decl) && n !== decl.name) {
+          const call = held.get(decl);
+          if (call && !builds(n) && !leads.get(decl)?.has(n)) used(call, n);
+          const properties = heldProperties.get(decl);
+          const access = n.parent;
+          const key =
+            ts.isPropertyAccessExpression(access) && access.expression === n
+              ? access.name.text
+              : ts.isElementAccessExpression(access) && access.expression === n && ts.isStringLiteralLike(access.argumentExpression)
+                ? access.argumentExpression.text
+                : undefined;
+          if (properties && key === undefined) escaped.add(decl);
+          const property = key === undefined ? undefined : properties?.get(key);
+          // A property the code assigns may hold another URL by the time it is read.
+          if (property && ts.isBinaryExpression(access.parent) && access.parent.left === access && access.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) written.add(property);
+          else if (property && !builds(access)) used(property, access);
         }
       }
       ts.forEachChild(n, find);
     };
     find(sf);
-    for (const [decl, used] of methods) if (used[0] !== "*" && used.every((m) => m === used[0])) held.get(decl)!.method = used[0]!;
+    for (const decl of escaped) for (const call of heldProperties.get(decl)!.values()) written.add(call);
+    for (const [call, list] of methods) if (!written.has(call) && list[0] !== "*" && list.every((m) => m === list[0])) call.method = list[0]!;
   }
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
@@ -2382,6 +2426,61 @@ const TEXT_METHODS: Array<{ files: RegExp; names: Set<string>; receiver?: string
 const INPUT_DECORATION_TEXT = new Set(["labelText", "hintText", "helperText", "prefixText", "suffixText", "counterText", "errorText", "semanticCounterText"]);
 
 /**
+ * The methods of Flutter's `Navigator` (and its state) that take a route of the app by its name (Flutter API,
+ * NavigatorState): a screen of the app, never an HTTP request.
+ */
+const NAVIGATOR_NAMED = new Set([
+  "pushNamed",
+  "pushReplacementNamed",
+  "popAndPushNamed",
+  "pushNamedAndRemoveUntil",
+  "restorablePushNamed",
+  "restorablePushReplacementNamed",
+  "restorablePopAndPushNamed",
+  "restorablePushNamedAndRemoveUntil",
+]);
+
+/**
+ * go_router's navigations to a location of the app (`context.go('/x')`, the `GoRouterHelper` extension on
+ * `BuildContext`, and the same methods of a `GoRouter`), read only where the file imports go_router. A location is a
+ * path of the app; an absolute URL given to a method of these names is another API's request, and is read.
+ */
+const GO_ROUTER_NAVIGATION = new Set(["go", "push", "pushReplacement", "replace", "goNamed", "pushNamed", "pushReplacementNamed", "replaceNamed"]);
+
+/** How a Dart string argument is given: whether it is an absolute URL, and the text before the `.` of its method. */
+interface DartPlace {
+  absolute: boolean;
+  chain: string;
+}
+
+/**
+ * Whether a Dart string argument is text Flutter shows or a route of the app, not a request: a text property of
+ * `InputDecoration`; the text of `Text` and `SelectableText` (their first argument), of a `TextSpan` (`text:`) and of a
+ * `Tooltip` (`message:`); a route a `Navigator` pushes by name, called on one (`Navigator.pushNamed`,
+ * `Navigator.of(context)`, a `navigatorKey`'s state); and, in a file that imports go_router, a `GoRoute`'s `path:`, a
+ * `GoRouter`'s `initialLocation:` and a location go_router navigates to. An absolute URL is never a route of the app.
+ */
+function flutterUnrequested(a: Argument, goRouter: boolean, place: () => DartPlace): boolean {
+  if (a.name === "InputDecoration") return a.label !== undefined && INPUT_DECORATION_TEXT.has(a.label);
+  if ((a.name === "Text" || a.name === "SelectableText") && !a.method) return a.label === undefined && a.index === 0;
+  if (a.name === "TextSpan") return a.label === "text";
+  if (a.name === "Tooltip") return a.label === "message";
+  if (a.method && NAVIGATOR_NAMED.has(a.name)) {
+    // Called on a navigator, the string is a route name, whatever it looks like.
+    if (/navigator\w*(?:\.\w+)*!?\s*(?:\([^()]*\)\s*!?\s*)?$/i.test(place().chain)) return true;
+  }
+  if (!goRouter) return false;
+  if (a.name === "GoRoute") return a.label === "path";
+  if (a.name === "GoRouter") return a.label === "initialLocation";
+  // A location is go_router's first positional argument; `Uri.replace(path: ...)` and the like build a request's URL.
+  if (!(a.method && GO_ROUTER_NAVIGATION.has(a.name) && a.label === undefined && a.index === 0)) return false;
+  // On a BuildContext or a GoRouter the string is a location, whatever it looks like; on another receiver, which
+  // text-read Dart cannot tell apart, an absolute URL is another API's request.
+  const { absolute, chain } = place();
+  return !absolute || /(?:\bcontext|\bGoRouter(?:\.of\([^()]*\))?|\brouter)\s*!?\s*$/.test(chain);
+}
+
+/**
  * ASP.NET Core's methods whose first argument is a route pattern the application serves (`app.MapGet("/x", ...)`,
  * `MapGroup`, YARP's `MapForwarder(pattern, destinationPrefix, targetPath)`, whose `targetPath` is the path it sends
  * the requests it forwards to), or a path the request is re-executed at inside the application
@@ -2411,13 +2510,13 @@ const ASPNET_FILES = new Set(["MapFallbackToFile", "MapFallbackToPage"]);
 
 /**
  * Whether a string argument is no request by the call it is given to: a text method of its file's language
- * (`TEXT_METHODS`) on a receiver; in Dart, a text property of Flutter's `InputDecoration`; in C#, a path ASP.NET Core
- * serves or re-executes at.
+ * (`TEXT_METHODS`) on a receiver; in Dart, text Flutter shows or a route of the app (`flutterUnrequested`); in C#, a
+ * path ASP.NET Core serves or re-executes at.
  */
-function unrequestedArgument(file: string, a: Argument): boolean {
+function unrequestedArgument(file: string, a: Argument, goRouter = false, place: () => DartPlace = () => ({ absolute: false, chain: "" })): boolean {
   const text = TEXT_METHODS.find((t) => t.files.test(file));
   if (a.method && text?.names.has(a.name) && (!text.receiver || a.receiver === text.receiver)) return true;
-  if (/\.dart$/.test(file)) return a.name === "InputDecoration" && a.label !== undefined && INPUT_DECORATION_TEXT.has(a.label);
+  if (/\.dart$/.test(file)) return flutterUnrequested(a, goRouter, place);
   if (!/\.cs$/.test(file)) return false;
   const path = ASPNET_PATHS.get(a.name);
   // A named argument is the parameter it names; a positional one is in the parameter's place.
@@ -2605,7 +2704,7 @@ const FEIGN_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT"
 export function callsFromText(file: string, original: string, spec: CallSource, spans?: Spans, labels?: Passed[], served?: (path: string) => boolean, context: TextContext = {}): ReadCall[] {
   const out: ReadCall[] = exchangeCalls(file, original, spec, context.untyped);
   const text = withoutComments(file, original);
-  const scopeAt = textScopes(text);
+  const scopeAt = /\.pyi?$/.test(file) ? pythonScopes(text) : textScopes(text);
   const scan = textCalls(file, text);
   const args = scan.args;
   const methods = new TextMethods(file, text, scan, spec.receivers);
@@ -2626,6 +2725,8 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
   const built = expressions.expressions();
   const taken = new Set(built.flatMap((e) => [...e.literals, ...(e.constants ?? [])]));
   const python = /\.pyi?$/.test(file);
+  // go_router's navigations are extension methods, so a Dart file calls them only where it imports the package.
+  const goRouter = /\.dart$/.test(file) && /^\s*import\s+['"]package:go_router\//m.test(text);
   const read = (segment: string, offset: number, field = false): void => {
     const re = new RegExp(STRING.source, "g");
     for (let m = re.exec(segment); m; m = re.exec(segment)) {
@@ -2711,7 +2812,11 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
     }
-    if (argument && unrequestedArgument(file, argument)) return;
+    const chainOf = (a: Argument) => {
+      const dot = scan.frames.get(a.call)?.dot;
+      return dot === undefined ? "" : text.slice(Math.max(0, dot - 120), dot);
+    };
+    if (argument && unrequestedArgument(file, argument, goRouter, () => ({ absolute: hostOf(inner) !== undefined, chain: chainOf(argument) }))) return;
     if (parsed.relative && !context.base) {
       context.unbaseRelative?.push({ file, line: lineOf(text, index) });
       return;

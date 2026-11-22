@@ -175,15 +175,36 @@ export function scan(source: Source, config: Config, context: { root?: string; r
     entry.matched = own.filter((c) => matched.has(c.id)).length;
     if (serving.has(from)) entry.linked = own.filter((c) => linked.has(c.id)).length;
   }
+  // A component whose handlers atlas follows none of into their calls: chains stop at its surfaces, once said.
+  const unfollowed = new Map<string, number>();
+  for (const entry of coverage) {
+    if (!entry.source.startsWith("calls ") || entry.linked === undefined) continue;
+    const from = entry.source.slice("calls ".length).split("->")[0]!;
+    unfollowed.set(from, (unfollowed.get(from) ?? 0) + (entry.linked ? -Infinity : entry.items));
+  }
+  for (const [from, items] of unfollowed) {
+    const handlers = surfaces.filter((s) => s.component === from && !s.implicit);
+    if (items <= 0 || !handlers.length || handlers.some((s) => s.reaches !== undefined)) continue;
+    const kinds = [...new Set(handlers.map((s) => /\.[^./]+$/.exec(s.at.file)?.[0] ?? s.at.file))].sort().join(", ");
+    limits.push(
+      `routes ${from}: atlas follows none of its handlers (in ${kinds}) into the calls they make, so its ${items} configured call${items === 1 ? " is" : "s are"} reached from no surface and chains stop at its surfaces`,
+    );
+  }
   for (const entry of coverage) {
     if (entry.files === 0) limits.push(`${entry.source}: the configured files match nothing`);
-    else if (entry.items === 0) limits.push(`${entry.source}: ${entry.files} files read, nothing extracted`);
+    else if (entry.items === 0) limits.push(`${entry.source}: ${entry.files} file${entry.files === 1 ? "" : "s"} read, nothing extracted`);
     else if (entry.source.startsWith("calls ")) {
-      // FA002 checks only calls to a component whose routes are read; without them the calls are neither matched nor checked.
+      // FA002 checks only calls to a component whose routes are configured; without them the calls are neither matched
+      // nor checked. With them and none read, the calls are checked against nothing, so both cases are named.
       const to = entry.source.slice("calls ".length).split("->")[1]!;
+      const one = entry.items === 1;
       if (!routedComponents(config).has(to))
         limits.push(
-          `${entry.source}: ${to} has no route source, so its ${entry.items} calls match nothing and FA002 does not check them; configure its routes (routes[] with files, or routes[].openapi for a generated document)`,
+          `${entry.source}: ${to} has no route source, so ${one ? "its call matches nothing and FA002 does not check it" : `its ${entry.items} calls match nothing and FA002 does not check them`}; configure its routes (routes[] with files, or routes[].openapi for a generated document)`,
+        );
+      else if (!surfaces.some((s) => s.component === to))
+        limits.push(
+          `${entry.source}: ${to}'s route sources yielded no route, so ${one ? "its call matches" : `its ${entry.items} calls match`} nothing; FA002 still checks ${one ? "it" : "them"}, as after a change that takes every route away, and the routes ${to} limits say what was not read`,
         );
     }
   }

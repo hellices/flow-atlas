@@ -6,10 +6,11 @@ import { joinRoute, routeTemplate, segments } from "../paths.js";
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { lineOf, matcher, select, type Source } from "../source.js";
+import { decoratedHandler } from "./python.js";
 import { operationShape } from "./apidocs.js";
 import { aspnetcoreRoutes } from "./aspnetcore.js";
 import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
-import { definitions, describedOperations, escapeRegExp, handlerNames, type Definition } from "./openapi.js";
+import { definitions, describedOperations, escapeRegExp, handlerNames, jvmHandler, type Definition } from "./openapi.js";
 import { withoutComments } from "./calls.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
@@ -358,6 +359,8 @@ export function routesFromTypeScript(
    * literal: the method each registers and the prefixes its path is served under, where they are known.
    */
   const readConstants = new Map<ts.Node, string>();
+  /** The routes `constants` made of those declarations. */
+  const constMade = constantRoutes;
   const unreadPaths: Array<{ arg: ts.Expression; method?: string; prefixes?: string[] }> = [];
   const unread = (arg: ts.Expression, method?: string, prefixes?: string[]) => unreadPaths.push({ arg, method, prefixes });
   const unreadVersion = (arg: ts.Node) =>
@@ -854,8 +857,14 @@ export function routesFromTypeScript(
       span(arg);
       return [one];
     }
+    // A path held in a constant the code spells out, of this file or one it imports, as Nest's are read.
+    const held = constants.text(u);
+    if (held !== undefined) {
+      span(arg);
+      return [held];
+    }
     if (ts.isArrayLiteralExpression(u)) {
-      const all = u.elements.map(literalText);
+      const all = u.elements.map((e) => literalText(e) ?? constants.text(e));
       if (inst.pkg !== "express" && !koa(inst)) {
         limits?.push(
           `routes ${spec.component}: ${file}:${at0(arg)} registers an array of paths (${arg.getText(sf).replace(/\s+/g, " ")}) on ${inst.name}, which atlas reads only on a router traced to Express or @koa/router; its routes are not read`,
@@ -1197,7 +1206,7 @@ export function routesFromTypeScript(
         if (name !== c.name) continue;
         const method = c.method ?? stringValue(node.arguments[c.methodArg]);
         const arg = node.arguments[c.pathArg];
-        const path = stringValue(arg);
+        const path = stringValue(arg) ?? constants.text(arg);
         if (arg && path === undefined) unread(arg, method, [""]);
         if (method && path?.startsWith("/")) {
           span(node.arguments[c.pathArg]);
@@ -1209,13 +1218,22 @@ export function routesFromTypeScript(
       const path = stringValue(node.initializer);
       if (path?.startsWith("/")) {
         span(node.initializer);
+        const before = out.length;
         add("GET", path, node);
+        for (const s of out.slice(before)) constMade.add(s);
         readConstants.set(node, path);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  // A GET a registration reads at a constant's path is the route `constants` makes of it, kept once at the registration,
+  // where its handler is; across files, `preferRegistered` does the same for the component.
+  if (out.some((s) => constMade.has(s))) {
+    const kept = preferRegistered(out);
+    out.length = 0;
+    out.push(...kept);
+  }
   // A GET registration at the very path of a constant read as a route above is that route; any other, another method
   // or a prefix included, is said in `limits`.
   // The methods chained on one `route(path)` share its path: one not spelled out is said once.
@@ -1658,7 +1676,11 @@ function handlerNode(reach: Reach, at: Found): ts.Node | undefined {
   return undefined;
 }
 
-/** Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. */
+/**
+ * Where the code defines an operation's handler: one definition by a derived name, else one quoted explicit id. A Java
+ * or Kotlin method not written as a request handler (`jvmHandler`), such as the service method a controller delegates
+ * to under the same name, comes after a quoted id: the handler of an id given in an annotation is named otherwise.
+ */
 function handlerPlace(
   texts: Map<string, string>,
   operationId: string,
@@ -1667,14 +1689,22 @@ function handlerPlace(
   parsed: Map<string, Map<string, Definition[]>>,
 ): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
+  // The methods not written as handlers, of the first name that has any: a later name may still have a handler.
+  let unmapped: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
+    const own: Found[] = [];
     for (const [f, t] of texts)
-      for (const { line, offset } of definitions(f, t, name, parsed)) hits.push({ file: f, line, offset: offset ?? definitionOffset(t, line, name) });
+      for (const { line, offset } of definitions(f, t, name, parsed)) {
+        const found = { file: f, line, offset: offset ?? definitionOffset(t, line, name) };
+        (!/\.(java|kt|kts)$/.test(f) || jvmHandler(t, line) ? hits : own).push(found);
+      }
     if (hits.length) break;
+    if (!unmapped.length) unmapped = own;
   }
   if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
   const quoted = literalLines(texts, operationId);
-  return quoted.length === 1 ? { at: quoted[0]!, evidence: "text" } : undefined;
+  if (quoted.length === 1) return { at: quoted[0]!, evidence: "text" };
+  return !hits.length && !quoted.length && unmapped.length === 1 ? { at: unmapped[0]!, evidence: "name" } : undefined;
 }
 
 /**
@@ -1946,6 +1976,15 @@ function springSources(source: Source, config: Config, files: string[], root: st
   return new Map(all.map((f) => [f, source.read(f) ?? ""]));
 }
 
+/** The GET routes `constants` makes of a constant's value, which give way to a registration read at the same path. */
+const constantRoutes = new WeakSet<Surface>();
+
+/** Surfaces less those `constants` made where a registration of the same component reads the same route. */
+function preferRegistered(surfaces: Surface[]): Surface[] {
+  const registered = new Set(surfaces.filter((s) => !constantRoutes.has(s)).map((s) => s.id));
+  return surfaces.filter((s) => !constantRoutes.has(s) || !registered.has(s.id));
+}
+
 /**
  * Surfaces with one per component, method and path, the first kept. Where the routes of one path take their parameters
  * by different regexps (or one by none), the surface takes what any of them does: it keeps no pattern. Its dispatch
@@ -2189,8 +2228,18 @@ export function extractRoutes(
     if ("why" in slashes) limits.push(`routes ${component}: ${slashes.why}; whether Next.js redirects a request with or without a trailing / is not read, so a call is matched to its route either way`);
     else for (const s of nextRoutes) if (s.component === component) s.dispatch = { ...s.dispatch, slashes: slashes.slashes };
   }
-  // A route two entries both register is one surface, so the document enriches the copy that is kept.
-  const code = unique(out);
+  // A route two entries both register is one surface, so the document enriches the copy that is kept. A GET route
+  // `constants` made that a registration in another file reads too is that registration's, and counted once.
+  const registeredToo = preferRegistered(out);
+  if (registeredToo.length < out.length) {
+    const kept = new Set(registeredToo);
+    for (const s of out) {
+      if (kept.has(s)) continue;
+      const entry = coverage.find((c) => c.source === `routes ${s.component}`);
+      if (entry) entry.items = Math.max(0, entry.items - 1);
+    }
+  }
+  const code = unique(registeredToo);
   out.length = 0;
   out.push(...code);
   // The document the configuration chooses for a component goes first, so its operationIds and places win.
@@ -2202,7 +2251,7 @@ export function extractRoutes(
     const texts = new Map([...codeFiles.get(spec.component)!].map((f) => [f, source.read(f) ?? ""]));
     const added = documentedSurfaces(source, spec, texts, out, limits, reach, executed, fromCode.has(spec.component));
     out.push(...added);
-    addCoverage(coverage, `routes ${spec.component}`, 1, added.length);
+    addCoverage(coverage, `routes ${spec.component}`, 1, added.length, true);
   }
   if (executed && views.size) {
     const templates = source.list().filter((f) => /(^|\/)templates\/.+\.html$/.test(f));
@@ -2232,7 +2281,27 @@ export function extractRoutes(
     }
   }
   for (const [id, { file, redirects: to }] of views) if (to.length) redirects?.set(id, to.map((r) => ({ path: r.path, at: { file, line: r.line } })));
+  pythonHandlers(source, out);
   return unique(out);
+}
+
+/**
+ * A Python route's handler, where a decorator registers it on its `def` (FastAPI's, Flask's) or a document's operation
+ * is placed at it: the function itself and those its body calls by name, one call deep, as `reaches`. A call held in
+ * one of those functions of the component is linked to the route by name, as a TypeScript handler's member calls are.
+ */
+function pythonHandlers(source: Source, surfaces: Surface[]): void {
+  const codes = new Map<string, string | undefined>();
+  for (const s of surfaces) {
+    if (s.reaches !== undefined || s.implicit || !s.at.file.endsWith(".py")) continue;
+    if (!codes.has(s.at.file)) {
+      const text = source.read(s.at.file);
+      codes.set(s.at.file, text === undefined ? undefined : pythonCode(text));
+    }
+    const code = codes.get(s.at.file);
+    const handler = code === undefined ? undefined : decoratedHandler(code, s.at.line);
+    if (handler) s.reaches = [...new Set([handler.name, ...handler.calls])].sort();
+  }
 }
 
 /** The paths a route's replies redirect to (see `routesFromSpring`), by route, each where it is written. */
