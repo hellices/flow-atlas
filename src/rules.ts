@@ -25,9 +25,10 @@ function byValueOnly(routePath: string, call: string): boolean {
 }
 
 /**
- * Whether a route of the same component other than `s`, of a method the call may send, takes every path the call stands
- * for, segment for segment. A catch-all (`*path`, `/**`, an application's fallback) takes every path there is, so it
- * says nothing of which one the call means.
+ * Whether a route of the same component other than `s`, of a method the call may send and every method `s` serves,
+ * fits every path the call stands for, segment for segment. A catch-all (`*path`, `/**`, an application's fallback)
+ * fits every path there is, so it says nothing of which one the call means. Which of the two a request of the very
+ * text `s` names reaches is its router's order; what is asserted is only that the call does not name `s`'s path.
  */
 function coveredElsewhere(surfaces: Graph["surfaces"], s: Graph["surfaces"][number], c: Graph["calls"][number]): boolean {
   const length = segments(c.path).length;
@@ -37,6 +38,7 @@ function coveredElsewhere(surfaces: Graph["surfaces"], s: Graph["surfaces"][numb
       o !== s &&
       o.component === s.component &&
       methodsMatch(o.method, c.method) &&
+      (o.method === "*" || o.method.toUpperCase() === s.method.toUpperCase()) &&
       // A route taken only with headers the call may not send is not shown to take it.
       !o.dispatch?.constrained &&
       segments(o.path).length === length &&
@@ -113,7 +115,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
           finding(
             "FA001",
             id,
-            `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and another route takes every value of that segment: ${list}${more}; whether one sends this path is not in the code.`,
+            `${s.method} ${s.path} (${s.component}) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and the path of another route fits every value of that segment: ${list}${more}; whether one sends this path is not in the code.`,
             [s.at, ...byValue.slice(0, 3).map((c) => c.at)],
           ),
         );

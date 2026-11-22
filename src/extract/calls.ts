@@ -2442,27 +2442,38 @@ const NAVIGATOR_NAMED = new Set([
 
 /**
  * go_router's navigations to a location of the app (`context.go('/x')`, the `GoRouterHelper` extension on
- * `BuildContext`, and the same methods of `GoRouter`), which a Dart file can call only where it imports go_router.
+ * `BuildContext`, and the same methods of a `GoRouter`), read only where the file imports go_router. A location is a
+ * path of the app; an absolute URL given to a method of these names is another API's request, and is read.
  */
 const GO_ROUTER_NAVIGATION = new Set(["go", "push", "pushReplacement", "replace", "goNamed", "pushNamed", "pushReplacementNamed", "replaceNamed"]);
+
+/** How a Dart string argument is given: whether it is an absolute URL, and the text before the `.` of its method. */
+interface DartPlace {
+  absolute: boolean;
+  chain: string;
+}
 
 /**
  * Whether a Dart string argument is text Flutter shows or a route of the app, not a request: a text property of
  * `InputDecoration`; the text of `Text` and `SelectableText` (their first argument), of a `TextSpan` (`text:`) and of a
- * `Tooltip` (`message:`); a route `Navigator` pushes by name; and, in a file that imports go_router, a `GoRoute`'s
- * `path:`, a `GoRouter`'s `initialLocation:` and a location go_router navigates to.
+ * `Tooltip` (`message:`); a route a `Navigator` pushes by name, called on one (`Navigator.pushNamed`,
+ * `Navigator.of(context)`, a `navigatorKey`'s state); and, in a file that imports go_router, a `GoRoute`'s `path:`, a
+ * `GoRouter`'s `initialLocation:` and a location go_router navigates to. An absolute URL is never a route of the app.
  */
-function flutterUnrequested(a: Argument, goRouter: boolean): boolean {
+function flutterUnrequested(a: Argument, goRouter: boolean, place: () => DartPlace): boolean {
   if (a.name === "InputDecoration") return a.label !== undefined && INPUT_DECORATION_TEXT.has(a.label);
   if ((a.name === "Text" || a.name === "SelectableText") && !a.method) return a.label === undefined && a.index === 0;
   if (a.name === "TextSpan") return a.label === "text";
   if (a.name === "Tooltip") return a.label === "message";
-  if (a.method && NAVIGATOR_NAMED.has(a.name)) return true;
+  if (a.method && NAVIGATOR_NAMED.has(a.name)) {
+    const { absolute, chain } = place();
+    if (!absolute && /navigator\w*(?:\.\w+)*!?\s*(?:\([^()]*\)\s*!?\s*)?$/i.test(chain)) return true;
+  }
   if (!goRouter) return false;
   if (a.name === "GoRoute") return a.label === "path";
   if (a.name === "GoRouter") return a.label === "initialLocation";
   // A location is go_router's first positional argument; `Uri.replace(path: ...)` and the like build a request's URL.
-  return a.method && GO_ROUTER_NAVIGATION.has(a.name) && a.label === undefined && a.index === 0;
+  return a.method && GO_ROUTER_NAVIGATION.has(a.name) && a.label === undefined && a.index === 0 && !place().absolute;
 }
 
 /**
@@ -2498,10 +2509,10 @@ const ASPNET_FILES = new Set(["MapFallbackToFile", "MapFallbackToPage"]);
  * (`TEXT_METHODS`) on a receiver; in Dart, text Flutter shows or a route of the app (`flutterUnrequested`); in C#, a
  * path ASP.NET Core serves or re-executes at.
  */
-function unrequestedArgument(file: string, a: Argument, goRouter = false): boolean {
+function unrequestedArgument(file: string, a: Argument, goRouter = false, place: () => DartPlace = () => ({ absolute: false, chain: "" })): boolean {
   const text = TEXT_METHODS.find((t) => t.files.test(file));
   if (a.method && text?.names.has(a.name) && (!text.receiver || a.receiver === text.receiver)) return true;
-  if (/\.dart$/.test(file)) return flutterUnrequested(a, goRouter);
+  if (/\.dart$/.test(file)) return flutterUnrequested(a, goRouter, place);
   if (!/\.cs$/.test(file)) return false;
   const path = ASPNET_PATHS.get(a.name);
   // A named argument is the parameter it names; a positional one is in the parameter's place.
@@ -2797,7 +2808,11 @@ export function callsFromText(file: string, original: string, spec: CallSource, 
       labels?.push({ callee: argument.exception, at: { file, line: lineOf(text, index) } });
       return;
     }
-    if (argument && unrequestedArgument(file, argument, goRouter)) return;
+    const chainOf = (a: Argument) => {
+      const dot = scan.frames.get(a.call)?.dot;
+      return dot === undefined ? "" : text.slice(Math.max(0, dot - 120), dot);
+    };
+    if (argument && unrequestedArgument(file, argument, goRouter, () => ({ absolute: hostOf(inner) !== undefined, chain: chainOf(argument) }))) return;
     if (parsed.relative && !context.base) {
       context.unbaseRelative?.push({ file, line: lineOf(text, index) });
       return;

@@ -270,6 +270,15 @@ describe("Python handlers", () => {
     '@app.get("/refunds")',
     "def refunds():",
     "    return s.load_orders()",
+    "",
+    '@app.get("/classes")',
+    "def classes():",
+    "    class Body(base()):",
+    "        value = helper()",
+    "        def later(self):",
+    "            return never()",
+    "    pick = lambda v=load_orders(): v",
+    "    return Body",
   ].join("\n");
   const files = {
     "api/app.ts": 'app.get("/api/items", h); app.post("/api/orders", h); app.get("/api/other", h); app.get("/api/client", h);',
@@ -297,12 +306,19 @@ describe("Python handlers", () => {
     expect(downstream("py|GET /params")).not.toContain("/api/items");
     // The module-level request after `def other():` belongs to no function, so no handler named other reaches it.
     const call = graph.calls.find((c) => c.path === "/api/other" && c.at.line === 21);
-    expect(call?.scope).toBeUndefined();
+    expect(call).toBeDefined();
+    expect(call!.scope).toBeUndefined();
     // A default argument runs when Python defines the function, not when the route is requested.
-    expect(graph.calls.find((c) => c.at.line === 25)?.scope).toBeUndefined();
+    const defaulted = graph.calls.find((c) => c.at.line === 25);
+    expect(defaulted).toMatchObject({ path: "/api/items" });
+    expect(defaulted!.scope).toBeUndefined();
     expect(downstream("py|GET /defaults")).not.toContain("/api/items");
     // A lambda runs only when it is called: its request is in a scope of its own.
-    expect(graph.calls.find((c) => c.at.line === 32)?.scope).toBe("lambda");
+    expect(graph.calls.find((c) => c.at.line === 32)).toMatchObject({ path: "/api/items", scope: "lambda" });
+  });
+
+  it("follows what a class statement and a lambda's defaults run as the handler runs, not a method or a lambda's body", () => {
+    expect(graph.surfaces.find((s) => s.id === "py|GET /classes")?.reaches).toEqual(["base", "classes", "helper", "load_orders"]);
   });
 
   it("says where a handler registered without a decorator stops", () => {
@@ -348,7 +364,7 @@ describe("a call that fits a route only by the value of an interpolated segment"
     const found = fa001("export const f = (id: string) => fetch(`/api/x/${id}`);");
     expect(found.map((f) => f.key)).toEqual(["FA001|api|GET /api/x/summary", "FA001|api|GET /api/y/a", "FA001|api|GET /api/y/b"]);
     expect(found[0]!.message).toBe(
-      "GET /api/x/summary (api) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and another route takes every value of that segment: web calls GET /api/x/{} (web/a.ts:1); whether one sends this path is not in the code.",
+      "GET /api/x/summary (api) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and the path of another route fits every value of that segment: web calls GET /api/x/{} (web/a.ts:1); whether one sends this path is not in the code.",
     );
   });
 
@@ -365,6 +381,9 @@ describe("a call that fits a route only by the value of an interpolated segment"
     const constrained = scan(memory({ "api/app.ts": fastify, "web/a.ts": "export const f = (id: string) => fetch(`/api/z/${id}`);" }), config);
     expect(constrained.surfaces.find((s) => s.path === "/api/z/{name}")?.dispatch?.constrained).toBe(true);
     expect(evaluate(constrained, config, []).filter((f) => f.rule === "FA001" && f.key.includes("/api/z/a"))).toEqual([]);
+    // Nor a route of another method: a call of unread method may send the one the literal route serves.
+    const methods = scan(memory({ "api/app.ts": 'app.post("/api/z/a", h);\napp.get("/api/z/:name", h);', "web/a.ts": "export const f = (id: string, m: string) => fetch(`/api/z/${id}`, { method: m });" }), config);
+    expect(evaluate(methods, config, []).filter((f) => f.rule === "FA001" && f.key.includes("/api/z/a"))).toEqual([]);
   });
 });
 
@@ -373,7 +392,8 @@ describe("what the output leaves out", () => {
     const calls = Array.from({ length: 10 }, (_, i) => ({ component: "web", file: `web/f${i}.ts`, count: i + 1, example: `web/f${i}.ts:1` }));
     const text = inventoryText({ components: [], routes: [], calls, apiDocuments: [] });
     expect(text).toContain("  web: 55 in 10 files (the 8 with the most below, 2 more not listed)\n    10  web/f9.ts:1\n");
-    expect(text).not.toContain("web/f1.ts:1");
+    const listed = text.split("\n").filter((l) => /^ {4}\d+ {2}web\//.test(l));
+    expect(listed).toEqual([9, 8, 7, 6, 5, 4, 3, 2].map((i) => `    ${i + 1}  web/f${i}.ts:1`));
   });
 
   it("answers --help after a command with the help", () => {

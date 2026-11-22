@@ -425,6 +425,7 @@ describe("net/http's ServeMux routes", () => {
       '\tmux.HandleFunc("GET /items", route)',
       '\thttp.ListenAndServe(":83", logging(mux))',
       '\thttp.ListenAndServe(":84", http.RedirectHandler("/x", 301))',
+      '\thttp.ListenAndServe(":85", http.HandlerFunc(mux.ServeHTTP))',
       "}",
       "",
       'func route(w http.ResponseWriter, r *http.Request) { switch r.URL.Path { case "/a": } }',

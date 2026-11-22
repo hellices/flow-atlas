@@ -205,6 +205,11 @@ describe("handler lookup", () => {
     expect([6, 9].map((line) => jvmHandler(controller, line))).toEqual([true, true]);
     expect(jvmHandler(service, 3)).toBe(false);
     expect(jvmHandler("class Routes {\n  @GET\n  @Path(\"/x\")\n  public String x() { return \"\"; }\n}\n", 4)).toBe(true);
+    // Another library's @Mapping is no request mapping; blank lines and arguments over several lines are the
+    // annotation's; a Kotlin function with an expression body before a method ends its annotations.
+    expect(jvmHandler("@Mapper\ninterface M {\n  @Mapping(target = \"a\")\n  @BeanMapping(ignoreByDefault = true)\n  Dto toDto(E e);\n}\n", 5)).toBe(false);
+    expect(jvmHandler("class C {\n  @GetMapping(\n    value = \"/x\"\n  )\n\n  public X x() { return null; }\n}\n", 6)).toBe(true);
+    expect(jvmHandler('class C {\n  @GetMapping("/a") fun a() = service.a()\n  fun helper() = service.helper()\n}\n', 3)).toBe(false);
     const files = {
       "svc/src/ResultController.java": controller,
       "svc/src/ResultService.java": service,
@@ -218,6 +223,14 @@ describe("handler lookup", () => {
     delete (plain as Record<string, string>)["svc/src/ResultService.java"];
     const read = memory(plain);
     expect(extractRoutes(read, config, new Reach(read))[0]).toMatchObject({ evidence: "name", at: { file: "svc/src/ResultController.java", line: 3 } });
+    // A later name the operationId derives still finds the handler when an earlier one names only a method of another type.
+    const later = {
+      "svc/src/Results.java": "@Service\nclass Results {\n  Result Results_save(Result r) { return r; }\n}\n",
+      "svc/src/ResultsController.java": '@RestController\nclass ResultsController {\n  @PostMapping("/results")\n  Result save(@RequestBody Result r) { return r; }\n}\n',
+      "svc/openapi.json": JSON.stringify({ openapi: "3.0.1", paths: { "/results": { post: { operationId: "Results_save" } } } }),
+    };
+    const third = memory(later);
+    expect(extractRoutes(third, config, new Reach(third)).find((s) => s.path === "/results")).toMatchObject({ evidence: "name", at: { file: "svc/src/ResultsController.java", line: 4 } });
   });
 });
 

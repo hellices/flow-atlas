@@ -475,9 +475,12 @@ cuts text, called on a receiver, is no request either: Java's, Kotlin's and the 
 text property of
 Flutter's `InputDecoration` (`labelText`, `hintText`, `helperText`, `prefixText`, `suffixText`, `counterText`,
 `errorText`, `semanticCounterText`), the text of `Text` and `SelectableText` (their first argument), a `TextSpan`'s
-`text:` or a `Tooltip`'s `message:`, a route `Navigator` pushes by name (`pushNamed` and the like), and, in a file that
-imports go_router (whose navigations are extension methods, callable only so), a `GoRoute`'s `path:`, a `GoRouter`'s
-`initialLocation:` and the location `go`, `push`, `pushReplacement` and `replace` navigate to; nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
+`text:` or a `Tooltip`'s `message:`, a route a `Navigator` pushes by name (`pushNamed` and the like, called on
+`Navigator`, `Navigator.of(context)` or a navigator key's state), and, in a file that imports go_router (whose
+`BuildContext` extension and `GoRouter` both navigate; neither is told apart from another type's method of that name
+otherwise), a `GoRoute`'s `path:`, a `GoRouter`'s `initialLocation:` and the location `go`, `push`,
+`pushReplacement` and `replace` take first; an absolute URL given to any of them is a request, not a route of the app;
+nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
 `MapPut`, `MapDelete`, `MapPatch`, `MapMethods`, `MapGroup`, `MapFallback`, `MapHub`, `MapHealthChecks` and
 `MapBlazorHub` or of YARP's `MapForwarder` (a route pattern the application serves; the forwarder's `targetPath`, the
 path it sends its requests to, is read), the path `UseExceptionHandler` and `UseStatusCodePagesWithReExecute`

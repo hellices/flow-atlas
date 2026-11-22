@@ -146,7 +146,7 @@ export class TextMethods {
           // data and POST with it (Python, urllib.request.Request.get_method). Unpacked arguments may give either, and
           // only data written as bytes or text, or encoded on the spot, is surely not None.
           if (f.parts.some((_, i) => /^\s*\*/.test(this.part(f, i) ?? ""))) return "*";
-          const method = urllib === "Request" ? this.value(f, "method") : undefined;
+          const method = urllib === "Request" ? (this.value(f, "method") ?? (this.label(f, 5) === undefined ? this.part(f, 5) : undefined)) : undefined;
           if (method !== undefined && method !== "None") return literalMethod(method, false) ?? "*";
           const data = (this.value(f, "data") ?? (this.label(f, 1) === undefined ? this.part(f, 1) : undefined))?.replace(/^\(\s*([^]*?)\s*\)$/, "$1");
           if (data === undefined || data === "None") return "GET";
@@ -578,7 +578,8 @@ export class TextMethods {
       const names = new Map<string, string>();
       const urllibModules = new Set<string>();
       const urllibNames = new Map<string, "Request" | "urlopen">();
-      const code = this.code();
+      // Comments taken out, so an import line that ends with one still names what it imports.
+      const code = this.code().replace(/#[^\n]*/g, "");
       for (const m of code.matchAll(/(?:^|\n)[ \t]*import[ \t]+([^\n]+)/g))
         for (const item of m[1]!.split(",")) {
           const i = /^\s*(requests|httpx)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);

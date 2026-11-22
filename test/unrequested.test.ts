@@ -420,13 +420,17 @@ describe("in code read as text", () => {
       ["Text('${x}/5')", []],
       ["SelectableText('/help'); TextSpan(text: '/s/'); Tooltip(message: '/m')", []],
       ["Navigator.pushNamed(context, '/settings'); Navigator.of(context).pushReplacementNamed('/home');", []],
+      // Another API's method of that name is its own: a client's, or any call with an absolute URL.
+      ["api.pushNamed('/api/items');", ["* /api/items"]],
       // go_router's navigations exist only where the file imports it; elsewhere `go` and `push` may be anything's.
       ["import 'package:go_router/go_router.dart';\nGoRoute(path: '/home', builder: b); context.go('/profile'); context.push('/settings'); GoRouter(initialLocation: '/start');", []],
       ["context.push('/settings'); GoRoute(path: '/home');", ["* /settings", "* /home"]],
+      // A location is a path of the app: an absolute URL pushed in a go_router file is a request.
+      ["import 'package:go_router/go_router.dart';\nclient.push('http://localhost:3000/api/items');", ["* /api/items based"]],
       // A URL built with `Uri.replace(path: ...)` is a request's, go_router imported or not.
       ["import 'package:go_router/go_router.dart';\nawait http.get(Uri.parse(base).replace(path: '/api/items'));", ["GET /api/items"]],
       // A request is still one in a widget's other arguments, and through go_router's imports.
-      ["Text(label, semanticsLabel: x); http.get(Uri.parse('/api/score'));", ["GET /api/score"]],
+      ["Text(label, key: ValueKey(http.get(Uri.parse('/api/score'))));", ["GET /api/score"]],
       ["import 'package:go_router/go_router.dart';\nawait http.post(Uri.parse('/api/items'));", ["POST /api/items"]],
     ];
     expect(rows.map(([code]) => text("a.dart", code))).toEqual(rows.map(([, calls]) => calls));

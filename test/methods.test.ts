@@ -168,7 +168,7 @@ describe("the method given as a value before or around the URL", () => {
     });
   });
 
-  it("reads urllib's Request and urlopen as GET without data and POST with it, unless a method is stated", () => {
+  it("reads urllib's Request and urlopen as GET without data and POST with data written out, unless a method is stated", () => {
     const code = lines(
       "import urllib.request",
       "from urllib.request import Request, urlopen",
@@ -190,6 +190,9 @@ describe("the method given as a value before or around the URL", () => {
     // Data that may be None, and unpacked arguments that may give data or a method, settle nothing.
     const unsure = lines("from urllib.request import Request", 'Request(f"{API}/i", data=(payload))', 'Request(f"{API}/j", headers={}, **options)', 'Request(f"{API}/k", build())');
     expect(read({ "web/c.py": unsure })).toEqual({ calls: ["* /i @2", "* /j @3", "* /k @4"], limits: [] });
+    // urlopen with data written out is POST; a method given in its sixth place is Request's; an import may end in a comment.
+    const more = lines("from urllib.request import Request, urlopen  # stdlib", 'urlopen(f"{API}/l", b"x")', 'Request(f"{API}/m", None, {}, None, False, "DELETE")');
+    expect(read({ "web/d.py": more })).toEqual({ calls: ["DELETE /m @3", "POST /l @2"], limits: [] });
   });
 
   it("reads net/http's request methods and constants by the name the file imports it under", () => {

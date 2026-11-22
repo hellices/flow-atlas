@@ -1690,14 +1690,17 @@ function handlerPlace(
   parsed: Map<string, Map<string, Definition[]>>,
 ): { at: Found; evidence: Surface["evidence"] } | undefined {
   const hits: Found[] = [];
-  const unmapped: Found[] = [];
+  // The methods not written as handlers, of the first name that has any: a later name may still have a handler.
+  let unmapped: Found[] = [];
   for (const name of handlerNames(operationId, method, key)) {
+    const own: Found[] = [];
     for (const [f, t] of texts)
       for (const { line, offset } of definitions(f, t, name, parsed)) {
         const found = { file: f, line, offset: offset ?? definitionOffset(t, line, name) };
-        (!/\.(java|kt|kts)$/.test(f) || jvmHandler(t, line) ? hits : unmapped).push(found);
+        (!/\.(java|kt|kts)$/.test(f) || jvmHandler(t, line) ? hits : own).push(found);
       }
-    if (hits.length || unmapped.length) break;
+    if (hits.length) break;
+    if (!unmapped.length) unmapped = own;
   }
   if (hits.length === 1) return { at: hits[0]!, evidence: "name" };
   const quoted = literalLines(texts, operationId);

@@ -201,18 +201,19 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
   const colon = code.indexOf(":", closingParen(code, at + def[0].length));
   if (colon < 0) return undefined;
   const end = blockEnd(code, colon, def[1]!);
-  // A function, class or lambda the handler declares runs only where it is called: its header and body are left out,
-  // and a function's name counts only where the rest of the handler calls it.
+  // A function or lambda the handler declares runs only where it is called: its header and body are left out, and a
+  // function's name counts only where the rest of the handler calls it. A class body runs as the class statement does,
+  // so only the functions in it are left out; a lambda's default arguments run as it is made, so only its body is.
   const body = code.slice(colon + 1, end).split("");
   const blankOut = (from: number, to: number) => {
     for (let i = Math.max(from, colon + 1); i < Math.min(to, end); i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
   };
-  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)(?:async[ \t]+)?(?:def|class)[ \t]+[A-Za-z_]\w*/gm)) {
+  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+[A-Za-z_]\w*/gm)) {
     const start = colon + 1 + (n.index ?? 0);
     const header = headerColon(code, start);
     blankOut(start, header < 0 ? end : blockEnd(code, header, n[1]!));
   }
-  for (const [start, stop] of lambdaRanges(code)) if (start > colon && start < end) blankOut(start, stop);
+  for (const [start, stop] of lambdaRanges(code)) if (start > colon && start <= end) blankOut(start, stop);
   // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
   // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
   // nothing of the component's.
@@ -223,7 +224,7 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
       if (i) local.add(i[2] ?? i[1]!);
     }
   const calls: string[] = [];
-  for (const m of body.join("").matchAll(/(?<![\w.])([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
+  for (const m of body.join("").matchAll(/(?<![\w.]|\bclass[ \t]+)([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
     if (m[2] === undefined) calls.push(m[1]!);
     else if (local.has(m[1]!)) calls.push(m[2]);
   }
@@ -243,8 +244,9 @@ function headerColon(code: string, from: number): number {
 }
 
 /**
- * Where each `lambda` of blanked code lies, from its keyword to the end of its expression (a `,` or a closing bracket
- * of what holds it, or the end of the line): its body runs only when it is called.
+ * Where the body of each `lambda` of blanked code lies, from past its `:` to the end of its expression (a `,` or a
+ * closing bracket of what holds it, or the end of the line): it runs only when the lambda is called. Its default
+ * arguments, before the `:`, run as it is made.
  */
 function lambdaRanges(code: string): Array<[number, number]> {
   const out: Array<[number, number]> = [];
@@ -261,7 +263,7 @@ function lambdaRanges(code: string): Array<[number, number]> {
         depth--;
       } else if (!depth && (c === "," || (c === "\n" && code[i - 1] !== "\\"))) break;
     }
-    out.push([m.index ?? 0, i]);
+    out.push([colon + 1, i]);
   }
   return out;
 }

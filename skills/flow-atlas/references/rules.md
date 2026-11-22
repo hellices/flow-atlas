@@ -19,9 +19,10 @@ route that takes its requests. A route that a call of unread method may reach, a
 reported, nor is one that a call without the trailing `/` its OpenAPI document writes may reach by a method other than
 GET or HEAD, one a call reaches only after its router's trailing-slash redirect, or one taken only with headers that
 meet its constraints (Fastify's); a `limit:` line names that call. A call whose interpolated segment fits a route's
-fixed text (`/api/x/${id}` and `GET /api/x/summary`), where another route of the target takes every value there (`GET
-/api/x/{name}`; a catch-all, which takes every path, does not count), names no path of that route: if no other call
-does, the route is reported, and the finding lists those
+fixed text (`/api/x/${id}` and `GET /api/x/summary`), where the path of another route of the target fits every value
+there and it serves the same method (`GET /api/x/{name}`; a catch-all, which fits every path, and a route taken only
+with headers do not count), names no path of that route: if no other call does, the route is reported, and the
+finding lists those
 calls, since whether one sends that value is not in the code. A route the framework serves by itself (`implicit`:
 FastAPI's OpenAPI document, Flask's static files route, the files Gin's `Static*` and net/http's `FileServer` serve,
 Spring Boot's error page and static resources, Next.js's public

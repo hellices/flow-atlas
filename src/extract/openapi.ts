@@ -177,10 +177,16 @@ export function definitions(file: string, text: string, name: string, parsed?: M
   return out;
 }
 
-/** A method annotation that maps requests: Spring's `@...Mapping` and `@...Exchange`, JAX-RS's, Micronaut's. */
-const JVM_MAPPING = /@(?:[\w$]+\.)*(?:\w*Mapping|\w*Exchange|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Path|Get|Post|Put|Delete|Patch|Head|Options)\b/;
+/**
+ * A method annotation that maps requests, by the names the frameworks atlas reads give them: Spring's
+ * `@RequestMapping`, `@GetMapping` and the like and `@HttpExchange`, `@GetExchange` and the like; JAX-RS's `@GET` and
+ * the like and `@Path`; Micronaut's `@Get` and the like. Another library's `@Mapping` (MapStruct's) is not one.
+ */
+const JVM_MAPPING = /@(?:[\w$]+\.)*(?:(?:Request|Get|Post|Put|Delete|Patch)Mapping|(?:Http|Get|Post|Put|Delete|Patch)Exchange|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Path|Get|Post|Put|Delete|Patch|Head|Options)\b(?![\w$])/;
 /** A type annotation that makes its methods request handlers or prefixes their paths. */
-const JVM_HANDLER_TYPE = /@(?:[\w$]+\.)*(?:\w*Controller|RequestMapping|HttpExchange|Path)\b/;
+const JVM_HANDLER_TYPE = /@(?:[\w$]+\.)*(?:Controller|RestController|RequestMapping|HttpExchange|Path)\b(?![\w$])/;
+
+const count = (s: string, c: string): number => s.split(c).length - 1;
 
 /**
  * Whether the Java or Kotlin method declared at `line` (1-based) is written as a request handler: it carries a mapping
@@ -190,12 +196,21 @@ const JVM_HANDLER_TYPE = /@(?:[\w$]+\.)*(?:\w*Controller|RequestMapping|HttpExch
 export function jvmHandler(text: string, line: number): boolean {
   const lines = text.split("\n");
   const annotations = (at: number): string => {
-    // The declaration's own line and the annotation lines above it, up to the statement or block before them.
+    // The declaration's own line and the annotations above it, blank lines between them included, an annotation's
+    // arguments spanning lines followed to its `@`; anything else before them (a statement, another declaration, a
+    // Kotlin function with an expression body) ends them.
     const own = [lines[at - 1] ?? ""];
+    let open = 0;
     for (let i = at - 2; i >= 0; i--) {
-      const l = lines[i]!.trim();
-      if (!l || /[;{}]$/.test(l)) break;
+      const l = lines[i]!.replace(/\/\/.*$/, "").trim();
+      if (!l) continue;
+      const closes = count(l, ")") - count(l, "(");
+      // A line of annotations followed by a declaration (`@GetMapping("/a") fun a() = ...`) is another declaration's.
+      let rest = l;
+      for (let m = /^@[\w$.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?\s*/.exec(rest); m?.[0]; m = /^@[\w$.]+(?:\s*\([^()]*(?:\([^()]*\)[^()]*)*\))?\s*/.exec(rest)) rest = rest.slice(m[0].length);
+      if (!open && (l.startsWith("@") ? rest !== "" && !rest.startsWith("@") : closes <= 0)) break;
       own.unshift(l);
+      open = Math.max(0, open + closes);
     }
     return own.join("\n");
   };

@@ -1588,7 +1588,13 @@ class Interp {
     // may wrap a router whose routes are read (a logging middleware), and one of net/http's own tells no paths apart.
     const direct =
       v.k === "func" ||
-      (arg?.k === "call" && arg.fn.k === "sel" && arg.fn.name === "HandlerFunc" && arg.fn.x.k === "ident" && frame.imports.get(arg.fn.x.name) === HTTP);
+      (arg?.k === "call" &&
+        arg.fn.k === "sel" &&
+        arg.fn.name === "HandlerFunc" &&
+        arg.fn.x.k === "ident" &&
+        frame.imports.get(arg.fn.x.name) === HTTP &&
+        // `http.HandlerFunc(mux.ServeHTTP)` serves what the router routes.
+        !(arg.args[0]?.k === "sel" && arg.args[0].name === "ServeHTTP"));
     if (direct) {
       this.limit(`${this.at(frame.file, at)} serves every request with ${this.source(arg, frame)}, a function and no router: the paths it tells apart in its own code are not read as routes`);
     }
