@@ -1286,7 +1286,11 @@ class Interp {
     };
     if (type?.k === "arraytype") return values.every((v) => v.value.k === "str" && !v.key) ? { k: "strs", values: values.map((v) => (v.value as { value: string }).value) } : lost();
     // net/http's Server serves its Handler at the root, as a router nothing mounts is.
-    if (type && this.httpServer(type, frame)) return { k: "builtin", pkg: HTTP, name: "Server" };
+    if (type && this.httpServer(type, frame)) {
+      const handler = e.elts.findIndex((el) => el.key?.k === "ident" && el.key.name === "Handler");
+      if (handler >= 0) this.servedHandler(values[handler]!.value, e.elts[handler]!.value, frame, e.start);
+      return { k: "builtin", pkg: HTTP, name: "Server" };
+    }
     const ref = type ? this.typeRef(type, frame) : undefined;
     if (!ref) return lost();
     const decl = ref.pkg.types.get(ref.name);
@@ -1574,6 +1578,22 @@ class Interp {
     return type.k === "sel" && type.x.k === "ident" && frame.imports.get(type.x.name) === HTTP && type.name === "Server";
   }
 
+  /**
+   * A server's handler that is a function, not a router atlas reads (`http.Server{Handler: http.HandlerFunc(h)}`,
+   * `http.ListenAndServe(addr, h)`): it answers every request and tells paths apart in its own code, which atlas does
+   * not read as routes, so a limit names it where it is served.
+   */
+  private servedHandler(v: V, arg: Expr | undefined, frame: Frame, at: number): void {
+    // Only a function given as it is, or wrapped right there in `http.HandlerFunc`: a handler a local function returns
+    // may wrap a router whose routes are read (a logging middleware), and one of net/http's own tells no paths apart.
+    const direct =
+      v.k === "func" ||
+      (arg?.k === "call" && arg.fn.k === "sel" && arg.fn.name === "HandlerFunc" && arg.fn.x.k === "ident" && frame.imports.get(arg.fn.x.name) === HTTP);
+    if (direct) {
+      this.limit(`${this.at(frame.file, at)} serves every request with ${this.source(arg, frame)}, a function and no router: the paths it tells apart in its own code are not read as routes`);
+    }
+  }
+
   /** `escape` for a router a handler is, or serves under `http.StripPrefix`. */
   private escapeHandler(h: V, frame: Frame, at: number): void {
     this.escape(h.k === "handler" && h.strip ? h.strip.inner : h, frame, at);
@@ -1638,6 +1658,15 @@ class Interp {
         case "NotFoundHandler":
         case "RedirectHandler":
           return [{ k: "handler", files: false }];
+        // The handler a server serves every request with, where it is no router.
+        case "ListenAndServe":
+        case "Serve":
+        case "ServeTLS":
+        case "ListenAndServeTLS": {
+          const i = name === "ListenAndServeTLS" ? 3 : 1;
+          if (args[i]) this.servedHandler(args[i], e.args[i], frame, at);
+          return [UNKNOWN];
+        }
         default:
           return [UNKNOWN];
       }

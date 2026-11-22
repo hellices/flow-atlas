@@ -14,7 +14,7 @@ import { Reach } from "../src/extract/reach.js";
 import { pythonCode, routesFromPython } from "../src/extract/routes.js";
 import { resolveFlows, type FlowObject, type LoadedFile } from "../src/flows.js";
 import type { Finding, Graph } from "../src/model.js";
-import { nearby } from "../src/nearby.js";
+import { nearby, nothingNearby } from "../src/nearby.js";
 import { callPath } from "../src/paths.js";
 import { markdownReport } from "../src/report.js";
 import { scan } from "../src/scan.js";
@@ -186,6 +186,25 @@ describe("nearby", () => {
     const graph = { calls: [{ from: "w", to: "api", method: "GET", path: "/users", at: { file: "w.ts", line: 1 } }], surfaces: [] } as unknown as Graph;
     const finding = { rule: "FA001", key: "FA001|api|GET /orders" } as Finding;
     expect(nearby(graph, finding)).toEqual([]);
+    expect(nothingNearby(graph, finding)).toBe("No call to api shares a fixed segment, in the same position, with /orders.");
+    expect(nothingNearby({ ...graph, calls: [] }, finding)).toBe("No configured call goes to api, so there is no call to compare GET /orders with.");
+  });
+
+  it("puts the same method first, then a path that fits under another method, before the cut", () => {
+    const at = { file: "api.ts", line: 1 };
+    const surface = (method: string, path: string) => ({ component: "api", method, path, at });
+    const deletes = ["a", "b", "c", "d", "e"].map((x) => surface("DELETE", `/a/items/${x}`));
+    const graph = { calls: [], surfaces: [...deletes, surface("GET", "/a/items/{id}/raw"), surface("POST", "/a/items")] } as unknown as Graph;
+    const finding = { rule: "FA002", key: "FA002|web->api|GET /a/items/{}" } as Finding;
+    expect(nearby(graph, finding).map((c) => [c.what, c.note])).toEqual([
+      ["api|GET /a/items/{id}/raw", undefined],
+      ["api|DELETE /a/items/a", "path fits, method differs"],
+      ["api|DELETE /a/items/b", "path fits, method differs"],
+      ["api|DELETE /a/items/c", "path fits, method differs"],
+      ["api|DELETE /a/items/d", "path fits, method differs"],
+    ]);
+    expect(nearby(graph, finding, Infinity)).toHaveLength(7);
+    expect(nothingNearby({ ...graph, surfaces: [] }, finding)).toBe("No route of api is read, so there is no surface to compare GET /a/items/{} with.");
   });
 });
 

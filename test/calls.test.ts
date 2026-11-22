@@ -141,6 +141,18 @@ describe("the second review of #21", () => {
       ['const url = "/api/chat";\nfetch(url);\nlog(url);', ["* /api/chat"]],
       // A use as the base of another URL is that URL's request.
       ['const items = "/items";\nfetch(items, { method: "POST" });\nfetch(`${items}/${id}`);', ["POST /items", "GET /items/{}"]],
+      // A use joined only to values builds no URL read of its own: it is this one's request (k6's `${BASE}${path}`).
+      ['const items = "/items";\nhttp.post(`${BASE}${items}`, body);', ["POST /items"]],
+      // A property of an object a const holds is used where the code reads that property.
+      ['const endpoints = { items: "/items", orders: "/orders" };\nhttp.post(`${BASE}${endpoints.items}`, body);\nhttp.del(BASE + endpoints.orders);', ["POST /items", "DELETE /orders"]],
+      ['const cfg = { url: "/x" };\nhttp.put(cfg.url, body);\nhttp.put(cfg.url, other);', ["PUT /x"]],
+      // One the code assigns may hold another URL by then, and one of an object handed on whole may be read anywhere.
+      ['const cfg = { url: "/x" };\ncfg.url = next;\nhttp.put(cfg.url, body);', ["* /x"]],
+      ['const cfg = { url: "/x" };\nhttp.put(cfg["url"], body);\nsend(cfg);', ["* /x"]],
+      ['const cfg = { url: "/x" };\nhttp.put(cfg["url"], body);', ["PUT /x"]],
+      // One the module exports may be read by the files that import it, with other methods.
+      ['export const PATHS = { items: "/items" };\nfetch(PATHS.items);', ["* /items"]],
+      ['const PATHS = { items: "/items" };\nfetch(PATHS.items);\nexport { PATHS };', ["* /items"]],
     ];
     expect(rows.map(([code]) => read(code))).toEqual(rows.map(([, calls]) => calls));
   });

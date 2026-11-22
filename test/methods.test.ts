@@ -168,6 +168,24 @@ describe("the method given as a value before or around the URL", () => {
     });
   });
 
+  it("reads urllib's Request and urlopen as GET without data and POST with it, unless a method is stated", () => {
+    const code = lines(
+      "import urllib.request",
+      "from urllib.request import Request, urlopen",
+      "from urllib import request as ur",
+      'urllib.request.Request(f"{API}/a", data=b"{}")',
+      'Request(f"{API}/b")',
+      'ur.Request(f"{API}/c", json.dumps(body).encode())',
+      'urlopen(f"{API}/d", data=payload)',
+      'urllib.request.Request(f"{API}/e", data=None, method="PUT")',
+      'urlopen(f"{API}/f")',
+    );
+    expect(read({ "web/a.py": code })).toEqual({
+      calls: ["* /d @7", "GET /b @5", "GET /f @9", "POST /a @4", "POST /c @6", "PUT /e @8"],
+      limits: [],
+    });
+  });
+
   it("reads net/http's request methods and constants by the name the file imports it under", () => {
     const code = lines(
       "package users",

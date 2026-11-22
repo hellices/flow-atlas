@@ -142,12 +142,16 @@ export function traceText(doc: Subgraph): string {
     if (lines.length === after) {
       lines.push(
         s.reaches !== undefined
-          ? "  none found: no configured call of this component sits in a method the handler reaches"
+          ? s.at.file.endsWith(".py")
+            ? "  none found: no configured call of this component sits in the handler or a function it calls by name (followed one call deep)"
+            : "  none found: no configured call of this component sits in a method the handler reaches"
           : /\.(java|kt|kts)$/.test(s.at.file)
             ? "  not followed: a Spring handler is followed to the template its view renders and the URL it redirects to; atlas reads neither here"
             : s.described && s.evidence === "declared"
               ? "  not traced: no handler of this operation was found in the configured route files"
-              : "  not traced: the handler was not read as TypeScript",
+              : s.at.file.endsWith(".py")
+                ? "  not traced: a Python handler is read where a decorator registers its def; this route is registered another way (add_api_route, add_url_rule, a URLconf, a class-based view)"
+                : "  not traced: the handler was not read as TypeScript",
       );
     }
     lines.push("", "= matched by method and path   ~ run by the handler (static) or held in a method it calls (by name)", "");

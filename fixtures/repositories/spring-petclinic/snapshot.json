@@ -184,7 +184,8 @@
     "reach server|POST /owners/{ownerId}/pets/{petId}/visits/new -> web->server|POST /owners/{}/pets/{}/visits/new@src/main/resources/templates/pets/createOrUpdateVisitForm.html:30 (name, view pets/createOrUpdateVisitForm)"
   ],
   "findings": [
-    "FA001|server|GET /oups"
+    "FA001|server|GET /oups",
+    "FA001|server|GET /owners/find"
   ],
   "limits": [
     "calls web->server: Thymeleaf links whose URL is a value (a model attribute, a fragment parameter) are not read: src/main/resources/templates/fragments/layout.html:31",

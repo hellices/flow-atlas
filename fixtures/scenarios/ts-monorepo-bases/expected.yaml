@@ -11,7 +11,8 @@ case: |
   client used to call, and its handler's request to the core service belongs to that route, which no chain starts at,
   so it starts none of its own; a journey whose order only the flow states stays Unknown. The core service's event
   streams are registered on paths held in consts (`fastify.get(outputPath, ...)`); they were missing with no sign but
-  a lower count in coverage, and now a limit names each registration, line and expression. The Kotlin app names the
+  a lower count in coverage, then a limit named each registration, and now (#98) the consts are read as their paths:
+  the streams are routes, and FA001 since no configured client subscribes to them. The Kotlin app names the
   path it asked in the exception it throws when the BFF is unavailable (`throw BffUnavailable("/messages")`); that
   label was read as a second call. Now a path given to an exception is no request, and a limit names the exception.
 surfaces:
@@ -19,6 +20,8 @@ surfaces:
   - bff|POST /uploads
   - bff|POST /messages
   - core|GET /profiles
+  - core|GET /outputs
+  - core|GET /outputs/snapshot
   - core|POST /uploads
   - core|POST /replies
   - store|GET /store/internal/object-info/**
@@ -27,6 +30,8 @@ surfaces:
   - store|POST /store/internal/v2/upload-tickets
 findings:
   - FA001|bff|GET /legacy/profiles
+  - FA001|core|GET /outputs
+  - FA001|core|GET /outputs/snapshot
 chains:
   - agent->store|POST /store/internal/v2/agent/images
   - app->bff|POST /uploads + core|POST /uploads
@@ -35,8 +40,6 @@ chains:
   - core->store|POST /store/internal/v2/shares
   - core->store|POST /store/internal/v2/upload-tickets
 limits:
-  - "core/src/events.ts:7 registers a path the file does not spell out (outputPath)"
-  - "core/src/events.ts:11 registers a path the file does not spell out (`${snapshotPath}`)"
   - "calls app->bff: paths given to an exception or to a function that throws are not read as requests: BffUnavailable (1, first at app/src/main/kotlin/com/example/app/BffApi.kt:8)"
 calls:
   - agent->store|POST /store/internal/v2/agent/images based @ agent/src/agent/images.py:13

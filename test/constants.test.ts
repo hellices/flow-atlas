@@ -403,6 +403,28 @@ describe("constants read across files", () => {
   });
 });
 
+describe("Express paths held in constants of other files", () => {
+  it("reads a registration's path from a constant this file or one it imports spells out, and leaves a run-time value unread", () => {
+    const files = {
+      "api/src/paths.ts": "export const API_PREFIX = '/api';\nexport const ROUTES = { items: '/items' } as const;",
+      "api/src/app.ts": [
+        "import express from 'express';",
+        "import * as C from './paths';",
+        "import { API_PREFIX, ROUTES } from './paths';",
+        "const app = express();",
+        "app.get(`${C.API_PREFIX}/health`, h);",
+        "app.post(API_PREFIX + ROUTES.items, h);",
+        "app.get([`${API_PREFIX}/a`, '/b'], h);",
+        "app.get(process.env.PATH_X, h);",
+      ].join("\n"),
+    };
+    const limits: string[] = [];
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"] }] });
+    expect(extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/health", "POST /api/items", "GET /api/a", "GET /b"]);
+    expect(limits).toEqual(["routes api: api/src/app.ts:8 registers a path the file does not spell out (process.env.PATH_X); its routes are not read"]);
+  });
+});
+
 describe("NestJS paths held in constants of other files", () => {
   const routes = (files: Record<string, string>, entry: Record<string, unknown> = {}) => {
     const limits: string[] = [];

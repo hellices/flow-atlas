@@ -39,6 +39,7 @@ routes:
     files: ["services/payments/src/main/**/*.java"]   # searched for the handlers of documented operations
 
 # Which files of one component call another. Keep these narrow: the client adapters, not the whole app.
+# In any files list, a pattern starting with ! takes files out of those the other patterns select; alone it is an error.
 calls:
   - { from: web, to: bff, files: ["apps/web/src/api/**/*.ts"] }
   - { from: app, to: api, files: ["app/lib/**/data/**/*.dart"], prefix: /api/v1 }   # the client's base path, appended to (Dio's baseUrl); the same as base: /api/v1, join: append
@@ -101,7 +102,8 @@ rules:
    }`), with the server that implements them as producers. `atlas query --kind registries` lists the entries.
 5. Read the `coverage` block of `atlas scan`: every source should read files and yield items; for calls, `matched`
    close to `items` means the paths line up, and `reached from a surface` shows how many outbound calls a trace can
-   continue through. A registry's line counts the active files read and the entries they list; one that reads no file
+   continue through. A routes line with a `routes[].openapi` document counts its code files and documents apart, and
+   the routes only the document gives. A registry's line counts the active files read and the entries they list; one that reads no file
    or lists nothing also gives a `limit:` line, usually a moved file or a `pattern` or `field` that no longer fits.
 6. Run `atlas baseline update` once, with the person who owns the repository. The baseline also records what each
    source yielded; a later check warns when a source falls below half of that, which usually means code moved and
@@ -217,9 +219,14 @@ leading constant of another file that names a host other than the target's (`DOC
 "https://docs.example.com"`), which the limit on other hosts names. Routes come
 from Nest decorators, Express-style receivers and registration helpers; their paths are written as OpenAPI templates
 (`:id` becomes `{id}`), and an `operationId` in the route options or `@ApiOperation` is kept. A registration whose path
-is not a literal (a `const`, a template, an expression; in Python a name or an f-string) registers nothing, and a limit
-names its file, line and expression; a Nest path held in a constant is read, as below. A `const` of the file named in `constants` is read as a GET route at its value,
-so a GET registered on it at that path gives no limit; another method or a prefix does. For each TypeScript route the handler is
+the code does not spell out (a value known at run time, an expression of one; in Python a name or an f-string)
+registers nothing, and a limit
+names its file, line and expression; a Nest path held in a constant is read, as below, and so is the path an Express,
+@koa/router or Fastify registration, or a TypeScript registration helper, takes from constants the same way
+(`` app.get(`${C.API_PREFIX}/items`, h) `` with `C` a module that exports `API_PREFIX = "/api"`), while a value only
+known at run time (`process.env.X`, a parameter) stays unread with the limit. A `const` of the file named in
+`constants` is read as a GET route at its value, for a path no registration reads (a server-sent events stream); a GET
+registered at it is that route, kept once at the registration. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
 those called on the handler's own parameters (`res.send()`, `reply.code()`), which belong to the framework, as does the
 registration call itself; an
@@ -307,10 +314,7 @@ after it, under the prefixes of the instance `register` is called on, since fast
 option is its own; with `redirect: true`, where the `/` was added, GET at the prefix as written too. `serve: false`
 registers none; `wildcard: false` registers a route per file under `root` as the server starts, which is not read, and
 options not spelled out leave its route unread; each says so in a limit. Its routes are `implicit` (`@fastify/static`).
-The `next` style reads Next.js route handlers, `app/**/route.ts` exporting `GET`, `POST` and
-router or on an `express()` application, created there or imported from a relative module; routers are told apart by their bindings, so a
-shadowing name is another value. Where a mount path is not a literal and `mounts` does not give it, its routes are not
-read and a limit says so. A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
+A FastAPI route on an `APIRouter` is served, as FastAPI documents ("Bigger Applications -
 Multiple Files"), at the router's `prefix` joined to its path, under every `include_router` that takes the router in
 with that call's `prefix`, under where the router or application it is included into is served; an application
 (`FastAPI()`) serves at the root. Routers are followed through nested includes and the imports of the route files
@@ -470,7 +474,10 @@ cuts text, called on a receiver, is no request either: Java's, Kotlin's and the 
 `strings`; type arguments (`helper<T, U>(`) and a keyword's parentheses (`if (...)`) are no call's. Nor, in Dart, a
 text property of
 Flutter's `InputDecoration` (`labelText`, `hintText`, `helperText`, `prefixText`, `suffixText`, `counterText`,
-`errorText`, `semanticCounterText`); nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
+`errorText`, `semanticCounterText`), the text of `Text` and `SelectableText` (their first argument), a `TextSpan`'s
+`text:` or a `Tooltip`'s `message:`, a route `Navigator` pushes by name (`pushNamed` and the like), and, in a file that
+imports go_router (whose navigations are extension methods, callable only so), a `GoRoute`'s `path:`, a `GoRouter`'s
+`initialLocation:` and the location `go`, `push`, `pushReplacement` and `replace` navigate to; nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
 `MapPut`, `MapDelete`, `MapPatch`, `MapMethods`, `MapGroup`, `MapFallback`, `MapHub`, `MapHealthChecks` and
 `MapBlazorHub` or of YARP's `MapForwarder` (a route pattern the application serves; the forwarder's `targetPath`, the
 path it sends its requests to, is read), the path `UseExceptionHandler` and `UseStatusCodePagesWithReExecute`
@@ -484,13 +491,11 @@ unlike `{*name}`, which matches `/x` itself; a call's trailing `/` is kept besid
 treats it (see "Which route a request reaches"). `{id:int}`, `{id:float}` and `{id:uuid}` are kept as written and take one segment their regex takes; `{id:str}` is
 `{id}`; a convertor registered elsewhere is not read, so its segment may take anything; a `path` converter before a
 suffix is not matched, so that route is left out with a limit), and `app.mount("/x", StaticFiles(...))` serves GET
-(and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; another mounted application
-is not read, and a limit says so. `app.frontend("/", directory=...)` serves the files a frontend build put in a
-directory, and a fallback page for GET and HEAD, wherever no route matches: which paths answer depends on the build,
-so they are not read and a limit names the call. The `spring` style reads `@RequestMapping` on a class as a prefix for the
 (and an implicit HEAD) at `/x/{path:path}`, as Starlette compiles a mount; an application or router of the route files
 that it mounts serves the routes read there under `/x`, as an include would; another mounted application is not read,
-and a limit says so. Each application (`FastAPI()`) serves routes of its own, which it adds as it is made, before any
+and a limit says so. `app.frontend("/", directory=...)` serves the files a frontend build put in a
+directory, and a fallback page for GET and HEAD, wherever no route matches: which paths answer depends on the build,
+so they are not read and a limit names the call. Each application (`FastAPI()`) serves routes of its own, which it adds as it is made, before any
 route of the code (fastapi/applications.py, `setup`): GET, and the HEAD Starlette adds, at `openapi_url`
 (`/openapi.json`), and where that is set, at `docs_url` (`/docs`) with `swagger_ui_oauth2_redirect_url`
 (`/docs/oauth2-redirect`) and at `redoc_url` (`/redoc`), under where the application is served (a mounted one under its
@@ -628,7 +633,8 @@ before it, a router a ServeMux or chi serves without the path stripped (it sees 
 root either), and chi's `middleware.StripSlashes`, `RedirectSlashes`,
 `URLFormat`, `StripPrefix` and `PathRewrite`, which route a request by another path than it names (chi's
 `middleware.GetHead`, used on a router, makes its GET routes serve HEAD as well, `implicit`, where no HEAD route or
-route for any method takes the path). Other Go routers (Echo,
+route for any method takes the path), and a server whose handler is a function and no router (`http.Server{Handler:
+http.HandlerFunc(h)}`, `http.ListenAndServe(addr, h)`), which tells paths apart in its own code. Other Go routers (Echo,
 Fiber, gorilla/mux and the rest) are not read.
 The `spring` style reads `@RequestMapping` on a class as a prefix for the
 `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping` and `@RequestMapping` methods under
@@ -1094,7 +1100,10 @@ URL argument the literal is, the URL also built inside it (`http.get(Uri.parse("
   constant of net/http or resty, by the names the file imports them under;
 - Python: `request(method, url)` and `build_request(method, url)` on any receiver (Requests, HTTPX, urllib3, aiohttp
   and http.client take the method first), and the `Request(method, url)` of Requests and HTTPX, by the names the file
-  imports; the method upper-cased, as those libraries send it;
+  imports; the method upper-cased, as those libraries send it; urllib's `Request(url, data, method=...)` and
+  `urlopen(url, data)`, by the names the file imports `urllib.request` or them under, send the method given, else GET
+  without `data` (or with `None`) and POST with it, as `Request.get_method` decides; `data` held in a name, which may be
+  `None`, is `*`;
 - Dart: package:http's `Request(method, url)`, `MultipartRequest` and `StreamedRequest`, `read` and `readBytes` (GET),
   by the prefix the file imports the package under; dio's `query` (QUERY) and the method of `request(path, options:
   Options(method: 'PATCH'))`, `*` without one, since the Dio's own options may set it;

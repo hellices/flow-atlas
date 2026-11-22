@@ -30,6 +30,10 @@ routes:
   gives the later methods sharing a name, is not traced back, since nothing in the document says which generator wrote
   it), evidence `name`. TypeScript and JavaScript are parsed, so a signature prettier spreads over several lines is
   found and an overload signature is not; Python, Java and Kotlin definitions are found by the line that names them.
+  A Java or Kotlin method is taken by name first only where it is written as a request handler: it carries a mapping
+  annotation (Spring's `@...Mapping` or `@...Exchange`, JAX-RS's, Micronaut's) or its type a controller or mapping
+  one; a method of another type of that name, such as the service method a controller delegates to, comes after a
+  quoted id, and is taken only where no quoted id is found.
   Else, when no name or several match, exactly one place in the component's
   route files that declares the operationId as a quoted value after `operationId` or `operation_id`
   (`operation_id="orderHistory"`, `@Operation(operationId = "orderHistory")`), evidence `text`. If neither finds
@@ -82,7 +86,11 @@ For a component whose routes are read with `styles: [spring]`, atlas lists what 
 Maven or Gradle project the component is part of (the nearest directory at or above its path with a `pom.xml` or
 `build.gradle(.kts)`), as served documents; every module of a Spring Modulith application shares them. They are
 candidates for the component's description (`references/boundaries.md`), not route sources: give `routes[].openapi`
-a generated file for that.
+a generated file for that. Give it the default document (`/v3/api-docs`, every group's operations in one), not one
+file per group: two `routes[].openapi` entries for one component are read as two descriptions of it, so its
+description is `ambiguous` (`SeveralReadForRoutes`) even where the groups do not overlap. Where the default document
+is turned off (`springdoc.enable-default-api-docs: false`), give the groups' files and choose the one exports describe
+the component by with `openapi.<component>`.
 
 | springdoc.org | What atlas reads |
 |---|---|

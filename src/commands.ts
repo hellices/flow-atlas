@@ -10,7 +10,7 @@ import { FlowIndex, seedsFor, trace, traceText } from "./flow.js";
 import { flowFindings, loadFlows, LOCATION, resolveFlows, type FlowReport } from "./flows.js";
 import { inventory, inventoryText } from "./inventory.js";
 import { API_VERSION, type Finding, type Findings, type Graph, type Subgraph } from "./model.js";
-import { nearby } from "./nearby.js";
+import { nearby, nothingNearby } from "./nearby.js";
 import { methodsMatch, pathsMatch } from "./paths.js";
 import { callSummary, markdownReport, textReport, type Classified } from "./report.js";
 import { callOutcomes, evaluate, RULES } from "./rules.js";
@@ -233,7 +233,10 @@ function cmdCheck(o: Options): number {
 
 function coverageText(graph: Graph): string {
   const rows = graph.coverage.map((c) => {
-    const parts = [`${c.files} files`, `${c.items} items`];
+    const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+    const parts = c.documents
+      ? [count(c.files - c.documents, "code file"), count(c.documents, "document"), `${count(c.items, "item")} (${c.documented ?? 0} only from the document${c.documents === 1 ? "" : "s"})`]
+      : [count(c.files, "file"), count(c.items, "item")];
     if (c.matched !== undefined) parts.push(`${c.matched} matched`);
     if (c.linked !== undefined) parts.push(`${c.linked} reached from a surface`);
     return `  ${c.source}: ${parts.join(", ")}`;
@@ -281,10 +284,15 @@ function cmdExplain(o: Options): number {
   console.log(`${f.rule} ${f.title}\n\n${f.message}\n`);
   for (const p of f.at) console.log(`  ${p.file}:${p.line}`);
   const graph = cached ? readGraph<Graph>(o.out) : now!.graph;
-  const near = graph ? nearby(graph, f) : [];
+  const all = graph ? nearby(graph, f, Infinity) : [];
+  const near = all.slice(0, 5);
   if (near.length) {
     console.log(`\n${f.rule === "FA001" ? "Calls to this component with a similar path" : "Surfaces of the target with a similar path"}:`);
-    for (const c of near) console.log(`  ${c.what}  ${c.at.file}:${c.at.line}`);
+    for (const c of near) console.log(`  ${c.what}  ${c.at.file}:${c.at.line}${c.note ? `  (${c.note})` : ""}`);
+    if (all.length > near.length) console.log(`  and ${all.length - near.length} more less close`);
+  } else if (graph) {
+    const why = nothingNearby(graph, f);
+    if (why) console.log(`\n${why}`);
   }
   console.log(`\nWhat the rule means and the usual resolutions: references/rules.md (${f.rule}) of the flow-atlas skill.`);
   console.log(`An exception entry for this finding:\n\n- rule: ${f.rule}\n  key: "${f.key}"\n  reason: "<why, and the decision that allows it>"\n  decidedBy: "<document or issue>"\n  reviewBy: "<YYYY-MM-DD>"`);
@@ -542,6 +550,10 @@ export function main(argv: string[]): number {
   if (!run) {
     process.stderr.write(`unknown command ${command}\n\n${HELP}`);
     return 2;
+  }
+  if (rest.includes("--help") || rest.includes("-h")) {
+    process.stdout.write(HELP);
+    return 0;
   }
   try {
     return run(parseArgs(rest));

@@ -176,3 +176,32 @@ export function definitions(file: string, text: string, name: string, parsed?: M
   });
   return out;
 }
+
+/** A method annotation that maps requests: Spring's `@...Mapping` and `@...Exchange`, JAX-RS's, Micronaut's. */
+const JVM_MAPPING = /@(?:[\w$]+\.)*(?:\w*Mapping|\w*Exchange|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Path|Get|Post|Put|Delete|Patch|Head|Options)\b/;
+/** A type annotation that makes its methods request handlers or prefixes their paths. */
+const JVM_HANDLER_TYPE = /@(?:[\w$]+\.)*(?:\w*Controller|RequestMapping|HttpExchange|Path)\b/;
+
+/**
+ * Whether the Java or Kotlin method declared at `line` (1-based) is written as a request handler: it carries a mapping
+ * annotation, on its line or the lines of annotations above it, or the nearest type declared before it carries a
+ * controller or mapping annotation. A method of a service or a repository with the operation's name is not.
+ */
+export function jvmHandler(text: string, line: number): boolean {
+  const lines = text.split("\n");
+  const annotations = (at: number): string => {
+    // The declaration's own line and the annotation lines above it, up to the statement or block before them.
+    const own = [lines[at - 1] ?? ""];
+    for (let i = at - 2; i >= 0; i--) {
+      const l = lines[i]!.trim();
+      if (!l || /[;{}]$/.test(l)) break;
+      own.unshift(l);
+    }
+    return own.join("\n");
+  };
+  if (JVM_MAPPING.test(annotations(line))) return true;
+  for (let i = line - 1; i >= 1; i--) {
+    if (/\b(?:class|interface|object)\s+[A-Za-z_$]/.test(lines[i - 1]!.replace(/\/\/.*$/, ""))) return JVM_HANDLER_TYPE.test(annotations(i));
+  }
+  return false;
+}

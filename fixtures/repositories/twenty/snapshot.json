@@ -261,6 +261,7 @@
     "FA001|server|GET /emailing/c/{token}",
     "FA001|server|GET /emailing/o/{token}",
     "FA001|server|GET /emailing/unsubscribe",
+    "FA001|server|GET /file/record-export/{id}",
     "FA001|server|GET /files/application-registrations/{applicationRegistrationId}/{path}/**",
     "FA001|server|GET /healthz",
     "FA001|server|GET /oauth/register/{clientId}",

@@ -10,15 +10,15 @@ import { resolveApiDescriptions } from "../src/extract/apidocs.js";
 import { callsFromText } from "../src/extract/calls.js";
 import { Reach } from "../src/extract/reach.js";
 import { extractRegistries } from "../src/extract/registries.js";
-import { evaluate } from "../src/rules.js";
+import { callOutcomes, evaluate } from "../src/rules.js";
 import { routesFromPython, routesFromTypeScript } from "../src/extract/routes.js";
-import { traceText } from "../src/flow.js";
+import { traceText, trace, seedsFor } from "../src/flow.js";
 import { flowFindings, resolveFlows, type FlowObject } from "../src/flows.js";
-import { inventory } from "../src/inventory.js";
+import { inventory, inventoryText } from "../src/inventory.js";
 import { API_VERSION, type Subgraph, type Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
 import { codeDependency, configDependency, provenance } from "../src/provenance.js";
-import { coverageDrops } from "../src/commands.js";
+import { coverageDrops, main } from "../src/commands.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import { GitRefSource, WorktreeSource, type Source } from "../src/source.js";
@@ -140,12 +140,25 @@ describe("registry coverage", () => {
   });
   it("gives a limit for an active list that yields no entries", () => {
     expect(graph.limits).toEqual([
-      "registries renamed: 1 files read, nothing extracted",
+      "registries renamed: 1 file read, nothing extracted",
       "registries moved: the configured files match nothing",
     ]);
   });
   it("does not warn against a baseline recorded before registries had coverage", () => {
     expect(coverageDrops(graph, {})).toEqual([]);
+  });
+});
+
+describe("routes coverage", () => {
+  it("counts a document's file and the routes only it gives apart from the code's", () => {
+    const files = {
+      "api/app.ts": 'app.get("/orders", h);',
+      "api/openapi.json": JSON.stringify({ openapi: "3.1.0", info: { title: "a", version: "1" }, paths: { "/orders": { get: {} }, "/refunds": { post: {} } } }),
+    };
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/**/*.ts"], styles: ["express"], openapi: "api/openapi.json" }] });
+    const graph = scan(memory(files), config);
+    expect(graph.coverage).toEqual([{ source: "routes api", files: 2, items: 2, documents: 1, documented: 1 }]);
+    expect(validate("graph", graph)).toEqual([]);
   });
 });
 
@@ -189,6 +202,165 @@ describe("calls to a component whose routes are not read", () => {
     // A request on a path agent serves and no route of agent takes is now reported.
     const strayGraph = scan(memory({ ...stray, "agent/openapi.json": documented["agent/openapi.json"] }), readConfig);
     expect(fa002(strayGraph, readConfig).filter((k) => k.includes("->agent|"))).toEqual(["FA002|web->agent|POST /v1/runs"]);
+  });
+
+  it("checks the calls to a component whose route sources yield no route, and says so next to each finding", () => {
+    const files = { "web/a.ts": 'fetch("http://localhost:3000/thing");', "agent/app.ts": "export const x = 1;" };
+    const components = [
+      { name: "web", path: "web" },
+      { name: "agent", path: "agent" },
+    ];
+    const config = normalizeConfig({ components, routes: [{ component: "agent", files: ["agent/**"], styles: ["express"] }], calls: [{ from: "web", to: "agent", files: ["web/**"] }] });
+    const graph = scan(memory(files), config);
+    expect(graph.limits).toEqual([
+      "routes agent: 1 file read, nothing extracted",
+      "calls web->agent: agent's route sources yielded no route, so its call matches nothing; FA002 still checks it, as after a change that takes every route away, and the routes agent limits say what was not read",
+    ]);
+    expect(evaluate(graph, config, []).filter((f) => f.rule === "FA002").map((f) => f.message)).toEqual([
+      "web calls GET /thing on agent, which serves no matching route. No route of agent is read: its route sources yielded none (a limit says what they left out).",
+    ]);
+    expect(callOutcomes(graph, config)).toEqual(["unserved"]);
+  });
+});
+
+describe("Python handlers", () => {
+  const components = [
+    { name: "py", path: "py" },
+    { name: "api", path: "api" },
+  ];
+  const routes = [
+    { component: "api", files: ["api/**"], styles: ["express"] },
+    { component: "py", files: ["py/**"], styles: ["fastapi"] },
+  ];
+  const main = [
+    "from fastapi import FastAPI",
+    "from .svc import load_orders",
+    "app = FastAPI()",
+    "",
+    '@app.get("/items")',
+    "@limiter.limit(",
+    '    "5/minute",',
+    ")",
+    "async def items():",
+    '    async with httpx.AsyncClient(base_url="http://localhost:3000") as c:',
+    '        return (await c.get("/api/items")).json()',
+    "",
+    '@app.get("/orders")',
+    "def orders():",
+    "    return load_orders()",
+    "",
+    "def other():",
+    '    return httpx.get("http://localhost:3000/api/other")',
+    "",
+    'app.add_api_route("/other", other)',
+    "",
+    "from . import svc as s",
+    '@app.get("/params")',
+    "def params(q: dict):",
+    '    return q.get("a")',
+    "",
+    '@app.get("/refunds")',
+    "def refunds():",
+    "    return s.load_orders()",
+  ].join("\n");
+  const files = {
+    "api/app.ts": 'app.get("/api/items", h); app.post("/api/orders", h); app.get("/api/other", h); app.get("/api/client", h);',
+    "py/main.py": main,
+    "py/svc.py": 'def load_orders():\n    return httpx.post("http://localhost:3000/api/orders").json()\n',
+    "py/client.py": 'class Client:\n    def get(self, key):\n        return httpx.get("http://localhost:3000/api/client")\n',
+  };
+  const config = normalizeConfig({ components, routes, origins: { api: "http://localhost:3000" }, calls: [{ from: "py", to: "api", files: ["py/**"] }] });
+  const graph = scan(memory(files), config);
+  const downstream = (seed: string) => traceText(trace(graph, seedsFor(graph, seed))).split("downstream")[1]!.split("\n\n")[0]!;
+
+  it("links a decorated def to the calls in it and in the functions it calls by name, one call deep", () => {
+    expect(downstream("py|GET /items")).toContain("~ py -> api  GET /api/items in items  py/main.py:11\n    = api|GET /api/items");
+    expect(downstream("py|GET /orders")).toContain("~ py -> api  POST /api/orders in load_orders  py/svc.py:2\n    = api|POST /api/orders");
+    expect(downstream("py|GET /refunds")).toContain("~ py -> api  POST /api/orders in load_orders  py/svc.py:2");
+    expect(graph.limits.filter((l) => l.startsWith("routes py:"))).toEqual([]);
+  });
+
+  it("takes no method of another value for a function of the component's (`q.get` is no Client.get)", () => {
+    expect(downstream("py|GET /params")).not.toContain("/api/client");
+    expect(graph.surfaces.find((s) => s.id === "py|GET /params")?.reaches).toEqual(["params"]);
+  });
+
+  it("says where a handler registered without a decorator stops", () => {
+    expect(downstream("py|GET /other")).toContain("not traced: a Python handler is read where a decorator registers its def; this route is registered another way");
+  });
+
+  it("names a component none of whose handlers is followed into its calls, once", () => {
+    const go = normalizeConfig({
+      components: [{ name: "go", path: "go" }, components[1]!],
+      routes: [routes[0]!, { component: "go", files: ["go/**"], styles: ["go"] }],
+      origins: { api: "http://localhost:3000" },
+      calls: [
+        { from: "go", to: "api", files: ["go/a.go"] },
+        { from: "go", to: "api", files: ["go/b.go"] },
+      ],
+    });
+    const goFiles = {
+      "api/app.ts": files["api/app.ts"],
+      "go/go.mod": "module x\n\ngo 1.22\n",
+      "go/a.go": 'package main\nimport "net/http"\nfunc main() { http.HandleFunc("/g", h); http.ListenAndServe(":8080", nil) }\n',
+      "go/b.go": 'package main\nimport "net/http"\nfunc h(w http.ResponseWriter, r *http.Request) { http.Get("http://localhost:3000/api/items") }\n',
+    };
+    const read = scan(memory(goFiles), go);
+    expect(read.limits.filter((l) => l.startsWith("routes go:"))).toEqual([
+      "routes go: atlas follows none of its handlers (in .go) into the calls they make, so its 1 configured call is reached from no surface and chains stop at its surfaces",
+    ]);
+  });
+});
+
+describe("a call that fits a route only by the value of an interpolated segment", () => {
+  const components = [
+    { name: "web", path: "web" },
+    { name: "api", path: "api" },
+  ];
+  const config = normalizeConfig({ components, routes: [{ component: "api", files: ["api/**"], styles: ["express"] }], calls: [{ from: "web", to: "api", files: ["web/**"] }] });
+  const api = 'app.get("/api/x/summary", h);\napp.get("/api/x/:name", h);\napp.get("/api/y/a", h);\napp.get("/api/y/b", h);';
+  const fa001 = (web: string) => {
+    const graph = scan(memory({ "api/app.ts": api, "web/a.ts": web }), config);
+    return evaluate(graph, config, []).filter((f) => f.rule === "FA001");
+  };
+
+  it("does not count as a caller of a literal route where another route takes every value, and the finding names it", () => {
+    const found = fa001("export const f = (id: string) => fetch(`/api/x/${id}`);");
+    expect(found.map((f) => f.key)).toEqual(["FA001|api|GET /api/x/summary", "FA001|api|GET /api/y/a", "FA001|api|GET /api/y/b"]);
+    expect(found[0]!.message).toBe(
+      "GET /api/x/summary (api) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and another route takes every value of that segment: web calls GET /api/x/{} (web/a.ts:1); whether one sends this path is not in the code.",
+    );
+  });
+
+  it("still counts where no route takes every value, and a call that names the path", () => {
+    const found = fa001("export const f = (id: string) => fetch(`/api/y/${id}`);\nexport const g = () => fetch('/api/x/summary');\nexport const h = (n: string) => fetch(`/api/x/${n}`);");
+    expect(found.map((f) => f.key)).toEqual([]);
+    // A call that writes the path's text, a value only after it (a query string), names it.
+    expect(fa001("export const f = (q: string) => fetch(`/api/x/summary${q}`);\nexport const h = (n: string) => fetch(`/api/x/${n}`);\nexport const g = (id: string) => fetch(`/api/y/${id}`);").map((f) => f.key)).toEqual([]);
+    // A catch-all takes every path there is, which says nothing of which one the call means.
+    const withFallback = scan(memory({ "api/app.ts": 'app.get("/api/z/a", h);\napp.get("/api/*rest", h);', "web/a.ts": "export const f = (id: string) => fetch(`/api/z/${id}`);" }), config);
+    expect(evaluate(withFallback, config, []).filter((f) => f.rule === "FA001").map((f) => f.key)).toEqual([]);
+  });
+});
+
+describe("what the output leaves out", () => {
+  it("says how many call candidate files inventory does not list", () => {
+    const calls = Array.from({ length: 10 }, (_, i) => ({ component: "web", file: `web/f${i}.ts`, count: i + 1, example: `web/f${i}.ts:1` }));
+    const text = inventoryText({ components: [], routes: [], calls, apiDocuments: [] });
+    expect(text).toContain("  web: 55 in 10 files (the 8 with the most below, 2 more not listed)\n    10  web/f9.ts:1\n");
+    expect(text).not.toContain("web/f1.ts:1");
+  });
+
+  it("answers --help after a command with the help", () => {
+    const out: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: string) => (out.push(s), true);
+    try {
+      expect(main(["query", "--help"])).toBe(0);
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(out.join("")).toContain("Usage: atlas <command> [options]");
   });
 });
 

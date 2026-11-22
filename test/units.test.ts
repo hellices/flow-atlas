@@ -13,6 +13,7 @@ import { matchCalls, type Ranking } from "../src/match.js";
 import { validate } from "../src/schema.js";
 import { normalizeConfig } from "../src/config.js";
 import type { Source } from "../src/source.js";
+import { matcher } from "../src/source.js";
 import type { Graph } from "../src/model.js";
 import { coverageDrops } from "../src/commands.js";
 import { fastapiDocumentation } from "./documentation.js";
@@ -288,11 +289,12 @@ describe("routesFromTypeScript", () => {
     expect(unread('@Controller("x")\nclass C {\n  @Get(Paths.DETAIL) a() {}\n  @Get() b() {}\n}')).toEqual({ routes: ["GET /x"], limits: [not(3, "Paths.DETAIL")] });
     const fastify = { component: "svc", files: [], styles: ["express" as const], receivers: ["fastify"] };
     const sse = 'const outputPath = "/outputs";\nconst snapshotPath = "/outputs/snapshot";\nfastify.get(outputPath, h);\nfastify.get(\n  `${snapshotPath}`,\n  h,\n);\nfastify.post("/outputs", h);';
-    expect(unread(sse, fastify)).toEqual({ routes: ["POST /outputs"], limits: [not(3, "outputPath"), not(5, "`${snapshotPath}`")] });
-    // Named in `constants`, the path is read as a GET route, so nothing is left unread.
+    // A path held in a constant the file spells out is read, as Nest's are.
+    expect(unread(sse, fastify)).toEqual({ routes: ["GET /outputs", "GET /outputs/snapshot", "POST /outputs"], limits: [] });
+    // Named in `constants` too, the GET route the constant makes is the registration's, kept once, where its handler is.
     expect(unread(sse, { ...fastify, constants: "^(outputPath|snapshotPath)$" })).toEqual({ routes: ["GET /outputs", "GET /outputs/snapshot", "POST /outputs"], limits: [] });
-    // Only a constant that reader turned into a route: an imported one, one computed at run time or a parameter that
-    // shadows a read one leaves the registration unread, whatever its name.
+    // A constant of a file not read, one computed at run time or a parameter that shadows a read one leaves the
+    // registration unread, whatever its name.
     const elsewhere = [
       'import { outputPath } from "./paths";',
       "fastify.get(outputPath, h);",
@@ -308,17 +310,16 @@ describe("routesFromTypeScript", () => {
       routes: ["GET /stream"],
       limits: [not(2, "outputPath"), not(4, "snapshotPath"), not(6, "streamPath")],
     });
-    // `constants` reads a GET route at the constant's own path; another method, or a router's prefix, is a route it
-    // does not give, so that registration is still unread.
+    // Every method registered at a constant's path is read at it, beside the GET route `constants` makes.
     const methods = ['const usersPath = "/users";', "app.get(usersPath, h);", "app.post(usersPath, h);", "app.all(usersPath, h);"].join("\n");
     expect(unread(methods, { ...fastify, receivers: ["app"], constants: "Path$" })).toEqual({
-      routes: ["GET /users"],
-      limits: [not(3, "usersPath"), not(4, "usersPath")],
+      routes: ["GET /users", "POST /users", "* /users"],
+      limits: [],
     });
     const helperGet = { component: "svc", files: [], constants: "Path$", calls: [{ name: "registerRoute", methodArg: 1, pathArg: 2 }] };
     expect(unread('const usersPath = "/users";\nregisterRoute(app, "GET", usersPath, h);\nregisterRoute(app, "PUT", usersPath, h);', helperGet)).toEqual({
-      routes: ["GET /users"],
-      limits: [not(3, "usersPath")],
+      routes: ["GET /users", "PUT /users"],
+      limits: [],
     });
     // A Nest decorator reads a `const` the code spells out as its path, under the controller's.
     const nestConst = { ...nest, constants: "Path$" };
@@ -380,6 +381,19 @@ describe("documentStart", () => {
 describe("normalizeConfig", () => {
   it("rejects the removed versions section instead of ignoring it", () => {
     expect(() => normalizeConfig({ versions: [] })).toThrow(/versions: contract-version checks \(FA006\) were removed/);
+  });
+  it("rejects a files list of ! patterns alone, which selects nothing", () => {
+    expect(() => normalizeConfig({ calls: [{ from: "web", to: "api", files: ["!apps/web/test/**"] }] })).toThrow(/calls web->api: files: a pattern starting with ! only takes files out/);
+    expect(() => normalizeConfig({ routes: [{ component: "api", files: ["!**/test/**"] }] })).toThrow(/routes of api: files/);
+    expect(() => normalizeConfig({ calls: [{ from: "web", to: "api", files: ["apps/web/**", "!apps/web/test/**"] }] })).not.toThrow();
+  });
+});
+
+describe("matcher", () => {
+  it("selects what a plain pattern matches less what a ! pattern matches, not either", () => {
+    const m = matcher(["apps/web/**", "!apps/web/test/**"]);
+    expect(["apps/web/a.ts", "apps/web/test/t.ts", "services/api/app.ts"].map(m)).toEqual([true, false, false]);
+    expect(matcher(["!apps/web/test/**"])("services/api/app.ts")).toBe(false);
   });
 });
 

@@ -171,6 +171,53 @@ export function scopeAt(scopes: Scope[], at: number): number {
   return around.length ? Math.max(...around.map((s) => s.start)) : -1;
 }
 
+const NOT_CALLED = new Set(["if", "elif", "while", "for", "with", "return", "await", "yield", "not", "and", "or", "in", "is", "lambda", "assert", "del", "raise", "except", "def", "class", "async", "print"]);
+
+/**
+ * The function the decorators starting at `line` (1-based) of blanked code put on, or the `def` at that line, as a
+ * request's handler: its name, and the names of the functions its own body calls for certain, one call deep. Undefined
+ * where the line is neither or no `def` follows the decorators.
+ */
+export function decoratedHandler(code: string, line: number): { name: string; calls: string[] } | undefined {
+  const lines = code.split("\n");
+  if (line < 1 || line > lines.length || !/^[ \t]*(?:@|(?:async[ \t]+)?def[ \t])/.test(lines[line - 1]!)) return undefined;
+  let at = lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
+  // Past each decorator, its arguments spanning lines, and the blank lines after it, to the statement they decorate.
+  const blank = /[ \t]*\n/y;
+  for (let decorator = /^[ \t]*@/.exec(code.slice(at)); decorator; decorator = /^[ \t]*@/.exec(code.slice(at))) {
+    let depth = 0;
+    let i = at + decorator[0].length;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth = Math.max(0, depth - 1);
+      else if (c === "\n" && !depth) break;
+    }
+    at = i + 1;
+    for (blank.lastIndex = at; blank.exec(code); ) at = blank.lastIndex;
+  }
+  const def = /^([ \t]*)(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/.exec(code.slice(at));
+  if (!def) return undefined;
+  const colon = code.indexOf(":", closingParen(code, at + def[0].length));
+  if (colon < 0) return undefined;
+  const body = code.slice(colon + 1, blockEnd(code, colon, def[1]!));
+  // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
+  // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
+  // nothing of the component's.
+  const local = new Set(["self", "cls"]);
+  for (const m of code.matchAll(/^[ \t]*from[ \t]+\.[\w.]*[ \t]+import[ \t]+\(?([^)\n]+)/gm))
+    for (const item of m[1]!.split(",")) {
+      const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
+      if (i) local.add(i[2] ?? i[1]!);
+    }
+  const calls: string[] = [];
+  for (const m of body.matchAll(/(?<![\w.])([A-Za-z_]\w*)(?:[ \t]*\.[ \t]*([A-Za-z_]\w*))?[ \t]*\(/g)) {
+    if (m[2] === undefined) calls.push(m[1]!);
+    else if (local.has(m[1]!)) calls.push(m[2]);
+  }
+  return { name: def[2]!, calls: [...new Set(calls.filter((n) => !NOT_CALLED.has(n)))].sort() };
+}
+
 /** A literal, or the text of an argument the file does not spell out. */
 export function valueAt(text: string, code: string, at: number): Value {
   const arg = pythonArg(text, code, at);
