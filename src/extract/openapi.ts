@@ -195,14 +195,16 @@ const count = (s: string, c: string): number => s.split(c).length - 1;
  */
 export function jvmHandler(text: string, line: number): boolean {
   const lines = text.split("\n");
+  // A line's code: string literals emptied and comments taken out, so `// @GetMapping` or "@GetMapping" names nothing.
+  const clean = (l: string) => l.replace(/"""[^]*?"""|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, '""').replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "");
   const annotations = (at: number): string => {
     // The declaration's own line and the annotations above it, blank lines between them included, an annotation's
     // arguments spanning lines followed to its `@`; anything else before them (a statement, another declaration, a
     // Kotlin function with an expression body) ends them.
-    const own = [lines[at - 1] ?? ""];
+    const own = [clean(lines[at - 1] ?? "")];
     let open = 0;
     for (let i = at - 2; i >= 0; i--) {
-      const l = lines[i]!.replace(/\/\/.*$/, "").trim();
+      const l = clean(lines[i]!).trim();
       if (!l) continue;
       const closes = count(l, ")") - count(l, "(");
       // A line of annotations followed by a declaration (`@GetMapping("/a") fun a() = ...`) is another declaration's.
@@ -216,7 +218,7 @@ export function jvmHandler(text: string, line: number): boolean {
   };
   if (JVM_MAPPING.test(annotations(line))) return true;
   for (let i = line - 1; i >= 1; i--) {
-    if (/\b(?:class|interface|object)\s+[A-Za-z_$]/.test(lines[i - 1]!.replace(/\/\/.*$/, ""))) return JVM_HANDLER_TYPE.test(annotations(i));
+    if (/\b(?:class|interface|object)\s+[A-Za-z_$]/.test(clean(lines[i - 1]!))) return JVM_HANDLER_TYPE.test(annotations(i));
   }
   return false;
 }

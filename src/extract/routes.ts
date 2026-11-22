@@ -360,7 +360,7 @@ export function routesFromTypeScript(
    */
   const readConstants = new Map<ts.Node, string>();
   /** The routes `constants` made of those declarations. */
-  const constMade = new Set<Surface>();
+  const constMade = constantRoutes;
   const unreadPaths: Array<{ arg: ts.Expression; method?: string; prefixes?: string[] }> = [];
   const unread = (arg: ts.Expression, method?: string, prefixes?: string[]) => unreadPaths.push({ arg, method, prefixes });
   const unreadVersion = (arg: ts.Node) =>
@@ -1228,10 +1228,9 @@ export function routesFromTypeScript(
   };
   visit(sf);
   // A GET a registration reads at a constant's path is the route `constants` makes of it, kept once at the registration,
-  // where its handler is.
-  if (constMade.size) {
-    const registered = new Set(out.filter((s) => !constMade.has(s)).map((s) => s.id));
-    const kept = out.filter((s) => !constMade.has(s) || !registered.has(s.id));
+  // where its handler is; across files, `preferRegistered` does the same for the component.
+  if (out.some((s) => constMade.has(s))) {
+    const kept = preferRegistered(out);
     out.length = 0;
     out.push(...kept);
   }
@@ -1977,6 +1976,15 @@ function springSources(source: Source, config: Config, files: string[], root: st
   return new Map(all.map((f) => [f, source.read(f) ?? ""]));
 }
 
+/** The GET routes `constants` makes of a constant's value, which give way to a registration read at the same path. */
+const constantRoutes = new WeakSet<Surface>();
+
+/** Surfaces less those `constants` made where a registration of the same component reads the same route. */
+function preferRegistered(surfaces: Surface[]): Surface[] {
+  const registered = new Set(surfaces.filter((s) => !constantRoutes.has(s)).map((s) => s.id));
+  return surfaces.filter((s) => !constantRoutes.has(s) || !registered.has(s.id));
+}
+
 /**
  * Surfaces with one per component, method and path, the first kept. Where the routes of one path take their parameters
  * by different regexps (or one by none), the surface takes what any of them does: it keeps no pattern. Its dispatch
@@ -2221,7 +2229,7 @@ export function extractRoutes(
     else for (const s of nextRoutes) if (s.component === component) s.dispatch = { ...s.dispatch, slashes: slashes.slashes };
   }
   // A route two entries both register is one surface, so the document enriches the copy that is kept.
-  const code = unique(out);
+  const code = unique(preferRegistered(out));
   out.length = 0;
   out.push(...code);
   // The document the configuration chooses for a component goes first, so its operationIds and places win.

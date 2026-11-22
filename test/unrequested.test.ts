@@ -425,8 +425,10 @@ describe("in code read as text", () => {
       // go_router's navigations exist only where the file imports it; elsewhere `go` and `push` may be anything's.
       ["import 'package:go_router/go_router.dart';\nGoRoute(path: '/home', builder: b); context.go('/profile'); context.push('/settings'); GoRouter(initialLocation: '/start');", []],
       ["context.push('/settings'); GoRoute(path: '/home');", ["* /settings", "* /home"]],
-      // A location is a path of the app: an absolute URL pushed in a go_router file is a request.
+      // A location is a path of the app: an absolute URL pushed in a go_router file is a request, unless the call is on
+      // a BuildContext, a GoRouter or a Navigator, which navigate whatever the string looks like.
       ["import 'package:go_router/go_router.dart';\nclient.push('http://localhost:3000/api/items');", ["* /api/items based"]],
+      ["import 'package:go_router/go_router.dart';\ncontext.go('http://localhost:3000/api/a'); GoRouter.of(context).push('http://localhost:3000/api/b'); Navigator.pushNamed(context, 'http://localhost:3000/api/c');", []],
       // A URL built with `Uri.replace(path: ...)` is a request's, go_router imported or not.
       ["import 'package:go_router/go_router.dart';\nawait http.get(Uri.parse(base).replace(path: '/api/items'));", ["GET /api/items"]],
       // A request is still one in a widget's other arguments, and through go_router's imports.

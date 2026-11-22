@@ -2466,14 +2466,18 @@ function flutterUnrequested(a: Argument, goRouter: boolean, place: () => DartPla
   if (a.name === "TextSpan") return a.label === "text";
   if (a.name === "Tooltip") return a.label === "message";
   if (a.method && NAVIGATOR_NAMED.has(a.name)) {
-    const { absolute, chain } = place();
-    if (!absolute && /navigator\w*(?:\.\w+)*!?\s*(?:\([^()]*\)\s*!?\s*)?$/i.test(chain)) return true;
+    // Called on a navigator, the string is a route name, whatever it looks like.
+    if (/navigator\w*(?:\.\w+)*!?\s*(?:\([^()]*\)\s*!?\s*)?$/i.test(place().chain)) return true;
   }
   if (!goRouter) return false;
   if (a.name === "GoRoute") return a.label === "path";
   if (a.name === "GoRouter") return a.label === "initialLocation";
   // A location is go_router's first positional argument; `Uri.replace(path: ...)` and the like build a request's URL.
-  return a.method && GO_ROUTER_NAVIGATION.has(a.name) && a.label === undefined && a.index === 0 && !place().absolute;
+  if (!(a.method && GO_ROUTER_NAVIGATION.has(a.name) && a.label === undefined && a.index === 0)) return false;
+  // On a BuildContext or a GoRouter the string is a location, whatever it looks like; on another receiver, which
+  // text-read Dart cannot tell apart, an absolute URL is another API's request.
+  const { absolute, chain } = place();
+  return !absolute || /(?:\bcontext|\bGoRouter(?:\.of\([^()]*\))?|\brouter)\s*!?\s*$/.test(chain);
 }
 
 /**

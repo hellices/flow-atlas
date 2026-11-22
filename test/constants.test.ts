@@ -423,6 +423,13 @@ describe("Express paths held in constants of other files", () => {
     expect(extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path}`)).toEqual(["GET /api/health", "POST /api/items", "GET /api/a", "GET /b"]);
     expect(limits).toEqual(["routes api: api/src/app.ts:8 registers a path the file does not spell out (process.env.PATH_X); its routes are not read"]);
   });
+
+  it("keeps the registration, not the constant, where `constants` names a constant another file registers", () => {
+    const files = { "api/src/a-paths.ts": "export const itemsPath = '/items';", "api/src/b.ts": "import { itemsPath } from './a-paths';\napp.get(itemsPath, h);" };
+    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"], constants: "Path$" }] });
+    const routes = extractRoutes(memory(files), config, undefined, [], []);
+    expect(routes.map((s) => `${s.method} ${s.path} @${s.at.file}:${s.at.line}`)).toEqual(["GET /items @api/src/b.ts:2"]);
+  });
 });
 
 describe("NestJS paths held in constants of other files", () => {

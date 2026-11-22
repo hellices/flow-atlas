@@ -20,7 +20,7 @@ atlas produces evidence for an agent or a person to judge flows by; it does not 
 keeps the four properties in [docs/responsibilities.md](docs/responsibilities.md#what-the-tools-output-must-be):
 
 - **General.** Follow the technology's documented rule or its source, at the version the repository depends on, and
-  cite it in `skills/flow-atlas/references/config.md`. No rule that only one repository's naming makes true.
+  cite it in the skill reference that covers it (`references/config.md`, `openapi.md` or `rules.md` under `skills/flow-atlas/`). No rule that only one repository's naming makes true.
 - **Nothing left out silently.** Whatever the new reading cannot settle produces a `limit:` line with the file, line
   and expression; a test asserts the line. Prefer a limit to a guess: an unread value, a handler that routes by its own
   code, a route registered another way.

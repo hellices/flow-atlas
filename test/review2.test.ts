@@ -279,6 +279,18 @@ describe("Python handlers", () => {
     "            return never()",
     "    pick = lambda v=load_orders(): v",
     "    return Body",
+    "",
+    "from . import (",
+    "    jobs,",
+    ")",
+    '@app.get("/nested")',
+    "def nested():",
+    "    def inner(x=jobs.prepare()):",
+    "        return x",
+    '    run = lambda: httpx.get("http://localhost:3000/api/other")',
+    "    later = (lambda:",
+    '        httpx.get("http://localhost:3000/api/items"))',
+    "    return run()",
   ].join("\n");
   const files = {
     "api/app.ts": 'app.get("/api/items", h); app.post("/api/orders", h); app.get("/api/other", h); app.get("/api/client", h);',
@@ -304,6 +316,8 @@ describe("Python handlers", () => {
 
   it("follows no function the handler declares and does not call, and no request after a function's body", () => {
     expect(downstream("py|GET /params")).not.toContain("/api/items");
+    // The request in the uncalled nested def is read, in that def's own scope.
+    expect(graph.calls.find((c) => c.at.line === 31)).toMatchObject({ path: "/api/items", scope: "never_called" });
     // The module-level request after `def other():` belongs to no function, so no handler named other reaches it.
     const call = graph.calls.find((c) => c.path === "/api/other" && c.at.line === 21);
     expect(call).toBeDefined();
@@ -313,8 +327,15 @@ describe("Python handlers", () => {
     expect(defaulted).toMatchObject({ path: "/api/items" });
     expect(defaulted!.scope).toBeUndefined();
     expect(downstream("py|GET /defaults")).not.toContain("/api/items");
-    // A lambda runs only when it is called: its request is in a scope of its own.
-    expect(graph.calls.find((c) => c.at.line === 32)).toMatchObject({ path: "/api/items", scope: "lambda" });
+    // A lambda runs only when it is called: its request is in a scope of its own, named as its assignment names it.
+    expect(graph.calls.find((c) => c.at.line === 32)).toMatchObject({ path: "/api/items", scope: "callback" });
+  });
+
+  it("follows a nested def's defaults, a multi-line import of the package and a lambda the handler calls, not one it does not", () => {
+    expect(graph.surfaces.find((s) => s.id === "py|GET /nested")?.reaches).toEqual(["nested", "prepare", "run"]);
+    expect(downstream("py|GET /nested")).toContain("~ py -> api  GET /api/other in run");
+    expect(graph.calls.find((c) => c.at.line === 57)).toMatchObject({ path: "/api/items", scope: "later" });
+    expect(downstream("py|GET /nested")).not.toContain("/api/items");
   });
 
   it("follows what a class statement and a lambda's defaults run as the handler runs, not a method or a lambda's body", () => {

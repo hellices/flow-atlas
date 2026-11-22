@@ -210,6 +210,8 @@ describe("handler lookup", () => {
     expect(jvmHandler("@Mapper\ninterface M {\n  @Mapping(target = \"a\")\n  @BeanMapping(ignoreByDefault = true)\n  Dto toDto(E e);\n}\n", 5)).toBe(false);
     expect(jvmHandler("class C {\n  @GetMapping(\n    value = \"/x\"\n  )\n\n  public X x() { return null; }\n}\n", 6)).toBe(true);
     expect(jvmHandler('class C {\n  @GetMapping("/a") fun a() = service.a()\n  fun helper() = service.helper()\n}\n', 3)).toBe(false);
+    // A name in a comment or a string is no annotation.
+    expect(jvmHandler('class C {\n  void helper() { log("@GetMapping"); } // @GetMapping\n}\n', 2)).toBe(false);
     const files = {
       "svc/src/ResultController.java": controller,
       "svc/src/ResultService.java": service,

@@ -193,6 +193,9 @@ describe("the method given as a value before or around the URL", () => {
     // urlopen with data written out is POST; a method given in its sixth place is Request's; an import may end in a comment.
     const more = lines("from urllib.request import Request, urlopen  # stdlib", 'urlopen(f"{API}/l", b"x")', 'Request(f"{API}/m", None, {}, None, False, "DELETE")');
     expect(read({ "web/d.py": more })).toEqual({ calls: ["DELETE /m @3", "POST /l @2"], limits: [] });
+    // The later import of a name binds it; an import written in a docstring imports nothing.
+    const rebound = lines('"""from urllib.request import urlopen"""', "from urllib.request import Request", "from requests import Request", 'Request("GET", f"{API}/n")', 'urlopen(f"{API}/o")');
+    expect(read({ "web/e.py": rebound })).toEqual({ calls: ["* /o @5", "GET /n @4"], limits: [] });
   });
 
   it("reads net/http's request methods and constants by the name the file imports it under", () => {

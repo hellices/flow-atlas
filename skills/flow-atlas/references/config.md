@@ -479,7 +479,9 @@ Flutter's `InputDecoration` (`labelText`, `hintText`, `helperText`, `prefixText`
 `Navigator`, `Navigator.of(context)` or a navigator key's state), and, in a file that imports go_router (whose
 `BuildContext` extension and `GoRouter` both navigate; neither is told apart from another type's method of that name
 otherwise), a `GoRoute`'s `path:`, a `GoRouter`'s `initialLocation:` and the location `go`, `push`,
-`pushReplacement` and `replace` take first; an absolute URL given to any of them is a request, not a route of the app;
+`pushReplacement` and `replace` take first. Called on `context`, a `GoRouter` (`GoRouter.of(context)`, `router`) or a
+navigator, the string is a route of the app whatever it looks like; on another receiver, an absolute URL is that
+API's request;
 nor, in C#, the first argument of ASP.NET Core's `Map`, `MapGet`, `MapPost`,
 `MapPut`, `MapDelete`, `MapPatch`, `MapMethods`, `MapGroup`, `MapFallback`, `MapHub`, `MapHealthChecks` and
 `MapBlazorHub` or of YARP's `MapForwarder` (a route pattern the application serves; the forwarder's `targetPath`, the

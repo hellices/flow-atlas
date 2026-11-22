@@ -1,4 +1,5 @@
 import type { Argument, Frame, TextCalls } from "./calls.js";
+import { pythonCode } from "./routes.js";
 
 /**
  * The method a request read as text is sent with, where a client library sets it through its own API: a call named for
@@ -578,8 +579,8 @@ export class TextMethods {
       const names = new Map<string, string>();
       const urllibModules = new Set<string>();
       const urllibNames = new Map<string, "Request" | "urlopen">();
-      // Comments taken out, so an import line that ends with one still names what it imports.
-      const code = this.code().replace(/#[^\n]*/g, "");
+      // Python's code with its strings (docstrings included) and comments blanked, so only import statements count.
+      const code = pythonCode(this.text);
       for (const m of code.matchAll(/(?:^|\n)[ \t]*import[ \t]+([^\n]+)/g))
         for (const item of m[1]!.split(",")) {
           const i = /^\s*(requests|httpx)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
@@ -587,17 +588,18 @@ export class TextMethods {
           const u = /^\s*urllib\.request(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (u) urllibModules.add(u[1] ?? "urllib.request");
         }
-      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
-        for (const item of (m[2] ?? m[3]!).split(",")) {
-          const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
-          if (i) names.set(i[2] ?? i[1]!, i[1]!);
-        }
-      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+urllib(\.request)?[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
+      // `from ... import` statements in the order they run: a name imported again is bound to the later one.
+      for (const m of code.matchAll(/(?:^|\n)[ \t]*from[ \t]+(requests|httpx|urllib\.request|urllib)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/g))
         for (const item of (m[2] ?? m[3]!).split(",")) {
           const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
           if (!i) continue;
-          if (!m[1] && i[1] === "request") urllibModules.add(i[2] ?? "request");
-          else if (m[1] && (i[1] === "Request" || i[1] === "urlopen")) urllibNames.set(i[2] ?? i[1], i[1]);
+          const local = i[2] ?? i[1]!;
+          names.delete(local);
+          urllibNames.delete(local);
+          urllibModules.delete(local);
+          if (m[1] === "requests" || m[1] === "httpx") names.set(local, i[1]!);
+          else if (m[1] === "urllib" && i[1] === "request") urllibModules.add(local);
+          else if (m[1] === "urllib.request" && (i[1] === "Request" || i[1] === "urlopen")) urllibNames.set(local, i[1]);
         }
       this.pythonNames = { modules, names, urllibModules, urllibNames };
     }

@@ -426,17 +426,24 @@ describe("net/http's ServeMux routes", () => {
       '\thttp.ListenAndServe(":83", logging(mux))',
       '\thttp.ListenAndServe(":84", http.RedirectHandler("/x", 301))',
       '\thttp.ListenAndServe(":85", http.HandlerFunc(mux.ServeHTTP))',
+      "\tapp := &App{}",
+      '\thttp.ListenAndServe(":86", http.HandlerFunc(app.ServeHTTP))',
       "}",
       "",
+      "type App struct{}",
+      "",
+      'func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) { switch r.URL.Path { case "/b": } }',
       'func route(w http.ResponseWriter, r *http.Request) { switch r.URL.Path { case "/a": } }',
       "func logging(next http.Handler) http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { next.ServeHTTP(w, r) }) }",
     );
     const { surfaces, limits } = read({ "svc/main.go": server });
-    // A middleware that wraps a router serves the router's routes; net/http's own handlers tell no paths apart.
+    // A middleware that wraps a router serves the router's routes; net/http's own handlers tell no paths apart; the
+    // ServeHTTP of a type that is no router atlas reads routes by its own code.
     expect(surfaces).toEqual(["GET /items", "HEAD /items (implicit)"]);
     expect(limits).toEqual([
       "routes svc: svc/main.go:6 serves every request with http.HandlerFunc(route), a function and no router: the paths it tells apart in its own code are not read as routes",
       "routes svc: svc/main.go:8 serves every request with http.HandlerFunc(route), a function and no router: the paths it tells apart in its own code are not read as routes",
+      "routes svc: svc/main.go:16 serves every request with http.HandlerFunc(app.ServeHTTP), a function and no router: the paths it tells apart in its own code are not read as routes",
     ]);
   });
 

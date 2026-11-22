@@ -1288,7 +1288,7 @@ class Interp {
     // net/http's Server serves its Handler at the root, as a router nothing mounts is.
     if (type && this.httpServer(type, frame)) {
       const handler = e.elts.findIndex((el) => el.key?.k === "ident" && el.key.name === "Handler");
-      if (handler >= 0) this.servedHandler(values[handler]!.value, e.elts[handler]!.value, frame, e.start);
+      if (handler >= 0) this.servedHandler(values[handler]!.value, e.elts[handler]!.value, scope, frame, e.start);
       return { k: "builtin", pkg: HTTP, name: "Server" };
     }
     const ref = type ? this.typeRef(type, frame) : undefined;
@@ -1583,18 +1583,15 @@ class Interp {
    * `http.ListenAndServe(addr, h)`): it answers every request and tells paths apart in its own code, which atlas does
    * not read as routes, so a limit names it where it is served.
    */
-  private servedHandler(v: V, arg: Expr | undefined, frame: Frame, at: number): void {
+  private servedHandler(v: V, arg: Expr | undefined, scope: Scope, frame: Frame, at: number): void {
     // Only a function given as it is, or wrapped right there in `http.HandlerFunc`: a handler a local function returns
     // may wrap a router whose routes are read (a logging middleware), and one of net/http's own tells no paths apart.
+    // `http.HandlerFunc(mux.ServeHTTP)` serves what the router routes, where `mux` is a router atlas reads.
+    const inner = arg?.k === "call" ? arg.args[0] : undefined;
+    const routerServes = inner?.k === "sel" && inner.name === "ServeHTTP" && this.eval(inner.x, scope, frame).k === "router";
     const direct =
       v.k === "func" ||
-      (arg?.k === "call" &&
-        arg.fn.k === "sel" &&
-        arg.fn.name === "HandlerFunc" &&
-        arg.fn.x.k === "ident" &&
-        frame.imports.get(arg.fn.x.name) === HTTP &&
-        // `http.HandlerFunc(mux.ServeHTTP)` serves what the router routes.
-        !(arg.args[0]?.k === "sel" && arg.args[0].name === "ServeHTTP"));
+      (arg?.k === "call" && arg.fn.k === "sel" && arg.fn.name === "HandlerFunc" && arg.fn.x.k === "ident" && frame.imports.get(arg.fn.x.name) === HTTP && !routerServes);
     if (direct) {
       this.limit(`${this.at(frame.file, at)} serves every request with ${this.source(arg, frame)}, a function and no router: the paths it tells apart in its own code are not read as routes`);
     }
@@ -1670,7 +1667,7 @@ class Interp {
         case "ServeTLS":
         case "ListenAndServeTLS": {
           const i = name === "ListenAndServeTLS" ? 3 : 1;
-          if (args[i]) this.servedHandler(args[i], e.args[i], frame, at);
+          if (args[i]) this.servedHandler(args[i], e.args[i], scope, frame, at);
           return [UNKNOWN];
         }
         default:

@@ -201,25 +201,27 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
   const colon = code.indexOf(":", closingParen(code, at + def[0].length));
   if (colon < 0) return undefined;
   const end = blockEnd(code, colon, def[1]!);
-  // A function or lambda the handler declares runs only where it is called: its header and body are left out, and a
-  // function's name counts only where the rest of the handler calls it. A class body runs as the class statement does,
-  // so only the functions in it are left out; a lambda's default arguments run as it is made, so only its body is.
+  // A function or lambda the handler declares runs only where it is called: its body is left out, and a function's
+  // name counts only where the rest of the handler calls it. What runs as it is declared stays: a nested def's default
+  // arguments and annotations, a class statement's body (only the functions in it are left out), a lambda's defaults.
   const body = code.slice(colon + 1, end).split("");
   const blankOut = (from: number, to: number) => {
     for (let i = Math.max(from, colon + 1); i < Math.min(to, end); i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
   };
-  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+[A-Za-z_]\w*/gm)) {
-    const start = colon + 1 + (n.index ?? 0);
+  for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)((?:async[ \t]+)?def[ \t]+[A-Za-z_]\w*)/gm)) {
+    const start = colon + 1 + (n.index ?? 0) + n[1]!.length;
     const header = headerColon(code, start);
-    blankOut(start, header < 0 ? end : blockEnd(code, header, n[1]!));
+    // The `def name` itself is no call; the rest of the header runs now, the body later.
+    blankOut(start, start + n[2]!.length);
+    if (header >= 0) blankOut(header + 1, blockEnd(code, header, n[1]!));
   }
   for (const [start, stop] of lambdaRanges(code)) if (start > colon && start <= end) blankOut(start, stop);
   // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
   // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
   // nothing of the component's.
   const local = new Set(["self", "cls"]);
-  for (const m of code.matchAll(/^[ \t]*from[ \t]+\.[\w.]*[ \t]+import[ \t]+\(?([^)\n]+)/gm))
-    for (const item of m[1]!.split(",")) {
+  for (const m of code.matchAll(/^[ \t]*from[ \t]+\.[\w.]*[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]+))/gm))
+    for (const item of (m[1] ?? m[2]!).split(",")) {
       const i = /^\s*([A-Za-z_]\w*)(?:\s+as\s+([A-Za-z_]\w*))?\s*$/.exec(item);
       if (i) local.add(i[2] ?? i[1]!);
     }
@@ -245,14 +247,23 @@ function headerColon(code: string, from: number): number {
 
 /**
  * Where the body of each `lambda` of blanked code lies, from past its `:` to the end of its expression (a `,` or a
- * closing bracket of what holds it, or the end of the line): it runs only when the lambda is called. Its default
- * arguments, before the `:`, run as it is made.
+ * closing bracket of what holds it, or the end of a line outside brackets), with the name an assignment binds it to
+ * (`callback = lambda: ...`): it runs only when the lambda is called. Its default arguments, before the `:`, run as
+ * it is made.
  */
-function lambdaRanges(code: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
+function lambdaRanges(code: string): Array<[number, number, string | undefined]> {
+  // The bracket depth at each offset, so a lambda inside brackets may run over several lines.
+  const depthAt: number[] = [];
+  for (let i = 0, d = 0; i < code.length; i++) {
+    depthAt.push(d);
+    if ("([{".includes(code[i]!)) d++;
+    else if (")]}".includes(code[i]!)) d = Math.max(0, d - 1);
+  }
+  const out: Array<[number, number, string | undefined]> = [];
   for (const m of code.matchAll(/(?<![\w.])lambda\b/g)) {
     const colon = headerColon(code, (m.index ?? 0) + m[0].length);
     if (colon < 0) continue;
+    const inside = (depthAt[m.index ?? 0] ?? 0) > 0;
     let depth = 0;
     let i = colon + 1;
     for (; i < code.length; i++) {
@@ -261,9 +272,10 @@ function lambdaRanges(code: string): Array<[number, number]> {
       else if (")]}".includes(c)) {
         if (!depth) break;
         depth--;
-      } else if (!depth && (c === "," || (c === "\n" && code[i - 1] !== "\\"))) break;
+      } else if (!depth && (c === "," || (!inside && c === "\n" && code[i - 1] !== "\\"))) break;
     }
-    out.push([colon + 1, i]);
+    const bound = /(?:^|[\n;])[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*\(?[ \t]*$/.exec(code.slice(Math.max(0, (m.index ?? 0) - 200), m.index ?? 0))?.[1];
+    out.push([colon + 1, i, bound]);
   }
   return out;
 }
@@ -271,8 +283,8 @@ function lambdaRanges(code: string): Array<[number, number]> {
 /**
  * For Python: the name of the innermost function whose body holds an offset, by indentation, so a statement after a
  * function's body (a module-level request, a decorator's arguments) belongs to none, and neither does a default
- * argument, which Python evaluates when it defines the function. A lambda's body is a scope of its own, `lambda`,
- * since it runs only when it is called.
+ * argument, which Python evaluates when it defines the function. A lambda's body is a scope of its own, named as the
+ * assignment that binds it names it (`callback`), else `lambda`, since it runs only when it is called.
  */
 export function pythonScopes(text: string): (index: number) => string | undefined {
   const code = pythonCode(text);
@@ -281,7 +293,7 @@ export function pythonScopes(text: string): (index: number) => string | undefine
     const colon = headerColon(code, (m.index ?? 0) + m[0].length - 1);
     if (colon >= 0) defs.push({ start: colon + 1, end: blockEnd(code, colon, m[1]!), name: m[2]! });
   }
-  for (const [start, end] of lambdaRanges(code)) defs.push({ start, end, name: "lambda" });
+  for (const [start, end, name] of lambdaRanges(code)) defs.push({ start, end, name: name ?? "lambda" });
   return (index) => {
     let found: { start: number; end: number; name: string } | undefined;
     for (const d of defs) if (d.start <= index && index < d.end && (!found || d.start > found.start)) found = d;
