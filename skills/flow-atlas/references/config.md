@@ -109,6 +109,32 @@ rules:
    source yielded; a later check warns when a source falls below half of that, which usually means code moved and
    the configuration did not.
 
+### Declaring what the code sets where atlas does not read it
+
+- Keep call files to the client adapters: screen routes (`context.push("/career/$id")`, `<Link href>`) look like
+  requests and come back as FA002. React Router's and TanStack Router's navigations are known by their import and are
+  not read as requests.
+- What the code sets where atlas does not read it, you declare, each with a comment naming the line you read: a
+  client's base (`calls[].base` with how it joins a path, `join`, or `calls[].prefix`, from a Dio `baseUrl` or an
+  `axios.create({ baseURL })` given a value atlas does not read; and, in code read as text, `calls[].receivers`, the
+  names the client is called on, and `calls[].baseValues`, the values that hold its base URL), the path an Express,
+  @koa/router or Hono router or a Fastify plugin is mounted at, a FastAPI router included at, a Flask blueprint
+  registered at, a Django URLconf included at or a Go file's routers are served at (`routes[].mounts`), a Nest global
+  prefix set from a variable (`routes[].prefix`), a registration helper and its method (`routes[].calls`), the `data-*`
+  attributes a template's scripts request (`calls[].dataUrls`), the method a project's wrapper around fetch sends
+  when the call states none (`calls[].wrappers`, after reading that it hands its URL and init to fetch). A `limit:`
+  line tells you when one is missing; a declaration states what the code does, never what makes a finding go away. A
+  limit on a call whose method is not read fits routes of several methods, and trace and chains leave it out: when the
+  call goes through such a wrapper, declare the wrapper; otherwise there is nothing to declare.
+- For a server framework atlas does not parse (Django Ninja, Ktor and others), generate its OpenAPI document and point
+  the routes at it (`openapi.md`).
+
+### When the configuration has fallen behind
+
+Signs: `limit:` lines on stderr (configured files match nothing, a source yields less than half of its baseline), or
+FA001 on routes you know are called. Run `atlas inventory`, compare with the configuration, correct it, and check
+`atlas scan` coverage again. A person decides `atlas baseline update`.
+
 ## What the extractors read
 
 TypeScript and JavaScript are parsed with the TypeScript compiler: string and template literals inside configured

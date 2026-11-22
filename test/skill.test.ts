@@ -80,6 +80,11 @@ describe("skills follow the Agent Skills specification", () => {
       }
       // The specification asks to keep SKILL.md under 500 lines, with details in references a host loads on demand.
       expect(text.replace(/\n$/, "").split("\n").length, "SKILL.md lines").toBeLessThan(500);
+      // The description sits in every turn's context, and the body in every run's: keep both to what every run needs
+      // and disclose the rest in references, each of which SKILL.md points to so an agent has a reason to read it.
+      expect((fm.description as string).split(/\s+/).length, "description words").toBeLessThan(80);
+      expect(text.slice(m![0].length).split(/\s+/).filter(Boolean).length, "SKILL.md body words").toBeLessThan(1500);
+      for (const f of readdirSync(new URL(`${dir}/references/`, skills))) expect(text, `SKILL.md points to references/${f}`).toContain(`references/${f}`);
     });
   }
 });

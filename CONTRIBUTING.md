@@ -63,6 +63,12 @@ atlas read there.
 `atlas` command the README, the skill and its references name, so a renamed command or option fails the tests. CI
 also runs `vally lint` on `skills/`, the check skill listings use.
 
+`SKILL.md` holds what every run needs: the rule, the steps, and the core of reading the output. What only some runs
+need goes into a reference, and `SKILL.md` says when to read it. The test holds the description under 80 words, since
+it sits in every turn's context, and the body under 1,500. Where a line would restate `atlas --help`, a schema or the
+configuration, point to it instead. Write the behaviour you want ("copy ids from atlas output") rather than the one you
+forbid.
+
 ## Registry mirrors
 
 If you install dependencies through a registry mirror, keep the mirror's URLs out of the committed lockfile:
