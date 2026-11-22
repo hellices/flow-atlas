@@ -2,6 +2,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { Constants } from "../src/extract/constants.js";
+import { Importers } from "../src/extract/importers.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import type { Coverage } from "../src/model.js";
 import type { Source } from "../src/source.js";
@@ -531,5 +532,30 @@ describe("NestJS paths held in constants of other files", () => {
       "api/src/users.controller.ts": "@Controller('users')\nexport class UsersController {\n  @Get() list() {}\n}",
     };
     expect(routes(files, { files: ["api/src/**/*.ts"] })).toEqual({ ids: ["GET /admin/users"], limits: [] });
+  });
+});
+
+describe("the uses of an exported binding across the repository's files", () => {
+  // The uses Importers finds of `send`, which web/a.ts exports, as `file:line`; null where they cannot all be read.
+  const uses = (files: Record<string, string>) => {
+    const all = { "web/a.ts": "export function send(path: string) {\n  return fetch(path);\n}", ...files };
+    const constants = new Constants(memory(all));
+    const sf = constants.sourceFile("web/a.ts")!;
+    const declaration = sf.statements[0]!;
+    const found = new Importers(memory(all), constants, () => false).uses("web/a.ts", declaration, ["send"]);
+    return found && found.map((u) => `${u.getSourceFile().fileName}:${u.getSourceFile().getLineAndCharacterOfPosition(u.getStart()).line + 1}`).sort();
+  };
+
+  it("follows imports and export * barrels, each use once, and gives up where a module is taken whole", () => {
+    expect(uses({ "web/b.ts": "import { send } from './a';\nsend('/x');" })).toEqual(["web/b.ts:2"]);
+    expect(uses({ "web/i.ts": "export * from './a';", "web/b.ts": "import { send } from './i';\nsend('/x');" })).toEqual(["web/b.ts:2"]);
+    // A module imported or loaded whole may hand the binding on without naming it, comments between its tokens or not.
+    expect(uses({ "web/b.ts": "import * as all from './a';\nlater(all);" })).toBeNull();
+    expect(uses({ "web/b.ts": "import /* all */ * as all from './a';\nlater(all);" })).toBeNull();
+    expect(uses({ "web/b.ts": "later(require( // the module\n  './a'));" })).toBeNull();
+    expect(uses({ "web/b.ts": "later(import('./a'));" })).toBeNull();
+    // A namespace of another module, or a document that only imports something whole, does not.
+    expect(uses({ "web/b.ts": "import * as other from './other';\nlater(other);", "web/other.ts": "export const x = 1;" })).toEqual([]);
+    expect(uses({ "docs/guide.mdx": "import * as all from 'some-package';" })).toEqual([]);
   });
 });

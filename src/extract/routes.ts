@@ -1263,8 +1263,12 @@ export function routesFromTypeScript(
     const fn = declaration && ts.isParameter(declaration) ? declaration.parent : undefined;
     const holder = fn && !ts.isFunctionDeclaration(fn) && ts.isVariableDeclaration(fn.parent) ? fn.parent.name : undefined;
     const helper = fn && ts.isFunctionDeclaration(fn) && fn.name ? fn.name.text : holder && ts.isIdentifier(holder) ? holder.text : undefined;
-    // Declared as a registration helper, each call of the function is read where it is written.
-    if (helper && spec.calls?.some((c) => c.name === helper)) continue;
+    // Declared as a registration helper that registers this method at this parameter, each call of the function is read
+    // where it is written; a declaration of another method or position leaves this registration unread.
+    const position = fn ? fn.parameters.filter((p) => !(ts.isIdentifier(p.name) && p.name.text === "this")).indexOf(declaration as ts.ParameterDeclaration) : -1;
+    const registers = (c: NonNullable<typeof spec.calls>[number]) =>
+      c.name === helper && c.pathArg === position && c.method !== undefined && (c.method === "*" || c.method.toUpperCase() === (method ?? "").toUpperCase());
+    if (helper && spec.calls?.some(registers)) continue;
     const hint = !fn ? "" : helper ? ` (a parameter of ${helper}: declare ${helper} in this entry's calls, with the position of its path)` : " (a parameter: declare the function that takes it in this entry's calls)";
     const line = `routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read${hint}`;
     if (!saidPaths.has(line)) limits?.push(line);
