@@ -300,7 +300,15 @@ export class Reach {
    * and the `const`s it names: the requests the page offers to make next. `requestTime` collects each request-time API
    * the code calls (see `requestTimeCall`), as `cookies() at file:line`.
    */
-  from(file: string, start: ts.Node, executed?: Set<string>, render = false, offered?: Set<string>, requestTime?: Set<string>): string[] {
+  from(
+    file: string,
+    start: ts.Node,
+    executed?: Set<string>,
+    render = false,
+    offered?: Set<string>,
+    requestTime?: Set<string>,
+    bound?: Map<ts.Node, ts.Expression>,
+  ): string[] {
     const names = new Set<string>();
     const seen = new Set<string>();
     const queue: Array<{ file: string; node: ts.Node }> = [{ file, node: start }];
@@ -349,6 +357,21 @@ export class Reach {
         const param = fn.parameters[i];
         if (param && !param.dotDotDotToken) handed.push({ arg, param });
       });
+    };
+    // The function a name of the code is: a local one, one of the file, or one it imports.
+    const named = (n: ts.Identifier, f: string, parsed: Parsed, local = localBinding(n)): { file: string; node: ts.Node } | null | undefined =>
+      local !== undefined
+        ? local && { file: f, node: local }
+        : parsed.functions.has(n.text)
+          ? { file: f, node: parsed.functions.get(n.text)! }
+          : parsed.imports.has(n.text)
+            ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
+            : undefined;
+    // The function an argument is: written in place, or named.
+    const functionGiven = (arg: ts.Expression, f: string, parsed: Parsed): { file: string; node: ts.Node } | null | undefined => {
+      const u = unwrap(arg);
+      if (isFunctionValue(u)) return { file: f, node: u };
+      return ts.isIdentifier(u) ? named(u, f, parsed) : undefined;
     };
     const calls: Array<{ member: string; receiver: ts.Expression }> = [];
     while (queue.length && seen.size < MAX_FUNCTIONS) {
@@ -470,14 +493,9 @@ export class Reach {
         }
         if (ts.isIdentifier(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) {
           const local = localBinding(n);
-          const target =
-            local !== undefined
-              ? local && { file: f, node: local }
-              : parsed.functions.has(n.text)
-                ? { file: f, node: parsed.functions.get(n.text)! }
-                : parsed.imports.has(n.text)
-                  ? this.exported(parsed.imports.get(n.text)!.file, parsed.imports.get(n.text)!.name)
-                  : undefined;
+          // A parameter the call that registered the route binds to a function (`bound`) is that function.
+          const given = local === null && bound ? bound.get(declarationOf(n) as ts.Node) : undefined;
+          const target = given ? functionGiven(given, f, parsed) : named(n, f, parsed, local);
           if (target) {
             if (ts.isCallExpression(n.parent) && n.parent.expression === n) handOn(n.parent, target);
             const key = `${target.file}#${target.node.pos}`;

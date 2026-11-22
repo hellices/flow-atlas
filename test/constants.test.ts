@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { Constants } from "../src/extract/constants.js";
 import { extractRoutes } from "../src/extract/routes.js";
+import { scan } from "../src/scan.js";
 import type { Coverage } from "../src/model.js";
 import type { Source } from "../src/source.js";
 
@@ -451,6 +452,37 @@ describe("Express paths held in constants of other files", () => {
       "routes api: api/src/app.ts:8 registers a path the file does not spell out (path); its routes are not read",
       "routes api: api/src/app.ts:11 registers a path the file does not spell out (path); its routes are not read",
     ]);
+  });
+
+  it("follows each route a function registers into the function its call hands it, and no other", () => {
+    const files = {
+      "api/app.js": [
+        "import express from 'express';",
+        "const app = express();",
+        "function route(path, answer) {",
+        "  app.post(path, async (req, res) => res.json(await answer(req.body)));",
+        "}",
+        "async function order(body) { return fetch('http://localhost/store/orders', { method: 'POST', body }); }",
+        "route('/v1/orders', order);",
+        "route('/v1/invoices', (body) => fetch('http://localhost/store/invoices', { method: 'POST', body }));",
+      ].join("\n"),
+      "store/app.js": "import express from 'express';\nconst app = express();\napp.post('/store/orders', h);\napp.post('/store/invoices', h);",
+    };
+    const config = normalizeConfig({
+      components: [
+        { name: "api", path: "api" },
+        { name: "store", path: "store" },
+      ],
+      routes: [
+        { component: "api", files: ["api/**"], styles: ["express"] },
+        { component: "store", files: ["store/**"], styles: ["express"] },
+      ],
+      calls: [{ from: "api", to: "store", files: ["api/**"] }],
+    });
+    const graph = scan(memory(files), config);
+    const callTo = (id: string) => graph.calls.find((c) => c.id === id)!;
+    const reached = graph.edges.filter((e) => e.kind === "reach").map((e) => `${e.from} -> ${callTo(e.to).method} ${callTo(e.to).path}`);
+    expect(reached.sort()).toEqual(["api|POST /v1/invoices -> POST /store/invoices", "api|POST /v1/orders -> POST /store/orders"]);
   });
 
   it("reads an exported helper's routes where every call of it is in its file, and leaves them unread where one is not", () => {

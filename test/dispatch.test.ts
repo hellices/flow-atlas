@@ -62,6 +62,28 @@ const express = { styles: ["express"] };
 const express5 = { "api/package.json": pkg({ express: "^5.1.0" }) };
 
 describe("registration order", () => {
+  it("orders the routes a function registers at its caller's path where that call runs, then as the function registers them", () => {
+    const files = {
+      ...express5,
+      "api/app.js": lines(
+        'import express from "express";',
+        "const app = express();",
+        "function route(path) {",
+        '  app.get(path, (req, res) => res.send("one"));',
+        "  app.all(path, (req, res) => res.status(405).end());",
+        "}",
+        'route("/items");',
+        'route("/users/me");',
+        'app.get("/users/:id", (req, res) => res.send("user"));',
+      ),
+    };
+    expect(reach(files, express, ["GET /items", "POST /items", "GET /users/me"]).reached).toEqual({
+      "GET /items": ["GET /items"],
+      "POST /items": ["* /items"],
+      "GET /users/me": ["GET /users/me"],
+    });
+  });
+
   it("answers a request with the first Express route registered that takes it, and every value a call may hold with each that may", () => {
     const files = {
       ...express5,

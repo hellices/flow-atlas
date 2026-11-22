@@ -11,7 +11,7 @@ import { operationShape } from "./apidocs.js";
 import { aspnetcoreRoutes } from "./aspnetcore.js";
 import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, jvmHandler, type Definition } from "./openapi.js";
-import { followUses, parameterTexts, shareImporters, withoutComments } from "./calls.js";
+import { boundArguments, followUses, parameterTexts, shareImporters, withoutComments } from "./calls.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
@@ -385,6 +385,8 @@ export function routesFromTypeScript(
       syntax?: Syntax;
       /** How the route's router dispatches, where it is read; the syntax adds what the path says (`RoutePath.trailing`). */
       dispatch?: Dispatch;
+      /** What the call of a function that registers the route binds its parameters to (see `Reach.from`). */
+      bound?: Map<ts.Node, ts.Expression>;
       /** The regexps the router tests parameters with besides the path's own (AdonisJS's matchers), by name. */
       matchers?: Record<string, string>;
     } = {},
@@ -418,7 +420,7 @@ export function routesFromTypeScript(
       at: at(node),
       evidence: "static",
       ...(operationId ? { operationId } : {}),
-      ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers)))].sort() } : {}),
+      ...(reach && handler ? { reaches: [...new Set(starts.flatMap((st) => reach.from(st.file, st.node, lines, more.render, offers, undefined, more.bound)))].sort() } : {}),
       ...(more.implicit ? { implicit: true } : {}),
       ...(more.convention ? { convention: more.convention } : {}),
       ...(served.patterns || matched ? { patterns: { ...served.patterns, ...matched } } : {}),
@@ -772,13 +774,25 @@ export function routesFromTypeScript(
    * How the router `inst` dispatches a route registered at `written` under `prefix` (see `Dispatch`): its order from
    * `orderNode`, whether its handlers pass the request on, the `/` the path ends with, and Fastify's options.
    */
-  const dispatchAt = (inst: Instance, written: string, prefix: string, orderNode: ts.Node, handlers: readonly ts.Node[], options?: FastifyOptions | null): Dispatch | undefined => {
+  const dispatchAt = (
+    inst: Instance,
+    written: string,
+    prefix: string,
+    orderNode: ts.Node,
+    handlers: readonly ts.Node[],
+    options?: FastifyOptions | null,
+    within?: ts.Node,
+  ): Dispatch | undefined => {
     if (!inst.router) return undefined;
     const base = mounts!.dispatchOf(inst.router);
     const out: Dispatch = {};
     if (base.picks) out.picks = base.picks;
     if (base.picks === "registration") {
-      const order = mounts!.orderOf(inst.router, file, orderNode);
+      // A route a function registers at its caller's path is registered where that call runs, then in the function's
+      // own order: one more step, after the call's.
+      const registered = mounts!.orderOf(inst.router, file, orderNode);
+      const called = within && mounts!.orderOf(inst.router, file, within);
+      const order = !within ? registered : called && registered ? [...called, registered[registered.length - 1]!] : undefined;
       if (order) out.order = order;
       if (passesOn(inst, handlers)) out.passes = true;
     }
@@ -824,20 +838,35 @@ export function routesFromTypeScript(
     path: string,
     node: ts.CallExpression,
     handlers: readonly ts.Node[],
-    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string }; place?: ts.Node } = {},
+    at: {
+      order?: ts.Node;
+      options?: ts.ObjectLiteralExpression;
+      served?: { implicit?: boolean; convention: string };
+      /** The call of a function that registers the route at the path it passes (`pathsAt`). */
+      place?: ts.CallExpression;
+      /** What that call binds the function's parameters to, which its handler may run. */
+      bound?: Map<ts.Node, ts.Expression>;
+    } = {},
   ) => {
     // A route is placed where its method is named, which in a chain is not where the chain starts; one a function
     // registers at the path its caller passes, at that call.
-    const place = at.place ?? (ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node);
+    const own = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
+    const place = at.place ?? own;
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
     // Fastify's shorthand takes its options between the path and the handler, or as the only argument after the path.
     const given = inst.pkg === "fastify" && !at.options ? (handlers.length > 1 ? handlers[0] : handlers.find((h) => routeOptions(h as ts.Expression))) : undefined;
     const options = at.options ?? (given ? (routeOptions(given as ts.Expression) ?? null) : undefined);
     const routeHandlers = given ? handlers.filter((h) => h !== given) : handlers;
-    const dispatch = (prefix: string) => dispatchAt(inst, path, prefix, at.order ?? place, routeHandlers, options);
+    const dispatch = (prefix: string) => dispatchAt(inst, path, prefix, at.order ?? own, routeHandlers, options, at.place);
     const matchers = adonisMatchers(node);
-    const more = { syntax, alongside: handlers.slice(1).map((h) => ({ file, node: h })), ...(matchers ? { matchers } : {}), ...(at.served ? { implicit: at.served.implicit, convention: at.served.convention } : {}) };
+    const more = {
+      syntax,
+      alongside: handlers.slice(1).map((h) => ({ file, node: h })),
+      ...(matchers ? { matchers } : {}),
+      ...(at.served ? { implicit: at.served.implicit, convention: at.served.convention } : {}),
+      ...(at.bound?.size ? { bound: at.bound } : {}),
+    };
     const not = (why: string) => limits?.push(`routes ${spec.component}: ${file}:${at0(place)} registers ${JSON.stringify(path)} on ${inst.name}, ${why}; its routes are not read`);
     if (!path.startsWith("/") && koa(inst) && path !== "") {
       const range = (inst.router ? mounts!.originsOf(inst.router) : []).flatMap((f) => ranges?.(f, inst.pkg!) ?? []);
@@ -866,7 +895,7 @@ export function routesFromTypeScript(
    * The literal paths an argument gives: a string, or an array of strings on the routers that take one (Express's
    * `Layer` and @koa/router's `register`); undefined where it gives none the file spells out, said in `limits`.
    */
-  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): Array<{ path: string; place?: ts.Node }> | undefined => {
+  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): Array<{ path: string; place?: ts.CallExpression; bound?: Map<ts.Node, ts.Expression> }> | undefined => {
     const u = unwrap(arg);
     const one = stringValue(u);
     if (one !== undefined) {
@@ -886,7 +915,7 @@ export function routesFromTypeScript(
     const passed = decl && ts.isParameter(decl) ? parameterTexts(decl, (e) => stringValue(e) ?? constants.text(e)) : undefined;
     if (passed && passed.every((p) => p.call.getSourceFile() === sf)) {
       for (const p of passed) span(p.arg);
-      return passed.map((p) => ({ path: p.text, place: p.call }));
+      return passed.map((p) => ({ path: p.text, place: p.call, bound: boundArguments((decl as ts.ParameterDeclaration).parent, p.call) }));
     }
     if (ts.isArrayLiteralExpression(u)) {
       const all = u.elements.map((e) => literalText(e) ?? constants.text(e));
@@ -1048,7 +1077,7 @@ export function routesFromTypeScript(
     if (route && on && express(on)) {
       if (!verbsOf("express").has(name) || !args.length) return;
       // The route `route(path)` makes holds its place among the router's registrations, whichever methods it gets later.
-      for (const { path, place } of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: place ?? (route.expression as ts.PropertyAccessExpression).name, place });
+      for (const { path, place, bound } of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: (route.expression as ts.PropertyAccessExpression).name, place, bound });
       return;
     }
     const inst = instanceAt(callee.expression);
@@ -1087,7 +1116,7 @@ export function routesFromTypeScript(
       const second = unwrap(args[1]!);
       const named = koa(inst) && (ts.isStringLiteralLike(second) || ts.isTemplateExpression(second) || ts.isRegularExpressionLiteral(second));
       if (named && args.length < 3) return;
-      for (const { path, place } of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1), { place });
+      for (const { path, place, bound } of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1), { place, bound });
       return;
     }
     if (name === "route" && args.length === 1 && inst.pkg === "fastify" && !ts.isObjectLiteralExpression(unwrap(args[0]!))) {

@@ -1659,6 +1659,20 @@ export function parameterTexts(parameter: ts.ParameterDeclaration, text: (e: ts.
   return out;
 }
 
+/**
+ * What a call binds the parameters of the function it calls to: the argument at each one's place, for a plain
+ * parameter the function does not write to; none from a spread argument on.
+ */
+export function boundArguments(fn: ts.SignatureDeclaration, call: ts.CallExpression): Map<ts.ParameterDeclaration, ts.Expression> {
+  const out = new Map<ts.ParameterDeclaration, ts.Expression>();
+  for (const [i, p] of fn.parameters.entries()) {
+    const arg = call.arguments[i];
+    if (!arg || ts.isSpreadElement(arg)) break;
+    if (!p.dotDotDotToken && ts.isIdentifier(p.name) && !reassigned(p.name)) out.set(p, arg);
+  }
+  return out;
+}
+
 /** The text a URL puts straight before a value, `` `/api${value}` `` or `"/api" + value`, where it is a path from the root. */
 function helperLead(url: ts.Node, value: ts.Node): string | undefined {
   let lead: string | undefined;

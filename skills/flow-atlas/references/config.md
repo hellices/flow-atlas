@@ -233,7 +233,10 @@ known at run time (`process.env.X`) stays unread with the limit. A parameter is 
 function passes, where the function is one the code declares and names, every use of it is a call in the same file
 that passes a path the code spells out there, and the parameter is not written to: each call registers a route at its path, placed where
 it passes it (`` function route(path, answer) { app.post(path, ...) } `` with `route("/v1/orders", order)`); otherwise
-it stays unread with the limit. A `const` of the file named in
+it stays unread with the limit. Such a route's handler runs what the call binds the function's parameters to: a
+parameter the handler names (`answer`) is followed into the function the call passes there (`order`, or a function
+written in place), for a parameter the function does not write to. In registration order it stands where the call
+runs, then where the function registers it. A `const` of the file named in
 `constants` is read as a GET route at its value, for a path no registration reads (a server-sent events stream); a GET
 registered at it is that route, kept once at the registration. For each TypeScript route the handler is
 followed through local functions, relative imports and re-exports, and the member methods it calls are kept, except
@@ -823,7 +826,8 @@ it does not, the call joins every route its path fits, and a limit names what is
 - Registration order. Express, @koa/router (without `exclusive`), Hono and Starlette (FastAPI) answer a request with
   the first route registered whose method and path it fits; Nest on Express registers a controller's routes in the
   order its methods are declared. The order is read within one router in one function body of one file (Python's
-  stacked decorators the nearest the definition first, as Python applies them), and a router mounted once (`use`, each
+  stacked decorators the nearest the definition first, as Python applies them; a route a function registers at its
+  caller's path where the call runs, then in the function's own order), and a router mounted once (`use`, each
   of its arguments in turn, `route`, `include_router`, `mount`) takes its place where the mount is; routes of routers
   registered in different files, of Nest's controllers, or of a router mounted twice are in no order atlas knows, so
   each stays a target. A route stops a request only where it takes every request the call stands for (`/users/me`
