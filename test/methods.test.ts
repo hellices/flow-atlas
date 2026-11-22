@@ -187,6 +187,9 @@ describe("the method given as a value before or around the URL", () => {
     // Under the names an import gives them.
     const aliased = lines("from urllib.request import urlopen as open_url, Request as Req", 'open_url(f"{API}/g")', 'Req(f"{API}/h", data=b"x")');
     expect(read({ "web/b.py": aliased })).toEqual({ calls: ["GET /g @2", "POST /h @3"], limits: [] });
+    // Data that may be None, and unpacked arguments that may give data or a method, settle nothing.
+    const unsure = lines("from urllib.request import Request", 'Request(f"{API}/i", data=(payload))', 'Request(f"{API}/j", headers={}, **options)', 'Request(f"{API}/k", build())');
+    expect(read({ "web/c.py": unsure })).toEqual({ calls: ["* /i @2", "* /j @3", "* /k @4"], limits: [] });
   });
 
   it("reads net/http's request methods and constants by the name the file imports it under", () => {

@@ -201,15 +201,18 @@ export function decoratedHandler(code: string, line: number): { name: string; ca
   const colon = code.indexOf(":", closingParen(code, at + def[0].length));
   if (colon < 0) return undefined;
   const end = blockEnd(code, colon, def[1]!);
-  // A function or class the handler declares runs only where it is called: its header and body are left out, and its
-  // name counts only where the rest of the handler calls it.
+  // A function, class or lambda the handler declares runs only where it is called: its header and body are left out,
+  // and a function's name counts only where the rest of the handler calls it.
   const body = code.slice(colon + 1, end).split("");
+  const blankOut = (from: number, to: number) => {
+    for (let i = Math.max(from, colon + 1); i < Math.min(to, end); i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
+  };
   for (const n of code.slice(colon + 1, end).matchAll(/^([ \t]*)(?:async[ \t]+)?(?:def|class)[ \t]+[A-Za-z_]\w*/gm)) {
     const start = colon + 1 + (n.index ?? 0);
     const header = headerColon(code, start);
-    const stop = header < 0 ? end : Math.min(end, blockEnd(code, header, n[1]!));
-    for (let i = start; i < stop; i++) if (body[i - colon - 1] !== "\n") body[i - colon - 1] = " ";
+    blankOut(start, header < 0 ? end : blockEnd(code, header, n[1]!));
   }
+  for (const [start, stop] of lambdaRanges(code)) if (start > colon && start < end) blankOut(start, stop);
   // The names a handler calls for certain: bare (`f(`), on `self` or `cls`, or on a module the file imports from its own
   // package (`svc.load(` after `from . import svc`). A method of any other value (`q.get(`, `requests.post(`) names
   // nothing of the component's.
@@ -240,9 +243,34 @@ function headerColon(code: string, from: number): number {
 }
 
 /**
+ * Where each `lambda` of blanked code lies, from its keyword to the end of its expression (a `,` or a closing bracket
+ * of what holds it, or the end of the line): its body runs only when it is called.
+ */
+function lambdaRanges(code: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const m of code.matchAll(/(?<![\w.])lambda\b/g)) {
+    const colon = headerColon(code, (m.index ?? 0) + m[0].length);
+    if (colon < 0) continue;
+    let depth = 0;
+    let i = colon + 1;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) {
+        if (!depth) break;
+        depth--;
+      } else if (!depth && (c === "," || (c === "\n" && code[i - 1] !== "\\"))) break;
+    }
+    out.push([m.index ?? 0, i]);
+  }
+  return out;
+}
+
+/**
  * For Python: the name of the innermost function whose body holds an offset, by indentation, so a statement after a
  * function's body (a module-level request, a decorator's arguments) belongs to none, and neither does a default
- * argument, which Python evaluates when it defines the function.
+ * argument, which Python evaluates when it defines the function. A lambda's body is a scope of its own, `lambda`,
+ * since it runs only when it is called.
  */
 export function pythonScopes(text: string): (index: number) => string | undefined {
   const code = pythonCode(text);
@@ -251,6 +279,7 @@ export function pythonScopes(text: string): (index: number) => string | undefine
     const colon = headerColon(code, (m.index ?? 0) + m[0].length - 1);
     if (colon >= 0) defs.push({ start: colon + 1, end: blockEnd(code, colon, m[1]!), name: m[2]! });
   }
+  for (const [start, end] of lambdaRanges(code)) defs.push({ start, end, name: "lambda" });
   return (index) => {
     let found: { start: number; end: number; name: string } | undefined;
     for (const d of defs) if (d.start <= index && index < d.end && (!found || d.start > found.start)) found = d;

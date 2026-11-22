@@ -264,6 +264,7 @@ describe("Python handlers", () => {
     "def params(q: dict):",
     "    def never_called():",
     '        return httpx.get("http://localhost:3000/api/items")',
+    '    callback = lambda: httpx.get("http://localhost:3000/api/items")',
     '    return q.get("a")',
     "",
     '@app.get("/refunds")',
@@ -300,6 +301,8 @@ describe("Python handlers", () => {
     // A default argument runs when Python defines the function, not when the route is requested.
     expect(graph.calls.find((c) => c.at.line === 25)?.scope).toBeUndefined();
     expect(downstream("py|GET /defaults")).not.toContain("/api/items");
+    // A lambda runs only when it is called: its request is in a scope of its own.
+    expect(graph.calls.find((c) => c.at.line === 32)?.scope).toBe("lambda");
   });
 
   it("says where a handler registered without a decorator stops", () => {

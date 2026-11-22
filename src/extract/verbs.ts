@@ -143,12 +143,15 @@ export class TextMethods {
         if (urllib) {
           if (!(label === "url" || (label === undefined && slot === 0))) return STOP;
           // `Request(url, data=None, ..., method=None)` and `urlopen(url, data=None)` send `method`, else GET without
-          // data and POST with it (Python, urllib.request.Request.get_method). A name may hold None, so it settles none.
+          // data and POST with it (Python, urllib.request.Request.get_method). Unpacked arguments may give either, and
+          // only data written as bytes or text, or encoded on the spot, is surely not None.
+          if (f.parts.some((_, i) => /^\s*\*/.test(this.part(f, i) ?? ""))) return "*";
           const method = urllib === "Request" ? this.value(f, "method") : undefined;
           if (method !== undefined && method !== "None") return literalMethod(method, false) ?? "*";
-          const data = this.value(f, "data") ?? (this.label(f, 1) === undefined ? this.part(f, 1) : undefined);
+          const data = (this.value(f, "data") ?? (this.label(f, 1) === undefined ? this.part(f, 1) : undefined))?.replace(/^\(\s*([^]*?)\s*\)$/, "$1");
           if (data === undefined || data === "None") return "GET";
-          return /^[A-Za-z_][\w.]*$/.test(data) ? "*" : "POST";
+          const written = /^[rRbBuUfF]{0,2}(["']).*\1$/s.test(data) || /\.encode\([^()]*\)$/.test(data);
+          return written ? "POST" : "*";
         }
         const known = f.method ? name === "request" || name === "build_request" || (name === "Request" && f.receiver !== undefined && this.pythonModule(f.receiver)) : this.pythonImported(name);
         if (!known) return undefined;
