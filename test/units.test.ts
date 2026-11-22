@@ -308,8 +308,16 @@ describe("routesFromTypeScript", () => {
     ].join("\n");
     expect(unread(elsewhere, { ...fastify, constants: "Path$" })).toEqual({
       routes: ["GET /stream"],
-      limits: [not(2, "outputPath"), not(4, "snapshotPath"), not(6, "streamPath")],
+      // A parameter's path is its callers' to give: the limit names the function to declare as a registration helper.
+      limits: [not(2, "outputPath"), not(4, "snapshotPath"), `${not(6, "streamPath")} (a parameter of register: declare register in this entry's calls, with the position of its path)`],
     });
+    // Declared so, each call of it is read and the limit goes.
+    const declared = unread(`${elsewhere}\nregister(fastify, "/events");`, { ...fastify, constants: "Path$", calls: [{ name: "register", pathArg: 1, method: "GET" }] });
+    expect(declared).toEqual({ routes: ["GET /stream", "GET /events"], limits: [not(2, "outputPath"), not(4, "snapshotPath")] });
+    // A declaration of another method or position does not cover the registration: its limit stays.
+    const hinted = `${not(6, "streamPath")} (a parameter of register: declare register in this entry's calls, with the position of its path)`;
+    for (const call of [{ name: "register", pathArg: 1, method: "POST" }, { name: "register", pathArg: 0, method: "GET" }])
+      expect(unread(`${elsewhere}\nregister(fastify, "/events");`, { ...fastify, constants: "Path$", calls: [call] }).limits).toContain(hinted);
     // Every method registered at a constant's path is read at it, beside the GET route `constants` makes.
     const methods = ['const usersPath = "/users";', "app.get(usersPath, h);", "app.post(usersPath, h);", "app.all(usersPath, h);"].join("\n");
     expect(unread(methods, { ...fastify, receivers: ["app"], constants: "Path$" })).toEqual({

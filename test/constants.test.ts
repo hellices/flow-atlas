@@ -2,6 +2,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { normalizeConfig } from "../src/config.js";
 import { Constants } from "../src/extract/constants.js";
+import { Importers } from "../src/extract/importers.js";
 import { extractRoutes } from "../src/extract/routes.js";
 import type { Coverage } from "../src/model.js";
 import type { Source } from "../src/source.js";
@@ -425,49 +426,6 @@ describe("Express paths held in constants of other files", () => {
     expect(limits).toEqual(["routes api: api/src/app.ts:8 registers a path the file does not spell out (process.env.PATH_X); its routes are not read"]);
   });
 
-  it("reads the routes a function registers at the path every call of it passes, each where it is passed", () => {
-    const files = {
-      "api/src/app.ts": [
-        "import Fastify from 'fastify';",
-        "const app = Fastify();",
-        "function route(path: string, answer: () => unknown) {",
-        "  app.post(path, async () => answer());",
-        "}",
-        "route('/v1/orders', order);",
-        "route('/v1/invoices', invoice);",
-        "function other(path: string) { app.get(path, h); }",
-        "other('/a');",
-        "other(process.env.P);",
-        "function handed(path: string) { app.put(path, h); }",
-        "handed('/b');",
-        "later(handed);",
-      ].join("\n"),
-    };
-    const limits: string[] = [];
-    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"] }] });
-    expect(extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path} @${s.at.line}`)).toEqual(["POST /v1/orders @6", "POST /v1/invoices @7"]);
-    // A call that passes a value, or the function handed on, leaves the path unread, as before.
-    expect(limits).toEqual([
-      "routes api: api/src/app.ts:8 registers a path the file does not spell out (path); its routes are not read",
-      "routes api: api/src/app.ts:11 registers a path the file does not spell out (path); its routes are not read",
-    ]);
-  });
-
-  it("reads an exported helper's routes where every call of it is in its file, and leaves them unread where one is not", () => {
-    const helper = "import Fastify from 'fastify';\nconst app = Fastify();\nexport function route(path: string) { app.post(path, h); }\nroute('/x');";
-    const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"] }] });
-    const read = (files: Record<string, string>) => {
-      const limits: string[] = [];
-      return { routes: extractRoutes(memory(files), config, undefined, [], limits).map((s) => `${s.method} ${s.path} @${s.at.file}:${s.at.line}`), limits };
-    };
-    expect(read({ "api/src/routes.ts": helper })).toEqual({ routes: ["POST /x @api/src/routes.ts:4"], limits: [] });
-    // A call in another file would place its route there: the path stays unread, with the limit.
-    expect(read({ "api/src/routes.ts": helper, "api/src/more.ts": "import { route } from './routes';\nroute('/y');" })).toEqual({
-      routes: [],
-      limits: ["routes api: api/src/routes.ts:3 registers a path the file does not spell out (path); its routes are not read"],
-    });
-  });
-
   it("keeps the registration, not the constant, where `constants` names a constant another file registers", () => {
     const files = { "api/src/a-paths.ts": "export const itemsPath = '/items';", "api/src/b.ts": "import { itemsPath } from './a-paths';\napp.get(itemsPath, h);" };
     const config = normalizeConfig({ components: [{ name: "api", path: "api" }], routes: [{ component: "api", files: ["api/src/**/*.ts"], styles: ["express"], constants: "Path$" }] });
@@ -574,5 +532,30 @@ describe("NestJS paths held in constants of other files", () => {
       "api/src/users.controller.ts": "@Controller('users')\nexport class UsersController {\n  @Get() list() {}\n}",
     };
     expect(routes(files, { files: ["api/src/**/*.ts"] })).toEqual({ ids: ["GET /admin/users"], limits: [] });
+  });
+});
+
+describe("the uses of an exported binding across the repository's files", () => {
+  // The uses Importers finds of `send`, which web/a.ts exports, as `file:line`; null where they cannot all be read.
+  const uses = (files: Record<string, string>) => {
+    const all = { "web/a.ts": "export function send(path: string) {\n  return fetch(path);\n}", ...files };
+    const constants = new Constants(memory(all));
+    const sf = constants.sourceFile("web/a.ts")!;
+    const declaration = sf.statements[0]!;
+    const found = new Importers(memory(all), constants, () => false).uses("web/a.ts", declaration, ["send"]);
+    return found && found.map((u) => `${u.getSourceFile().fileName}:${u.getSourceFile().getLineAndCharacterOfPosition(u.getStart()).line + 1}`).sort();
+  };
+
+  it("follows imports and export * barrels, each use once, and gives up where a module is taken whole", () => {
+    expect(uses({ "web/b.ts": "import { send } from './a';\nsend('/x');" })).toEqual(["web/b.ts:2"]);
+    expect(uses({ "web/i.ts": "export * from './a';", "web/b.ts": "import { send } from './i';\nsend('/x');" })).toEqual(["web/b.ts:2"]);
+    // A module imported or loaded whole may hand the binding on without naming it, comments between its tokens or not.
+    expect(uses({ "web/b.ts": "import * as all from './a';\nlater(all);" })).toBeNull();
+    expect(uses({ "web/b.ts": "import /* all */ * as all from './a';\nlater(all);" })).toBeNull();
+    expect(uses({ "web/b.ts": "later(require( // the module\n  './a'));" })).toBeNull();
+    expect(uses({ "web/b.ts": "later(import('./a'));" })).toBeNull();
+    // A namespace of another module, or a document that only imports something whole, does not.
+    expect(uses({ "web/b.ts": "import * as other from './other';\nlater(other);", "web/other.ts": "export const x = 1;" })).toEqual([]);
+    expect(uses({ "docs/guide.mdx": "import * as all from 'some-package';" })).toEqual([]);
   });
 });

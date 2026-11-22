@@ -277,6 +277,10 @@ stopped. Judging what the evidence means for a flow (a defect, a plan, a misread
   component's chains stop at its surfaces, what its handlers call is not in atlas's output.
 - A call's `in <name>` is the function holding the string. A string in an error label or a log message is not a
   request even if it looks like a path; the scope usually shows that.
+- atlas does not try to read every form code can take, and it will not grow a reading for one repository's code. Where
+  a `limit:` names a configuration entry (a function whose parameter holds a path: declare it in that route entry's
+  `calls`; a client wrapper, a base, a mount), setting it is yours. Where none fits, read the code at the place named
+  and judge it yourself.
 - Only configured files are read, and in them only what is written for certain: literal paths, with the meaning a
   standard or the framework gives them. A URL from a variable, another template engine, or htmx and Vue attributes
   is not read and not guessed. So "no caller" means none that atlas can read; check the code before removing anything,

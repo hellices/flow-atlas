@@ -36,6 +36,30 @@ for the flow is the agent's, or a person's.
 When a reading cannot keep these properties, it is not added: a catch-all handler is named in a limit rather than read
 as a route that serves every path, and a path from a value known only at run time stays unread rather than guessed.
 
+## What the tool does not try to read
+
+atlas is the deterministic part of a skill, not a program analyzer. It reads the forms a technology documents, as
+the code writes them, and stops where it would have to follow a value through the program: a function's parameter to
+the calls that fill it, a name through aliases, reassignments and re-exports, a handler handed on through another
+function. JavaScript alone has no end of ways to pass the same value. Each one a repository shows is another case,
+and chasing them turns atlas into a partial interpreter that fits the repositories it was tried on. That costs the
+first property, generality. Covering every case is not the tool's goal. What it cannot settle is the agent's to
+decide, with the code open at the place a limit names.
+
+A new reading is added only when all four hold:
+
+1. A technology's documentation or source fixes what the form means.
+2. The form is read where it is written, from literals and the constants rule, without following values across calls,
+   assignments or modules.
+3. The configuration cannot already declare it. A registration helper goes in `routes[].calls`, a client's wrapper in
+   `wrappers`, a base in `base`, a router's mount in `mounts`.
+4. It is not added for the shape of one repository's code.
+
+Otherwise the reading stays out. A limit names where reading stopped and, where the configuration can declare what is
+there, which entry to set. A registration path held in a function's parameter, for one, names that function as a
+registration helper to declare. Reading such a path from the function's callers was tried (#101) and taken out: each
+review found another way the same function could be passed, and one line of configuration reads it.
+
 ## What the tool generates
 
 | Output | Command | From |

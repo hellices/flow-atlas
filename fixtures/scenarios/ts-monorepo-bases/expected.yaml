@@ -15,9 +15,6 @@ case: |
   the streams are routes, and FA001 since no configured client subscribes to them. The Kotlin app names the
   path it asked in the exception it throws when the BFF is unavailable (`throw BffUnavailable("/messages")`); that
   label was read as a second call. Now a path given to an exception is no request, and a limit names the exception.
-  The adapter's `send(route)` puts each operation's name after the base (`send("shares")`): it was one call to
-  `/store/internal/v2/{}`, which fit every POST route there by value; now each call of `send` is a request at the
-  text it passes.
 surfaces:
   - bff|GET /legacy/profiles
   - bff|POST /uploads
@@ -52,8 +49,7 @@ calls:
   - bff->core|POST /replies based @ bff/src/routes.ts:12
   - bff->core|GET /profiles based @ bff/src/routes.ts:18
   - core->store|* /store/internal/object-info/{} based @ core/src/adapters/store-objects.ts:6
-  - core->store|POST /store/internal/v2/shares based @ core/src/adapters/store-shares.ts:18
-  - core->store|POST /store/internal/v2/upload-tickets based @ core/src/adapters/store-shares.ts:19
+  - core->store|POST /store/internal/v2/{} based @ core/src/adapters/store-shares.ts:10
 flows:
   ask: Ready=True
   image-question: Ready=Unknown

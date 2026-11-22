@@ -11,7 +11,7 @@ import { operationShape } from "./apidocs.js";
 import { aspnetcoreRoutes } from "./aspnetcore.js";
 import { httpExchanges, maskStrings, pathPrefixes, routesFromSpring, type SpringSlashes, type Views } from "./spring.js";
 import { definitions, describedOperations, escapeRegExp, handlerNames, jvmHandler, type Definition } from "./openapi.js";
-import { followUses, parameterTexts, shareImporters, withoutComments } from "./calls.js";
+import { withoutComments } from "./calls.js";
 import { addCoverage } from "./coverage.js";
 import { expressMounts, verbsOf, type Mounts } from "./mounts.js";
 import type { Spans } from "./spans.js";
@@ -347,7 +347,6 @@ export function routesFromTypeScript(
   };
   const sf = reach?.parse(file)?.sf ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const constants = context.constants ?? new Constants({ read: (f) => (f === file ? text : undefined), list: () => [file] });
-  followUses(sf, constants);
   const styles = new Set(spec.styles ?? []);
   const receivers = new Set(spec.receivers ?? EXPRESS_RECEIVERS);
   /** Routers whose routes are not read, by name, with why. */
@@ -824,11 +823,10 @@ export function routesFromTypeScript(
     path: string,
     node: ts.CallExpression,
     handlers: readonly ts.Node[],
-    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string }; place?: ts.Node } = {},
+    at: { order?: ts.Node; options?: ts.ObjectLiteralExpression; served?: { implicit?: boolean; convention: string } } = {},
   ) => {
-    // A route is placed where its method is named, which in a chain is not where the chain starts; one a function
-    // registers at the path its caller passes, at that call.
-    const place = at.place ?? (ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node);
+    // A route is placed where its method is named, which in a chain is not where the chain starts.
+    const place = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node;
     const verb = method === "all" ? "*" : method === "del" && koa(inst) ? "delete" : method;
     const syntax = syntaxFor(inst);
     // Fastify's shorthand takes its options between the path and the handler, or as the only argument after the path.
@@ -866,27 +864,18 @@ export function routesFromTypeScript(
    * The literal paths an argument gives: a string, or an array of strings on the routers that take one (Express's
    * `Layer` and @koa/router's `register`); undefined where it gives none the file spells out, said in `limits`.
    */
-  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): Array<{ path: string; place?: ts.Node }> | undefined => {
+  const pathsAt = (arg: ts.Expression, inst: Instance, method: string): string[] | undefined => {
     const u = unwrap(arg);
     const one = stringValue(u);
     if (one !== undefined) {
       span(arg);
-      return [{ path: one }];
+      return [one];
     }
     // A path held in a constant the code spells out, of this file or one it imports, as Nest's are read.
     const held = constants.text(u);
     if (held !== undefined) {
       span(arg);
-      return [{ path: held }];
-    }
-    // A parameter of a function of the code that every call of it fills with a path the code spells out: each call
-    // registers a route, at the path it passes and where it passes it.
-    const decl = ts.isIdentifier(u) ? declarationOf(u) : undefined;
-    // A call in another file would place its route there; it is not read here, and the limit stays.
-    const passed = decl && ts.isParameter(decl) ? parameterTexts(decl, (e) => stringValue(e) ?? constants.text(e)) : undefined;
-    if (passed && passed.every((p) => p.call.getSourceFile() === sf)) {
-      for (const p of passed) span(p.arg);
-      return passed.map((p) => ({ path: p.text, place: p.call }));
+      return [held];
     }
     if (ts.isArrayLiteralExpression(u)) {
       const all = u.elements.map((e) => literalText(e) ?? constants.text(e));
@@ -898,7 +887,7 @@ export function routesFromTypeScript(
       }
       if (all.length && all.every((p) => p !== undefined)) {
         span(arg);
-        return all.map((path) => ({ path }));
+        return all;
       }
     }
     unread(arg, method === "all" ? "*" : method, prefixesOf(inst));
@@ -1048,7 +1037,7 @@ export function routesFromTypeScript(
     if (route && on && express(on)) {
       if (!verbsOf("express").has(name) || !args.length) return;
       // The route `route(path)` makes holds its place among the router's registrations, whichever methods it gets later.
-      for (const { path, place } of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: place ?? (route.expression as ts.PropertyAccessExpression).name, place });
+      for (const path of pathsAt(route.arguments[0]!, on, name) ?? []) register(on, name, path, node, args, { order: (route.expression as ts.PropertyAccessExpression).name });
       return;
     }
     const inst = instanceAt(callee.expression);
@@ -1087,7 +1076,7 @@ export function routesFromTypeScript(
       const second = unwrap(args[1]!);
       const named = koa(inst) && (ts.isStringLiteralLike(second) || ts.isTemplateExpression(second) || ts.isRegularExpressionLiteral(second));
       if (named && args.length < 3) return;
-      for (const { path, place } of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1), { place });
+      for (const path of pathsAt(args[named ? 1 : 0]!, inst, name) ?? []) register(inst, name, path, node, args.slice(named ? 2 : 1));
       return;
     }
     if (name === "route" && args.length === 1 && inst.pkg === "fastify" && !ts.isObjectLiteralExpression(unwrap(args[0]!))) {
@@ -1269,7 +1258,19 @@ export function routesFromTypeScript(
     const value = declaration && readConstants.get(declaration);
     const route = (p: string) => routeTemplate(joinRoute(p));
     if (value && method?.toUpperCase() === "GET" && prefixes?.length && prefixes.every((p) => route(joinRoute(p, value)) === route(value))) continue;
-    const line = `routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read`;
+    // A path a function takes from its callers is theirs to give: atlas does not follow the calls, the configuration
+    // names the function as a registration helper.
+    const fn = declaration && ts.isParameter(declaration) ? declaration.parent : undefined;
+    const holder = fn && !ts.isFunctionDeclaration(fn) && ts.isVariableDeclaration(fn.parent) ? fn.parent.name : undefined;
+    const helper = fn && ts.isFunctionDeclaration(fn) && fn.name ? fn.name.text : holder && ts.isIdentifier(holder) ? holder.text : undefined;
+    // Declared as a registration helper that registers this method at this parameter, each call of the function is read
+    // where it is written; a declaration of another method or position leaves this registration unread.
+    const position = fn ? fn.parameters.filter((p) => !(ts.isIdentifier(p.name) && p.name.text === "this")).indexOf(declaration as ts.ParameterDeclaration) : -1;
+    const registers = (c: NonNullable<typeof spec.calls>[number]) =>
+      c.name === helper && c.pathArg === position && c.method !== undefined && (c.method === "*" || c.method.toUpperCase() === (method ?? "").toUpperCase());
+    if (helper && spec.calls?.some(registers)) continue;
+    const hint = !fn ? "" : helper ? ` (a parameter of ${helper}: declare ${helper} in this entry's calls, with the position of its path)` : " (a parameter: declare the function that takes it in this entry's calls)";
+    const line = `routes ${spec.component}: ${file}:${at(arg).line} registers a path the file does not spell out (${arg.getText(sf).replace(/\s+/g, " ")}); its routes are not read${hint}`;
     if (!saidPaths.has(line)) limits?.push(line);
     saidPaths.add(line);
   }
@@ -2106,7 +2107,6 @@ export function extractRoutes(
   const codeFiles = new Map<string, Set<string>>();
   const ranges = packageRanges(source);
   const constants = new Constants(source);
-  shareImporters(constants, source, config.exclude);
   /** The routes Next.js serves from the files of a next entry, which its `trailingSlash` redirects to. */
   const nextRoutes: Surface[] = [];
   /** The Spring entries' route files by component, and how their routes treat a trailing `/`. */

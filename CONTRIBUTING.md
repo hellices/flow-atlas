@@ -29,6 +29,16 @@ keeps the four properties in [docs/responsibilities.md](docs/responsibilities.md
 - **Normalized.** Paths, methods and keys as the schemas in `schema/` give them; a key that changes moves every
   baseline, so it changes only on purpose.
 
+atlas does not try to read every case: what it cannot settle is the agent's to decide. Before adding a reading, check
+it against [what the tool does not try to read](docs/responsibilities.md#what-the-tool-does-not-try-to-read):
+
+- **No following values.** A reading that would follow a value through calls, aliases, reassignments or modules is not
+  added. It stops with a limit.
+- **Configuration first.** Where the configuration can declare it (`routes[].calls`, `wrappers`, `base`, `mounts`),
+  the limit names that entry rather than atlas inferring it.
+- **Not for one repository.** A gap a field run finds in one codebase is fixed by a limit, a configuration hint or the
+  skill, and by a reading only if it passes the four conditions there.
+
 Then: a misreading found on a real repository becomes a scenario under `fixtures/scenarios` first; the reading goes
 into `docs/direction.md` (what is read, what is not and why) and the reference the skill loads; and the snapshots of
 `fixtures/repositories` are written again when the change moves what atlas read there.

@@ -24,13 +24,10 @@ const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIO
 /** What a URL expression's leading value stands for, when the code states it; undefined leaves a hole. */
 type Lead = (expr: ts.Expression) => string | undefined;
 
-/** Text the code settles for a value of a URL (see `filledByCallers`), by the expression written in the URL. */
-type Fill = Map<ts.Node, string>;
-
-function templateText(node: ts.TemplateExpression, lead?: Lead, fill?: Fill): string {
+function templateText(node: ts.TemplateExpression, lead?: Lead): string {
   let s = node.head.text;
   node.templateSpans.forEach((span, i) => {
-    s += fill?.get(unwrap(span.expression)) ?? ((i === 0 && !s && lead?.(span.expression)) || HOLE);
+    s += (i === 0 && !s && lead?.(span.expression)) || HOLE;
     s += span.literal.text;
   });
   return s;
@@ -42,18 +39,12 @@ const isPlus = (node: ts.Node): node is ts.BinaryExpression => ts.isBinaryExpres
  * The text a string concatenation builds, its operands in order, with a hole for each operand that is not a literal:
  * `BASE + "/reviews"` reads as a template `${BASE}/reviews` would. Undefined when no operand is a string.
  */
-function concatenationText(node: ts.BinaryExpression, lead?: Lead, fill?: Fill): string | undefined {
+function concatenationText(node: ts.BinaryExpression, lead?: Lead): string | undefined {
   const parts: string[] = [];
   let strings = 0;
   const walk = (written: ts.Expression): void => {
     // `(BASE)`, `BASE as string` and `BASE!` are BASE; a parenthesized sum is still one sum.
     const n = unwrap(written);
-    const filled = fill?.get(n);
-    if (filled !== undefined) {
-      parts.push(filled);
-      strings++;
-      return;
-    }
     const first = !parts.length && !isPlus(n) ? lead?.(n) : undefined;
     if (first !== undefined) {
       parts.push(first);
@@ -67,7 +58,7 @@ function concatenationText(node: ts.BinaryExpression, lead?: Lead, fill?: Fill):
       parts.push(n.text);
       strings++;
     } else if (ts.isTemplateExpression(n)) {
-      parts.push(templateText(n, lead, fill));
+      parts.push(templateText(n, lead));
       strings++;
     } else parts.push(HOLE);
   };
@@ -1134,19 +1125,6 @@ const ITERATION = new Set(["some", "every", "findIndex", "findLastIndex", "forEa
 const importersOf = new WeakMap<Constants, Importers>();
 
 /**
- * Lets `usesOf`, and so `parameterTexts`, follow what a file read with `constants` exports to the files of the
- * repository that import it (`shareImporters` gives them), as call extraction does for its own files.
- */
-export function followUses(sf: ts.SourceFile, constants: Constants): void {
-  repositories.set(sf, constants);
-}
-
-/** The importers of the repository's files for `constants`, which route extraction reads its files with. */
-export function shareImporters(constants: Constants, source: Pick<Source, "list" | "read">, exclude: Config["exclude"]): void {
-  if (!importersOf.has(constants)) importersOf.set(constants, new Importers(source, constants, matcher(exclude)));
-}
-
-/**
  * What following a value needs: the URL's text, the call source's target, and where route registrations write paths;
  * what each binding was found to reach, and how many times the property followed was read.
  */
@@ -1619,46 +1597,6 @@ function passesPaths(fn: Callable, index: number, relative: boolean): boolean {
   return text;
 }
 
-/** A call of a function, and the text it passes at a parameter (see `parameterTexts`). */
-export interface Passing {
-  text: string;
-  arg: ts.Expression;
-  call: ts.CallExpression;
-}
-
-/**
- * The text every call of a function passes at a parameter, where the code settles it: the function is one the code
- * declares and names (`function f`, `const f = () => ...`), the parameter a plain name it neither writes nor reads
- * through `arguments`, and every use of the function (`usesOf`, across the files that import it) a call of it that
- * passes there a string the code spells out (`text`: a literal, or a constant). Undefined where a use is anything else
- * (the function handed on as a value, a call that passes a value, a spread or nothing there) or there is none: what
- * the parameter holds is then not settled by the code.
- */
-export function parameterTexts(parameter: ts.ParameterDeclaration, text: (e: ts.Expression) => string | undefined): Passing[] | undefined {
-  const fn = parameter.parent;
-  if (!(ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isArrowFunction(fn))) return undefined;
-  const index = fn.parameters.indexOf(parameter);
-  if (parameter.dotDotDotToken || parameter.initializer || !ts.isIdentifier(parameter.name) || readsArguments(fn) || reassigned(parameter.name)) return undefined;
-  const holder = valuePlace(fn).parent;
-  const name = ts.isFunctionDeclaration(fn) ? fn.name : ts.isVariableDeclaration(holder) && constDeclaration(holder) && unwrap(holder.initializer!) === fn ? holder.name : undefined;
-  if (!name || !ts.isIdentifier(name) || callableOf(ts.isFunctionDeclaration(fn) ? fn : holder) !== fn) return undefined;
-  // A function expression's own name reaches it too, where it may be called otherwise or handed on.
-  if (ts.isFunctionExpression(fn) && fn.name && references(fn.name).length) return undefined;
-  const uses = usesOf(name, ts.isFunctionDeclaration(fn) ? fn : holder);
-  if (!uses?.length) return undefined;
-  const out: Passing[] = [];
-  for (const use of uses) {
-    const call = outermost(use).parent;
-    if (!ts.isCallExpression(call) || outermost(call.expression) !== outermost(use)) return undefined;
-    if (call.arguments.slice(0, index + 1).some(ts.isSpreadElement)) return undefined;
-    const arg = call.arguments[index];
-    const value = arg && text(unwrap(arg));
-    if (value === undefined) return undefined;
-    out.push({ text: value, arg: arg!, call });
-  }
-  return out;
-}
-
 /** The text a URL puts straight before a value, `` `/api${value}` `` or `"/api" + value`, where it is a path from the root. */
 function helperLead(url: ts.Node, value: ts.Node): string | undefined {
   let lead: string | undefined;
@@ -1742,10 +1680,6 @@ export interface ReadContext {
   unjoined?: Array<{ why: string; at: Place }>;
   /** Collects the URLs of a helper that puts a path before the path it is given, read before its callers' paths. */
   helpers?: Array<{ prefix: string; at: Place }>;
-  /** The files the call source reads; a request a call outside them fills (`filledByCallers`) is not this source's. */
-  reads?: (file: string) => boolean;
-  /** Collects the calls outside the call source's files that fill a URL of a function in them, whose requests are not read. */
-  outside?: Place[];
   /** Collects the paths written relative to a base the call source does not give (code read as text). */
   unbaseRelative?: Place[];
   /**
@@ -1806,7 +1740,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   const leads = new Map<ts.VariableDeclaration, Set<ts.Identifier>>();
   // Leads whose value Angular fixes but atlas cannot read for certain (environments that differ, a token no provider gives).
   const unreadLeads = new Map<ts.Node, string>();
-  const urlText = (node: ts.Node, depth: number, fill?: Fill): string | undefined => {
+  const urlText = (node: ts.Node, depth: number): string | undefined => {
     const lead: Lead = (expr) => {
       if (depth > 4) return undefined;
       const fixed = ts.isIdentifier(expr) ? undefined : angularLead(expr);
@@ -1823,9 +1757,9 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
     // A const that names another (`const BASE = API`) has its value.
     if (ts.isIdentifier(node)) return lead(node);
-    if (ts.isTemplateExpression(node)) return templateText(node, lead, fill);
-    if (isPlus(node)) return concatenationText(node, lead, fill);
-    if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth, fill);
+    if (ts.isTemplateExpression(node)) return templateText(node, lead);
+    if (isPlus(node)) return concatenationText(node, lead);
+    if (unwrap(node as ts.Expression) !== node) return urlText(unwrap(node as ts.Expression), depth);
     return undefined;
   };
   /**
@@ -1969,7 +1903,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     if (report) passed?.push({ callee, at: at(node) });
     return undefined;
   };
-  const add = (node: ts.Node, parsed: Requested, host: string | undefined, place: ts.Node = node): void => {
+  const add = (node: ts.Node, parsed: Requested, host: string | undefined): void => {
     found.push({ node, call: {
       from: spec.from,
       to: spec.to,
@@ -1979,43 +1913,15 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       ...(parsed.slash ? { slash: true as const } : {}),
       ...(parsed.relative ? { relative: true as const } : {}),
       ...(parsed.base ? { base: parsed.base } : {}),
-      at: placeOf(place),
+      at: at(node),
       evidence: "static",
-      scope: scopeOf(place),
-      span: [place.getStart(place.getSourceFile()), place.getEnd()],
+      scope: scopeOf(node),
+      span: [node.getStart(sf), node.getEnd()],
       host: parsed.hostSet ? parsed.host : (host ?? parsed.host),
     } });
   };
-  /**
-   * The text each call of a function fills the URL's values with, where those values are parameters of that function
-   * and every call of it passes there text the code spells out (`parameterTexts`): a segment, or text a path continues
-   * (`` `${base}/${route}` `` with `send("orders")`). A path from the root or a URL with a host a call passes is
-   * read where it is written (`helperBefore`), not here. A value no call settles stays a hole in each of those
-   * requests. Undefined where no value is such a parameter, or those that are belong to different functions.
-   */
-  const filledByCallers = (node: ts.Node): Array<{ fill: Fill; place: ts.Node }> | undefined => {
-    const values = ts.isTemplateExpression(node) ? node.templateSpans.map((s) => unwrap(s.expression)) : isPlus(node) ? operands(node).map(unwrap).filter((o) => !ts.isStringLiteralLike(o) && !ts.isTemplateExpression(o)) : [];
-    const parameters = values.map((v) => (ts.isIdentifier(v) ? declarationOf(v) : undefined)).filter((d): d is ts.ParameterDeclaration => !!d && ts.isParameter(d));
-    const literal = (e: ts.Expression) => (ts.isStringLiteralLike(e) ? e.text : constantText(e));
-    const passings = [...new Set(parameters)].map((p) => ({ p, all: parameterTexts(p, literal) })).filter(({ all }) => all);
-    // The calls of one function fill its parameters together; those of two cannot be paired.
-    if (!passings.length || new Set(passings.map(({ p }) => p.parent)).size !== 1) return undefined;
-    // A path from the root, or a URL that names a host, is read where it is written.
-    if (passings.some(({ all }) => all!.some((x) => x.text.startsWith("/") || hostOf(x.text) !== undefined || x.text.includes(HOLE)))) return undefined;
-    const calls = passings[0]!.all!.length;
-    return Array.from({ length: calls }, (_, i) => {
-      const fill: Fill = new Map();
-      for (const v of values) {
-        const d = ts.isIdentifier(v) ? declarationOf(v) : undefined;
-        const given = passings.find(({ p }) => p === d)?.all![i];
-        if (given) fill.set(v, given.text);
-      }
-      return { fill, place: passings[0]!.all![i]!.arg };
-    });
-  };
   // Branches of a conditional read as one call, at the conditional.
   const merged = new Set<ts.Node>();
-  const filledAlike = new Set<string>();
   const visit = (node: ts.Node): void => {
     // A literal type (`path: "/m" | "/r"`) names values; it is no request. `extends make(fetch(x))` runs its expression.
     if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression);
@@ -2024,8 +1930,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     // branches do. Branches the configured prefix leaves on different paths (it goes before a root-relative path, not
     // one joined to a base) are two requests, as is a branch to another host or one that differs in a trailing slash:
     // each is read on its own.
-    // Branches the calls of their function fill (`filledByCallers`) are read each on its own, per call.
-    if (ts.isConditionalExpression(node) && ![node.whenTrue, node.whenFalse].some((b) => filledByCallers(unwrap(b)))) {
+    if (ts.isConditionalExpression(node)) {
       const branches = [unwrap(node.whenTrue), unwrap(node.whenFalse)];
       const read = branches.map((b) => {
         const raw = ts.isStringLiteral(b) || ts.isNoSubstitutionTemplateLiteral(b) || ts.isTemplateExpression(b) || isPlus(b) ? urlText(b, 0) : undefined;
@@ -2057,30 +1962,7 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
       // A host chosen in the leading hole is another server's, as in a whole conditional: the URL is a request to the
       // target only where a branch names none of those hosts, and a limit names them.
       const { host, other } = parsed ? urlHosts(node, raw, origin) : { host: undefined, other: [] };
-      // A value of the URL every call of its function fills with text the code spells out is that text: one request
-      // per call, placed where the call passes it.
-      const filled = parsed ? filledByCallers(node) : undefined;
-      if (filled) {
-        // The branches of one conditional that a call fills alike are one request of that call.
-        const choice = outermost(node).parent;
-        for (const { fill, place } of filled) {
-          const text = urlText(node, 0, fill);
-          const each = text === undefined ? undefined : requested(node, text, true);
-          if (!each) continue;
-          const call = place.parent as ts.CallExpression;
-          const caller = call.getSourceFile().fileName;
-          if (context.reads && caller !== file && !context.reads(caller)) {
-            context.outside?.push(placeOf(call));
-            continue;
-          }
-          if (ts.isConditionalExpression(choice)) {
-            const key = `${choice.pos}\0${caller}\0${call.pos}\0${JSON.stringify(each)}\0${host ?? ""}`;
-            if (filledAlike.has(key)) continue;
-            filledAlike.add(key);
-          }
-          add(node, each, host, place);
-        }
-      } else if (parsed) {
+      if (parsed) {
         // A generated SDK function's request takes the base each of its callers gives (`getHealth({ baseUrl })`).
         const bases = generator ? clients.generatedBases(node, generator, usesOf, pageAddress) : undefined;
         for (const b of bases ?? [{ none: true as const }]) {
@@ -2134,11 +2016,8 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
   // (`endpoints.items`) is used where the code reads that property of it, in the file.
   const held = new Map<ts.VariableDeclaration, ReadCall>();
   const heldProperties = new Map<ts.VariableDeclaration, Map<string, ReadCall>>();
-  // The calls one URL is read as, one per call of its function (`filledByCallers`), take the method of the first.
-  const alike = new Map<ts.Node, ReadCall[]>();
-  for (const f of found) (alike.get(f.node) ?? alike.set(f.node, []).get(f.node)!).push(f.call);
   for (const f of found) {
-    if (f.call.method !== "*" || alike.get(f.node)![0] !== f.call) continue;
+    if (f.call.method !== "*") continue;
     const decl = valuePlace(f.node).parent;
     if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && decl.parent.flags & ts.NodeFlags.Const) held.set(decl, f.call);
     else if (ts.isPropertyAssignment(decl) && ts.isObjectLiteralExpression(decl.parent)) {
@@ -2195,7 +2074,6 @@ export function callsFromTypeScript(file: string, text: string, spec: CallSource
     find(sf);
     for (const decl of escaped) for (const call of heldProperties.get(decl)!.values()) written.add(call);
     for (const [call, list] of methods) if (!written.has(call) && list[0] !== "*" && list.every((m) => m === list[0])) call.method = list[0]!;
-    for (const [, [first, ...rest]] of alike) for (const c of rest) c.method = first!.method;
   }
   return found.filter((f) => !bases.has(f.node)).map((f) => f.call);
 }
@@ -3770,16 +3648,12 @@ export function extractCalls(
     const alone: string[] = [];
     const elsewhere: Array<{ host: string; at: Place }> = [];
     const unbased: Place[] = [];
-    const outside: Place[] = [];
-    const include = matcher(spec.files);
-    const skip = matcher(config.exclude);
-    const reads = (f: string) => include(f) && !skip(f);
     const before = out.length;
     for (const file of files) {
       const text = source.read(file);
       if (text === undefined) continue;
       let calls = SCRIPT.test(file)
-        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, angular, anyClient, base, written, unjoined, helpers, reads, outside })
+        ? callsFromTypeScript(file, text, spec, { spans, passed, origin, prefixed, served, routes, elsewhere, unbased, constants, clients, angular, anyClient, base, written, unjoined, helpers })
         : /\.html?$/.test(file)
           ? callsFromTemplate(file, text, spec, { passed, origin, prefixed, served, pages: read.pages, unread, unpaged, elsewhere, unbased, base, written, unjoined, helpers })
           : callsFromText(file, text, spec, spans, labels, served, { base, written, unbaseRelative, untyped, without });
@@ -3831,7 +3705,6 @@ export function extractCalls(
       for (const h of helpers) (byPrefix.get(h.prefix) ?? byPrefix.set(h.prefix, []).get(h.prefix)!).push(h.at);
       for (const [prefix, at] of byPrefix) limits.push(`${edge}: ${prefix}, which a function puts before the path it is given (${places(at)}), is read before the paths passed to it, not as a request of its own`);
     }
-    if (outside.length) limits.push(`${edge}: a function of these files is called from files the call source does not read, which fill its URL; those requests are not read here: ${places(outside)}`);
     if (unjoined.length) {
       const byWhy = new Map<string, Place[]>();
       for (const u of unjoined) (byWhy.get(u.why) ?? byWhy.set(u.why, []).get(u.why)!).push(u.at);
