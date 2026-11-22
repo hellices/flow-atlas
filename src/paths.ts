@@ -258,6 +258,16 @@ export function narrowedPath(routePath: string, call: string): string {
   return joinRoute(...segments(call).map((seg, i) => (isHole(seg) && r[i] !== undefined && isFixed(r[i]) ? r[i] : seg)));
 }
 
+/**
+ * Whether a call fits a route's fixed text only where a whole segment of the call is an interpolated value
+ * (`/x/${id}` and `/x/summary`), not where the call writes the text (`/x/summary${query}`): whether it sends that path
+ * is not in the code.
+ */
+export function fitsByValue(routePath: string, call: string): boolean {
+  const r = segments(routePath);
+  return segments(call).some((part, i) => part === HOLE && r[i] !== undefined && isFixed(r[i]));
+}
+
 /** A route segment written as plain text: no parameter, wildcard or brace pattern; a colon inside one is text. */
 export const isFixed = (seg: string): boolean => !isParam(seg) && !/[{}*?]/.test(seg);
 

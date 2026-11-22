@@ -11,7 +11,7 @@ import { flowFindings, loadFlows, LOCATION, resolveFlows, type FlowReport } from
 import { inventory, inventoryText } from "./inventory.js";
 import { API_VERSION, type Finding, type Findings, type Graph, type Subgraph } from "./model.js";
 import { nearby, nothingNearby } from "./nearby.js";
-import { methodsMatch, pathsMatch } from "./paths.js";
+import { fitsByValue, methodsMatch, pathsMatch } from "./paths.js";
 import { callSummary, markdownReport, textReport, type Classified } from "./report.js";
 import { callOutcomes, evaluate, RULES } from "./rules.js";
 import { toSarif } from "./sarif.js";
@@ -378,12 +378,15 @@ export function queryText(doc: Subgraph): string {
     const callers = (index.in.get(s.id) ?? []).map((e) => index.calls.get(e.from)!);
     const leads = (index.out.get(s.id) ?? []).map((e) => index.calls.get(e.to)!);
     lines.push(`  ${s.id}  ${s.at.file}:${s.at.line}  callers ${callers.length}  leads to ${leads.length}`);
-    for (const c of callers) lines.push(`    <- ${c.from} ${c.method} ${c.path}  ${c.at.file}:${c.at.line}`);
+    for (const c of callers) lines.push(`    <- ${c.from} ${c.method} ${c.path}  ${c.at.file}:${c.at.line}${fitsByValue(s.path, c.path) ? "  (by value)" : ""}`);
     for (const c of leads) lines.push(`    -> ${c.to} ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${c.at.file}:${c.at.line}`);
   }
   if (filter.kind !== "surfaces") lines.push(`calls (${calls.length})`);
   for (const c of calls) {
-    const targets = (index.out.get(c.id) ?? []).map((e) => e.to);
+    const targets = (index.out.get(c.id) ?? []).map((e) => {
+      const s = index.surfaces.get(e.to);
+      return s && fitsByValue(s.path, c.path) ? `${e.to} (by value)` : e.to;
+    });
     lines.push(`  ${c.from} -> ${c.to}  ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${c.at.file}:${c.at.line}  ${targets.length ? `serves ${targets.join(", ")}` : "no surface"}`);
   }
   return `${lines.join("\n")}\n`;
