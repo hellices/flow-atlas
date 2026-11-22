@@ -268,7 +268,9 @@ stopped. Judging what the evidence means for a flow (a defect, a plan, a misread
   code was not found to have: a hand-written contract given as a route source, or a handler atlas did not find. Open
   the code before calling either built.
 - Finding status: `new` is yours; `baseline` is accepted debt; `excepted` is covered; `expired-exception` needs a person.
-- In a trace, `=` joins a call to a surface by method and path; `~` joins a route to an outbound call its handler
+- In a trace, `=` joins a call to a surface by method and path; `?` joins one that fits it only where an interpolated
+  segment of the call takes the route's fixed text (`/v1/${route}` and `/v1/orders`), which `query` marks `(by value)`:
+  whether the call sends that path is not in the code, so read the call before counting it as a caller; `~` joins a route to an outbound call its handler
   runs: written in the handler's own code or the functions it calls (evidence `static`), or held in a method of a name
   the handler calls (evidence `name`; a Python handler a decorator registers joins only so, one call deep), or, for a
   Spring page, made by the template its view name renders (`via view

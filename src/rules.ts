@@ -3,7 +3,7 @@ import { routedComponents, ruleEnabled } from "./config.js";
 import { matchCalls, plausibleRequest, rankedComponents, shadowedRoutes, takes } from "./match.js";
 import type { Finding, Graph } from "./model.js";
 import { isRedirect, surfaceId } from "./model.js";
-import { HOLE, isFixed, methodsMatch, pathCovers, segments } from "./paths.js";
+import { fitsByValue, methodsMatch, pathCovers, segments } from "./paths.js";
 
 /** Titles only. What to do about a finding is decided by whoever reads it; guidance lives with the skill. */
 export const RULES: Record<Finding["rule"], { title: string }> = {
@@ -16,12 +16,6 @@ export const RULES: Record<Finding["rule"], { title: string }> = {
 
 function finding(rule: Finding["rule"], key: string, message: string, at: Finding["at"]): Finding {
   return { rule, key: `${rule}|${key}`, title: RULES[rule].title, message, at };
-}
-
-/** Whether a call fits a route's fixed text only where a whole segment of the call is an interpolated value (`/x/${id}` and `/x/summary`), not where the call writes the text (`/x/summary${query}`). */
-function byValueOnly(routePath: string, call: string): boolean {
-  const r = segments(routePath);
-  return segments(call).some((part, i) => part === HOLE && r[i] !== undefined && isFixed(r[i]));
 }
 
 /**
@@ -109,7 +103,7 @@ export function evaluate(graph: Graph, config: Config, limits: string[] = []): F
       if (callers) {
         // A call that fits this route only by the value of an interpolated segment, where another route takes every
         // value of it, names no path of this route: shown as the evidence, not counted as a caller.
-        const byValue = callers.filter((c) => byValueOnly(s.path, c.path) && coveredElsewhere(graph.surfaces, s, c));
+        const byValue = callers.filter((c) => fitsByValue(s.path, c.path) && coveredElsewhere(graph.surfaces, s, c));
         if (byValue.length < callers.length) return;
         const list = byValue.slice(0, 3).map((c) => `${c.from} calls ${c.method} ${c.path} (${c.at.file}:${c.at.line})`).join(", ");
         const more = byValue.length > 3 ? ` and ${byValue.length - 3} more` : "";

@@ -1,6 +1,6 @@
 import { API_VERSION, type Call, type Edge, type Graph, type Subgraph, type Surface } from "./model.js";
 import { derived } from "./provenance.js";
-import { methodsMatch, pathsMatch, routeTemplate } from "./paths.js";
+import { fitsByValue, methodsMatch, pathsMatch, routeTemplate } from "./paths.js";
 
 /** Lookups over a graph's nodes and edges; every reader of a graph or subgraph walks the same edges. */
 export class FlowIndex {
@@ -117,13 +117,21 @@ export function traceText(doc: Subgraph): string {
     const c = index.calls.get(id)!;
     return `${c.from} -> ${c.to}  ${c.method} ${c.path}${c.scope ? ` in ${c.scope}` : ""}  ${where(c.at)}${repeated ? "  (shown above)" : ""}`;
   };
+  // A match that holds only by the value of an interpolated segment is marked apart: the code does not show the call
+  // sends this route's path.
+  const mark = (e: { kind: string; from: string; to: string }): string => {
+    if (e.kind === "reach") return "~";
+    const c = index.calls.get(e.from);
+    const s = index.surfaces.get(e.to);
+    return c && s && fitsByValue(s.path, c.path) ? "?" : "=";
+  };
   const lines: string[] = [];
   // Each node is expanded once per direction: a node reached again, by a cycle or another branch, is only named.
   const walk = (id: string, dir: "in" | "out", indent: string, expanded: Set<string>) => {
     for (const e of (dir === "out" ? index.out : index.in).get(id) ?? []) {
       const other = dir === "out" ? e.to : e.from;
       const repeated = expanded.has(other);
-      lines.push(`${indent}${e.kind === "reach" ? "~" : "="} ${label(other, repeated)}`);
+      lines.push(`${indent}${mark(e)} ${label(other, repeated)}`);
       if (!repeated) {
         expanded.add(other);
         walk(other, dir, `${indent}  `, expanded);
@@ -154,7 +162,11 @@ export function traceText(doc: Subgraph): string {
                 : "  not traced: the handler was not read as TypeScript",
       );
     }
-    lines.push("", "= matched by method and path   ~ run by the handler (static) or held in a method it calls (by name)", "");
+    lines.push(
+      "",
+      "= matched by method and path   ? matched only where an interpolated segment of the call takes the route's fixed text   ~ run by the handler (static) or held in a method it calls (by name)",
+      "",
+    );
   }
   return lines.join("\n");
 }

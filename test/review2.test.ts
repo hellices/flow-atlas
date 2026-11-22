@@ -18,7 +18,7 @@ import { inventory, inventoryText } from "../src/inventory.js";
 import { API_VERSION, type Subgraph, type Surface } from "../src/model.js";
 import { holeMatches, pathsMatch } from "../src/paths.js";
 import { codeDependency, configDependency, provenance } from "../src/provenance.js";
-import { coverageDrops, main } from "../src/commands.js";
+import { coverageDrops, main, query, queryText } from "../src/commands.js";
 import { scan } from "../src/scan.js";
 import { validate } from "../src/schema.js";
 import { GitRefSource, WorktreeSource, type Source } from "../src/source.js";
@@ -387,6 +387,16 @@ describe("a call that fits a route only by the value of an interpolated segment"
     expect(found[0]!.message).toBe(
       "GET /api/x/summary (api) has no caller among the configured call sites that names its path. Only calls with an interpolated segment fit it, and the path of another route fits every value of that segment: web calls GET /api/x/{} (web/a.ts:1); whether one sends this path is not in the code.",
     );
+  });
+
+  it("marks in trace and query a caller that fits a route only by such a value, and not one that names its path", () => {
+    const web = "export const f = (id: string) => fetch(`/api/y/${id}`);\nexport const g = () => fetch('/api/y/a');";
+    const graph = scan(memory({ "api/app.ts": api, "web/a.ts": web }), config);
+    const upstream = traceText(trace(graph, seedsFor(graph, "api|GET /api/y/a"))).split("upstream")[1]!.split("\n\n")[0]!;
+    expect(upstream.trim().split("\n").slice(1).map((l) => l.trim().split("  ").slice(0, 2).join("  "))).toEqual(["? web -> api  GET /api/y/{} in f", "= web -> api  GET /api/y/a in g"]);
+    const text = queryText(query(graph, { path: "/api/y/a" }));
+    expect(text).toContain("<- web GET /api/y/{}  web/a.ts:1  (by value)");
+    expect(text).toContain("<- web GET /api/y/a  web/a.ts:2\n");
   });
 
   it("still counts where no route takes every value, and a call that names the path", () => {
