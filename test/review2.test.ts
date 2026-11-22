@@ -256,6 +256,10 @@ describe("Python handlers", () => {
     'httpx.get("http://localhost:3000/api/other")',
     "",
     "from . import svc as s",
+    '@app.get("/defaults")',
+    'def defaults(v=httpx.get("http://localhost:3000/api/items")):',
+    "    return v",
+    "",
     '@app.get("/params")',
     "def params(q: dict):",
     "    def never_called():",
@@ -293,6 +297,9 @@ describe("Python handlers", () => {
     // The module-level request after `def other():` belongs to no function, so no handler named other reaches it.
     const call = graph.calls.find((c) => c.path === "/api/other" && c.at.line === 21);
     expect(call?.scope).toBeUndefined();
+    // A default argument runs when Python defines the function, not when the route is requested.
+    expect(graph.calls.find((c) => c.at.line === 25)?.scope).toBeUndefined();
+    expect(downstream("py|GET /defaults")).not.toContain("/api/items");
   });
 
   it("says where a handler registered without a decorator stops", () => {

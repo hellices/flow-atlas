@@ -241,14 +241,15 @@ function headerColon(code: string, from: number): number {
 
 /**
  * For Python: the name of the innermost function whose body holds an offset, by indentation, so a statement after a
- * function's body (a module-level request, a decorator's arguments) belongs to none.
+ * function's body (a module-level request, a decorator's arguments) belongs to none, and neither does a default
+ * argument, which Python evaluates when it defines the function.
  */
 export function pythonScopes(text: string): (index: number) => string | undefined {
   const code = pythonCode(text);
   const defs: Array<{ start: number; end: number; name: string }> = [];
   for (const m of code.matchAll(/^([ \t]*)(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w*)[ \t]*\(/gm)) {
     const colon = headerColon(code, (m.index ?? 0) + m[0].length - 1);
-    if (colon >= 0) defs.push({ start: m.index ?? 0, end: blockEnd(code, colon, m[1]!), name: m[2]! });
+    if (colon >= 0) defs.push({ start: colon + 1, end: blockEnd(code, colon, m[1]!), name: m[2]! });
   }
   return (index) => {
     let found: { start: number; end: number; name: string } | undefined;
