@@ -1637,7 +1637,7 @@ export interface Passing {
 export function parameterTexts(parameter: ts.ParameterDeclaration, text: (e: ts.Expression) => string | undefined): Passing[] | undefined {
   const fn = parameter.parent;
   if (!(ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isArrowFunction(fn))) return undefined;
-  const index = fn.parameters.indexOf(parameter);
+  const index = runtimeParameters(fn).indexOf(parameter);
   if (parameter.dotDotDotToken || parameter.initializer || !ts.isIdentifier(parameter.name) || readsArguments(fn) || reassigned(parameter.name)) return undefined;
   const holder = valuePlace(fn).parent;
   const name = ts.isFunctionDeclaration(fn) ? fn.name : ts.isVariableDeclaration(holder) && constDeclaration(holder) && unwrap(holder.initializer!) === fn ? holder.name : undefined;
@@ -1659,24 +1659,25 @@ export function parameterTexts(parameter: ts.ParameterDeclaration, text: (e: ts.
   return out;
 }
 
+/** A function's parameters that take its arguments: TypeScript's `this` parameter takes none. */
+function runtimeParameters(fn: ts.SignatureDeclaration): ts.ParameterDeclaration[] {
+  return fn.parameters.filter((p) => !(ts.isIdentifier(p.name) && p.name.text === "this"));
+}
+
 /**
  * What a call binds the parameters of the function it calls to: the argument at each one's place, for a plain
  * parameter the function does not write to; none from a spread argument on. An argument that is a name is bound only
- * where the name holds one value for certain: an import, a function declaration or a `const` the code does not write
- * to; a `let` or a parameter may hold another by the time the call runs.
+ * where the name holds one function for certain: a function declaration or a `const` the code does not write to, or
+ * an import of one; a `let` or a parameter may hold another by the time the call runs.
  */
 export function boundArguments(fn: ts.SignatureDeclaration, call: ts.CallExpression): Map<ts.ParameterDeclaration, ts.Expression> {
   const out = new Map<ts.ParameterDeclaration, ts.Expression>();
+  // `functionCalled` settles a name the way a call of it is settled, an import followed to the module that exports it.
   const settled = (a: ts.Expression): boolean => {
     const u = unwrap(a);
-    if (!ts.isIdentifier(u)) return true;
-    const d = declarationOf(u);
-    if (!d) return false;
-    if (ts.isImportSpecifier(d) || ts.isImportClause(d)) return true;
-    if (ts.isFunctionDeclaration(d)) return !(d.name && reassigned(d.name));
-    return ts.isVariableDeclaration(d) && constDeclaration(d);
+    return !ts.isIdentifier(u) || functionCalled(u) !== undefined;
   };
-  for (const [i, p] of fn.parameters.entries()) {
+  for (const [i, p] of runtimeParameters(fn).entries()) {
     const arg = call.arguments[i];
     if (!arg || ts.isSpreadElement(arg)) break;
     if (!p.dotDotDotToken && ts.isIdentifier(p.name) && !reassigned(p.name) && settled(arg)) out.set(p, arg);

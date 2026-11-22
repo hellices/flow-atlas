@@ -455,9 +455,10 @@ describe("Express paths held in constants of other files", () => {
   });
 
   it("follows each route a function registers into the function its call hands it, and no other", () => {
-    const reached = (app: string[]) => {
+    const reached = (app: string[], more: Record<string, string> = {}, appFile = "api/app.js") => {
       const files = {
-        "api/app.js": ["import express from 'express';", "const app = express();", ...app].join("\n"),
+        ...more,
+        [appFile]: ["import express from 'express';", "const app = express();", ...app].join("\n"),
         "store/app.js": "import express from 'express';\nconst app = express();\napp.post('/store/orders', h);\napp.post('/store/invoices', h);",
       };
       const config = normalizeConfig({
@@ -489,6 +490,16 @@ describe("Express paths held in constants of other files", () => {
     expect(reached([...helper, ...send, "route('/v1/orders', send);"])).toEqual([]);
     const keyed = ["function route(path, answer) {", "  app.post(path, (req, res) => res.json({ answer: 'cached' }));", "}"];
     expect(reached([...keyed, order, "route('/v1/orders', order);"])).toEqual([]);
+    // An export the module writes to may hold another function by the time the call runs.
+    const handlers = { "api/handlers.js": send.map((l) => l.replace(/^let/, "export let")).join("\n") };
+    expect(reached(["import { send } from './handlers';", ...helper, "route('/v1/orders', send);"], handlers)).toEqual([]);
+    // TypeScript's `this` parameter takes no argument.
+    const typed = ["function route(this: void, path: string, answer: (b: unknown) => unknown) {", "  app.post(path, async (req, res) => res.json(await answer(req.body)));", "}"];
+    expect(reached([...typed, order, "route('/v1/orders', order);"], {}, "api/app.ts")).toEqual(["api|POST /v1/orders -> POST /store/orders"]);
+    // A function the call hands as the handler itself is handed the framework's objects: `res.send()` is the framework's.
+    const direct = ["function route(path, answer) {", "  app.post(path, answer);", "}", "async function send(body) { return fetch('http://localhost/store/orders', { method: 'POST', body }); }"];
+    expect(reached([...direct, "route('/v1/orders', (req, res) => res.send('ok'));"])).toEqual([]);
+    expect(reached([...direct, "route('/v1/orders', (req, res) => send(req.body));"])).toEqual(["api|POST /v1/orders -> POST /store/orders"]);
   });
 
   it("reads an exported helper's routes where every call of it is in its file, and leaves them unread where one is not", () => {
